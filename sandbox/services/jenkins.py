@@ -72,6 +72,8 @@ class JenkinsService(BaseService):
             "workflow-aggregator",
             "git",
             "warnings-ng",
+            "coverage",
+            "junit",
             "credentials-binding",
             "ws-cleanup",
         ]
