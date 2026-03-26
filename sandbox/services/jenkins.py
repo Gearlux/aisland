@@ -1,7 +1,6 @@
 import sys
 import urllib.request
 
-
 import click
 
 from sandbox.manager import BIN_DIR, BaseService
@@ -58,8 +57,52 @@ class JenkinsService(BaseService):
         else:
             click.echo("No Jenkins jobs directory found.")
 
+    def install_plugins(self) -> None:
+        """Download and install required Jenkins plugins."""
+        self.setup()
+
+        plugin_manager_jar = BIN_DIR / "jenkins-plugin-manager.jar"
+        if not plugin_manager_jar.exists():
+            url = "https://github.com/jenkinsci/plugin-installation-manager-tool/releases/download/2.12.15/jenkins-plugin-manager-2.12.15.jar"
+            click.echo(f"Downloading Jenkins Plugin Manager from {url}...")
+            urllib.request.urlretrieve(url, plugin_manager_jar)
+            click.echo("Plugin Manager download complete.")
+
+        plugins = [
+            "workflow-aggregator",
+            "git",
+            "warnings-ng",
+            "credentials-binding",
+            "ws-cleanup",
+        ]
+
+        plugin_dir = self.service_data_dir / "plugins"
+        plugin_dir.mkdir(parents=True, exist_ok=True)
+
+        cmd = [
+            "java",
+            "-jar",
+            str(plugin_manager_jar),
+            "--war",
+            str(self.war_file),
+            "-d",
+            str(plugin_dir),
+            "--plugins",
+        ] + plugins
+
+        click.echo("Installing Jenkins plugins (this may take a minute)...")
+        import subprocess
+
+        try:
+            subprocess.run(cmd, check=True)
+            click.echo("Plugins installed successfully.")
+        except subprocess.CalledProcessError as e:
+            click.echo(f"Failed to install plugins: {e}", err=True)
+            sys.exit(1)
+
     def init_pipelines(self) -> None:
         """Seed Jenkins with Multi-branch pipelines for all projects in the workspace."""
+        self.install_plugins()
         from sandbox.manager import BASE_DIR
 
         workspace_root = BASE_DIR.parent
