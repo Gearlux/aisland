@@ -1,8 +1,9 @@
-import urllib.request
-import click
 import sys
+import urllib.request
 from pathlib import Path
 from typing import Optional
+
+import click
 
 from sandbox.manager import BIN_DIR, BaseService
 
@@ -31,10 +32,10 @@ class JenkinsService(BaseService):
     def launch(self, port: int = 8080, background: bool = False) -> None:
         """Start the Jenkins server."""
         self.setup()
-        
+
         cmd = ["java", "-jar", str(self.war_file), f"--httpPort={port}"]
         env = {"JENKINS_HOME": str(self.service_data_dir)}
-        
+
         self.start(cmd, env=env, background=background)
 
     def status(self) -> None:
@@ -45,17 +46,31 @@ class JenkinsService(BaseService):
             password = admin_pass_file.read_text().strip()
             click.echo(f"    Initial Admin Password: {password}")
 
+    def clear_jobs(self) -> None:
+        """Clear all Jenkins projects/jobs without resetting the rest of the environment."""
+        jobs_dir = self.service_data_dir / "jobs"
+        if jobs_dir.exists():
+            import shutil
+
+            click.echo(f"Clearing Jenkins jobs at {jobs_dir}...")
+            shutil.rmtree(jobs_dir)
+            jobs_dir.mkdir(parents=True, exist_ok=True)
+            click.echo("Jenkins projects cleared.")
+        else:
+            click.echo("No Jenkins jobs directory found.")
+
     def init_pipelines(self) -> None:
         """Seed Jenkins with Multi-branch pipelines for all projects in the workspace."""
         from sandbox.manager import BASE_DIR
+
         workspace_root = BASE_DIR.parent
-        
+
         # Dynamically find all projects in the workspace root
         projects = []
         for item in workspace_root.iterdir():
             if item.is_dir() and (item / "pyproject.toml").exists():
                 projects.append(item.name)
-        
+
         jobs_dir = self.service_data_dir / "jobs"
         jobs_dir.mkdir(parents=True, exist_ok=True)
 
@@ -64,12 +79,12 @@ class JenkinsService(BaseService):
             project_dir = workspace_root / project
             project_job_dir = jobs_dir / project
             project_job_dir.mkdir(exist_ok=True)
-            
+
             # 1. Generate Jenkinsfile if it doesn't exist (using LogFlow as template)
             jenkinsfile_path = project_dir / "Jenkinsfile"
             if not jenkinsfile_path.exists():
                 click.echo(f"  - Generating Jenkinsfile for {project}...")
-                
+
                 # Check for standard directories to include in quality gates
                 pkg_dir = project.replace("-", "_")
                 check_dirs = [pkg_dir]
@@ -82,18 +97,19 @@ class JenkinsService(BaseService):
                     # Fallback to current directory as package dir if we can't find it
                     pkg_dir = project
                     check_dirs = [pkg_dir]
-                
+
                 if (project_dir / "tests").exists():
                     check_dirs.append("tests")
                 if (project_dir / "examples").exists():
                     check_dirs.append("examples")
-                
+
                 dirs_str = " ".join(check_dirs)
-                
+
                 # Dependencies for this project (from pyproject.toml if possible)
                 deps_str = ""
                 try:
                     import tomllib
+
                     with open(project_dir / "pyproject.toml", "rb") as f:
                         pyproject = tomllib.load(f)
                         deps = pyproject.get("project", {}).get("dependencies", [])
@@ -266,7 +282,7 @@ with open('isort-checkstyle.xml', 'w') as f:
         <source class="jenkins.plugins.git.GitSCMSource" plugin="git">
           <id>{project}-remote</id>
           <remote>git@github.com:Gearlux/{project}.git</remote>
-          <credentialsId>jenkins-gearlux</credentialsId>
+          <credentialsId>jenkins-sandbox</credentialsId>
           <traits>
             <jenkins.plugins.git.traits.BranchDiscoveryTrait/>
           </traits>
@@ -287,5 +303,7 @@ with open('isort-checkstyle.xml', 'w') as f:
             config_file = project_job_dir / "config.xml"
             config_file.write_text(config_xml)
             click.echo(f"  - Seeded job: {project}")
-        
-        click.echo("Jenkins pipelines initialized. Please restart Jenkins if it was already running.")
+
+        click.echo(
+            "Jenkins pipelines initialized. Please restart Jenkins if it was already running."
+        )

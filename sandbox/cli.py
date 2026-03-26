@@ -12,6 +12,7 @@ def main() -> None:
 
 # --- Jenkins Commands ---
 
+
 @main.group()
 def jenkins() -> None:
     """Manage local Jenkins CI/CD server."""
@@ -45,13 +46,30 @@ def jenkins_reset() -> None:
     JenkinsService().reset()
 
 
+@jenkins.command(name="clear")
+def jenkins_clear() -> None:
+    """Clear all Jenkins projects."""
+    JenkinsService().clear_jobs()
+
+
 @jenkins.command(name="init")
 def jenkins_init() -> None:
     """Initialize Jenkins with Multi-branch pipelines for all projects."""
     JenkinsService().init_pipelines()
 
 
+@jenkins.command(name="restart")
+@click.option("--port", default=8080, help="HTTP port for Jenkins.")
+@click.option("--background", "-b", is_flag=True, help="Run in background.")
+def jenkins_restart(port: int, background: bool) -> None:
+    """Restart Jenkins."""
+    service = JenkinsService()
+    service.stop()
+    service.launch(port=port, background=background)
+
+
 # --- MLflow Commands ---
+
 
 @main.group()
 def mlflow() -> None:
@@ -87,6 +105,7 @@ def mlflow_reset() -> None:
 
 
 # --- Global Commands ---
+
 
 @main.command()
 def status() -> None:
