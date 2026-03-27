@@ -15,6 +15,8 @@ sandbox status
 ```
 
 ### 2. Manage Jenkins
+For a complete guide on setting up project pipelines and credentials, see the [Jenkins Setup Workflow](JENKINS_WORKFLOW.md).
+
 ```bash
 # Start Jenkins (foreground)
 sandbox jenkins start
