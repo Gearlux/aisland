@@ -12,12 +12,15 @@ sandbox jenkins start --background
 - **Default URL:** [http://localhost:8080](http://localhost:8080)
 - **Home Directory:** `sandbox/data/jenkins/`
 
-### 2. Initial Setup (First Run Only)
-On the first run, Jenkins will prompt for an "Initial Admin Password". You can retrieve this by running:
+### 2. Initial Setup
+The `sandbox` tool automatically skips the Jenkins setup wizard and pre-installs all necessary plugins and their dependencies.
+
+- **Username:** `admin` (or your OS username)
+- **Password:** If prompted for a password, you can retrieve the initial one by running:
 ```bash
 sandbox jenkins status
 ```
-Paste this into the Jenkins web interface to proceed with the setup wizard. You may choose to "Install suggested plugins" or skip to manual setup (the `sandbox` tool already installs the core Gearlux plugins).
+Paste this into the Jenkins web interface if security is enabled.
 
 ---
 

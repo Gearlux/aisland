@@ -12,110 +12,84 @@ class JenkinsService(BaseService):
     """Jenkins CI/CD Server."""
 
     URL = "https://get.jenkins.io/war-stable/latest/jenkins.war"
+    MANAGER_URL = "https://github.com/jenkinsci/plugin-installation-manager-tool/releases/latest/download/jenkins-plugin-manager.jar"
+    
     PLUGINS = [
-        # Core Dependencies
-        "structs",
-        "scm-api",
-        "script-security",
-        "display-url-api",
-        "token-macro",
-        "jackson2-api",
-        "ionicons-api",
-        "echarts-api",
-        "font-awesome-api",
-        "bootstrap5-api",
-        "checks-api",
-        "sshd",
-        "javax-activation-api",
-        "javax-mail-api",
-        "jaxb",
-        "apache-httpcomponents-client-4-api",
-        "instance-identity",
-        
-        # Credentials
-        "credentials",
-        "ssh-credentials",
-        "plain-credentials",
-
-        # Pipeline / Workflow
-        "workflow-step-api",
-        "workflow-api",
-        "workflow-support",
-        "workflow-job",
-        "workflow-cps",
-        "workflow-scm-step",
         "workflow-multibranch",
         "workflow-aggregator",
-        "workflow-durable-task-step",
-        "workflow-basic-steps",
-        "pipeline-model-definition",
-        "pipeline-model-api",
-        "pipeline-model-extensions",
-        "pipeline-stage-step",
-        "pipeline-stage-view",
-        "pipeline-graph-analysis",
-        "pipeline-rest-api",
-        "pipeline-build-step",
-        "pipeline-milestone-step",
-        "pipeline-input-step",
-        
-        # Git
-        "git-client",
         "git",
-        "git-server",
-
-        # Testing & UI
-        "junit",
-        "matrix-project",
         "build-monitor-plugin",
         "view-job-filters",
-        "dashboard-view"
+        "dashboard-view",
+        "configuration-as-code",
+        "credentials-binding"
     ]
 
     def __init__(self) -> None:
         super().__init__("jenkins")
         self.war_file = BIN_DIR / "jenkins.war"
+        self.manager_jar = BIN_DIR / "jenkins-plugin-manager.jar"
 
     def setup(self) -> None:
-        """Download Jenkins binary."""
+        """Download Jenkins binary and plugin manager."""
+        BIN_DIR.mkdir(exist_ok=True)
+        
         if not self.war_file.exists():
             click.echo(f"Downloading Jenkins from {self.URL}...")
             try:
-                BIN_DIR.mkdir(exist_ok=True)
                 urllib.request.urlretrieve(self.URL, self.war_file)
-                click.echo("Download complete.")
+                click.echo("  - Jenkins download complete.")
             except Exception as e:
                 click.echo(f"Error downloading Jenkins: {e}", err=True)
                 sys.exit(1)
+        
+        if not self.manager_jar.exists():
+            click.echo(f"Downloading Jenkins Plugin Manager from {self.MANAGER_URL}...")
+            try:
+                urllib.request.urlretrieve(self.MANAGER_URL, self.manager_jar)
+                click.echo("  - Plugin Manager download complete.")
+            except Exception as e:
+                click.echo(f"Error downloading Plugin Manager: {e}", err=True)
 
     def setup_plugins(self) -> None:
-        """Download Jenkins plugins."""
+        """Download Jenkins plugins using the official plugin-manager tool."""
         plugins_dir = self.service_data_dir / "plugins"
         plugins_dir.mkdir(parents=True, exist_ok=True)
         
-        click.echo("Verifying Jenkins plugins...")
-        for plugin in self.PLUGINS:
-            plugin_file = plugins_dir / f"{plugin}.jpi"
-            pinned_file = plugins_dir / f"{plugin}.jpi.pinned"
-            
-            if not plugin_file.exists():
-                click.echo(f"  - Downloading {plugin}...")
-                url = f"https://updates.jenkins.io/latest/{plugin}.hpi"
-                try:
-                    urllib.request.urlretrieve(url, plugin_file)
-                except Exception as e:
-                    click.echo(f"    - Error downloading {plugin}: {e}", err=True)
-            
-            # Ensure the plugin is pinned so Jenkins doesn't override it
-            if not pinned_file.exists():
-                pinned_file.touch()
+        # Create plugins.txt for the manager
+        plugins_txt = self.service_data_dir / "plugins.txt"
+        plugins_txt.write_text("\n".join(self.PLUGINS))
+        
+        click.echo("Verifying and installing Jenkins plugins (this may take a minute)...")
+        
+        import subprocess
+        cmd = [
+            "java", "-jar", str(self.manager_jar),
+            "--war", str(self.war_file),
+            "--plugin-file", str(plugins_txt),
+            "--plugin-download-directory", str(plugins_dir),
+            "--no-proxy-test"
+        ]
+        
+        try:
+            # Run the manager tool. It handles dependencies and version resolution.
+            subprocess.run(cmd, check=True, capture_output=True, text=True)
+            click.echo("  - All plugins and dependencies installed successfully.")
+        except subprocess.CalledProcessError as e:
+            click.echo(f"  - Error installing plugins: {e.stderr}", err=True)
 
     def launch(self, port: int = 8080, background: bool = False) -> None:
         """Start the Jenkins server."""
         self.setup()
         self.setup_plugins()
         
-        cmd = ["java", "-jar", str(self.war_file), f"--httpPort={port}"]
+        # -Djenkins.install.runSetupWizard=false skips the first-run wizard
+        cmd = [
+            "java", 
+            "-Djenkins.install.runSetupWizard=false",
+            "-jar", str(self.war_file), 
+            f"--httpPort={port}"
+        ]
         env = {"JENKINS_HOME": str(self.service_data_dir)}
         
         self.start(cmd, env=env, background=background)
