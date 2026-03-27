@@ -13,6 +13,54 @@ class JenkinsService(BaseService):
 
     URL = "https://get.jenkins.io/war-stable/latest/jenkins.war"
     PLUGINS = [
+        # Core Dependencies
+        "structs",
+        "scm-api",
+        "script-security",
+        "display-url-api",
+        "token-macro",
+        "jackson2-api",
+        "ionicons-api",
+        "echarts-api",
+        "font-awesome-api",
+        "bootstrap5-api",
+        "checks-api",
+        
+        # Credentials
+        "credentials",
+        "ssh-credentials",
+        "plain-credentials",
+
+        # Pipeline / Workflow
+        "workflow-step-api",
+        "workflow-api",
+        "workflow-support",
+        "workflow-job",
+        "workflow-cps",
+        "workflow-scm-step",
+        "workflow-multibranch",
+        "workflow-aggregator",
+        "workflow-durable-task-step",
+        "workflow-basic-steps",
+        "pipeline-model-definition",
+        "pipeline-model-api",
+        "pipeline-model-extensions",
+        "pipeline-stage-step",
+        "pipeline-stage-view",
+        "pipeline-graph-analysis",
+        "pipeline-rest-api",
+        "pipeline-build-step",
+        "pipeline-milestone-step",
+        "pipeline-input-step",
+        
+        # Git
+        "git-client",
+        "git",
+        "git-server",
+
+        # Testing & UI
+        "junit",
+        "matrix-project",
         "build-monitor-plugin",
         "view-job-filters",
         "dashboard-view"
@@ -42,6 +90,8 @@ class JenkinsService(BaseService):
         click.echo("Verifying Jenkins plugins...")
         for plugin in self.PLUGINS:
             plugin_file = plugins_dir / f"{plugin}.jpi"
+            pinned_file = plugins_dir / f"{plugin}.jpi.pinned"
+            
             if not plugin_file.exists():
                 click.echo(f"  - Downloading {plugin}...")
                 url = f"https://updates.jenkins.io/latest/{plugin}.hpi"
@@ -49,6 +99,10 @@ class JenkinsService(BaseService):
                     urllib.request.urlretrieve(url, plugin_file)
                 except Exception as e:
                     click.echo(f"    - Error downloading {plugin}: {e}", err=True)
+            
+            # Ensure the plugin is pinned so Jenkins doesn't override it
+            if not pinned_file.exists():
+                pinned_file.touch()
 
     def launch(self, port: int = 8080, background: bool = False) -> None:
         """Start the Jenkins server."""
