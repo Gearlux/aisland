@@ -1,4 +1,5 @@
 import click
+from typing import Optional
 
 from sandbox.services.jenkins import JenkinsService
 from sandbox.services.mlflow import MLflowService
@@ -39,16 +40,29 @@ def jenkins_status() -> None:
 
 
 @jenkins.command(name="reset")
-@click.confirmation_option(prompt="Are you sure you want to wipe all Jenkins data?")
-def jenkins_reset() -> None:
-    """Stop Jenkins and wipe all its data."""
-    JenkinsService().reset()
+@click.option("--project", help="Only reset data for a specific project pipeline.")
+@click.confirmation_option(prompt="Are you sure you want to wipe data?")
+def jenkins_reset(project: Optional[str]) -> None:
+    """Stop Jenkins and wipe its data (or just a specific project's data)."""
+    if project:
+        JenkinsService().remove_pipelines(project_name=project)
+    else:
+        JenkinsService().reset()
 
 
 @jenkins.command(name="init")
-def jenkins_init() -> None:
-    """Initialize Jenkins with Multi-branch pipelines for all projects."""
-    JenkinsService().init_pipelines()
+@click.argument("project", required=False)
+def jenkins_init(project: Optional[str]) -> None:
+    """Initialize Jenkins with Multi-branch pipelines for a project or all projects."""
+    JenkinsService().init_pipelines(project_name=project)
+
+
+@jenkins.command(name="remove")
+@click.argument("project", required=False)
+@click.confirmation_option(prompt="Are you sure you want to remove the pipeline(s)?")
+def jenkins_remove(project: Optional[str]) -> None:
+    """Remove a specific project pipeline or all pipelines from Jenkins."""
+    JenkinsService().remove_pipelines(project_name=project)
 
 
 # --- MLflow Commands ---

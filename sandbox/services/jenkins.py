@@ -133,15 +133,55 @@ class JenkinsService(BaseService):
         
         return ""
 
-    def init_pipelines(self) -> None:
-        """Seed Jenkins with Multi-branch pipelines for all projects discovered in the workspace."""
+    def remove_pipelines(self, project_name: Optional[str] = None) -> None:
+        """Remove one or all project pipelines from Jenkins."""
+        jobs_dir = self.service_data_dir / "jobs"
+        if not jobs_dir.exists():
+            click.echo("No Jenkins jobs directory found.")
+            return
+
+        if project_name:
+            project_job_dir = jobs_dir / project_name
+            if project_job_dir.exists():
+                import shutil
+                click.echo(f"Removing Jenkins pipeline for project '{project_name}'...")
+                shutil.rmtree(project_job_dir)
+                click.echo(f"  - Removed: {project_name}")
+            else:
+                click.echo(f"  - Error: Jenkins job for project '{project_name}' not found.", err=True)
+        else:
+            import shutil
+            click.echo("Removing ALL project pipelines from Jenkins...")
+            for project_job_dir in jobs_dir.iterdir():
+                if project_job_dir.is_dir() and (project_job_dir / "config.xml").exists():
+                    shutil.rmtree(project_job_dir)
+                    click.echo(f"  - Removed: {project_job_dir.name}")
+            click.echo("All project pipelines removed. Please restart Jenkins if it was already running.")
+
+    def init_pipelines(self, project_name: Optional[str] = None) -> None:
+        """Seed Jenkins with Multi-branch pipelines for projects discovered in the workspace."""
         workspace_root = Path(__file__).resolve().parents[3]
-        projects = [p for p in workspace_root.iterdir() if p.is_dir() and (p / "Jenkinsfile").exists()]
         
+        if project_name:
+            project_path = workspace_root / project_name
+            if not project_path.exists() or not project_path.is_dir():
+                click.echo(f"  - Error: Project directory '{project_name}' not found at {project_path}.", err=True)
+                return
+            if not (project_path / "Jenkinsfile").exists():
+                click.echo(f"  - Error: Project '{project_name}' does not have a Jenkinsfile at its root.", err=True)
+                return
+            projects = [project_path]
+        else:
+            projects = [p for p in workspace_root.iterdir() if p.is_dir() and (p / "Jenkinsfile").exists()]
+        
+        if not projects:
+            click.echo("No projects with a Jenkinsfile found to initialize.")
+            return
+
         jobs_dir = self.service_data_dir / "jobs"
         jobs_dir.mkdir(parents=True, exist_ok=True)
 
-        click.echo(f"Initializing Jenkins pipelines for {len(projects)} projects...")
+        click.echo(f"Initializing Jenkins pipelines for {len(projects)} project(s)...")
         
         for project_path in projects:
             project = project_path.name
