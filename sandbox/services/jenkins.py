@@ -1,4 +1,5 @@
 import urllib.request
+import json
 import click
 import sys
 import xml.etree.ElementTree as ET
@@ -12,7 +13,7 @@ class JenkinsService(BaseService):
     """Jenkins CI/CD Server."""
 
     URL = "https://get.jenkins.io/war-stable/latest/jenkins.war"
-    MANAGER_URL = "https://github.com/jenkinsci/plugin-installation-manager-tool/releases/latest/download/jenkins-plugin-manager.jar"
+    REPO = "jenkinsci/plugin-installation-manager-tool"
     
     PLUGINS = [
         "workflow-multibranch",
@@ -28,10 +29,31 @@ class JenkinsService(BaseService):
     def __init__(self) -> None:
         super().__init__("jenkins")
         self.war_file = BIN_DIR / "jenkins.war"
-        self.manager_jar = BIN_DIR / "jenkins-plugin-manager.jar"
+        # Find any existing manager jar in the bin directory
+        self.manager_jar = self._find_manager_jar()
+
+    def _find_manager_jar(self) -> Path:
+        """Find the most recent manager jar in the bin directory."""
+        jars = list(BIN_DIR.glob("jenkins-plugin-manager-*.jar"))
+        if jars:
+            # Sort by version or modification time if multiple exist
+            return sorted(jars)[-1]
+        return BIN_DIR / "jenkins-plugin-manager.jar"
+
+    def _get_latest_manager_info(self) -> dict:
+        """Fetch the latest release info from GitHub API."""
+        api_url = f"https://api.github.com/repos/{self.REPO}/releases/latest"
+        headers = {"User-Agent": "Gearlux-AI-Agent"}
+        try:
+            req = urllib.request.Request(api_url, headers=headers)
+            with urllib.request.urlopen(req) as response:
+                return json.loads(response.read().decode())
+        except Exception as e:
+            click.echo(f"  - Error fetching latest manager info: {e}", err=True)
+            return {}
 
     def setup(self) -> None:
-        """Download Jenkins binary and plugin manager."""
+        """Download Jenkins binary and the latest plugin manager."""
         BIN_DIR.mkdir(exist_ok=True)
         
         if not self.war_file.exists():
@@ -43,13 +65,34 @@ class JenkinsService(BaseService):
                 click.echo(f"Error downloading Jenkins: {e}", err=True)
                 sys.exit(1)
         
+        # Check for latest manager version
+        info = self._get_latest_manager_info()
+        if info:
+            tag = info.get("tag_name", "")
+            assets = info.get("assets", [])
+            jar_asset = next((a for a in assets if a["name"].endswith(".jar")), None)
+            
+            if jar_asset:
+                latest_jar_name = jar_asset["name"]
+                latest_jar_path = BIN_DIR / latest_jar_name
+                download_url = jar_asset["browser_download_url"]
+                
+                if not latest_jar_path.exists():
+                    click.echo(f"Downloading Jenkins Plugin Manager {tag}...")
+                    try:
+                        urllib.request.urlretrieve(download_url, latest_jar_path)
+                        click.echo(f"  - Plugin Manager {tag} download complete.")
+                        # Remove old versions
+                        for old_jar in BIN_DIR.glob("jenkins-plugin-manager-*.jar"):
+                            if old_jar != latest_jar_path:
+                                old_jar.unlink()
+                    except Exception as e:
+                        click.echo(f"Error downloading Plugin Manager: {e}", err=True)
+                
+                self.manager_jar = latest_jar_path
+        
         if not self.manager_jar.exists():
-            click.echo(f"Downloading Jenkins Plugin Manager from {self.MANAGER_URL}...")
-            try:
-                urllib.request.urlretrieve(self.MANAGER_URL, self.manager_jar)
-                click.echo("  - Plugin Manager download complete.")
-            except Exception as e:
-                click.echo(f"Error downloading Plugin Manager: {e}", err=True)
+            click.echo("  - Error: Plugin Manager could not be discovered or downloaded.", err=True)
 
     def setup_plugins(self) -> None:
         """Download Jenkins plugins using the official plugin-manager tool."""
