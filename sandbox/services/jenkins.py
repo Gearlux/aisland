@@ -25,6 +25,12 @@ class JenkinsService(BaseService):
         "font-awesome-api",
         "bootstrap5-api",
         "checks-api",
+        "sshd",
+        "javax-activation-api",
+        "javax-mail-api",
+        "jaxb",
+        "apache-httpcomponents-client-4-api",
+        "instance-identity",
         
         # Credentials
         "credentials",
