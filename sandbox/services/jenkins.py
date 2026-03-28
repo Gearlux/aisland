@@ -48,8 +48,10 @@ class JenkinsService(BaseService):
             req = urllib.request.Request(api_url, headers=headers)
             with urllib.request.urlopen(req) as response:
                 return json.loads(response.read().decode())
-        except Exception as e:
-            click.echo(f"  - Error fetching latest manager info: {e}", err=True)
+        except Exception:
+            # Silence this error if we already have a jar file, as we can still proceed.
+            if not self.manager_jar.exists():
+                 click.echo("  - Error fetching latest Jenkins Plugin Manager info from GitHub API.", err=True)
             return {}
 
     def setup(self) -> None:
@@ -103,8 +105,6 @@ class JenkinsService(BaseService):
         plugins_txt = self.service_data_dir / "plugins.txt"
         plugins_txt.write_text("\n".join(self.PLUGINS))
         
-        click.echo("Verifying and installing Jenkins plugins (this may take a minute)...")
-        
         import subprocess
         cmd = [
             "java", "-jar", str(self.manager_jar),
@@ -116,8 +116,10 @@ class JenkinsService(BaseService):
         
         try:
             # Run the manager tool. It handles dependencies and version resolution.
-            subprocess.run(cmd, check=True, capture_output=True, text=True)
-            click.echo("  - All plugins and dependencies installed successfully.")
+            # We capture output to keep it clean unless there's an error.
+            result = subprocess.run(cmd, check=True, capture_output=True, text=True)
+            if "Installed" in result.stdout:
+                 click.echo("  - Jenkins plugins and dependencies synchronized.")
         except subprocess.CalledProcessError as e:
             click.echo(f"  - Error installing plugins: {e.stderr}", err=True)
 
@@ -126,9 +128,21 @@ class JenkinsService(BaseService):
         self.setup()
         self.setup_plugins()
         
+        # Suppress Java 25+ warnings for terminal deprecation and illegal access
+        jvm_args = [
+            "--add-opens=java.base/java.lang=ALL-UNNAMED",
+            "--add-opens=java.base/java.io=ALL-UNNAMED",
+            "--add-opens=java.base/java.util=ALL-UNNAMED",
+            "--add-opens=java.base/java.util.concurrent=ALL-UNNAMED",
+            "--add-opens=java.base/sun.reflect.annotation=ALL-UNNAMED",
+            "--add-opens=java.base/java.lang.reflect=ALL-UNNAMED",
+            "--add-opens=java.rmi/sun.rmi.transport=ALL-UNNAMED",
+        ]
+        
         # -Djenkins.install.runSetupWizard=false skips the first-run wizard
         cmd = [
             "java", 
+            *jvm_args,
             "-Djenkins.install.runSetupWizard=false",
             "-jar", str(self.war_file), 
             f"--httpPort={port}"
