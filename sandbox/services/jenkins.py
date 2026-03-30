@@ -1,10 +1,12 @@
-import urllib.request
 import json
-import click
+import os
 import sys
+import urllib.request
 import xml.etree.ElementTree as ET
 from pathlib import Path
-from typing import Optional
+from typing import Any, Optional, cast
+
+import click
 
 from sandbox.manager import BIN_DIR, BaseService
 
@@ -14,16 +16,21 @@ class JenkinsService(BaseService):
 
     URL = "https://get.jenkins.io/war-stable/latest/jenkins.war"
     REPO = "jenkinsci/plugin-installation-manager-tool"
-    
+
     PLUGINS = [
         "workflow-multibranch",
         "workflow-aggregator",
         "git",
+        "cloudbees-folder",
         "build-monitor-plugin",
         "view-job-filters",
         "dashboard-view",
         "configuration-as-code",
-        "credentials-binding"
+        "credentials-binding",
+        "warnings-ng",
+        "coverage",
+        "junit",
+        "pipeline-stage-view",
     ]
 
     def __init__(self) -> None:
@@ -47,17 +54,23 @@ class JenkinsService(BaseService):
         try:
             req = urllib.request.Request(api_url, headers=headers)
             with urllib.request.urlopen(req) as response:
-                return json.loads(response.read().decode())
+                data = json.loads(response.read().decode())
+                if not isinstance(data, dict):
+                    return {}
+                return cast(dict[Any, Any], data)
         except Exception:
             # Silence this error if we already have a jar file, as we can still proceed.
             if not self.manager_jar.exists():
-                 click.echo("  - Error fetching latest Jenkins Plugin Manager info from GitHub API.", err=True)
+                click.echo(
+                    "  - Error fetching latest Jenkins Plugin Manager info from GitHub API.",
+                    err=True,
+                )
             return {}
 
     def setup(self) -> None:
         """Download Jenkins binary and the latest plugin manager."""
         BIN_DIR.mkdir(exist_ok=True)
-        
+
         if not self.war_file.exists():
             click.echo(f"Downloading Jenkins from {self.URL}...")
             try:
@@ -66,19 +79,19 @@ class JenkinsService(BaseService):
             except Exception as e:
                 click.echo(f"Error downloading Jenkins: {e}", err=True)
                 sys.exit(1)
-        
+
         # Check for latest manager version
         info = self._get_latest_manager_info()
         if info:
             tag = info.get("tag_name", "")
             assets = info.get("assets", [])
             jar_asset = next((a for a in assets if a["name"].endswith(".jar")), None)
-            
+
             if jar_asset:
                 latest_jar_name = jar_asset["name"]
                 latest_jar_path = BIN_DIR / latest_jar_name
                 download_url = jar_asset["browser_download_url"]
-                
+
                 if not latest_jar_path.exists():
                     click.echo(f"Downloading Jenkins Plugin Manager {tag}...")
                     try:
@@ -90,44 +103,131 @@ class JenkinsService(BaseService):
                                 old_jar.unlink()
                     except Exception as e:
                         click.echo(f"Error downloading Plugin Manager: {e}", err=True)
-                
-                self.manager_jar = latest_jar_path
-        
-        if not self.manager_jar.exists():
-            click.echo("  - Error: Plugin Manager could not be discovered or downloaded.", err=True)
 
-    def setup_plugins(self) -> None:
-        """Download Jenkins plugins using the official plugin-manager tool."""
+                self.manager_jar = latest_jar_path
+
+        if not self.manager_jar.exists():
+            click.echo(
+                "  - Error: Plugin Manager could not be discovered or downloaded.",
+                err=True,
+            )
+
+    def _are_plugins_installed(self) -> bool:
+        """Check if all required plugins are present in the plugins directory."""
+        plugins_dir = self.service_data_dir / "plugins"
+        if not plugins_dir.exists():
+            return False
+
+        missing = []
+        for plugin in self.PLUGINS:
+            jpi = plugins_dir / f"{plugin}.jpi"
+            hpi = plugins_dir / f"{plugin}.hpi"
+            plugin_folder = plugins_dir / plugin
+
+            if not (
+                jpi.exists()
+                or hpi.exists()
+                or plugin_folder.exists()
+                or (plugins_dir / f"{plugin}.jpi.pinned").exists()
+            ):
+                missing.append(plugin)
+
+        if missing:
+            click.echo(f"  - Missing plugins: {', '.join(missing)}")
+            return False
+        return True
+
+    def setup_plugins(self) -> bool:
+        """Download Jenkins plugins using the official plugin-manager tool.
+        Returns True if plugins were downloaded, False if they were already present.
+        """
+        installed = self._are_plugins_installed()
+        if installed:
+            click.echo("  - All required Jenkins plugins are already installed.")
+            return False
+
         plugins_dir = self.service_data_dir / "plugins"
         plugins_dir.mkdir(parents=True, exist_ok=True)
-        
+
         # Create plugins.txt for the manager
         plugins_txt = self.service_data_dir / "plugins.txt"
         plugins_txt.write_text("\n".join(self.PLUGINS))
-        
+
         import subprocess
+
         cmd = [
-            "java", "-jar", str(self.manager_jar),
-            "--war", str(self.war_file),
-            "--plugin-file", str(plugins_txt),
-            "--plugin-download-directory", str(plugins_dir),
-            "--no-proxy-test"
+            "java",
+            "-jar",
+            str(self.manager_jar),
+            "--war",
+            str(self.war_file),
+            "--plugin-file",
+            str(plugins_txt),
+            "--plugin-download-directory",
+            str(plugins_dir),
         ]
-        
+
         try:
             # Run the manager tool. It handles dependencies and version resolution.
             # We capture output to keep it clean unless there's an error.
+            click.echo("  - Downloading necessary Jenkins plugins...")
             result = subprocess.run(cmd, check=True, capture_output=True, text=True)
-            if "Installed" in result.stdout:
-                 click.echo("  - Jenkins plugins and dependencies synchronized.")
+            if "Installed" in result.stdout or "Done" in result.stdout:
+                click.echo("  - Jenkins plugins and dependencies synchronized.")
+            return True
         except subprocess.CalledProcessError as e:
             click.echo(f"  - Error installing plugins: {e.stderr}", err=True)
+            return False
+
+    def check_credentials_and_print_instructions(self, port: int) -> None:
+        """Check if Git credentials are configured and print instructions if not."""
+        config_file = self.service_data_dir / "credentials.xml"
+        admin_pass_file = self.service_data_dir / "secrets/initialAdminPassword"
+
+        has_creds = False
+        if config_file.exists():
+            try:
+                tree = ET.parse(config_file)
+                root = tree.getroot()
+                if (
+                    root.find(".//com.cloudbees.plugins.credentials.impl.UsernamePasswordCredentialsImpl") is not None
+                    or root.find(".//com.cloudbees.jenkins.plugins.sshcredentials.impl.BasicSSHUserPrivateKey")
+                    is not None
+                ):
+                    has_creds = True
+            except Exception:
+                pass
+
+        if not has_creds:
+            click.echo("\n" + "=" * 65)
+            click.echo(" Jenkins Initial Setup / Missing Credentials ".center(65, "="))
+            click.echo("=" * 65)
+            click.echo("No Git credentials found. To allow Jenkins to pull code:")
+            click.echo("  1. Open Jenkins at " + click.style(f"http://localhost:{port}", fg="blue", bold=True))
+            if admin_pass_file.exists():
+                password = admin_pass_file.read_text().strip()
+                click.echo(f"  2. Unlock using password: {click.style(password, bg='black', fg='white')}")
+            click.echo("  3. Navigate to: Manage Jenkins -> Credentials -> System ->")
+            click.echo("     Global credentials -> Add Credentials")
+            click.echo("  4. Add your Git username/password or SSH key.")
+            click.echo(
+                "     "
+                + click.style(
+                    "CRITICAL: You MUST set the ID field to 'sandbox-github'",
+                    fg="red",
+                    bold=True,
+                )
+            )
+            click.echo(
+                "  5. Run " + click.style("sandbox jenkins init", fg="green") + " to install plugins and populate jobs."
+            )
+            click.echo("=" * 65 + "\n")
 
     def launch(self, port: int = 8080, background: bool = False) -> None:
         """Start the Jenkins server."""
         self.setup()
-        self.setup_plugins()
-        
+        self.check_credentials_and_print_instructions(port)
+
         # Suppress Java 25+ warnings for terminal deprecation and illegal access
         jvm_args = [
             "--add-opens=java.base/java.lang=ALL-UNNAMED",
@@ -138,17 +238,16 @@ class JenkinsService(BaseService):
             "--add-opens=java.base/java.lang.reflect=ALL-UNNAMED",
             "--add-opens=java.rmi/sun.rmi.transport=ALL-UNNAMED",
         ]
-        
-        # -Djenkins.install.runSetupWizard=false skips the first-run wizard
-        cmd = [
-            "java", 
-            *jvm_args,
-            "-Djenkins.install.runSetupWizard=false",
-            "-jar", str(self.war_file), 
-            f"--httpPort={port}"
-        ]
-        env = {"JENKINS_HOME": str(self.service_data_dir)}
-        
+
+        # Start Jenkins without skipping the setup wizard to ensure security is enabled
+        cmd = ["java", *jvm_args, "-jar", str(self.war_file), f"--httpPort={port}"]
+        workspace_root = Path(__file__).resolve().parents[3]
+        venv_bin = workspace_root / ".venv" / "bin"
+        env = {
+            "JENKINS_HOME": str(self.service_data_dir),
+            "PATH": f"{venv_bin}:{os.environ.get('PATH', '')}",
+        }
+
         self.start(cmd, env=env, background=background)
 
     def status(self) -> None:
@@ -162,67 +261,62 @@ class JenkinsService(BaseService):
     def _get_git_remote(self, project_path: Path) -> Optional[str]:
         """Get the Git remote origin URL for a project."""
         import subprocess
+
         try:
             result = subprocess.run(
                 ["git", "remote", "get-url", "origin"],
                 cwd=project_path,
                 capture_output=True,
                 text=True,
-                check=True
+                check=True,
             )
             return result.stdout.strip()
         except Exception:
             return None
 
     def _find_credentials(self, remote_url: str) -> str:
-        """Find matching credentials in Jenkins configuration based on URL fuzzy matching."""
+        """Find matching credentials in Jenkins configuration."""
+        remote_lower = remote_url.lower()
+        is_github = "github" in remote_lower
+        expected_id = "sandbox-github" if is_github else None
+
         config_file = self.service_data_dir / "credentials.xml"
         if not config_file.exists():
-            return ""
+            if expected_id:
+                click.echo(
+                    f"  - Warning: credentials.xml missing. You MUST add your Git credential with ID '{expected_id}'.",
+                    err=True,
+                )
+            return expected_id or ""
 
         try:
             tree = ET.parse(config_file)
             root = tree.getroot()
-            
-            # Extract all credential IDs and their descriptions/usernames
-            creds = []
-            # Check both UsernamePassword and SSH Private Key credentials
+
+            # Extract all credential IDs
+            cred_ids = []
             for entry in root.findall(".//com.cloudbees.plugins.credentials.impl.UsernamePasswordCredentialsImpl"):
-                creds.append({
-                    "id": entry.findtext("id"),
-                    "username": entry.findtext("username"),
-                    "description": entry.findtext("description") or ""
-                })
+                cred_ids.append(entry.findtext("id") or "")
             for entry in root.findall(".//com.cloudbees.jenkins.plugins.sshcredentials.impl.BasicSSHUserPrivateKey"):
-                creds.append({
-                    "id": entry.findtext("id"),
-                    "username": entry.findtext("username"),
-                    "description": entry.findtext("description") or ""
-                })
+                cred_ids.append(entry.findtext("id") or "")
 
-            remote_lower = remote_url.lower()
-            
-            # 1. Direct match with username (e.g. gertbehi)
-            for cred in creds:
-                if cred["username"] and cred["username"].lower() in remote_lower:
-                    return cred["id"]
-            
-            # 2. Match with part of the URL (e.g. gearlux)
-            for cred in creds:
-                if "gearlux" in remote_lower and "gearlux" in cred["id"].lower():
-                    return cred["id"]
-                if "gearlux" in remote_lower and "gearlux" in cred["description"].lower():
-                    return cred["id"]
+            if expected_id:
+                if expected_id not in cred_ids:
+                    click.echo(
+                        f"  - Warning: Credential with ID '{expected_id}' not found in credentials.xml! "
+                        f"You MUST name your Jenkins credential exactly '{expected_id}'.",
+                        err=True,
+                    )
+                return expected_id
 
-            # 3. Default to the first gearlux-related credential found if any
-            for cred in creds:
-                if "gearlux" in cred["id"].lower() or "gearlux" in cred["description"].lower():
-                    return cred["id"]
+            # Fallback for non-github: return the first available if any
+            if cred_ids:
+                return cred_ids[0]
 
         except Exception as e:
             click.echo(f"  - Error parsing credentials.xml: {e}")
-        
-        return ""
+
+        return expected_id or ""
 
     def remove_pipelines(self, project_name: Optional[str] = None) -> None:
         """Remove one or all project pipelines from Jenkins."""
@@ -235,13 +329,18 @@ class JenkinsService(BaseService):
             project_job_dir = jobs_dir / project_name
             if project_job_dir.exists():
                 import shutil
+
                 click.echo(f"Removing Jenkins pipeline for project '{project_name}'...")
                 shutil.rmtree(project_job_dir)
                 click.echo(f"  - Removed: {project_name}")
             else:
-                click.echo(f"  - Error: Jenkins job for project '{project_name}' not found.", err=True)
+                click.echo(
+                    f"  - Error: Jenkins job for project '{project_name}' not found.",
+                    err=True,
+                )
         else:
             import shutil
+
             click.echo("Removing ALL project pipelines from Jenkins...")
             for project_job_dir in jobs_dir.iterdir():
                 if project_job_dir.is_dir() and (project_job_dir / "config.xml").exists():
@@ -249,43 +348,120 @@ class JenkinsService(BaseService):
                     click.echo(f"  - Removed: {project_job_dir.name}")
             click.echo("All project pipelines removed. Please restart Jenkins if it was already running.")
 
-    def init_pipelines(self, project_name: Optional[str] = None) -> None:
+    def safe_restart(self) -> None:
+        """Issue a safeRestart command to Jenkins."""
+        if not self.is_running():
+            return
+
+        click.echo("  - Issuing Safe Restart to Jenkins (waiting for active jobs)...")
+        admin_pass_file = self.service_data_dir / "secrets/initialAdminPassword"
+
+        url = "http://localhost:8080"
+
+        if admin_pass_file.exists():
+            password = admin_pass_file.read_text().strip()
+            import base64
+
+            auth = base64.b64encode(f"admin:{password}".encode()).decode()
+            auth_str = f"Basic {auth}"
+
+            # Get Crumb
+            crumb_headers = {}
+            try:
+                crumb_url = f"{url}/crumbIssuer/api/json"
+                req = urllib.request.Request(crumb_url)
+                req.add_header("Authorization", auth_str)
+                with urllib.request.urlopen(req, timeout=5) as response:
+                    import json
+
+                    data = json.loads(response.read().decode())
+                    crumb_headers[data["crumbRequestField"]] = data["crumb"]
+            except Exception:
+                pass
+
+            try:
+                req = urllib.request.Request(url + "/safeRestart", method="POST")
+                req.add_header("Authorization", auth_str)
+                for k, v in crumb_headers.items():
+                    req.add_header(k, v)
+                with urllib.request.urlopen(req, timeout=5):
+                    pass
+                click.echo("  - Safe Restart initiated. Jenkins will reload soon.")
+                return
+            except Exception as e:
+                click.echo(f"  - Safe Restart API failed: {e}. Falling back to process restart.")
+        else:
+            click.echo("  - Missing API credentials. Falling back to process restart.")
+
+        self.stop()
+        self.launch(background=True)
+
+    def init_pipelines(self, project_name: Optional[str] = None, local: bool = False) -> None:
         """Seed Jenkins with Multi-branch pipelines for projects discovered in the workspace."""
+        self.setup()
+        was_running = self.is_running()
+        # setup_plugins returns True if it actually installed/updated something
+        plugins_changed = self.setup_plugins()
+
         workspace_root = Path(__file__).resolve().parents[3]
-        
+
         if project_name:
             project_path = workspace_root / project_name
             if not project_path.exists() or not project_path.is_dir():
-                click.echo(f"  - Error: Project directory '{project_name}' not found at {project_path}.", err=True)
+                click.echo(
+                    f"  - Error: Project directory '{project_name}' not found at {project_path}.",
+                    err=True,
+                )
                 return
-            if not (project_path / "Jenkinsfile").exists():
-                click.echo(f"  - Error: Project '{project_name}' does not have a Jenkinsfile at its root.", err=True)
+            if not local and not (project_path / "Jenkinsfile").exists():
+                click.echo(
+                    f"  - Error: Project '{project_name}' does not have a Jenkinsfile at its root.",
+                    err=True,
+                )
+                return
+            if local and not (project_path / "Jenkinsfile.local").exists():
+                click.echo(
+                    f"  - Error: Project '{project_name}' does not have a Jenkinsfile.local at its root.",
+                    err=True,
+                )
                 return
             projects = [project_path]
         else:
-            projects = [p for p in workspace_root.iterdir() if p.is_dir() and (p / "Jenkinsfile").exists()]
-        
+            if local:
+                projects = [p for p in workspace_root.iterdir() if p.is_dir() and (p / "Jenkinsfile.local").exists()]
+            else:
+                projects = [p for p in workspace_root.iterdir() if p.is_dir() and (p / "Jenkinsfile").exists()]
+
         if not projects:
-            click.echo("No projects with a Jenkinsfile found to initialize.")
+            click.echo("No projects with the required Jenkinsfile found to initialize.")
             return
 
         jobs_dir = self.service_data_dir / "jobs"
         jobs_dir.mkdir(parents=True, exist_ok=True)
 
         click.echo(f"Initializing Jenkins pipelines for {len(projects)} project(s)...")
-        
+
         for project_path in projects:
-            project = project_path.name
-            project_job_dir = jobs_dir / project
-            project_job_dir.mkdir(exist_ok=True)
-            
-            remote_url = self._get_git_remote(project_path)
-            if not remote_url:
-                click.echo(f"  - Skipping {project}: Could not determine Git remote.")
+            project_base_name: Optional[str] = project_path.name
+            if project_base_name is None:
                 continue
 
-            # Determine credentialsId via fuzzy matching
-            cred_id = self._find_credentials(remote_url)
+            project: str = f"{project_base_name}.local" if local else project_base_name
+            project_job_dir = jobs_dir / project
+            project_job_dir.mkdir(exist_ok=True)
+
+            remote_url: Optional[str] = None
+            if local:
+                remote_url = str(project_path.absolute())
+                cred_id = ""
+                script_path = "Jenkinsfile.local"
+            else:
+                remote_url = self._get_git_remote(project_path)
+                if not remote_url:
+                    click.echo(f"  - Skipping {project}: Could not determine Git remote.")
+                    continue
+                cred_id = self._find_credentials(remote_url)
+                script_path = "Jenkinsfile"
 
             # Simplified Multibranch Pipeline config.xml template
             config_xml = f"""<?xml version='1.1' encoding='UTF-8'?>
@@ -298,12 +474,19 @@ class JenkinsService(BaseService):
   <icon class="jenkins.branch.MetadataActionFolderIcon" plugin="branch-api">
     <owner class="org.jenkinsci.plugins.workflow.multibranch.WorkflowMultiBranchProject" reference="../.."/>
   </icon>
-  <orphanedItemStrategy class="com.cloudbees.hudson.plugins.folder.computed.DefaultOrphanedItemStrategy" plugin="cloudbees-folder">
+  <orphanedItemStrategy
+      class="com.cloudbees.hudson.plugins.folder.computed.DefaultOrphanedItemStrategy"
+      plugin="cloudbees-folder">
     <pruneDeadBranches>true</pruneDeadBranches>
     <daysToKeep>-1</daysToKeep>
     <numToKeep>-1</numToKeep>
   </orphanedItemStrategy>
-  <triggers/>
+  <triggers>
+    <com.cloudbees.hudson.plugins.folder.computed.PeriodicFolderTrigger plugin="cloudbees-folder">
+      <spec>* * * * *</spec>
+      <interval>300000</interval>
+    </com.cloudbees.hudson.plugins.folder.computed.PeriodicFolderTrigger>
+  </triggers>
   <disabled>false</disabled>
   <sources class="jenkins.branch.MultiBranchProject$BranchSourceList" plugin="branch-api">
     <data>
@@ -325,16 +508,27 @@ class JenkinsService(BaseService):
   </sources>
   <factory class="org.jenkinsci.plugins.workflow.multibranch.WorkflowBranchProjectFactory">
     <owner class="org.jenkinsci.plugins.workflow.multibranch.WorkflowMultiBranchProject" reference="../.."/>
-    <scriptPath>Jenkinsfile</scriptPath>
+    <scriptPath>{script_path}</scriptPath>
   </factory>
 </org.jenkinsci.plugins.workflow.multibranch.WorkflowMultiBranchProject>
 """
             config_file = project_job_dir / "config.xml"
             config_file.write_text(config_xml)
             click.echo(f"  - Seeded job: {project} (Remote: {remote_url}, CredID: {cred_id})")
-        
+
         self.setup_dashboard_view()
-        click.echo("Jenkins pipelines and dashboard initialized. Please restart Jenkins if it was already running.")
+
+        if was_running:
+            # We always restart after seeding to ensure jobs and plugins are loaded correctly
+            self.safe_restart()
+            if plugins_changed:
+                click.echo("Jenkins plugins updated and restart initiated.")
+            else:
+                click.echo("Jenkins pipelines seeded and restart initiated.")
+        else:
+            click.echo("Starting Jenkins to load the new plugins and pipelines...")
+            self.launch(background=True)
+            click.echo("Jenkins started in the background.")
 
     def setup_dashboard_view(self, name: str = "Gearlux Ecosystem Dashboard") -> None:
         """Create a Build Monitor View for the Gearlux Ecosystem branching workflow."""
@@ -344,18 +538,27 @@ class JenkinsService(BaseService):
             return
 
         import xml.etree.ElementTree as ET
-        
+
         try:
             tree = ET.parse(config_file)
             root = tree.getroot()
         except Exception as e:
             click.echo(f"  - Error parsing config.xml: {e}")
             return
-        
+
+        # Find or create the 'views' container
         views = root.find("views")
         if views is None:
             views = ET.SubElement(root, "views")
-            
+            # If views was missing, also add the 'all' view to keep standard behavior
+            all_view = ET.SubElement(views, "hudson.model.AllView")
+            ET.SubElement(all_view, "owner").set("class", "hudson")
+            ET.SubElement(all_view, "owner").set("reference", "../../..")
+            ET.SubElement(all_view, "name").text = "all"
+            ET.SubElement(all_view, "filterExecutors").text = "false"
+            ET.SubElement(all_view, "filterQueue").text = "false"
+            ET.SubElement(all_view, "properties").set("class", "hudson.model.View$PropertyList")
+
         # Check if the view already exists
         view_exists = False
         for v in views:
@@ -364,12 +567,15 @@ class JenkinsService(BaseService):
                 break
 
         if not view_exists:
-            click.echo(f"  - Creating '{name}' view (branches: main, dev/main)...")
-            
+            click.echo(f"  - Creating '{name}' view (branches: main, dev/main) " f"with Build Monitor View plugin...")
+
             # Add Build Monitor View
-            bm_view = ET.SubElement(views, "com.smartcodeltd.jenkinsci.plugins.buildmonitor.BuildMonitorView")
+            bm_view = ET.SubElement(
+                views,
+                "com.smartcodeltd.jenkinsci.plugins.buildmonitor.BuildMonitorView",
+            )
             bm_view.set("plugin", "build-monitor-plugin")
-            
+
             ET.SubElement(bm_view, "owner").set("class", "hudson")
             ET.SubElement(bm_view, "owner").set("reference", "../../..")
             ET.SubElement(bm_view, "name").text = name
@@ -377,9 +583,9 @@ class JenkinsService(BaseService):
             ET.SubElement(bm_view, "filterQueue").text = "false"
             ET.SubElement(bm_view, "properties").set("class", "hudson.model.View$PropertyList")
             ET.SubElement(bm_view, "jobNames").set("class", "hudson.util.CaseInsensitiveComparator")
-            
+
             job_filters = ET.SubElement(bm_view, "jobFilters")
-            
+
             # Regex Filter for standard Gearlux branches: main and dev/main
             regex_filter = ET.SubElement(job_filters, "hudson.views.RegExJobFilter")
             regex_filter.set("plugin", "view-job-filters")
@@ -387,23 +593,23 @@ class JenkinsService(BaseService):
             ET.SubElement(regex_filter, "valueTypeString").text = "NAME"
             ET.SubElement(regex_filter, "regex").text = "^(main|dev/main)$"
             ET.SubElement(regex_filter, "matchCanary").text = "false"
-            
+
             ET.SubElement(bm_view, "columns").set("class", "empty-list")
             ET.SubElement(bm_view, "recurse").text = "true"
             ET.SubElement(bm_view, "title").text = name
-            
+
             config = ET.SubElement(bm_view, "config")
             ET.SubElement(config, "displayCommitters").text = "true"
             ET.SubElement(config, "displayLowPriorityJobs").text = "false"
             ET.SubElement(config, "displayLastBuildConsoleOutput").text = "true"
             ET.SubElement(config, "order").set("class", "com.smartcodeltd.jenkinsci.plugins.buildmonitor.order.ByName")
+
+            # Revert primary view to 'all' to ensure standard overview is default
+            primary_view = root.find("primaryView")
+            if primary_view is not None:
+                primary_view.text = "all"
+
+            # Robust write
+            tree.write(config_file, encoding="UTF-8", xml_declaration=True)
         else:
             click.echo(f"  - Dashboard view '{name}' already exists.")
-        
-        # Revert primary view to 'all' to ensure standard overview is default
-        primary_view = root.find("primaryView")
-        if primary_view is not None:
-            primary_view.text = "all"
-
-        # Robust write
-        tree.write(config_file, encoding="UTF-8", xml_declaration=True)

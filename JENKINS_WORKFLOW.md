@@ -2,47 +2,54 @@
 
 This document describes the end-to-end workflow for setting up and managing a local Jenkins CI/CD environment using the `sandbox` tool.
 
-## Phase 1: Service Lifecycle
+## Phase 1: Service Startup
 
 ### 1. Start Jenkins
-To download the binary (if missing), install essential plugins, and launch the server:
+To download the base Jenkins binary (if missing) and launch the server:
 ```bash
 sandbox jenkins start --background
 ```
 - **Default URL:** [http://localhost:8080](http://localhost:8080)
 - **Home Directory:** `sandbox/data/jenkins/`
 
-### 2. Initial Setup
-The `sandbox` tool automatically skips the Jenkins setup wizard and pre-installs all necessary plugins and their dependencies.
+*Note: The `start` command intentionally does NOT aggressively install plugins. It simply brings the server up and checks if you have configured credentials.*
+
+### 2. Initial Setup & Unlock
+If this is a clean installation, `sandbox jenkins start` will detect that no credentials exist and print instructions to the console. 
+The `sandbox` tool skips the Jenkins setup wizard automatically.
 
 - **Username:** `admin` (or your OS username)
 - **Password:** If prompted for a password, you can retrieve the initial one by running:
 ```bash
 sandbox jenkins status
 ```
-Paste this into the Jenkins web interface if security is enabled.
+Paste this into the Jenkins web interface to unlock it.
 
 ---
 
-## Phase 2: Configuration & Credentials
+## Phase 2: Configuration & Plugins
 
 ### 1. Add Git Credentials (Manual Step)
-Since the Gearlux projects use private GitHub repositories, you must add your credentials to Jenkins:
+Since the Gearlux projects use private GitHub repositories, you must add your credentials to Jenkins *before* initializing pipelines:
 1.  Navigate to **Manage Jenkins** -> **Credentials** -> **System** -> **Global credentials (unrestricted)**.
 2.  Click **Add Credentials**.
 3.  **Kind:** SSH Username with private key OR Username with password (personal access token).
-4.  **ID:** Use something descriptive (e.g., `github-gertbehi`). 
+4.  **ID:** You **MUST** enter exactly `sandbox-github` in this field. If it is named anything else, local pipeline creation will fail to scan GitHub.
 5.  **Username:** Your GitHub username.
 6.  **Password/Key:** Your GitHub Personal Access Token or Private SSH Key.
 
-### 2. Initialize Project Pipelines
-Once credentials are in place, use the `init` command to automatically seed the Gearlux project jobs:
+### 2. Install Plugins & Initialize Pipelines
+Once credentials are in place, use the `init` command. This single command handles plugin management and job seeding:
 
 #### Initialize All Projects:
 ```bash
 sandbox jenkins init
 ```
-This discovers all projects in the workspace containing a `Jenkinsfile`, determines their Git remote, fuzzy-matches the credentials you added, and creates a **Multibranch Pipeline** job for each.
+This command performs the following automated workflow:
+1. **Plugin Audit:** Checks if all required plugins are installed.
+2. **Plugin Setup:** If missing, it downloads them using the Jenkins Plugin Manager.
+3. **Safe Restart:** If Jenkins is already running and plugins/jobs were added, it issues a Safe Restart directly to the Jenkins API so your jobs load gracefully. If Jenkins is not running, it starts it.
+4. **Pipeline Seeding:** Discovers all projects in the workspace containing a `Jenkinsfile`, determines their Git remote, and automatically links any GitHub repository to the `sandbox-github` credential. It creates a **Multibranch Pipeline** job for each project.
 
 #### Initialize a Single Project:
 ```bash
@@ -71,4 +78,4 @@ sandbox jenkins init logflow
 If Jenkins reports missing dependencies during startup, ensure you are using the latest version of the `sandbox` tool and perform a `sandbox jenkins reset` to force a clean re-download of the plugin suite.
 
 ### Credentials Matching
-The `init` command uses fuzzy matching to link your GitHub remote URL to your Jenkins credentials. If it fails to find a match, ensure your credential **Username** or **Description** contains part of the repository URL (e.g., your GitHub username or the word "gearlux").
+The `init` command aggressively expects credentials for GitHub repositories to be named exactly `sandbox-github`. If it warns you during `init` that it cannot find this ID, delete your current credentials in Jenkins and recreate them, ensuring the **ID** field explicitly says `sandbox-github`.

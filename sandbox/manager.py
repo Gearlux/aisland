@@ -42,16 +42,13 @@ class BaseService:
     def _find_process_by_pattern(self) -> bool:
         """Search for a running process that looks like this service using pgrep."""
         try:
-            patterns = {
-                "jenkins": "jenkins.war",
-                "mlflow": "mlflow server"
-            }
+            patterns = {"jenkins": "jenkins.war", "mlflow": "mlflow server"}
             pattern = patterns.get(self.name, self.name)
-            
+
             # Use pgrep -f to search the full command line
             cmd = ["pgrep", "-f", pattern]
             output = subprocess.check_output(cmd, text=True).strip()
-            
+
             if output:
                 # Take the first PID returned
                 pids = output.splitlines()
@@ -76,12 +73,22 @@ class BaseService:
             return
 
         click.echo(f"Starting {self.name.capitalize()}...")
-        
+
         # Prepare environment
         process_env = os.environ.copy()
+
+        # Ensure the root workspace virtual environment is prioritized
+        # This guarantees that 'python3' and other tools point to the project-standard environment.
+        workspace_root = Path(__file__).resolve().parents[3]
+        venv_bin = workspace_root / ".venv" / "bin"
+
+        current_path = process_env.get("PATH", "")
+        if str(venv_bin) not in current_path:
+            current_path = f"{venv_bin}:{current_path}"
+        process_env["PATH"] = current_path
+
         if env:
             process_env.update(env)
-
         if background:
             with open(self.log_file, "w") as log:
                 process = subprocess.Popen(
@@ -89,7 +96,7 @@ class BaseService:
                     env=process_env,
                     stdout=log,
                     stderr=subprocess.STDOUT,
-                    start_new_session=True
+                    start_new_session=True,
                 )
                 self.pid_file.write_text(str(process.pid))
             click.echo(f"{self.name.capitalize()} started in background (PID: {process.pid})")
@@ -139,16 +146,33 @@ class BaseService:
         status_str = click.style("Running", fg="green") if running else click.style("Stopped", fg="red")
         click.echo(f"  {self.name.capitalize():<15} : {status_str} " + (f"(PID: {self.get_pid()})" if running else ""))
 
+    def restart(self, **kwargs: Any) -> None:
+        """Restart the service."""
+        click.echo(f"Restarting {self.name}...")
+        self.stop()
+        # We assume launch is the method to start with default/stored config
+        # Individual services might need to override this if launch signatures differ significantly
+        if hasattr(self, "launch"):
+            getattr(self, "launch")(**kwargs)
+        else:
+            click.echo(f"Error: {self.name} service does not have a launch method.")
+
     def reset(self) -> None:
-        """Stop the service and wipe its data directory."""
+        """Stop the service and wipe its data directory, logs, and PID files."""
         if self.is_running():
             self.stop()
 
         if self.service_data_dir.exists():
             import shutil
+
             click.echo(f"Wiping data for {self.name} at {self.service_data_dir}...")
             shutil.rmtree(self.service_data_dir)
             self.service_data_dir.mkdir(parents=True, exist_ok=True)
-            click.echo(f"{self.name.capitalize()} data reset.")
-        else:
-            click.echo(f"No data directory found for {self.name} at {self.service_data_dir}.")
+
+        if self.log_file.exists():
+            self.log_file.unlink()
+
+        if self.pid_file.exists():
+            self.pid_file.unlink()
+
+        click.echo(f"{self.name.capitalize()} data reset.")

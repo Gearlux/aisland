@@ -19,3 +19,16 @@ sandbox = "sandbox.cli:main"
 [tool.setuptools.packages.find]
 where = ["."]
 include = ["sandbox*"]
+
+[tool.black]
+line-length = 120
+extend-exclude = 'data/'
+
+[tool.isort]
+profile = "black"
+line_length = 120
+skip_glob = ["data/*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+python_files = ["test_*.py"]
