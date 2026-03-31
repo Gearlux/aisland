@@ -3,9 +3,9 @@ requires = ["setuptools>=61.0", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "sandbox-manager"
+name = "aisland-manager"
 version = "0.1.0"
-description = "Development Infrastructure Sandbox Manager"
+description = "Development Infrastructure Aisland Manager"
 authors = [{name = "gearlux"}]
 license = {text = "MIT"}
 dependencies = [
@@ -14,11 +14,11 @@ dependencies = [
 requires-python = ">=3.8"
 
 [project.scripts]
-sandbox = "sandbox.cli:main"
+aisland = "aisland.cli:main"
 
 [tool.setuptools.packages.find]
 where = ["."]
-include = ["sandbox*"]
+include = ["aisland*"]
 
 [tool.black]
 line-length = 120
@@ -32,3 +32,6 @@ skip_glob = ["data/*"]
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 python_files = ["test_*.py"]
+
+[tool.aisland.sys-dependencies]
+brew = ["openjdk"]

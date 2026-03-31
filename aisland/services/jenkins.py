@@ -8,7 +8,7 @@ from typing import Any, Optional, cast
 
 import click
 
-from sandbox.manager import BIN_DIR, BaseService
+from aisland.manager import BIN_DIR, BaseService
 
 
 class JenkinsService(BaseService):
@@ -213,13 +213,13 @@ class JenkinsService(BaseService):
             click.echo(
                 "     "
                 + click.style(
-                    "CRITICAL: You MUST set the ID field to 'sandbox-github'",
+                    "CRITICAL: You MUST set the ID field to 'aisland-github'",
                     fg="red",
                     bold=True,
                 )
             )
             click.echo(
-                "  5. Run " + click.style("sandbox jenkins init", fg="green") + " to install plugins and populate jobs."
+                "  5. Run " + click.style("aisland jenkins init", fg="green") + " to install plugins and populate jobs."
             )
             click.echo("=" * 65 + "\n")
 
@@ -278,7 +278,7 @@ class JenkinsService(BaseService):
         """Find matching credentials in Jenkins configuration."""
         remote_lower = remote_url.lower()
         is_github = "github" in remote_lower
-        expected_id = "sandbox-github" if is_github else None
+        expected_id = "aisland-github" if is_github else None
 
         config_file = self.service_data_dir / "credentials.xml"
         if not config_file.exists():

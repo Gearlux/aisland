@@ -9,14 +9,14 @@ import click
 
 # Path Configuration (relative to the file itself)
 SERVICES_DIR = Path(__file__).parent.absolute()
-# The package is at sandbox/sandbox/manager.py, so project root is SERVICES_DIR.parent
+# The package is at aisland/aisland/manager.py, so project root is SERVICES_DIR.parent
 BASE_DIR = SERVICES_DIR.parent.absolute()
 BIN_DIR = BASE_DIR / "bin"
 DATA_DIR = BASE_DIR / "data"
 
 
 class BaseService:
-    """Standardized management logic for sandbox services."""
+    """Standardized management logic for aisland services."""
 
     def __init__(self, name: str) -> None:
         self.name = name
@@ -176,3 +176,137 @@ class BaseService:
             self.pid_file.unlink()
 
         click.echo(f"{self.name.capitalize()} data reset.")
+
+
+def get_workspace_root() -> Path:
+    """Resolve the absolute path to the workspace root by searching upwards for a marker."""
+    curr = Path(__file__).resolve()
+    # Search up to 6 levels up for the workspace root marker TASKS.md
+    for _ in range(6):
+        if (curr / "TASKS.md").exists():
+            return curr
+        curr = curr.parent
+    
+    # Fallback to .git if TASKS.md not found
+    curr = Path(__file__).resolve()
+    for _ in range(6):
+        if (curr / ".git").exists():
+            return curr
+        curr = curr.parent
+
+    # Absolute fallback
+    return Path(__file__).resolve().parents[3]
+
+
+def provision_system() -> None:
+    """Scan all projects for [tool.aisland.sys-dependencies] and install via Homebrew."""
+    workspace_root = get_workspace_root()
+    click.echo(f"==> Scanning for system dependencies in {workspace_root}...")
+
+    import json
+    try:
+        import tomllib
+    except ImportError:
+        import tomli as tomllib  # type: ignore
+
+    brew_packages = set()
+
+    for pyproject in workspace_root.glob("**/pyproject.toml"):
+        if ".venv" in str(pyproject) or "aisland/data" in str(pyproject):
+            continue
+
+        try:
+            with open(pyproject, "rb") as f:
+                data = tomllib.load(f)
+                aisland_config = data.get("tool", {}).get("aisland", {})
+                sys_deps = aisland_config.get("sys-dependencies", {})
+                brew_deps = sys_deps.get("brew", [])
+                if isinstance(brew_deps, list):
+                    for dep in brew_deps:
+                        brew_packages.add(dep)
+        except Exception as e:
+            click.echo(f"  - Warning: Failed to parse {pyproject}: {e}")
+
+    if not brew_packages:
+        click.echo("  - No system dependencies found.")
+        return
+
+    click.echo(f"  - Found required brew packages: {', '.join(sorted(brew_packages))}")
+
+    # Check for brew command
+    try:
+        subprocess.check_call(["brew", "--version"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    except (subprocess.CalledProcessError, FileNotFoundError):
+        click.echo("  - Error: 'brew' command not found. Homebrew is required for system provisioning.")
+        return
+
+    # Non-interactive installation
+    env = os.environ.copy()
+    env["HOMEBREW_NO_AUTO_UPDATE"] = "1"
+
+    for pkg in sorted(brew_packages):
+        click.echo(f"==> Installing {pkg} via Homebrew...")
+        try:
+            # --quiet flag for non-interactive output reduction
+            subprocess.check_call(["brew", "install", "--quiet", pkg], env=env)
+            click.echo(f"  - {pkg} installed successfully.")
+        except subprocess.CalledProcessError as e:
+            click.echo(f"  - Error: Failed to install {pkg}: {e}")
+
+
+def setup_workspace() -> None:
+    """Perform a full workspace setup: system provisioning followed by editable pip installs."""
+    workspace_root = get_workspace_root()
+    venv_bin = workspace_root / ".venv" / "bin"
+    pip_cmd = str(venv_bin / "pip")
+
+    if not venv_bin.exists():
+        click.echo(f"Error: Virtual environment not found at {workspace_root / '.venv'}. Run aisland/setup.sh first.")
+        return
+
+    # 1. System Provisioning
+    provision_system()
+
+    # 2. Python Provisioning (Editable Installs)
+    click.echo(f"==> Performing editable installs for all projects in {workspace_root}...")
+    
+    # We prioritize projects that others depend on (order doesn't strictly matter for editable, but it's cleaner)
+    # confluid is a core dependency, so we ensure it's handled early.
+    project_dirs = [
+        p.parent for p in workspace_root.glob("**/pyproject.toml") 
+        if ".venv" not in str(p) and "aisland/data" not in str(p)
+    ]
+    
+    # Sort: confluid first, then logflow, then others.
+    def project_priority(d: Path) -> int:
+        name = d.name
+        if name == "confluid": return 0
+        if name == "logflow": return 1
+        return 10
+
+    project_dirs.sort(key=project_priority)
+
+    for project_dir in project_dirs:
+        # Check if project has [dev] extra
+        has_dev = False
+        try:
+            import tomllib
+        except ImportError:
+            import tomli as tomllib  # type: ignore
+            
+        try:
+            with open(project_dir / "pyproject.toml", "rb") as f:
+                data = tomllib.load(f)
+                if "dev" in data.get("project", {}).get("optional-dependencies", {}):
+                    has_dev = True
+        except Exception:
+            pass
+
+        target = f"{project_dir}[dev]" if has_dev else str(project_dir)
+        click.echo(f"==> Installing {project_dir.name} ({target})...")
+        try:
+            subprocess.check_call([pip_cmd, "install", "-e", target])
+        except subprocess.CalledProcessError as e:
+            click.echo(f"  - Error: Failed to install {project_dir.name}: {e}")
+
+    click.echo("==> Workspace setup complete!")

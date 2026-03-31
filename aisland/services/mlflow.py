@@ -2,7 +2,7 @@ import sys
 
 import click
 
-from sandbox.manager import BaseService
+from aisland.manager import BaseService
 
 
 class MLflowService(BaseService):

@@ -2,14 +2,27 @@ from typing import Optional
 
 import click
 
-from sandbox.services.jenkins import JenkinsService
-from sandbox.services.mlflow import MLflowService
+from aisland.manager import provision_system, setup_workspace
+from aisland.services.jenkins import JenkinsService
+from aisland.services.mlflow import MLflowService
 
 
 @click.group()
 def main() -> None:
-    """Sandbox Manager: Multi-service development infrastructure."""
+    """Aisland Manager: Multi-service development infrastructure."""
     pass
+
+
+@main.command()
+def provision() -> None:
+    """Scan projects and install required system dependencies (Homebrew)."""
+    provision_system()
+
+
+@main.command()
+def setup() -> None:
+    """Full workspace setup: provision system tools and install all projects in editable mode."""
+    setup_workspace()
 
 
 # --- Jenkins Commands ---
@@ -129,8 +142,8 @@ def mlflow_reset() -> None:
 
 @main.command()
 def status() -> None:
-    """Show status of all sandbox services."""
-    click.echo("Sandbox Infrastructure Status:")
+    """Show status of all aisland services."""
+    click.echo("Aisland Infrastructure Status:")
     JenkinsService().status()
     MLflowService().status()
 
@@ -138,7 +151,7 @@ def status() -> None:
 @main.command(name="start")
 @click.option("--background", "-b", is_flag=True, help="Run all in background.")
 def start(background: bool) -> None:
-    """Start all sandbox services."""
+    """Start all aisland services."""
     click.echo("Starting all services...")
     JenkinsService().launch(background=background)
     MLflowService().launch(background=background)
@@ -146,7 +159,7 @@ def start(background: bool) -> None:
 
 @main.command(name="stop")
 def stop() -> None:
-    """Stop all sandbox services."""
+    """Stop all aisland services."""
     click.echo("Stopping all services...")
     JenkinsService().stop()
     MLflowService().stop()
@@ -155,14 +168,14 @@ def stop() -> None:
 @main.command(name="restart")
 @click.option("--background", "-b", is_flag=True, help="Run all in background.")
 def restart(background: bool) -> None:
-    """Restart all sandbox services."""
+    """Restart all aisland services."""
     click.echo("Restarting all services...")
     JenkinsService().restart(background=background)
     MLflowService().restart(background=background)
 
 
 @main.command(name="reset")
-@click.confirmation_option(prompt="Are you sure you want to wipe ALL sandbox data?")
+@click.confirmation_option(prompt="Are you sure you want to wipe ALL aisland data?")
 def reset() -> None:
     """Stop all services and wipe all data."""
     click.echo("Resetting all services...")
