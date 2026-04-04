@@ -35,4 +35,4 @@ python_files = ["test_*.py"]
 norecursedirs = ["data", ".venv"]
 
 [tool.aisland.sys-dependencies]
-brew = ["openjdk"]
+brew = ["openjdk", "swiftbar"]
