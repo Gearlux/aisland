@@ -99,7 +99,7 @@ The `pull-all` alias is for **eagerly fetching unrecorded changes**. It reaches 
 To configure the global `pull-all` Git alias:
 
 ```bash
-git config --global alias.pull-all '!git pull && git submodule update --remote --merge'
+git config --global alias.pull-all '!PARENT_BRANCH=$(git branch --show-current) && git pull origin $PARENT_BRANCH && git submodule foreach "git pull origin \$PARENT_BRANCH"'
 ```
 
 To use it (e.g., to grab everything latest before starting a new feature):

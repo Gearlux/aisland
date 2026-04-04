@@ -10,7 +10,7 @@ echo "==> Configuring Git Submodule Tracking..."
 git config submodule.recurse true
 
 echo "==> Configuring Git Aliases..."
-git config --global alias.pull-all '!git pull && git submodule update --remote --merge'
+git config --global alias.pull-all '!PARENT_BRANCH=$(git branch --show-current) && git pull origin $PARENT_BRANCH && git submodule foreach "git pull origin \$PARENT_BRANCH"'
 
 git config --global alias.switch-all '!f() { git checkout "$1" && git submodule foreach "branch=\$(git config -f \"\$toplevel/.gitmodules\" submodule.\$name.branch); [ \"\$branch\" = \".\" ] && branch=\"$1\"; git checkout \${branch:-main}"; }; f'
 
