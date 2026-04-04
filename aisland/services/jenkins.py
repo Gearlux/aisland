@@ -4,7 +4,7 @@ import sys
 import urllib.request
 import xml.etree.ElementTree as ET
 from pathlib import Path
-from typing import Any, Optional, cast
+from typing import Any, List, Optional, cast
 
 import click
 
@@ -179,8 +179,38 @@ class JenkinsService(BaseService):
             click.echo(f"  - Error installing plugins: {e.stderr}", err=True)
             return False
 
+    def _has_remote_pipelines(self) -> bool:
+        """Check if any initialized pipelines require remote Git credentials."""
+        jobs_dir = self.service_data_dir / "jobs"
+        if not jobs_dir.exists():
+            return False
+
+        for project_job_dir in jobs_dir.iterdir():
+            if not project_job_dir.is_dir():
+                continue
+            config_xml = project_job_dir / "config.xml"
+            if config_xml.exists():
+                try:
+                    tree = ET.parse(config_xml)
+                    root = tree.getroot()
+                    # Look for the remote URL in the GitSCMSource configuration
+                    remote_elem = root.find(".//remote")
+                    if remote_elem is not None and remote_elem.text:
+                        url = remote_elem.text
+                        # Local paths start with / (Unix) or X: (Windows)
+                        is_local = url.startswith("/") or (len(url) > 1 and url[1] == ":")
+                        if not is_local:
+                            return True
+                except Exception:
+                    pass
+        return False
+
     def check_credentials_and_print_instructions(self, port: int) -> None:
         """Check if Git credentials are configured and print instructions if not."""
+        # Only warn if there are actually remote pipelines that need credentials
+        if not self._has_remote_pipelines():
+            return
+
         config_file = self.service_data_dir / "credentials.xml"
         admin_pass_file = self.service_data_dir / "secrets/initialAdminPassword"
 
@@ -230,6 +260,7 @@ class JenkinsService(BaseService):
 
         # Suppress Java 25+ warnings for terminal deprecation and illegal access
         jvm_args = [
+            "-Dhudson.plugins.git.GitSCM.ALLOW_LOCAL_CHECKOUT=true",
             "--add-opens=java.base/java.lang=ALL-UNNAMED",
             "--add-opens=java.base/java.io=ALL-UNNAMED",
             "--add-opens=java.base/java.util=ALL-UNNAMED",
@@ -396,6 +427,98 @@ class JenkinsService(BaseService):
         self.stop()
         self.launch(background=True)
 
+    def _create_orchestrator_job(self, local: bool, initialized_projects: List[str]) -> None:
+        """Create an orchestrator job that builds all discovered projects in topological order."""
+        from aisland.manager import get_install_order, get_workspace_root
+
+        workspace_root = get_workspace_root()
+        install_order = get_install_order(workspace_root)
+
+        initialized_names = {p for p in initialized_projects}
+
+        depths: dict[str, int] = {}
+        for p in install_order:
+            name = p["name"]
+            if name not in initialized_names:
+                continue
+
+            deps = []
+            for dep in p["dependencies"]:
+                dep_name = dep.split(">=")[0].split("==")[0].split("<=")[0].split("[")[0].strip()
+                if dep_name in initialized_names and dep_name != name:
+                    deps.append(dep_name)
+
+            max_dep_depth = -1
+            for d in deps:
+                max_dep_depth = max(max_dep_depth, depths.get(d, -1))
+
+            depths[name] = max_dep_depth + 1
+
+        phases: dict[int, list[str]] = {}
+        for name, d in depths.items():
+            phases.setdefault(d, []).append(name)
+
+        stages_str = ""
+        for depth in sorted(phases.keys()):
+            phase_projects = phases[depth]
+            if not phase_projects:
+                continue
+
+            stages_str += f"        stage('Phase {depth}') {{\n            parallel {{\n"
+            for proj in phase_projects:
+                job_name = f"{proj}.local" if local else f"{proj}/main"
+                stages_str += f"                stage('Build {proj}') {{\n"
+                stages_str += f"                    steps {{ build job: '{job_name}', wait: true, propagate: true }}\n"
+                stages_str += "                }\n"
+            stages_str += "            }\n        }\n"
+
+        pipeline_script = f"""pipeline {{
+    agent {{
+        node {{
+            label 'built-in'
+        }}
+    }}
+    options {{
+        disableConcurrentBuilds()
+    }}
+    stages {{
+{stages_str}    }}
+}}"""
+
+        from xml.sax.saxutils import escape
+
+        escaped_script = escape(pipeline_script)
+
+        job_name = "_orchestrator.local" if local else "_orchestrator"
+        description = (
+            "Orchestrates the build of all local workspace projects based on dependencies."
+            if local
+            else "Orchestrates the build of all workspace projects based on dependencies."
+        )
+
+        config_xml = f"""<?xml version='1.1' encoding='UTF-8'?>
+<flow-definition plugin="workflow-job">
+  <actions/>
+  <description>{description}</description>
+  <keepDependencies>false</keepDependencies>
+  <properties>
+    <org.jenkinsci.plugins.workflow.job.properties.DisableConcurrentBuildsJobProperty/>
+  </properties>
+  <definition class="org.jenkinsci.plugins.workflow.cps.CpsFlowDefinition" plugin="workflow-cps">
+    <script>{escaped_script}</script>
+    <sandbox>true</sandbox>
+  </definition>
+  <triggers/>
+  <disabled>false</disabled>
+</flow-definition>
+"""
+        jobs_dir = self.service_data_dir / "jobs"
+        project_job_dir = jobs_dir / job_name
+        project_job_dir.mkdir(parents=True, exist_ok=True)
+        config_file = project_job_dir / "config.xml"
+        config_file.write_text(config_xml)
+        click.echo(f"  - Seeded orchestrator job: {job_name}")
+
     def init_pipelines(self, project_name: Optional[str] = None, local: bool = False) -> None:
         """Seed Jenkins with Multi-branch pipelines for projects discovered in the workspace."""
         self.setup()
@@ -450,18 +573,48 @@ class JenkinsService(BaseService):
             project_job_dir = jobs_dir / project
             project_job_dir.mkdir(exist_ok=True)
 
-            remote_url: Optional[str] = None
             if local:
-                remote_url = str(project_path.absolute())
-                cred_id = ""
-                script_path = "Jenkinsfile.local"
-            else:
-                remote_url = self._get_git_remote(project_path)
-                if not remote_url:
-                    click.echo(f"  - Skipping {project}: Could not determine Git remote.")
+                # For local jobs, embed the Jenkinsfile.local content directly to avoid needing commits
+                jenkinsfile_path = project_path / "Jenkinsfile.local"
+                if jenkinsfile_path.exists():
+                    script_content = jenkinsfile_path.read_text()
+                    # Escape XML entities in the script
+                    from xml.sax.saxutils import escape
+
+                    escaped_script = escape(script_content)
+
+                    config_xml = f"""<?xml version='1.1' encoding='UTF-8'?>
+<flow-definition plugin="workflow-job">
+  <actions/>
+  <description>Local development pipeline for {project_base_name}</description>
+  <keepDependencies>false</keepDependencies>
+  <properties>
+    <org.jenkinsci.plugins.workflow.job.properties.DisableConcurrentBuildsJobProperty/>
+  </properties>
+  <definition class="org.jenkinsci.plugins.workflow.cps.CpsFlowDefinition" plugin="workflow-cps">
+    <script>{escaped_script}</script>
+    <sandbox>true</sandbox>
+  </definition>
+  <triggers/>
+  <disabled>false</disabled>
+  <customWorkspace>{project_path.absolute()}</customWorkspace>
+</flow-definition>
+"""
+                    config_file = project_job_dir / "config.xml"
+                    config_file.write_text(config_xml)
+                    click.echo(f"  - Seeded local job (embedded script): {project}")
                     continue
-                cred_id = self._find_credentials(remote_url)
-                script_path = "Jenkinsfile"
+                else:
+                    click.echo(f"  - Warning: {jenkinsfile_path} not found for {project}. Skipping.")
+                    continue
+
+            # Standard Multibranch Pipeline for remote jobs
+            remote_url = self._get_git_remote(project_path)
+            if not remote_url:
+                click.echo(f"  - Skipping {project}: Could not determine Git remote.")
+                continue
+            cred_id = self._find_credentials(remote_url)
+            script_path = "Jenkinsfile"
 
             # Simplified Multibranch Pipeline config.xml template
             config_xml = f"""<?xml version='1.1' encoding='UTF-8'?>
@@ -516,7 +669,16 @@ class JenkinsService(BaseService):
             config_file.write_text(config_xml)
             click.echo(f"  - Seeded job: {project} (Remote: {remote_url}, CredID: {cred_id})")
 
+        # Create the orchestrator job
+        initialized_names = [p.name for p in projects if p.name]
+        self._create_orchestrator_job(local, initialized_names)
+
         self.setup_dashboard_view()
+        self.setup_global_properties()
+
+        if local:
+            if click.confirm("Reduce Jenkins security for faster local access? (Disables CSRF, allows anonymous read)"):
+                self.reduce_security()
 
         if was_running:
             # We always restart after seeding to ensure jobs and plugins are loaded correctly
@@ -613,3 +775,98 @@ class JenkinsService(BaseService):
             tree.write(config_file, encoding="UTF-8", xml_declaration=True)
         else:
             click.echo(f"  - Dashboard view '{name}' already exists.")
+
+    def setup_global_properties(self) -> None:
+        """Add WORKSPACE_ROOT and other workspace-wide settings to Jenkins global properties."""
+        config_file = self.service_data_dir / "config.xml"
+        if not config_file.exists():
+            return
+
+        import xml.etree.ElementTree as ET
+
+        from aisland.manager import get_workspace_root
+
+        try:
+            tree = ET.parse(config_file)
+            root = tree.getroot()
+        except Exception as e:
+            click.echo(f"  - Error parsing config.xml for global properties: {e}")
+            return
+
+        # Find or create globalNodeProperties
+        node_props = root.find("globalNodeProperties")
+        if node_props is None:
+            node_props = ET.SubElement(root, "globalNodeProperties")
+
+        # Find or create EnvironmentVariablesNodeProperty
+        env_vars_prop = node_props.find("hudson.slaves.EnvironmentVariablesNodeProperty")
+        if env_vars_prop is None:
+            env_vars_prop = ET.SubElement(node_props, "hudson.slaves.EnvironmentVariablesNodeProperty")
+
+        # In recent Jenkins, envVars is often serialized as a custom TreeMap
+        env_vars = env_vars_prop.find("envVars")
+        if env_vars is not None:
+            env_vars_prop.remove(env_vars)
+
+        env_vars = ET.SubElement(env_vars_prop, "envVars")
+        env_vars.set("serialization", "custom")
+        ET.SubElement(env_vars, "unserializable-parents")
+        tree_map = ET.SubElement(env_vars, "tree-map")
+
+        # Add Comparator
+        default_elem = ET.SubElement(tree_map, "default")
+        ET.SubElement(default_elem, "comparator").set("class", "hudson.util.CaseInsensitiveComparator")
+
+        workspace_root = get_workspace_root()
+        env_data = {
+            "WORKSPACE_ROOT": str(workspace_root),
+            "FORCE_JAVASCRIPT_ACTIONS_TO_NODE24": "true",
+        }
+
+        # Number of entries
+        ET.SubElement(tree_map, "int").text = str(len(env_data))
+
+        # Add key-value pairs
+        for key, value in env_data.items():
+            ET.SubElement(tree_map, "string").text = key
+            ET.SubElement(tree_map, "string").text = value
+            click.echo(f"  - Added global Jenkins property: {key}={value}")
+
+        tree.write(config_file, encoding="UTF-8", xml_declaration=True)
+
+    def reduce_security(self) -> None:
+        """Modify config.xml to reduce security for local development."""
+        config_file = self.service_data_dir / "config.xml"
+        if not config_file.exists():
+            return
+
+        import xml.etree.ElementTree as ET
+
+        try:
+            tree = ET.parse(config_file)
+            root = tree.getroot()
+        except Exception as e:
+            click.echo(f"  - Error parsing config.xml for security reduction: {e}")
+            return
+
+        if click.confirm("Disable Jenkins security entirely? (No login required, most fast/unsecure)"):
+            use_security = root.find("useSecurity")
+            if use_security is not None:
+                use_security.text = "false"
+                click.echo("  - Jenkins security disabled.")
+        else:
+            # 1. Allow Anonymous Read Access
+            auth_strategy = root.find("authorizationStrategy")
+            if auth_strategy is not None:
+                deny_anon = auth_strategy.find("denyAnonymousReadAccess")
+                if deny_anon is not None:
+                    deny_anon.text = "false"
+                    click.echo("  - Enabled anonymous read access.")
+
+            # 2. Disable CSRF Protection (Crumb Issuer)
+            crumb = root.find("crumbIssuer")
+            if crumb is not None:
+                root.remove(crumb)
+                click.echo("  - Disabled CSRF protection (Crumb Issuer removed).")
+
+        tree.write(config_file, encoding="UTF-8", xml_declaration=True)

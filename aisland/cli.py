@@ -5,6 +5,7 @@ import click
 from aisland.manager import provision_system, setup_workspace
 from aisland.services.jenkins import JenkinsService
 from aisland.services.mlflow import MLflowService
+from aisland.services.swiftbar import SwiftBarService
 
 
 @click.group()
@@ -137,6 +138,51 @@ def mlflow_reset() -> None:
     MLflowService().reset()
 
 
+# --- SwiftBar Commands ---
+
+
+@main.group()
+def swiftbar() -> None:
+    """Manage SwiftBar menu bar plugins."""
+    pass
+
+
+@swiftbar.command(name="init")
+def swiftbar_init() -> None:
+    """Initialize SwiftBar scripts for monitoring workspace projects."""
+    SwiftBarService().init_scripts()
+
+
+@swiftbar.command(name="start")
+def swiftbar_start() -> None:
+    """Start SwiftBar application."""
+    SwiftBarService().launch()
+
+
+@swiftbar.command(name="stop")
+def swiftbar_stop() -> None:
+    """Stop SwiftBar application."""
+    SwiftBarService().stop()
+
+
+@swiftbar.command(name="restart")
+def swiftbar_restart() -> None:
+    """Restart SwiftBar application."""
+    SwiftBarService().restart()
+
+
+@swiftbar.command(name="remove")
+def swiftbar_remove() -> None:
+    """Unlink workspace scripts from SwiftBar."""
+    SwiftBarService().remove()
+
+
+@swiftbar.command(name="reset")
+def swiftbar_reset() -> None:
+    """Alias for remove."""
+    SwiftBarService().reset()
+
+
 # --- Global Commands ---
 
 
@@ -146,6 +192,7 @@ def status() -> None:
     click.echo("Aisland Infrastructure Status:")
     JenkinsService().status()
     MLflowService().status()
+    SwiftBarService().status()
 
 
 @main.command(name="start")
@@ -155,6 +202,7 @@ def start(background: bool) -> None:
     click.echo("Starting all services...")
     JenkinsService().launch(background=background)
     MLflowService().launch(background=background)
+    SwiftBarService().launch()
 
 
 @main.command(name="stop")
@@ -163,6 +211,7 @@ def stop() -> None:
     click.echo("Stopping all services...")
     JenkinsService().stop()
     MLflowService().stop()
+    SwiftBarService().stop()
 
 
 @main.command(name="restart")
@@ -172,6 +221,7 @@ def restart(background: bool) -> None:
     click.echo("Restarting all services...")
     JenkinsService().restart(background=background)
     MLflowService().restart(background=background)
+    SwiftBarService().restart()
 
 
 @main.command(name="reset")
@@ -181,6 +231,7 @@ def reset() -> None:
     click.echo("Resetting all services...")
     JenkinsService().reset()
     MLflowService().reset()
+    SwiftBarService().reset()
 
 
 if __name__ == "__main__":

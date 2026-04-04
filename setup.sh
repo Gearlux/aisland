@@ -11,8 +11,13 @@ echo "==> Gearlux Bootstrap: Initializing environment at $WORKSPACE_ROOT"
 
 # 1. Create/Verify Virtual Environment
 if [ ! -d "$VENV_DIR" ]; then
-    echo "==> Creating virtual environment (Python 3.12)..."
-    python3.12 -m venv "$VENV_DIR"
+    # Try to get the git project name from the origin URL, fallback to directory name
+    PROMPT_NAME=$(git -C "$WORKSPACE_ROOT" remote get-url origin 2>/dev/null | sed 's/.*\/\([^/]*\)\.git/\1/')
+    if [ -z "$PROMPT_NAME" ]; then
+        PROMPT_NAME=$(basename "$WORKSPACE_ROOT")
+    fi
+    echo "==> Creating virtual environment (python3) with prompt: $PROMPT_NAME..."
+    python3 -m venv --prompt "$PROMPT_NAME" "$VENV_DIR"
 fi
 
 # 2. Activate and upgrade core tools

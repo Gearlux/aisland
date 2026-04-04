@@ -23,3 +23,14 @@ build/
 bin/
 data/
 logs/
+
+# Reports
+*-checkstyle.xml
+*-diff.txt
+flake8.txt
+mypy.txt
+coverage.xml
+test-report.xml
+coverage-sources.zip
+coverage/
+coverage-navigaitor/

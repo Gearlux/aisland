@@ -186,7 +186,7 @@ def get_workspace_root() -> Path:
         if (curr / "TASKS.md").exists():
             return curr
         curr = curr.parent
-    
+
     # Fallback to .git if TASKS.md not found
     curr = Path(__file__).resolve()
     for _ in range(6):
@@ -198,12 +198,28 @@ def get_workspace_root() -> Path:
     return Path(__file__).resolve().parents[3]
 
 
+def discover_projects(root: Path) -> List[Path]:
+    """Recursively discover pyproject.toml files, but only in directories that are identified as projects."""
+    projects = []
+    # Skip standard ignored directories
+    if any(p in str(root) for p in [".venv", "aisland/data"]):
+        return []
+
+    for item in root.iterdir():
+        if item.is_dir():
+            pyproject = item / "pyproject.toml"
+            if pyproject.exists():
+                projects.append(pyproject)
+                # If it's a project, also check for sub-projects (submodules)
+                projects.extend(discover_projects(item))
+    return projects
+
+
 def provision_system() -> None:
     """Scan all projects for [tool.aisland.sys-dependencies] and install via Homebrew."""
     workspace_root = get_workspace_root()
     click.echo(f"==> Scanning for system dependencies in {workspace_root}...")
 
-    import json
     try:
         import tomllib
     except ImportError:
@@ -211,10 +227,7 @@ def provision_system() -> None:
 
     brew_packages = set()
 
-    for pyproject in workspace_root.glob("**/pyproject.toml"):
-        if ".venv" in str(pyproject) or "aisland/data" in str(pyproject):
-            continue
-
+    for pyproject in discover_projects(workspace_root):
         try:
             with open(pyproject, "rb") as f:
                 data = tomllib.load(f)
@@ -254,6 +267,66 @@ def provision_system() -> None:
             click.echo(f"  - Error: Failed to install {pkg}: {e}")
 
 
+def get_project_metadata(pyproject_path: Path) -> dict:
+    """Extract name and dependencies from pyproject.toml."""
+    try:
+        import tomllib
+    except ImportError:
+        import tomli as tomllib  # type: ignore
+
+    with open(pyproject_path, "rb") as f:
+        data = tomllib.load(f)
+        project_info = data.get("project", {})
+        name = project_info.get("name")
+        deps = project_info.get("dependencies", [])
+        # Also include optional-dependencies if they are internal
+        optional_deps = project_info.get("optional-dependencies", {})
+        for extra_deps in optional_deps.values():
+            deps.extend(extra_deps)
+
+        return {"name": name, "path": pyproject_path.parent, "dependencies": deps, "has_dev": "dev" in optional_deps}
+
+
+def get_install_order(workspace_root: Path) -> List[dict]:
+    """Determine the correct installation order using topological sort based on workspace dependencies."""
+    pyprojects = discover_projects(workspace_root)
+    projects = [get_project_metadata(p) for p in pyprojects]
+    project_names = {p["name"] for p in projects}
+
+    # Build adjacency list
+    adj: dict[str, list[str]] = {p["name"]: [] for p in projects}
+    for p in projects:
+        for dep in p["dependencies"]:
+            # Extract package name from dependency string (e.g., 'logflow>=0.1.0' -> 'logflow')
+            dep_name = dep.split(">=")[0].split("==")[0].split("<=")[0].split("[")[0].strip()
+            if dep_name in project_names and dep_name != p["name"]:
+                adj[p["name"]].append(dep_name)
+
+    # Topological sort (Kahn's algorithm or DFS)
+    visited = set()
+    temp_visited = set()
+    order = []
+
+    def visit(name: str) -> None:
+        if name in temp_visited:
+            # Circular dependency detected - just break and continue for now
+            return
+        if name not in visited:
+            temp_visited.add(name)
+            for neighbor in adj.get(name, []):
+                visit(neighbor)
+            temp_visited.remove(name)
+            visited.add(name)
+            order.append(name)
+
+    for p in projects:
+        visit(p["name"])
+
+    # Map names back to metadata
+    name_to_meta = {p["name"]: p for p in projects}
+    return [name_to_meta[name] for name in order]
+
+
 def setup_workspace() -> None:
     """Perform a full workspace setup: system provisioning followed by editable pip installs."""
     workspace_root = get_workspace_root()
@@ -267,46 +340,26 @@ def setup_workspace() -> None:
     # 1. System Provisioning
     provision_system()
 
-    # 2. Python Provisioning (Editable Installs)
-    click.echo(f"==> Performing editable installs for all projects in {workspace_root}...")
-    
-    # We prioritize projects that others depend on (order doesn't strictly matter for editable, but it's cleaner)
-    # confluid is a core dependency, so we ensure it's handled early.
-    project_dirs = [
-        p.parent for p in workspace_root.glob("**/pyproject.toml") 
-        if ".venv" not in str(p) and "aisland/data" not in str(p)
-    ]
-    
-    # Sort: confluid first, then logflow, then others.
-    def project_priority(d: Path) -> int:
-        name = d.name
-        if name == "confluid": return 0
-        if name == "logflow": return 1
-        return 10
+    # 2. Dependency Discovery
+    click.echo(f"==> Resolving workspace dependency graph in {workspace_root}...")
+    install_order = get_install_order(workspace_root)
 
-    project_dirs.sort(key=project_priority)
+    # 3. Provisioning (Git & Python)
+    for project in install_order:
+        project_dir = project["path"]
 
-    for project_dir in project_dirs:
-        # Check if project has [dev] extra
-        has_dev = False
+        # Git Configuration (pull.rebase false)
         try:
-            import tomllib
-        except ImportError:
-            import tomli as tomllib  # type: ignore
-            
-        try:
-            with open(project_dir / "pyproject.toml", "rb") as f:
-                data = tomllib.load(f)
-                if "dev" in data.get("project", {}).get("optional-dependencies", {}):
-                    has_dev = True
-        except Exception:
+            subprocess.check_call(["git", "config", "pull.rebase", "false"], cwd=project_dir)
+        except (subprocess.CalledProcessError, FileNotFoundError):
             pass
 
-        target = f"{project_dir}[dev]" if has_dev else str(project_dir)
-        click.echo(f"==> Installing {project_dir.name} ({target})...")
+        # Python Provisioning (Editable Installs)
+        target = f"{project_dir}[dev]" if project["has_dev"] else str(project_dir)
+        click.echo(f"==> Installing {project['name']} ({target})...")
         try:
             subprocess.check_call([pip_cmd, "install", "-e", target])
         except subprocess.CalledProcessError as e:
-            click.echo(f"  - Error: Failed to install {project_dir.name}: {e}")
+            click.echo(f"  - Error: Failed to install {project['name']}: {e}")
 
     click.echo("==> Workspace setup complete!")
