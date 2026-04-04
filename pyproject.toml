@@ -32,6 +32,7 @@ skip_glob = ["data/*"]
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 python_files = ["test_*.py"]
+norecursedirs = ["data", ".venv"]
 
 [tool.aisland.sys-dependencies]
 brew = ["openjdk"]

@@ -35,5 +35,9 @@ cd "$WORKSPACE_ROOT"
 # We call it from the root so Path.glob("**/*.toml") works correctly
 "$VENV_DIR/bin/aisland" setup
 
+# 5. Initialize Git Configuration
+echo "==> Setting up Git configurations..."
+bash "$WORKSPACE_ROOT/aisland/setup_git.sh"
+
 echo "==> Setup complete! Your environment is ready."
 echo "==> Run 'source .venv/bin/activate' to start working."

@@ -50,3 +50,92 @@ Default: [http://localhost:5000](http://localhost:5000)
 
 ## Future Services
 Placeholders for **LabelStudio** and **Grafana/Loki** are being prepared and will be integrated into the `aisland` CLI in future updates.
+
+## Submodule Management
+
+This repository uses Git submodules to manage its constituent projects.
+
+### Working with Submodules
+
+To execute commands across all submodules (e.g., installing all projects in editable mode), use `git submodule foreach`:
+
+```bash
+# Install all projects in editable mode
+git submodule foreach 'pip install -e .'
+
+# Run tests in all submodules
+git submodule foreach 'pytest'
+
+# Check the status of all submodules
+git submodule foreach 'git status'
+```
+
+### Initializing Submodules
+
+If you've just cloned the repository or pulled new changes, ensure all submodules are up to date:
+
+```bash
+git submodule update --init --recursive
+```
+
+### Recommended Workspace Configuration
+
+To ensure that your local submodules automatically stay in sync with the **parent repository's recorded hashes**, enable recursive submodule operations:
+
+```bash
+git config submodule.recurse true
+```
+
+*With this on, if a team member commits a new submodule hash to the parent repository, your next `git pull` will automatically download their updated submodule code.*
+
+### Pulling Unrecorded Submodule Changes (`pull-all`)
+
+If `submodule.recurse` keeps things in sync, why do you need `pull-all`? 
+
+Because a standard `git pull` only syncs submodules to the exact snapshots recorded in the **parent repository**. If a teammate pushes a brand new commit directly to the `dataflux` submodule's remote branch, but *nobody* has updated the parent repository to point to it yet, a standard `git pull` will completely ignore that new `dataflux` commit.
+
+The `pull-all` alias is for **eagerly fetching unrecorded changes**. It reaches out directly to all submodule remote repositories, bypasses the parent's locked hashes, and forces your submodules to fast-forward to the absolute latest commits on their tracked branches.
+
+To configure the global `pull-all` Git alias:
+
+```bash
+git config --global alias.pull-all '!git pull && git submodule update --remote --merge'
+```
+
+To use it (e.g., to grab everything latest before starting a new feature):
+
+```bash
+git pull-all
+```
+
+### Switching All Submodules (`switch-all`)
+
+When moving between development streams (e.g., switching from a feature branch back to `dev/main`), you often need to update the branch context for both the parent repository and all its constituent submodules simultaneously.
+
+To configure the global `switch-all` Git alias:
+
+```bash
+git config --global alias.switch-all '!f() { git checkout "$1" && git submodule foreach "branch=\$(git config -f \"\$toplevel/.gitmodules\" submodule.\$name.branch); [ \"\$branch\" = \".\" ] && branch=\"$1\"; git checkout \${branch:-main}"; }; f'
+```
+
+To use it:
+
+```bash
+git switch-all dev/main
+```
+
+### Safely Pushing Changes (`safe`)
+
+A custom Git alias exists to enforce the workspace mandates before pushing code. It automatically sets up the environment, formats the code with `isort` and `black`, lints with `flake8`, types checks with `mypy`, and runs `pytest`. If everything passes, it commits and pushes safely to the remote.
+
+To configure the global `safe` Git alias:
+
+```bash
+git config --global alias.safe '!f() { if [ -z "$1" ]; then echo "Error: Please provide a commit message. Example: git safe \"feat: my message\""; exit 1; fi; if [ -d ".venv" ]; then echo "Activating virtual environment..."; source .venv/bin/activate; fi; echo "Running formatting (isort, black)..."; isort . && black . || { echo "Formatting failed!"; exit 1; }; echo "Running linting (flake8)..."; flake8 . || { echo "Flake8 linting failed!"; exit 1; }; echo "Running type checking (mypy)..."; mypy . || { echo "Mypy type checking failed!"; exit 1; }; echo "Running tests (pytest)..."; pytest || { echo "Tests failed!"; exit 1; }; echo "All checks passed! Committing and pushing..."; git add . && git commit -m "$1"; CURRENT_BRANCH=$(git branch --show-current); if [ -z "$CURRENT_BRANCH" ]; then git push origin HEAD:dev/main || git push origin HEAD:main; else git push origin "$CURRENT_BRANCH" || { echo "Falling back to dev/main push..."; git push origin HEAD:dev/main; }; fi; }; f'
+```
+
+To use the shortcut:
+
+```bash
+git safe "feat(logflow): fixed the configuration parser bug"
+```
