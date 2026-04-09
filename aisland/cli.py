@@ -14,6 +14,26 @@ def main() -> None:
     pass
 
 
+# --- Notebook Commands ---
+
+
+@main.group()
+def notebooks() -> None:
+    """Manage Jupyter notebooks in the workspace."""
+    pass
+
+
+@notebooks.command(name="clean")
+def notebooks_clean() -> None:
+    """
+    Clear outputs of code cells from standard input.
+    Can be used as a git filter to avoid committing notebook outputs.
+    """
+    from aisland.notebook_utils import clean_notebook_stdin
+
+    clean_notebook_stdin()
+
+
 @main.command()
 def provision() -> None:
     """Scan projects and install required system dependencies (Homebrew)."""

@@ -55,7 +55,33 @@ Placeholders for **LabelStudio** and **Grafana/Loki** are being prepared and wil
 
 This repository uses Git submodules to manage its constituent projects.
 
-### Working with Submodules
+## Jupyter Notebook Management
+
+To keep the repository size small and diffs clean, all Jupyter notebooks (`*.ipynb`) are automatically processed by a Git filter that clears their code cell outputs before staging.
+
+### Marking as Documentation
+If you have a notebook that serves as documentation and you **want** to preserve its outputs (e.g., visualizations, benchmark results), you must mark it as such in its metadata:
+
+1. Open the notebook in VS Code or Jupyter.
+2. Edit the notebook metadata (in VS Code: `Notebook Information` -> `Open Metadata`).
+3. Add `"is_documentation": true` to the `metadata` object:
+```json
+{
+  "metadata": {
+    "is_documentation": true,
+    ...
+  },
+  ...
+}
+```
+
+### Manual Cleaning
+You can also manually clean a notebook using the CLI:
+```bash
+cat my_notebook.ipynb | aisland notebooks clean > cleaned_notebook.ipynb
+```
+
+## Working with Submodules
 
 To execute commands across all submodules (e.g., installing all projects in editable mode), use `git submodule foreach`:
 

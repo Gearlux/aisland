@@ -220,10 +220,7 @@ def provision_system() -> None:
     workspace_root = get_workspace_root()
     click.echo(f"==> Scanning for system dependencies in {workspace_root}...")
 
-    try:
-        import tomllib
-    except ImportError:
-        import tomli as tomllib  # type: ignore
+    import tomllib
 
     brew_packages = set()
 
@@ -269,10 +266,7 @@ def provision_system() -> None:
 
 def get_project_metadata(pyproject_path: Path) -> dict:
     """Extract name and dependencies from pyproject.toml."""
-    try:
-        import tomllib
-    except ImportError:
-        import tomli as tomllib  # type: ignore
+    import tomllib
 
     with open(pyproject_path, "rb") as f:
         data = tomllib.load(f)
