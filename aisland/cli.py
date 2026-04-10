@@ -2,7 +2,7 @@ from typing import Optional
 
 import click
 
-from aisland.manager import provision_system, setup_workspace
+from aisland.manager import provision_system, run_quality_gates, setup_workspace
 from aisland.services.jenkins import JenkinsService
 from aisland.services.mlflow import MLflowService
 from aisland.services.swiftbar import SwiftBarService
@@ -252,6 +252,14 @@ def reset() -> None:
     JenkinsService().reset()
     MLflowService().reset()
     SwiftBarService().reset()
+
+
+@main.command(name="check")
+@click.argument("project", required=False)
+@click.option("--tool", help="Run only a specific tool (isort, black, flake8, mypy, pytest).")
+def check(project: Optional[str], tool: Optional[str]) -> None:
+    """Run quality gates (isort, black, flake8, mypy, pytest) for all or a specific project."""
+    run_quality_gates(project_name=project, tool_name=tool)
 
 
 if __name__ == "__main__":

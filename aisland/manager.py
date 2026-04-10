@@ -198,6 +198,27 @@ def get_workspace_root() -> Path:
     return Path(__file__).resolve().parents[3]
 
 
+def get_workspace_name() -> str:
+    """Return the name of the workspace (repo name or root directory name)."""
+    root = get_workspace_root()
+    try:
+        # Try to get the repo name from git remote
+        import subprocess
+
+        output = subprocess.check_output(
+            ["git", "remote", "get-url", "origin"], cwd=root, text=True, stderr=subprocess.DEVNULL
+        ).strip()
+        if output:
+            # Extract name from URL (handles both https and ssh)
+            # e.g., https://github.com/Gearlux/gearlux.git -> gearlux
+            name = output.split("/")[-1].replace(".git", "")
+            if name:
+                return name
+    except Exception:
+        pass
+    return root.name
+
+
 def discover_projects(root: Path) -> List[Path]:
     """Recursively discover pyproject.toml files, but only in directories that are identified as projects."""
     projects = []
@@ -357,3 +378,71 @@ def setup_workspace() -> None:
             click.echo(f"  - Error: Failed to install {project['name']}: {e}")
 
     click.echo("==> Workspace setup complete!")
+
+
+def run_quality_gates(project_name: Optional[str] = None, tool_name: Optional[str] = None) -> None:
+    """Execute quality gates (isort, black, flake8, mypy, pytest) for one or all projects."""
+    workspace_root = get_workspace_root()
+    venv_bin = workspace_root / ".venv" / "bin"
+
+    if not venv_bin.exists():
+        click.echo(f"Error: Virtual environment not found at {workspace_root / '.venv'}. Run aisland/setup.sh first.")
+        return
+
+    env = os.environ.copy()
+    env["PATH"] = f"{venv_bin}:{env.get('PATH', '')}"
+    env["PYTHONPATH"] = str(workspace_root)
+
+    # Find projects to check
+    pyprojects = discover_projects(workspace_root)
+    projects = [get_project_metadata(p) for p in pyprojects]
+
+    if project_name:
+        projects = [p for p in projects if p["name"] == project_name]
+        if not projects:
+            click.echo(f"Error: Project '{project_name}' not found in workspace.")
+            return
+
+    results = []
+
+    for project in projects:
+        project_dir = project["path"]
+        name = project["name"]
+        click.echo(f"==> Checking {name} at {project_dir}...")
+
+        # Quality Gate Tools configuration
+        all_tools = [
+            ("isort", ["isort", "."], True),
+            ("black", ["black", "."], True),
+            ("flake8", ["flake8", "."], True),
+            ("mypy", ["mypy", "-p", name.replace("-manager", "")], False),
+            ("pytest", ["pytest"], True),
+        ]
+
+        active_tools = all_tools
+        if tool_name:
+            active_tools = [t for t in all_tools if t[0] == tool_name]
+            if not active_tools:
+                click.echo(f"Error: Tool '{tool_name}' not supported.")
+                return
+
+        project_failed = False
+        for current_tool_name, cmd, project_relative in active_tools:
+            cwd = project_dir if project_relative else workspace_root
+            try:
+                subprocess.check_call(cmd, cwd=cwd, env=env, stdout=subprocess.DEVNULL, stderr=subprocess.STDOUT)
+                click.echo(f"  [{click.style('PASS', fg='green')}] {current_tool_name}")
+            except subprocess.CalledProcessError:
+                click.echo(f"  [{click.style('FAIL', fg='red')}] {current_tool_name}")
+                project_failed = True
+
+        results.append((name, not project_failed))
+
+    # Summary table
+    click.echo("\nQuality Gate Summary:")
+    for name, success in results:
+        status = click.style("SUCCESS", fg="green") if success else click.style("FAILURE", fg="red")
+        click.echo(f"  {name:<25} : {status}")
+
+    if any(not r[1] for r in results):
+        exit(1)

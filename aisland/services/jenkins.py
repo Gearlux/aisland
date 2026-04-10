@@ -487,13 +487,16 @@ class JenkinsService(BaseService):
 
         from xml.sax.saxutils import escape
 
+        from aisland.manager import get_workspace_name
+
         escaped_script = escape(pipeline_script)
 
-        job_name = "_orchestrator.local" if local else "_orchestrator"
+        base_name = get_workspace_name()
+        job_name = f"{base_name}.local" if local else base_name
         description = (
-            "Orchestrates the build of all local workspace projects based on dependencies."
+            f"Orchestrates the build of all local {base_name} workspace projects based on dependencies."
             if local
-            else "Orchestrates the build of all workspace projects based on dependencies."
+            else f"Orchestrates the build of all {base_name} workspace projects based on dependencies."
         )
 
         config_xml = f"""<?xml version='1.1' encoding='UTF-8'?>
