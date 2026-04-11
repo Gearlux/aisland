@@ -106,6 +106,13 @@ def jenkins_init(project: Optional[str], local: bool) -> None:
     JenkinsService().init_pipelines(project_name=project, local=local)
 
 
+@jenkins.command(name="scaffold")
+@click.argument("project")
+def jenkins_scaffold(project: str) -> None:
+    """Generate standard Jenkinsfile and Jenkinsfile.local for a project."""
+    JenkinsService().scaffold_pipelines(project_name=project)
+
+
 @jenkins.command(name="remove")
 @click.argument("project", required=False)
 @click.confirmation_option(prompt="Are you sure you want to remove the pipeline(s)?")

@@ -19,6 +19,9 @@ build/
 .idea/
 .DS_Store
 
+# Testing / Coverage
+coverage-*
+
 # Project-Specific (Binaries & Data)
 bin/
 data/
@@ -31,6 +34,4 @@ flake8.txt
 mypy.txt
 coverage.xml
 test-report.xml
-coverage-sources.zip
 coverage/
-coverage-navigaitor/
