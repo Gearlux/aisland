@@ -728,60 +728,65 @@ class JenkinsService(BaseService):
             ET.SubElement(all_view, "filterQueue").text = "false"
             ET.SubElement(all_view, "properties").set("class", "hudson.model.View$PropertyList")
 
-        # Check if the view already exists
-        view_exists = False
+        # Find or create the view
+        dashboard_view = None
         for v in views:
             if v.findtext("name") == name:
-                view_exists = True
+                dashboard_view = v
                 break
 
-        if not view_exists:
-            click.echo(f"  - Creating '{name}' view (branches: main, dev/main) " f"with Build Monitor View plugin...")
-
-            # Add Build Monitor View
-            bm_view = ET.SubElement(
+        if dashboard_view is None:
+            click.echo(
+                f"  - Creating '{name}' view (branches: main, dev/main, *.local) " f"with Build Monitor View plugin..."
+            )
+            dashboard_view = ET.SubElement(
                 views,
                 "com.smartcodeltd.jenkinsci.plugins.buildmonitor.BuildMonitorView",
             )
-            bm_view.set("plugin", "build-monitor-plugin")
-
-            ET.SubElement(bm_view, "owner").set("class", "hudson")
-            ET.SubElement(bm_view, "owner").set("reference", "../../..")
-            ET.SubElement(bm_view, "name").text = name
-            ET.SubElement(bm_view, "filterExecutors").text = "false"
-            ET.SubElement(bm_view, "filterQueue").text = "false"
-            ET.SubElement(bm_view, "properties").set("class", "hudson.model.View$PropertyList")
-            ET.SubElement(bm_view, "jobNames").set("class", "hudson.util.CaseInsensitiveComparator")
-
-            job_filters = ET.SubElement(bm_view, "jobFilters")
-
-            # Regex Filter for standard Gearlux branches: main and dev/main
-            regex_filter = ET.SubElement(job_filters, "hudson.views.RegExJobFilter")
-            regex_filter.set("plugin", "view-job-filters")
-            ET.SubElement(regex_filter, "includeExcludeTypeString").text = "includeMatched"
-            ET.SubElement(regex_filter, "valueTypeString").text = "NAME"
-            ET.SubElement(regex_filter, "regex").text = "^(main|dev/main)$"
-            ET.SubElement(regex_filter, "matchCanary").text = "false"
-
-            ET.SubElement(bm_view, "columns").set("class", "empty-list")
-            ET.SubElement(bm_view, "recurse").text = "true"
-            ET.SubElement(bm_view, "title").text = name
-
-            config = ET.SubElement(bm_view, "config")
+            dashboard_view.set("plugin", "build-monitor-plugin")
+            ET.SubElement(dashboard_view, "owner").set("class", "hudson")
+            ET.SubElement(dashboard_view, "owner").set("reference", "../../..")
+            ET.SubElement(dashboard_view, "name").text = name
+            ET.SubElement(dashboard_view, "filterExecutors").text = "false"
+            ET.SubElement(dashboard_view, "filterQueue").text = "false"
+            ET.SubElement(dashboard_view, "properties").set("class", "hudson.model.View$PropertyList")
+            ET.SubElement(dashboard_view, "jobNames").set("class", "hudson.util.CaseInsensitiveComparator")
+            ET.SubElement(dashboard_view, "jobFilters")
+            ET.SubElement(dashboard_view, "columns").set("class", "empty-list")
+            ET.SubElement(dashboard_view, "recurse").text = "true"
+            ET.SubElement(dashboard_view, "title").text = name
+            config = ET.SubElement(dashboard_view, "config")
             ET.SubElement(config, "displayCommitters").text = "true"
             ET.SubElement(config, "displayLowPriorityJobs").text = "false"
             ET.SubElement(config, "displayLastBuildConsoleOutput").text = "true"
             ET.SubElement(config, "order").set("class", "com.smartcodeltd.jenkinsci.plugins.buildmonitor.order.ByName")
 
-            # Revert primary view to 'all' to ensure standard overview is default
-            primary_view = root.find("primaryView")
-            if primary_view is not None:
-                primary_view.text = "all"
+        # Always ensure the regex filter is present and correct
+        job_filters = dashboard_view.find("jobFilters")
+        if job_filters is None:
+            job_filters = ET.SubElement(dashboard_view, "jobFilters")
 
-            # Robust write
-            tree.write(config_file, encoding="UTF-8", xml_declaration=True)
+        regex_filter = job_filters.find("hudson.views.RegExJobFilter")
+        if regex_filter is None:
+            regex_filter = ET.SubElement(job_filters, "hudson.views.RegExJobFilter")
+            regex_filter.set("plugin", "view-job-filters")
+            ET.SubElement(regex_filter, "includeExcludeTypeString").text = "includeMatched"
+            ET.SubElement(regex_filter, "valueTypeString").text = "NAME"
+            ET.SubElement(regex_filter, "regex").text = "^(main|dev/main|.*\\.local)$"
+            ET.SubElement(regex_filter, "matchCanary").text = "false"
         else:
-            click.echo(f"  - Dashboard view '{name}' already exists.")
+            regex_elem = regex_filter.find("regex")
+            if regex_elem is None:
+                regex_elem = ET.SubElement(regex_filter, "regex")
+            regex_elem.text = "^(main|dev/main|.*\\.local)$"
+
+        # Revert primary view to 'all' to ensure standard overview is default
+        primary_view = root.find("primaryView")
+        if primary_view is not None:
+            primary_view.text = "all"
+
+        # Robust write
+        tree.write(config_file, encoding="UTF-8", xml_declaration=True)
 
     def setup_global_properties(self) -> None:
         """Add WORKSPACE_ROOT and other workspace-wide settings to Jenkins global properties."""
@@ -820,7 +825,7 @@ class JenkinsService(BaseService):
         env_vars.set("serialization", "custom")
         ET.SubElement(env_vars, "unserializable-parents")
         tree_map = ET.SubElement(env_vars, "tree-map")
-        
+
         # Add default/comparator
         default_elem = ET.SubElement(tree_map, "default")
         ET.SubElement(default_elem, "comparator").set("class", "hudson.util.CaseInsensitiveComparator")

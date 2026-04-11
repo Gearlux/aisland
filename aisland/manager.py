@@ -418,7 +418,9 @@ def run_quality_gates(arg1: Optional[str] = None, arg2: Optional[str] = None) ->
         target_project = arg1
         target_tool = arg2  # Can be None (all tools)
     elif arg1:
-        click.echo(f"Error: Argument '{arg1}' is neither a project nor a supported tool ({', '.join(supported_tools)}).")
+        click.echo(
+            f"Error: Argument '{arg1}' is neither a project nor a supported tool ({', '.join(supported_tools)})."
+        )
         return
 
     # Filter projects
@@ -445,7 +447,6 @@ def run_quality_gates(arg1: Optional[str] = None, arg2: Optional[str] = None) ->
             ("mypy", ["mypy", str(project_dir.relative_to(workspace_root))], False),
             ("pytest", ["pytest"], True),
         ]
-
 
         if target_tool:
             active_tools = [t for t in all_tools if t[0] == target_tool]
