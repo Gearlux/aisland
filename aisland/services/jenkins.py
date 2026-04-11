@@ -815,17 +815,28 @@ class JenkinsService(BaseService):
         if env_vars is not None:
             env_vars_prop.remove(env_vars)
 
+        # Create envVars with custom serialization (tree-map)
         env_vars = ET.SubElement(env_vars_prop, "envVars")
+        env_vars.set("serialization", "custom")
+        ET.SubElement(env_vars, "unserializable-parents")
+        tree_map = ET.SubElement(env_vars, "tree-map")
+        
+        # Add default/comparator
+        default_elem = ET.SubElement(tree_map, "default")
+        ET.SubElement(default_elem, "comparator").set("class", "hudson.util.CaseInsensitiveComparator")
+
         workspace_root = get_workspace_root()
         env_data = {
             "WORKSPACE_ROOT": str(workspace_root),
             "FORCE_JAVASCRIPT_ACTIONS_TO_NODE24": "true",
         }
 
+        # int size
+        ET.SubElement(tree_map, "int").text = str(len(env_data))
+
         for key, value in env_data.items():
-            entry = ET.SubElement(env_vars, "entry")
-            ET.SubElement(entry, "string").text = key
-            ET.SubElement(entry, "string").text = value
+            ET.SubElement(tree_map, "string").text = key
+            ET.SubElement(tree_map, "string").text = value
             click.echo(f"  - Added global Jenkins property: {key}={value}")
 
         tree.write(config_file, encoding="UTF-8", xml_declaration=True)

@@ -438,18 +438,19 @@ def run_quality_gates(arg1: Optional[str] = None, arg2: Optional[str] = None) ->
         click.echo(f"==> Checking {name} at {project_dir}...")
 
         # Quality Gate Tools configuration
-        tools_config = [
+        all_tools = [
             ("isort", ["isort", "."], True),
             ("black", ["black", "."], True),
             ("flake8", ["flake8", "."], True),
-            ("mypy", ["mypy", "-p", name.replace("-manager", "")], False),
+            ("mypy", ["mypy", str(project_dir.relative_to(workspace_root))], False),
             ("pytest", ["pytest"], True),
         ]
 
+
         if target_tool:
-            active_tools = [t for t in tools_config if t[0] == target_tool]
+            active_tools = [t for t in all_tools if t[0] == target_tool]
         else:
-            active_tools = tools_config
+            active_tools = all_tools
 
         project_failed = False
         for current_tool_name, cmd, project_relative in active_tools:
