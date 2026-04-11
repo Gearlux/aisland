@@ -255,11 +255,17 @@ def reset() -> None:
 
 
 @main.command(name="check")
-@click.argument("project", required=False)
-@click.option("--tool", help="Run only a specific tool (isort, black, flake8, mypy, pytest).")
-def check(project: Optional[str], tool: Optional[str]) -> None:
-    """Run quality gates (isort, black, flake8, mypy, pytest) for all or a specific project."""
-    run_quality_gates(project_name=project, tool_name=tool)
+@click.argument("arg1", required=False)
+@click.argument("arg2", required=False)
+def check(arg1: Optional[str], arg2: Optional[str]) -> None:
+    """
+    Run quality gates.
+    aisland check                 -> All projects, all tools
+    aisland check confluid         -> All tools for confluid
+    aisland check pytest          -> pytest for all projects
+    aisland check pytest confluid -> pytest for confluid
+    """
+    run_quality_gates(arg1=arg1, arg2=arg2)
 
 
 if __name__ == "__main__":

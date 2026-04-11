@@ -429,10 +429,11 @@ class JenkinsService(BaseService):
 
     def _create_orchestrator_job(self, local: bool, initialized_projects: List[str]) -> None:
         """Create an orchestrator job that builds all discovered projects in topological order."""
-        from aisland.manager import get_install_order, get_workspace_root
+        from aisland.manager import get_install_order, get_workspace_name, get_workspace_root
 
         workspace_root = get_workspace_root()
         install_order = get_install_order(workspace_root)
+        base_name = get_workspace_name()
 
         initialized_names = {p for p in initialized_projects}
 
@@ -487,11 +488,8 @@ class JenkinsService(BaseService):
 
         from xml.sax.saxutils import escape
 
-        from aisland.manager import get_workspace_name
-
         escaped_script = escape(pipeline_script)
 
-        base_name = get_workspace_name()
         job_name = f"{base_name}.local" if local else base_name
         description = (
             f"Orchestrates the build of all local {base_name} workspace projects based on dependencies."
@@ -695,8 +693,14 @@ class JenkinsService(BaseService):
             self.launch(background=True)
             click.echo("Jenkins started in the background.")
 
-    def setup_dashboard_view(self, name: str = "Gearlux Ecosystem Dashboard") -> None:
-        """Create a Build Monitor View for the Gearlux Ecosystem branching workflow."""
+    def setup_dashboard_view(self, name: Optional[str] = None) -> None:
+        """Create a Build Monitor View for the Ecosystem branching workflow."""
+        from aisland.manager import get_workspace_name
+
+        base_name = get_workspace_name()
+        if name is None:
+            name = f"{base_name.capitalize()} Ecosystem Dashboard"
+
         config_file = self.service_data_dir / "config.xml"
         if not config_file.exists():
             click.echo("  - Jenkins config.xml not found. Skipping view setup until first run.")
@@ -806,33 +810,22 @@ class JenkinsService(BaseService):
         if env_vars_prop is None:
             env_vars_prop = ET.SubElement(node_props, "hudson.slaves.EnvironmentVariablesNodeProperty")
 
-        # In recent Jenkins, envVars is often serialized as a custom TreeMap
+        # Clear existing envVars
         env_vars = env_vars_prop.find("envVars")
         if env_vars is not None:
             env_vars_prop.remove(env_vars)
 
         env_vars = ET.SubElement(env_vars_prop, "envVars")
-        env_vars.set("serialization", "custom")
-        ET.SubElement(env_vars, "unserializable-parents")
-        tree_map = ET.SubElement(env_vars, "tree-map")
-
-        # Add Comparator
-        default_elem = ET.SubElement(tree_map, "default")
-        ET.SubElement(default_elem, "comparator").set("class", "hudson.util.CaseInsensitiveComparator")
-
         workspace_root = get_workspace_root()
         env_data = {
             "WORKSPACE_ROOT": str(workspace_root),
             "FORCE_JAVASCRIPT_ACTIONS_TO_NODE24": "true",
         }
 
-        # Number of entries
-        ET.SubElement(tree_map, "int").text = str(len(env_data))
-
-        # Add key-value pairs
         for key, value in env_data.items():
-            ET.SubElement(tree_map, "string").text = key
-            ET.SubElement(tree_map, "string").text = value
+            entry = ET.SubElement(env_vars, "entry")
+            ET.SubElement(entry, "string").text = key
+            ET.SubElement(entry, "string").text = value
             click.echo(f"  - Added global Jenkins property: {key}={value}")
 
         tree.write(config_file, encoding="UTF-8", xml_declaration=True)

@@ -380,8 +380,14 @@ def setup_workspace() -> None:
     click.echo("==> Workspace setup complete!")
 
 
-def run_quality_gates(project_name: Optional[str] = None, tool_name: Optional[str] = None) -> None:
-    """Execute quality gates (isort, black, flake8, mypy, pytest) for one or all projects."""
+def run_quality_gates(arg1: Optional[str] = None, arg2: Optional[str] = None) -> None:
+    """
+    Execute quality gates.
+    aisland check                 -> All projects, all tools
+    aisland check confluid         -> All tools for confluid
+    aisland check pytest          -> pytest for all projects
+    aisland check pytest confluid -> pytest for confluid
+    """
     workspace_root = get_workspace_root()
     venv_bin = workspace_root / ".venv" / "bin"
 
@@ -395,15 +401,36 @@ def run_quality_gates(project_name: Optional[str] = None, tool_name: Optional[st
 
     # Find projects to check
     pyprojects = discover_projects(workspace_root)
-    projects = [get_project_metadata(p) for p in pyprojects]
+    all_projects = [get_project_metadata(p) for p in pyprojects]
+    project_names = {p["name"] for p in all_projects}
 
-    if project_name:
-        projects = [p for p in projects if p["name"] == project_name]
+    # Tool mapping
+    supported_tools = ["isort", "black", "flake8", "mypy", "pytest"]
+
+    target_project: Optional[str] = None
+    target_tool: Optional[str] = None
+
+    # Logic to resolve arg1 and arg2
+    if arg1 in supported_tools:
+        target_tool = arg1
+        target_project = arg2  # Can be None (all projects)
+    elif arg1 in project_names:
+        target_project = arg1
+        target_tool = arg2  # Can be None (all tools)
+    elif arg1:
+        click.echo(f"Error: Argument '{arg1}' is neither a project nor a supported tool ({', '.join(supported_tools)}).")
+        return
+
+    # Filter projects
+    if target_project:
+        projects = [p for p in all_projects if p["name"] == target_project]
         if not projects:
-            click.echo(f"Error: Project '{project_name}' not found in workspace.")
+            click.echo(f"Error: Project '{target_project}' not found.")
             return
+    else:
+        projects = all_projects
 
-    results = []
+    results: list[tuple[str, bool]] = []
 
     for project in projects:
         project_dir = project["path"]
@@ -411,7 +438,7 @@ def run_quality_gates(project_name: Optional[str] = None, tool_name: Optional[st
         click.echo(f"==> Checking {name} at {project_dir}...")
 
         # Quality Gate Tools configuration
-        all_tools = [
+        tools_config = [
             ("isort", ["isort", "."], True),
             ("black", ["black", "."], True),
             ("flake8", ["flake8", "."], True),
@@ -419,12 +446,10 @@ def run_quality_gates(project_name: Optional[str] = None, tool_name: Optional[st
             ("pytest", ["pytest"], True),
         ]
 
-        active_tools = all_tools
-        if tool_name:
-            active_tools = [t for t in all_tools if t[0] == tool_name]
-            if not active_tools:
-                click.echo(f"Error: Tool '{tool_name}' not supported.")
-                return
+        if target_tool:
+            active_tools = [t for t in tools_config if t[0] == target_tool]
+        else:
+            active_tools = tools_config
 
         project_failed = False
         for current_tool_name, cmd, project_relative in active_tools:
@@ -434,15 +459,20 @@ def run_quality_gates(project_name: Optional[str] = None, tool_name: Optional[st
                 click.echo(f"  [{click.style('PASS', fg='green')}] {current_tool_name}")
             except subprocess.CalledProcessError:
                 click.echo(f"  [{click.style('FAIL', fg='red')}] {current_tool_name}")
+                # Re-run to show output if it failed
+                click.echo(f"--- {current_tool_name} Output ---")
+                subprocess.run(cmd, cwd=cwd, env=env)
+                click.echo("-----------------------")
                 project_failed = True
 
         results.append((name, not project_failed))
 
     # Summary table
-    click.echo("\nQuality Gate Summary:")
-    for name, success in results:
-        status = click.style("SUCCESS", fg="green") if success else click.style("FAILURE", fg="red")
-        click.echo(f"  {name:<25} : {status}")
+    if len(results) > 1:
+        click.echo("\nQuality Gate Summary:")
+        for name, success in results:
+            status = click.style("SUCCESS", fg="green") if success else click.style("FAILURE", fg="red")
+            click.echo(f"  {name:<25} : {status}")
 
     if any(not r[1] for r in results):
         exit(1)
