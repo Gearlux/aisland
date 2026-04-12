@@ -50,7 +50,7 @@ class LabelStudioService(BaseService):
         # Update .env file with the token and URL
         self._update_env_file(user_token, port)
 
-        click.echo("Label Studio Login:")
+        click.echo(f"Label Studio: http://localhost:{port}")
         click.echo(f"  Username: {username}")
         click.echo(f"  Password: {password}")
 

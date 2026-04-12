@@ -6,6 +6,16 @@ This directory contains the infrastructure and server management tools for the d
 - **Python 3.12+**
 - **Java OpenJDK 17 or higher** (Required for Jenkins)
 
+## Default Ports
+
+| Service       | Port | URL                        |
+|---------------|------|----------------------------|
+| Jenkins       | 9080 | http://localhost:9080      |
+| Label Studio  | 9081 | http://localhost:9081      |
+| MLflow        | 5005 | http://localhost:5005      |
+
+All ports are configurable via `--port` flag.
+
 ## Setup & Usage
 
 ### 1. Check Status
@@ -42,7 +52,7 @@ aisland mlflow start --background
 aisland mlflow stop
 aisland mlflow status
 ```
-Default: [http://localhost:5000](http://localhost:5000)
+Default: [http://localhost:5005](http://localhost:5005)
 
 ## Jenkins Configuration
 - **JENKINS_HOME:** All data, jobs, and configurations are stored in `aisland/data/jenkins`. This directory is ignored by Git to keep your local environment clean.

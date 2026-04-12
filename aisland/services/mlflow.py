@@ -27,6 +27,7 @@ class MLflowService(BaseService):
         """Start the MLflow tracking server."""
         self.setup()
         self.artifacts_path.mkdir(exist_ok=True)
+        click.echo(f"MLflow: http://localhost:{port}")
 
         cmd = [
             sys.executable,

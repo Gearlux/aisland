@@ -256,6 +256,7 @@ class JenkinsService(BaseService):
     def launch(self, port: int = 9080, background: bool = False) -> None:
         """Start the Jenkins server."""
         self.setup()
+        click.echo(f"Jenkins: http://localhost:{port}")
         self.check_credentials_and_print_instructions(port)
 
         # Suppress Java 25+ warnings for terminal deprecation and illegal access
