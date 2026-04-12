@@ -45,7 +45,6 @@ class BaseService:
             patterns = {
                 "jenkins": "jenkins.war",
                 "mlflow": "mlflow server",
-                "labelstudio": "label_studio start",
             }
             pattern = patterns.get(self.name, self.name)
 
