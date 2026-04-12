@@ -42,7 +42,11 @@ class BaseService:
     def _find_process_by_pattern(self) -> bool:
         """Search for a running process that looks like this service using pgrep."""
         try:
-            patterns = {"jenkins": "jenkins.war", "mlflow": "mlflow server"}
+            patterns = {
+                "jenkins": "jenkins.war",
+                "mlflow": "mlflow server",
+                "labelstudio": "label_studio start",
+            }
             pattern = patterns.get(self.name, self.name)
 
             # Use pgrep -f to search the full command line
