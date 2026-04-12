@@ -4,6 +4,7 @@ import click
 
 from aisland.manager import provision_system, run_quality_gates, setup_workspace
 from aisland.services.jenkins import JenkinsService
+from aisland.services.labelstudio import LabelStudioService
 from aisland.services.mlflow import MLflowService
 from aisland.services.swiftbar import SwiftBarService
 
@@ -165,32 +166,66 @@ def mlflow_reset() -> None:
     MLflowService().reset()
 
 
+@mlflow.command(name="ui")
+@click.argument("db_file")
+@click.option("--port", default=5000, help="HTTP port for MLflow UI.")
+def mlflow_ui(db_file: str, port: int) -> None:
+    """Run local MLflow UI with the given database file."""
+    MLflowService().ui(db_path=db_file, port=port)
+
+
 # --- Label Studio Commands ---
 
 
 @main.group()
+def labelstudio() -> None:
     """Manage local Label Studio annotation server."""
     pass
 
 
+@labelstudio.command(name="start")
 @click.option("--port", default=8080, help="HTTP port for Label Studio.")
 @click.option("--background", "-b", is_flag=True, help="Run in background.")
+@click.option("--username", default=None, help="Username for default user (defaults to git email).")
+@click.option("--password", default="gearlux", help="Password for default user.")
+@click.option("--token", default="gearlux_token_1234567890abcdef12345678", help="User token for API access.")
+def labelstudio_start(port: int, background: bool, username: Optional[str], password: str, token: str) -> None:
     """Start Label Studio."""
+    LabelStudioService().launch(
+        port=port, background=background, username=username, password=password, user_token=token
+    )
 
 
+@labelstudio.command(name="stop")
+def labelstudio_stop() -> None:
     """Stop Label Studio."""
+    LabelStudioService().stop()
 
 
+@labelstudio.command(name="status")
+def labelstudio_status() -> None:
     """Show Label Studio status."""
+    LabelStudioService().status()
 
 
+@labelstudio.command(name="restart")
 @click.option("--port", default=8080, help="HTTP port for Label Studio.")
 @click.option("--background", "-b", is_flag=True, help="Run in background.")
+@click.option("--username", default=None, help="Username for default user (defaults to git email).")
+@click.option("--password", default="gearlux", help="Password for default user.")
+@click.option("--token", default="gearlux_token_1234567890abcdef12345678", help="User token for API access.")
+def labelstudio_restart(port: int, background: bool, username: Optional[str], password: str, token: str) -> None:
     """Restart Label Studio."""
+    LabelStudioService().restart(
+        port=port, background=background, username=username, password=password, user_token=token
+    )
 
 
+@labelstudio.command(name="reset")
 @click.confirmation_option(prompt="Are you sure you want to wipe all Label Studio data?")
+def labelstudio_reset() -> None:
     """Stop Label Studio and wipe all its data."""
+    LabelStudioService().reset()
 
 
 # --- SwiftBar Commands ---
@@ -247,6 +282,7 @@ def status() -> None:
     click.echo("Aisland Infrastructure Status:")
     JenkinsService().status()
     MLflowService().status()
+    LabelStudioService().status()
     SwiftBarService().status()
 
 
@@ -257,6 +293,7 @@ def start(background: bool) -> None:
     click.echo("Starting all services...")
     JenkinsService().launch(background=background)
     MLflowService().launch(background=background)
+    LabelStudioService().launch(background=background)
     SwiftBarService().launch()
 
 
@@ -266,6 +303,7 @@ def stop() -> None:
     click.echo("Stopping all services...")
     JenkinsService().stop()
     MLflowService().stop()
+    LabelStudioService().stop()
     SwiftBarService().stop()
 
 
@@ -276,6 +314,7 @@ def restart(background: bool) -> None:
     click.echo("Restarting all services...")
     JenkinsService().restart(background=background)
     MLflowService().restart(background=background)
+    LabelStudioService().restart(background=background)
     SwiftBarService().restart()
 
 
@@ -286,6 +325,7 @@ def reset() -> None:
     click.echo("Resetting all services...")
     JenkinsService().reset()
     MLflowService().reset()
+    LabelStudioService().reset()
     SwiftBarService().reset()
 
 

@@ -181,6 +181,16 @@ class BaseService:
         click.echo(f"{self.name.capitalize()} data reset.")
 
 
+def get_git_email() -> str:
+    """Get the git user email from the current project."""
+    try:
+        # Use workspace root to ensure we get the project's git config
+        root = get_workspace_root()
+        return subprocess.check_output(["git", "-C", str(root), "config", "user.email"], text=True).strip()
+    except (subprocess.CalledProcessError, FileNotFoundError):
+        return "gearlux@gearlux.com"
+
+
 def get_workspace_root() -> Path:
     """Resolve the absolute path to the workspace root by searching upwards for a marker."""
     curr = Path(__file__).resolve()

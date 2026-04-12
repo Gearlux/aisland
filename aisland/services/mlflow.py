@@ -44,3 +44,34 @@ class MLflowService(BaseService):
         ]
 
         self.start(cmd, background=background)
+
+    def ui(self, db_path: str, port: int = 5000) -> None:
+        """Run MLflow UI with a specific database file."""
+        self.setup()
+
+        # Ensure path is absolute for sqlite:///
+        from pathlib import Path
+
+        abs_db_path = Path(db_path).resolve()
+
+        cmd = [
+            sys.executable,
+            "-m",
+            "mlflow",
+            "ui",
+            "--port",
+            str(port),
+            "--backend-store-uri",
+            f"sqlite:///{abs_db_path}",
+        ]
+
+        # We run this in the foreground as it's typically for quick local inspection
+        click.echo(f"Starting MLflow UI for {abs_db_path} on port {port}...")
+        try:
+            import subprocess
+
+            subprocess.check_call(cmd)
+        except KeyboardInterrupt:
+            click.echo("\nStopping MLflow UI...")
+        except Exception as e:
+            click.echo(f"Error starting MLflow UI: {e}")
