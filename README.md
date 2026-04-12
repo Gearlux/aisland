@@ -58,8 +58,19 @@ Default: [http://localhost:5005](http://localhost:5005)
 - **JENKINS_HOME:** All data, jobs, and configurations are stored in `aisland/data/jenkins`. This directory is ignored by Git to keep your local environment clean.
 - **Pipelines:** Each project (e.g., `logflow/`) contains its own `Jenkinsfile`. When creating a new job in Jenkins, point it to the local repository path and select "Pipeline from SCM" with the script path set to `logflow/Jenkinsfile`.
 
-## Future Services
-Placeholders for **LabelStudio** and **Grafana/Loki** are being prepared and will be integrated into the `aisland` CLI in future updates.
+### 4. Manage Label Studio
+```bash
+# Start Label Studio (foreground)
+aisland labelstudio start
+
+# Start Label Studio (background)
+aisland labelstudio start --background
+
+# Stop/Status
+aisland labelstudio stop
+aisland labelstudio status
+```
+Default: [http://localhost:9081](http://localhost:9081)
 
 ## Submodule Management
 
