@@ -109,9 +109,10 @@ def jenkins_init(project: Optional[str], local: bool) -> None:
 
 @jenkins.command(name="scaffold")
 @click.argument("project")
-def jenkins_scaffold(project: str) -> None:
-    """Generate standard Jenkinsfile and Jenkinsfile.local for a project."""
-    JenkinsService().scaffold_pipelines(project_name=project)
+@click.option("--force", "-f", is_flag=True, help="Overwrite existing files.")
+def jenkins_scaffold(project: str, force: bool) -> None:
+    """Generate standard Jenkinsfile, Jenkinsfile.local, and GitHub Actions for a project."""
+    JenkinsService().scaffold_pipelines(project_name=project, force=force)
 
 
 @jenkins.command(name="remove")

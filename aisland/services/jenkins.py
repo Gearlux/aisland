@@ -520,8 +520,8 @@ class JenkinsService(BaseService):
         config_file.write_text(config_xml)
         click.echo(f"  - Seeded orchestrator job: {job_name}")
 
-    def scaffold_pipelines(self, project_name: str) -> None:
-        """Generate standard Jenkinsfile and Jenkinsfile.local for a project."""
+    def scaffold_pipelines(self, project_name: str, force: bool = False) -> None:
+        """Generate standard Jenkinsfile, Jenkinsfile.local, and GitHub Actions for a project."""
         from aisland.manager import get_project_metadata, get_workspace_root
 
         workspace_root = get_workspace_root()
@@ -546,7 +546,16 @@ class JenkinsService(BaseService):
                     pkg_name = d.name
                     break
 
-        click.echo(f"Scaffolding Jenkins files for {project_name} (Package: {pkg_name})...")
+        click.echo(f"Scaffolding CI/CD for {project_name} (Package: {pkg_name})...")
+
+        # Helper to write file safely
+        def _write_safe(path: Path, content: str, desc: str) -> None:
+            if path.exists() and not force:
+                click.echo(f"  [SKIP] {desc} already exists. Use --force to overwrite.")
+                return
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text(content)
+            click.echo(f"  [OK] Created {desc}")
 
         # 1. Jenkinsfile.local
         local_content = f"""pipeline {{
@@ -757,11 +766,9 @@ with open('isort-checkstyle.xml', 'w') as f:
     }}
 }}
 """
-        (project_path / "Jenkinsfile.local").write_text(local_content)
-        click.echo(f"  - Created {project_path}/Jenkinsfile.local")
+        _write_safe(project_path / "Jenkinsfile.local", local_content, "Jenkinsfile.local")
 
         # 2. Jenkinsfile (Standard)
-        # We simplify this one to use generic workspace and git-based installs
         standard_content = f"""pipeline {{
     agent any
 
@@ -884,8 +891,92 @@ with open('isort-checkstyle.xml', 'w') as f:
     }}
 }}
 """
-        (project_path / "Jenkinsfile").write_text(standard_content)
-        click.echo(f"  - Created {project_path}/Jenkinsfile")
+        _write_safe(project_path / "Jenkinsfile", standard_content, "Jenkinsfile")
+
+        # 3. GitHub Actions (.github/workflows/ci.yml)
+        gh_content = f"""name: {project_name.capitalize()} CI
+
+on:
+  push:
+    branches: [ main, dev/main ]
+  pull_request:
+    branches: [ main ]
+
+jobs:
+  quality-gates:
+    name: Quality Gates
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v4
+    - name: Set up Python 3.12
+      uses: actions/setup-python@v5
+      with:
+        python-version: "3.12"
+        cache: 'pip'
+    - name: Install dependencies
+      run: |
+        python -m pip install --upgrade pip
+        pip install git+https://github.com/Gearlux/logflow.git@main || true
+        pip install git+https://github.com/Gearlux/confluid.git@main || true
+        pip install -e ".[dev]"
+    - name: Run Isort
+      run: isort --check-only .
+    - name: Run Black
+      run: black --check .
+    - name: Run Flake8
+      run: flake8 .
+    - name: Run Mypy
+      run: mypy .
+
+  unit-tests:
+    name: Unit Tests & Coverage
+    needs: [quality-gates]
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v4
+    - name: Set up Python 3.12
+      uses: actions/setup-python@v5
+      with:
+        python-version: "3.12"
+        cache: 'pip'
+    - name: Install dependencies
+      run: |
+        python -m pip install --upgrade pip
+        pip install git+https://github.com/Gearlux/logflow.git@main || true
+        pip install git+https://github.com/Gearlux/confluid.git@main || true
+        pip install -e ".[dev]"
+    - name: Run Tests
+      run: |
+        pytest tests --junitxml=test-report.xml --cov={pkg_name} --cov-report=xml --cov-report=term
+    - name: Upload Test Results
+      uses: actions/upload-artifact@v4
+      with:
+        name: test-results
+        path: test-report.xml
+      if: always()
+
+  verify-examples:
+    name: Verify Examples
+    needs: [unit-tests]
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v4
+    - name: Set up Python 3.12
+      uses: actions/setup-python@v5
+      with:
+        python-version: "3.12"
+        cache: 'pip'
+    - name: Install dependencies
+      run: |
+        python -m pip install --upgrade pip
+        pip install git+https://github.com/Gearlux/logflow.git@main || true
+        pip install git+https://github.com/Gearlux/confluid.git@main || true
+        pip install -e ".[dev]"
+    - name: Run Examples
+      run: |
+        for f in examples/*.py; do echo "Verifying $f..."; python "$f" --help; done
+"""
+        _write_safe(project_path / ".github" / "workflows" / "ci.yml", gh_content, "GitHub CI Workflow")
 
     def init_pipelines(self, project_name: Optional[str] = None, local: bool = False) -> None:
         """Seed Jenkins with Multi-branch pipelines for projects discovered in the workspace."""
