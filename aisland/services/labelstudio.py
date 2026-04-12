@@ -31,11 +31,19 @@ class LabelStudioService(BaseService):
         port: int = 8080,
         background: bool = False,
         username: Optional[str] = None,
-        password: str = "gearlux",
-        user_token: str = "gearlux_token_1234567890abcdef12345678",
+        password: Optional[str] = None,
+        user_token: Optional[str] = None,
     ) -> None:
         """Start the Label Studio server."""
         self.setup()
+
+        from aisland.manager import get_workspace_name
+
+        ws_name = get_workspace_name()
+        if password is None:
+            password = ws_name
+        if user_token is None:
+            user_token = f"{ws_name}_token_1234567890abcdef12345678"
 
         if username is None:
             username = get_git_email()
