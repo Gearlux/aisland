@@ -303,7 +303,7 @@ for PROJECT in "${{PROJECTS[@]}}"; do
             fi
 
             ENCODED_BRANCH=$(echo "$DISPLAY_NAME" | sed 's/\\//%2F/g')
-            BRANCH_URL="http://localhost:8080/job/${{PROJECT}}/job/${{ENCODED_BRANCH}}"
+            BRANCH_URL="http://localhost:9080/job/${{PROJECT}}/job/${{ENCODED_BRANCH}}"
 
             DROPDOWN_TEXT+="${{DISPLAY_NAME}}: ${{STATUS_STR}} | href=${{BRANCH_URL}}\\n"
         done
@@ -323,7 +323,7 @@ echo "---"
 echo -e "$DROPDOWN_TEXT"
 echo "---"
 echo "Refresh Now | refresh=true"
-echo "Open Jenkins | href=http://localhost:8080"
+echo "Open Jenkins | href=http://localhost:9080"
 """
         script_path.write_text(content)
         script_path.chmod(0o755)

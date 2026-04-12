@@ -57,7 +57,7 @@ def jenkins() -> None:
 
 
 @jenkins.command(name="start")
-@click.option("--port", default=8080, help="HTTP port for Jenkins.")
+@click.option("--port", default=9080, help="HTTP port for Jenkins.")
 @click.option("--background", "-b", is_flag=True, help="Run in background.")
 def jenkins_start(port: int, background: bool) -> None:
     """Start Jenkins."""
@@ -77,7 +77,7 @@ def jenkins_status() -> None:
 
 
 @jenkins.command(name="restart")
-@click.option("--port", default=8080, help="HTTP port for Jenkins.")
+@click.option("--port", default=9080, help="HTTP port for Jenkins.")
 @click.option("--background", "-b", is_flag=True, help="Run in background.")
 def jenkins_restart(port: int, background: bool) -> None:
     """Restart Jenkins."""
@@ -184,7 +184,7 @@ def labelstudio() -> None:
 
 
 @labelstudio.command(name="start")
-@click.option("--port", default=8080, help="HTTP port for Label Studio.")
+@click.option("--port", default=9081, help="HTTP port for Label Studio.")
 @click.option("--background", "-b", is_flag=True, help="Run in background.")
 @click.option("--username", default=None, help="Username for default user (defaults to git email).")
 @click.option("--password", default="gearlux", help="Password for default user.")
@@ -209,7 +209,7 @@ def labelstudio_status() -> None:
 
 
 @labelstudio.command(name="restart")
-@click.option("--port", default=8080, help="HTTP port for Label Studio.")
+@click.option("--port", default=9081, help="HTTP port for Label Studio.")
 @click.option("--background", "-b", is_flag=True, help="Run in background.")
 @click.option("--username", default=None, help="Username for default user (defaults to git email).")
 @click.option("--password", default="gearlux", help="Password for default user.")

@@ -9,7 +9,7 @@ To download the base Jenkins binary (if missing) and launch the server:
 ```bash
 aisland jenkins start --background
 ```
-- **Default URL:** [http://localhost:8080](http://localhost:8080)
+- **Default URL:** [http://localhost:9080](http://localhost:9080)
 - **Home Directory:** `aisland/data/jenkins/`
 
 *Note: The `start` command intentionally does NOT aggressively install plugins. It simply brings the server up and checks if you have configured credentials.*

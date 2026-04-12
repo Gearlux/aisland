@@ -1,5 +1,4 @@
 import sys
-from pathlib import Path
 from typing import Optional
 
 import click
@@ -28,7 +27,7 @@ class LabelStudioService(BaseService):
 
     def launch(
         self,
-        port: int = 8080,
+        port: int = 9081,
         background: bool = False,
         username: Optional[str] = None,
         password: Optional[str] = None,
@@ -48,8 +47,8 @@ class LabelStudioService(BaseService):
         if username is None:
             username = get_git_email()
 
-        # Update .env file with the token
-        self._update_env_file(user_token)
+        # Update .env file with the token and URL
+        self._update_env_file(user_token, port)
 
         click.echo("Label Studio Login:")
         click.echo(f"  Username: {username}")
@@ -80,31 +79,40 @@ class LabelStudioService(BaseService):
 
         self.start(cmd, env=env, background=background)
 
-    def _update_env_file(self, token: str) -> None:
-        """Add or replace LABELSTUDIO_TOKEN in the root .env file."""
-        # The file is at aisland/aisland/services/labelstudio.py
-        # workspace_root is 4 levels up: services -> aisland -> aisland -> workspace
-        workspace_root = Path(__file__).resolve().parents[3]
+    def _update_env_file(self, token: str, port: int = 9081) -> None:
+        """Add or replace LABELSTUDIO_TOKEN and LABELSTUDIO_URL in the root .env file."""
+        from aisland.manager import get_workspace_root
+
+        workspace_root = get_workspace_root()
         env_file = workspace_root / ".env"
-        token_line = f"LABELSTUDIO_TOKEN={token}"
+        url = f"http://localhost:{port}"
+        entries = {
+            "LABELSTUDIO_TOKEN": token,
+            "LABELSTUDIO_URL": url,
+        }
 
         if not env_file.exists():
-            env_file.write_text(token_line + "\n")
-            click.echo("Created .env with LABELSTUDIO_TOKEN.")
+            env_file.write_text("\n".join(f"{k}={v}" for k, v in entries.items()) + "\n")
+            click.echo(f"Created .env with LABELSTUDIO_TOKEN and LABELSTUDIO_URL={url}.")
             return
 
         content = env_file.read_text().splitlines()
         new_content = []
-        found = False
+        found_keys: set[str] = set()
         for line in content:
-            if line.startswith("LABELSTUDIO_TOKEN="):
-                new_content.append(token_line)
-                found = True
-            else:
+            replaced = False
+            for key, value in entries.items():
+                if line.startswith(f"{key}="):
+                    new_content.append(f"{key}={value}")
+                    found_keys.add(key)
+                    replaced = True
+                    break
+            if not replaced:
                 new_content.append(line)
 
-        if not found:
-            new_content.append(token_line)
+        for key, value in entries.items():
+            if key not in found_keys:
+                new_content.append(f"{key}={value}")
 
         env_file.write_text("\n".join(new_content) + "\n")
-        click.echo("Updated .env with LABELSTUDIO_TOKEN.")
+        click.echo(f"Updated .env with LABELSTUDIO_TOKEN and LABELSTUDIO_URL={url}.")

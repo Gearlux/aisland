@@ -28,7 +28,7 @@ aisland jenkins start --background
 aisland jenkins stop
 aisland jenkins status
 ```
-Default: [http://localhost:8080](http://localhost:8080)
+Default: [http://localhost:9080](http://localhost:9080)
 
 ### 3. Manage MLflow
 ```bash

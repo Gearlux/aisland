@@ -253,7 +253,7 @@ class JenkinsService(BaseService):
             )
             click.echo("=" * 65 + "\n")
 
-    def launch(self, port: int = 8080, background: bool = False) -> None:
+    def launch(self, port: int = 9080, background: bool = False) -> None:
         """Start the Jenkins server."""
         self.setup()
         self.check_credentials_and_print_instructions(port)
@@ -387,7 +387,7 @@ class JenkinsService(BaseService):
         click.echo("  - Issuing Safe Restart to Jenkins (waiting for active jobs)...")
         admin_pass_file = self.service_data_dir / "secrets/initialAdminPassword"
 
-        url = "http://localhost:8080"
+        url = "http://localhost:9080"
 
         if admin_pass_file.exists():
             password = admin_pass_file.read_text().strip()
