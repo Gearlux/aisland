@@ -58,6 +58,7 @@ class LabelStudioService(BaseService):
         env = {
             "LABEL_STUDIO_BASE_DATA_DIR": str(self.data_dir),
             "LABEL_STUDIO_DISABLE_SIGNUP_WITHOUT_LINK": "true",  # Security best practice
+            "LABEL_STUDIO_ENABLE_LEGACY_API_TOKEN": "true",  # Allow simple token auth
             "LABEL_STUDIO_USERNAME": username,
             "LABEL_STUDIO_PASSWORD": password,
             "LABEL_STUDIO_USER_TOKEN": user_token,
@@ -74,6 +75,7 @@ class LabelStudioService(BaseService):
             password,
             "--user-token",
             user_token,
+            "--enable-legacy-api-token",
             "--no-browser",
         ]
 

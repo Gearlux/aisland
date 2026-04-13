@@ -549,6 +549,23 @@ class JenkinsService(BaseService):
 
         click.echo(f"Scaffolding CI/CD for {project_name} (Package: {pkg_name})...")
 
+        # Internal Gearlux Dependencies (order matters for install)
+        gearlux_projects = [
+            "logflow", "confluid", "dataflux", "liquify", 
+            "navigaitor", "signals", "signals-rfuav", 
+            "annotaide", "torpedo", "aisland", "marainer"
+        ]
+        
+        # Filter metadata dependencies to only those in the Gearlux org
+        internal_deps = [d for d in metadata["dependencies"] if d in gearlux_projects]
+        pip_install_cmds = []
+        for dep in internal_deps:
+            pip_install_cmds.append(f'pip install git+https://github.com/Gearlux/{dep}.git@main')
+
+        pip_install_str = "\n        ".join(pip_install_cmds)
+        if pip_install_str:
+            pip_install_str = "\n        # Internal Gearlux dependencies\n        " + pip_install_str
+
         # Helper to write file safely
         def _write_safe(path: Path, content: str, desc: str) -> None:
             if path.exists() and not force:
@@ -583,7 +600,7 @@ class JenkinsService(BaseService):
                             def targets = sh(script: "for d in {pkg_name} tests examples; do if [ -d \\"\\$d\\" ] && find \\"\\$d\\" -name '*.py' | grep -q .; then printf \\"%s \\" \\"\\$d\\"; fi; done || true", returnStdout: true).trim()
                             if (targets) {{
                                 def rc = sh(script: "${{VENV_BIN}}/black --check --diff ${{targets}} > black-diff.txt 2>&1", returnStatus: true)
-                                sh \"\"\"${{VENV_BIN}}/python3 -c \"
+                                sh \"\"\"${{VENV_BIN}}/python3 -c \\"
 import sys, os
 if not os.path.exists('black-diff.txt'): sys.exit(0)
 lines = open('black-diff.txt').readlines()
@@ -596,7 +613,7 @@ with open('black-checkstyle.xml', 'w') as f:
             f.write('    <error line=\\"1\\" severity=\\"warning\\" message=\\"Black would reformat this file\\" source=\\"black\\"/>\\\\n')
             f.write('  </file>\\\\n')
     f.write('</checkstyle>\\\\n')
-\" \"\"\"
+\\" \"\"\"
                             }} else {{
                                 echo "No python files found for Black. Skipping."
                             }}
@@ -623,7 +640,7 @@ with open('black-checkstyle.xml', 'w') as f:
                             def targets = sh(script: "for d in {pkg_name} tests examples; do if [ -d \\"\\$d\\" ] && find \\"\\$d\\" -name '*.py' | grep -q .; then printf \\"%s \\" \\"\\$d\\"; fi; done || true", returnStdout: true).trim()
                             if (targets) {{
                                 def rc = sh(script: "${{VENV_BIN}}/isort --check-only --diff ${{targets}} > isort-diff.txt 2>&1", returnStatus: true)
-                                sh \"\"\"${{VENV_BIN}}/python3 -c \"
+                                sh \"\"\"${{VENV_BIN}}/python3 -c \\"
 import sys, os
 if not os.path.exists('isort-diff.txt'): sys.exit(0)
 lines = open('isort-diff.txt').readlines()
@@ -636,7 +653,7 @@ with open('isort-checkstyle.xml', 'w') as f:
             f.write('    <error line=\\"1\\" severity=\\"warning\\" message=\\"Isort import order issues\\" source=\\"isort\\"/>\\\\n')
             f.write('  </file>\\\\n')
     f.write('</checkstyle>\\\\n')
-\" \"\"\"
+\\" \"\"\"
                             }} else {{
                                 echo "No python files found for Isort. Skipping."
                             }}
@@ -786,9 +803,7 @@ with open('isort-checkstyle.xml', 'w') as f:
                 sh "python3 -m venv ${{VENV_PATH}}"
                 echo 'Installing Dependencies...'
                 sh "${{VENV_BIN}}/pip install --upgrade pip"
-                # Internal workspace dependencies
-                sh "${{VENV_BIN}}/pip install --no-cache-dir git+https://github.com/Gearlux/logflow.git@main || true"
-                sh "${{VENV_BIN}}/pip install --no-cache-dir git+https://github.com/Gearlux/confluid.git@main || true"
+                {pip_install_str}
                 sh "${{VENV_BIN}}/pip install -e .[dev]"
             }}
         }}
@@ -917,8 +932,7 @@ jobs:
     - name: Install dependencies
       run: |
         python -m pip install --upgrade pip
-        pip install git+https://github.com/Gearlux/logflow.git@main || true
-        pip install git+https://github.com/Gearlux/confluid.git@main || true
+        {pip_install_str}
         pip install -e ".[dev]"
     - name: Run Isort
       run: isort --check-only .
@@ -943,8 +957,7 @@ jobs:
     - name: Install dependencies
       run: |
         python -m pip install --upgrade pip
-        pip install git+https://github.com/Gearlux/logflow.git@main || true
-        pip install git+https://github.com/Gearlux/confluid.git@main || true
+        {pip_install_str}
         pip install -e ".[dev]"
     - name: Run Tests
       run: |
@@ -970,8 +983,7 @@ jobs:
     - name: Install dependencies
       run: |
         python -m pip install --upgrade pip
-        pip install git+https://github.com/Gearlux/logflow.git@main || true
-        pip install git+https://github.com/Gearlux/confluid.git@main || true
+        {pip_install_str}
         pip install -e ".[dev]"
     - name: Run Examples
       run: |
