@@ -574,6 +574,7 @@ class JenkinsService(BaseService):
             if base_name in gearlux_projects:
                 internal_deps.append(base_name)
 
+        # GH Actions — raw pip commands (valid inside `run: |` blocks)
         pip_install_cmds = []
         for dep in internal_deps:
             pip_install_cmds.append(f"pip install git+https://github.com/Gearlux/{dep}.git@main")
@@ -581,6 +582,24 @@ class JenkinsService(BaseService):
         pip_install_str = "\n        ".join(pip_install_cmds)
         if pip_install_str:
             pip_install_str = "\n        # Internal Gearlux dependencies\n        " + pip_install_str
+
+        # Jenkinsfile (standard) — sh-wrapped, installs from GitHub
+        jenkins_pip_cmds = []
+        for dep in internal_deps:
+            jenkins_pip_cmds.append(f'sh "${{VENV_BIN}}/pip install git+https://github.com/Gearlux/{dep}.git@main"')
+        jenkins_pip_str = "\n                ".join(jenkins_pip_cmds)
+        if jenkins_pip_str:
+            jenkins_pip_str = "\n                // Internal Gearlux dependencies\n                " + jenkins_pip_str
+
+        # Jenkinsfile.local — sh-wrapped, editable installs from local workspace
+        local_pip_cmds = []
+        for dep in internal_deps:
+            local_pip_cmds.append(f'sh "${{VENV_BIN}}/pip install -e ${{env.WORKSPACE_ROOT}}/{dep}"')
+        local_pip_str = "\n                ".join(local_pip_cmds)
+        if local_pip_str:
+            local_pip_str = (
+                "\n                // Internal Gearlux dependencies (local editable)\n                " + local_pip_str
+            )
 
         # Helper to write file safely
         def _write_safe(path: Path, content: str, desc: str) -> None:
@@ -607,6 +626,16 @@ class JenkinsService(BaseService):
     }}
 
     stages {{
+        stage('Initialize') {{
+            steps {{
+                echo 'Validating Environment...'
+                sh "${{VENV_BIN}}/python3 --version"
+                echo 'Installing Project in Editable Mode...'
+                {local_pip_str}
+                sh "${{VENV_BIN}}/pip install -e .[dev]"
+            }}
+        }}
+
         stage('Quality Gates') {{
             parallel {{
                 stage('Black') {{
@@ -616,20 +645,20 @@ class JenkinsService(BaseService):
                             def targets = sh(script: "for d in {pkg_name} tests examples; do if [ -d \\"\\$d\\" ] && find \\"\\$d\\" -name '*.py' | grep -q .; then printf \\"%s \\" \\"\\$d\\"; fi; done || true", returnStdout: true).trim()
                             if (targets) {{
                                 def rc = sh(script: "${{VENV_BIN}}/black --check --diff ${{targets}} > black-diff.txt 2>&1", returnStatus: true)
-                                sh \"\"\"${{VENV_BIN}}/python3 -c \\"
+                                sh \"\"\"${{VENV_BIN}}/python3 -c "
 import sys, os
 if not os.path.exists('black-diff.txt'): sys.exit(0)
 lines = open('black-diff.txt').readlines()
 with open('black-checkstyle.xml', 'w') as f:
-    f.write('<?xml version=\\"1.0\\" encoding=\\"UTF-8\\"?>\\\\n<checkstyle version=\\"5.0\\">\\\\n')
+    f.write('<?xml version=\\\\"1.0\\\\" encoding=\\\\"UTF-8\\\\"?>\\\\n<checkstyle version=\\\\"5.0\\\\">\\\\n')
     for line in lines:
         if line.startswith('would reformat '):
             path = line.replace('would reformat ', '').strip()
-            f.write('  <file name=\\"' + path + '\\">\\\\n')
-            f.write('    <error line=\\"1\\" severity=\\"warning\\" message=\\"Black would reformat this file\\" source=\\"black\\"/>\\\\n')
+            f.write('  <file name=\\\\"' + path + '\\\\">\\\\n')
+            f.write('    <error line=\\\\"1\\\\" severity=\\\\"warning\\\\" message=\\\\"Black would reformat this file\\\\" source=\\\\"black\\\\"/>\\\\n')
             f.write('  </file>\\\\n')
     f.write('</checkstyle>\\\\n')
-\\" \"\"\"
+" \"\"\"
                             }} else {{
                                 echo "No python files found for Black. Skipping."
                             }}
@@ -656,20 +685,20 @@ with open('black-checkstyle.xml', 'w') as f:
                             def targets = sh(script: "for d in {pkg_name} tests examples; do if [ -d \\"\\$d\\" ] && find \\"\\$d\\" -name '*.py' | grep -q .; then printf \\"%s \\" \\"\\$d\\"; fi; done || true", returnStdout: true).trim()
                             if (targets) {{
                                 def rc = sh(script: "${{VENV_BIN}}/isort --check-only --diff ${{targets}} > isort-diff.txt 2>&1", returnStatus: true)
-                                sh \"\"\"${{VENV_BIN}}/python3 -c \\"
+                                sh \"\"\"${{VENV_BIN}}/python3 -c "
 import sys, os
 if not os.path.exists('isort-diff.txt'): sys.exit(0)
 lines = open('isort-diff.txt').readlines()
 with open('isort-checkstyle.xml', 'w') as f:
-    f.write('<?xml version=\\"1.0\\" encoding=\\"UTF-8\\"?>\\\\n<checkstyle version=\\"5.0\\">\\\\n')
+    f.write('<?xml version=\\\\"1.0\\\\" encoding=\\\\"UTF-8\\\\"?>\\\\n<checkstyle version=\\\\"5.0\\\\">\\\\n')
     for line in lines:
         if line.startswith('ERROR: '):
             path = line.split(' ')[1].strip()
-            f.write('  <file name=\\"' + path + '\\">\\\\n')
-            f.write('    <error line=\\"1\\" severity=\\"warning\\" message=\\"Isort import order issues\\" source=\\"isort\\"/>\\\\n')
+            f.write('  <file name=\\\\"' + path + '\\\\">\\\\n')
+            f.write('    <error line=\\\\"1\\\\" severity=\\\\"warning\\\\" message=\\\\"Isort import order issues\\\\" source=\\\\"isort\\\\"/>\\\\n')
             f.write('  </file>\\\\n')
     f.write('</checkstyle>\\\\n')
-\\" \"\"\"
+" \"\"\"
                             }} else {{
                                 echo "No python files found for Isort. Skipping."
                             }}
@@ -819,7 +848,7 @@ with open('isort-checkstyle.xml', 'w') as f:
                 sh "python3 -m venv ${{VENV_PATH}}"
                 echo 'Installing Dependencies...'
                 sh "${{VENV_BIN}}/pip install --upgrade pip"
-                {pip_install_str}
+                {jenkins_pip_str}
                 sh "${{VENV_BIN}}/pip install -e .[dev]"
             }}
         }}
