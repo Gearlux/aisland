@@ -551,16 +551,32 @@ class JenkinsService(BaseService):
 
         # Internal Gearlux Dependencies (order matters for install)
         gearlux_projects = [
-            "logflow", "confluid", "dataflux", "liquify", 
-            "navigaitor", "signals", "signals-rfuav", 
-            "annotaide", "torpedo", "aisland", "marainer"
+            "logflow",
+            "confluid",
+            "dataflux",
+            "liquify",
+            "navigaitor",
+            "signals",
+            "signals-rfuav",
+            "annotaide",
+            "torpedo",
+            "aisland",
+            "marainer",
         ]
-        
+
         # Filter metadata dependencies to only those in the Gearlux org
-        internal_deps = [d for d in metadata["dependencies"] if d in gearlux_projects]
+        # Strip version specifiers (e.g., "logflow>=0.1.0" -> "logflow")
+        import re
+
+        internal_deps = []
+        for dep_str in metadata["dependencies"]:
+            base_name = re.split(r"[>=< ]", dep_str)[0].strip()
+            if base_name in gearlux_projects:
+                internal_deps.append(base_name)
+
         pip_install_cmds = []
         for dep in internal_deps:
-            pip_install_cmds.append(f'pip install git+https://github.com/Gearlux/{dep}.git@main')
+            pip_install_cmds.append(f"pip install git+https://github.com/Gearlux/{dep}.git@main")
 
         pip_install_str = "\n        ".join(pip_install_cmds)
         if pip_install_str:
