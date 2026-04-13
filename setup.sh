@@ -9,17 +9,20 @@ VENV_DIR="$WORKSPACE_ROOT/.venv"
 
 echo "==> Gearlux Bootstrap: Initializing environment at $WORKSPACE_ROOT"
 
-# 1. Ensure Python 3.12 is available
-if ! command -v python3.12 &> /dev/null; then
-    echo "==> Python 3.12 not found. Installing via Homebrew..."
+# 1. Ensure Python 3.12+ is available
+if python3 -c "import sys; sys.exit(0 if sys.version_info >= (3, 12) else 1)" 2>/dev/null; then
+    PYTHON_BIN=$(command -v python3)
+elif command -v python3.12 &> /dev/null; then
+    PYTHON_BIN=$(command -v python3.12)
+else
+    echo "==> Python 3.12+ not found. Installing Python 3.12 via Homebrew..."
     if ! command -v brew &> /dev/null; then
         echo "Error: Homebrew is not installed. Please install Homebrew or Python 3.12 manually."
         exit 1
     fi
     brew install python@3.12
+    PYTHON_BIN=$(command -v python3.12)
 fi
-
-PYTHON_BIN=$(command -v python3.12)
 
 # 2. Create/Verify Virtual Environment
 # Try to get the git project name for the prompt
