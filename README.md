@@ -187,6 +187,22 @@ To use it (e.g., to merge `dev/main` into your current branch everywhere):
 git merge-all dev/main
 ```
 
+### Checking Status of All Submodules (`status-all`)
+
+To quickly see the status of the root repository and all its constituent submodules, you can use the `status-all` alias.
+
+To configure the global `status-all` Git alias:
+
+```bash
+git config --global alias.status-all '!git status && git submodule foreach "echo \"--- \$name ---\"; git status --short"'
+```
+
+To use it:
+
+```bash
+git status-all
+```
+
 ### Safely Pushing Changes (`safe`)
 
 A custom Git alias exists to enforce the workspace mandates before pushing code. It automatically sets up the environment, formats the code with `isort` and `black`, lints with `flake8`, types checks with `mypy`, and runs `pytest`. If everything passes, it commits and pushes safely to the remote.
