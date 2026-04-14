@@ -194,7 +194,7 @@ To quickly see the status and current branch of the root repository and all its 
 To configure the global `status-all` Git alias:
 
 ```bash
-git config --global alias.status-all '!f() { printf "%-25s (@%s)\n" "ROOT" "$(git branch --show-current)"; git status --short; git submodule foreach -q "echo \"\"; printf \"%-25s (@%s)\n\" \"\$name\" \"\$(git branch --show-current)\"; git status --short"; }; f'
+git config --global alias.status-all '!f() { printf "%-25s (@%s%s)\n" "ROOT" "$(git branch --show-current)" "$(git rev-list --left-right --count HEAD...@{u} 2>/dev/null | awk "{if (\$1 > 0 || \$2 > 0) { printf \" (\"; if (\$1 > 0) printf \$1 \" ahead\"; if (\$1 > 0 && \$2 > 0) printf \", \"; if (\$2 > 0) printf \$2 \" behind\"; printf \")\" }}")"; git status --short; git submodule foreach -q "echo \"\"; printf \"%-25s (@%s%s)\n\" \"\$name\" \"\$(git branch --show-current)\" \"\$(git rev-list --left-right --count HEAD...@{u} 2>/dev/null | awk \"{if (\$1 > 0 || \$2 > 0) { printf \\\" (\\\"; if (\$1 > 0) printf \$1 \\\" ahead\\\"; if (\$1 > 0 && \$2 > 0) printf \\\", \\\"; if (\$2 > 0) printf \$2 \\\" behind\\\"; printf \\\")\\\" }}\")\"; git status --short"; }; f'
 ```
 
 To use it:
