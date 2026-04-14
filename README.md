@@ -171,6 +171,22 @@ To use it:
 git switch-all dev/main
 ```
 
+### Merging All Submodules (`merge-all`)
+
+When you need to merge a base branch (e.g., `main` or `dev/main`) into your current feature branch across all projects in the workspace, you can use `merge-all`. This ensures your entire dependency tree stays synchronized with upstream changes.
+
+To configure the global `merge-all` Git alias:
+
+```bash
+git config --global alias.merge-all '!f() { git merge "$1" && git submodule foreach "git merge $1"; }; f'
+```
+
+To use it (e.g., to merge `dev/main` into your current branch everywhere):
+
+```bash
+git merge-all dev/main
+```
+
 ### Safely Pushing Changes (`safe`)
 
 A custom Git alias exists to enforce the workspace mandates before pushing code. It automatically sets up the environment, formats the code with `isort` and `black`, lints with `flake8`, types checks with `mypy`, and runs `pytest`. If everything passes, it commits and pushes safely to the remote.
