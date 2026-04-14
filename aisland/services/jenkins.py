@@ -572,6 +572,18 @@ class JenkinsService(BaseService):
             "marainer",
         ]
 
+        # Private Gearlux repos require GitHub App authentication for cross-repo CI installs.
+        # The default GITHUB_TOKEN only grants access to the current repo, so a GitHub App
+        # token is minted and git HTTPS URLs are rewritten to include it.
+        private_gearlux_repos = {
+            "signals",
+            "signals-rfuav",
+            "marainer",
+            "navigaitor",
+            "annotaide",
+            "aisland",
+        }
+
         # Filter metadata dependencies to only those in the Gearlux org
         # Strip version specifiers (e.g., "logflow>=0.1.0" -> "logflow")
         import re
@@ -592,10 +604,30 @@ class JenkinsService(BaseService):
         if pip_install_str:
             pip_install_str = "\n        # Internal Gearlux dependencies\n        " + pip_install_str
 
+        # Detect private Gearlux dependencies — if any, CI needs a GitHub App token
+        # to clone them (default GITHUB_TOKEN only grants access to the current repo).
+        needs_app_token = any(dep in private_gearlux_repos for dep in internal_deps)
+
+        if needs_app_token:
+            app_token_step = """    - name: Mint GitHub App token for private Gearlux deps
+      id: app-token
+      uses: actions/create-github-app-token@v1
+      with:
+        app-id: ${{ secrets.GEARLUX_APP_ID }}
+        private-key: ${{ secrets.GEARLUX_APP_PRIVATE_KEY }}
+        owner: Gearlux
+    - name: Configure git auth for Gearlux
+      run: git config --global url."https://x-access-token:${{ steps.app-token.outputs.token }}@github.com/".insteadOf "https://github.com/"
+"""
+        else:
+            app_token_step = ""
+
         # Jenkinsfile (standard) — sh-wrapped, installs from GitHub
         jenkins_pip_cmds = []
         for dep in internal_deps:
-            jenkins_pip_cmds.append(f'sh "${{VENV_BIN}}/pip install --no-deps git+https://github.com/Gearlux/{dep}.git@main"')
+            jenkins_pip_cmds.append(
+                f'sh "${{VENV_BIN}}/pip install --no-deps git+https://github.com/Gearlux/{dep}.git@main"'
+            )
         jenkins_pip_str = "\n                ".join(jenkins_pip_cmds)
         if jenkins_pip_str:
             jenkins_pip_str = "\n                // Internal Gearlux dependencies\n                " + jenkins_pip_str
@@ -1072,7 +1104,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
     - uses: actions/checkout@v4
-    - name: Set up Python 3.12
+{app_token_step}    - name: Set up Python 3.12
       uses: actions/setup-python@v5
       with:
         python-version: "3.12"
@@ -1097,7 +1129,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
     - uses: actions/checkout@v4
-    - name: Set up Python 3.12
+{app_token_step}    - name: Set up Python 3.12
       uses: actions/setup-python@v5
       with:
         python-version: "3.12"
@@ -1127,7 +1159,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
     - uses: actions/checkout@v4
-    - name: Set up Python 3.12
+{app_token_step}    - name: Set up Python 3.12
       uses: actions/setup-python@v5
       with:
         python-version: "3.12"
