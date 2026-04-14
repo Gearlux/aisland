@@ -194,7 +194,28 @@ To quickly see the status and current branch of the root repository and all its 
 To configure the global `status-all` Git alias:
 
 ```bash
-git config --global alias.status-all '!f() { printf "%-25s (@%s%s)\n" "ROOT" "$(git branch --show-current)" "$(git rev-list --left-right --count HEAD...@{u} 2>/dev/null | while read a b; do [ -z \"$a\" ] && continue; res=\"\"; if [ \"$a\" -gt 0 ] || [ \"$b\" -gt 0 ]; then res=\" (\"; [ \"$a\" -gt 0 ] && res=\"${res}\033[32m${a} ahead\033[0m\"; [ \"$a\" -gt 0 ] && [ \"$b\" -gt 0 ] && res=\"${res}, \"; [ \"$b\" -gt 0 ] && res=\"${res}\033[31m${b} behind\033[0m\"; res=\"${res})\"; fi; printf \"%s\" \"$res\"; done)"; git status --short; git submodule foreach -q "echo \"\"; printf \"%-25s (@%s%s)\n\" \"\$name\" \"\$(git branch --show-current)\" \"\$(git rev-list --left-right --count HEAD...@{u} 2>/dev/null | while read a b; do [ -z \"\$a\" ] && continue; res=\"\"; if [ \"\$a\" -gt 0 ] || [ \"\$b\" -gt 0 ]; then res=\" (\"; [ \"\$a\" -gt 0 ] && res=\"\${res}\033[32m\${a} ahead\033[0m\"; [ \"\$a\" -gt 0 ] && [ \"\$b\" -gt 0 ] && res=\"\${res}, \"; [ \"\$b\" -gt 0 ] && res=\"\${res}\033[31m\${b} behind\033[0m\"; res=\"\${res})\"; fi; printf \"%s\" \"\$res\"; done)\"; git status --short"; }; f'
+git config --global alias.status-all '!f() { 
+    printf "%-25s (@%s" "ROOT" "$(git branch --show-current)";
+    git rev-list --left-right --count HEAD...@{u} 2>/dev/null | while read a b; do
+        if [ -n "$a" ] && ([ "$a" -gt 0 ] || [ "$b" -gt 0 ]); then
+            printf " ("; [ "$a" -gt 0 ] && printf "\033[32m%s ahead\033[0m" "$a";
+            [ "$a" -gt 0 ] && [ "$b" -gt 0 ] && printf ", ";
+            [ "$b" -gt 0 ] && printf "\033[31m%s behind\033[0m" "$b"; printf ")";
+        fi;
+    done;
+    printf ")\n"; git status --short;
+    git submodule foreach -q '\''
+        printf "\n%-25s (@%s" "$name" "$(git branch --show-current)";
+        git rev-list --left-right --count HEAD...@{u} 2>/dev/null | while read a b; do
+            if [ -n "$a" ] && ([ "$a" -gt 0 ] || [ "$b" -gt 0 ]); then
+                printf " ("; [ "$a" -gt 0 ] && printf "\033[32m%s ahead\033[0m" "$a";
+                [ "$a" -gt 0 ] && [ "$b" -gt 0 ] && printf ", ";
+                [ "$b" -gt 0 ] && printf "\033[31m%s behind\033[0m" "$b"; printf ")";
+            fi;
+        done;
+        printf ")\n"; git status --short
+    '\''; 
+}; f'
 ```
 
 To use it:
