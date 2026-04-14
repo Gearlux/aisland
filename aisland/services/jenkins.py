@@ -575,9 +575,10 @@ class JenkinsService(BaseService):
                 internal_deps.append(base_name)
 
         # GH Actions — raw pip commands (valid inside `run: |` blocks)
+        # Use --no-deps to avoid PyPI name collisions (e.g. logflow exists on PyPI)
         pip_install_cmds = []
         for dep in internal_deps:
-            pip_install_cmds.append(f"pip install git+https://github.com/Gearlux/{dep}.git@main")
+            pip_install_cmds.append(f"pip install --no-deps git+https://github.com/Gearlux/{dep}.git@main")
 
         pip_install_str = "\n        ".join(pip_install_cmds)
         if pip_install_str:
