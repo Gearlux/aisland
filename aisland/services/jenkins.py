@@ -521,11 +521,19 @@ class JenkinsService(BaseService):
         config_file.write_text(config_xml)
         click.echo(f"  - Seeded orchestrator job: {job_name}")
 
-    def scaffold_pipelines(self, project_name: str, force: bool = False) -> None:
-        """Generate standard Jenkinsfile, Jenkinsfile.local, and GitHub Actions for a project."""
+    def scaffold_pipelines(self, project_name: Optional[str] = None, force: bool = False) -> None:
+        """Generate standard Jenkinsfile, Jenkinsfile.local, and GitHub Actions for a project or all projects."""
         from aisland.manager import get_project_metadata, get_workspace_root
 
         workspace_root = get_workspace_root()
+
+        if project_name is None:
+            # Scaffold all projects that have a pyproject.toml
+            for child in sorted(workspace_root.iterdir()):
+                if child.is_dir() and (child / "pyproject.toml").exists() and child.name != "aisland":
+                    self.scaffold_pipelines(project_name=child.name, force=force)
+            return
+
         project_path = workspace_root / project_name
 
         if not project_path.exists() or not project_path.is_dir():
@@ -587,7 +595,7 @@ class JenkinsService(BaseService):
         # Jenkinsfile (standard) — sh-wrapped, installs from GitHub
         jenkins_pip_cmds = []
         for dep in internal_deps:
-            jenkins_pip_cmds.append(f'sh "${{VENV_BIN}}/pip install git+https://github.com/Gearlux/{dep}.git@main"')
+            jenkins_pip_cmds.append(f'sh "${{VENV_BIN}}/pip install --no-deps git+https://github.com/Gearlux/{dep}.git@main"')
         jenkins_pip_str = "\n                ".join(jenkins_pip_cmds)
         if jenkins_pip_str:
             jenkins_pip_str = "\n                // Internal Gearlux dependencies\n                " + jenkins_pip_str
@@ -832,7 +840,7 @@ with open('isort-checkstyle.xml', 'w') as f:
 """
         _write_safe(project_path / "Jenkinsfile.local", local_content, "Jenkinsfile.local")
 
-        # 2. Jenkinsfile (Standard)
+        # 2. Jenkinsfile (Standard) — aligned with Jenkinsfile.local
         standard_content = f"""pipeline {{
     agent any
 
@@ -860,16 +868,39 @@ with open('isort-checkstyle.xml', 'w') as f:
                     steps {{
                         script {{
                             sh "rm -f black-diff.txt black-checkstyle.xml"
-                            sh "${{VENV_BIN}}/black --check --diff {pkg_name} tests examples > black-diff.txt 2>&1"
+                            def targets = sh(script: "for d in {pkg_name} tests examples; do if [ -d \\"\\$d\\" ] && find \\"\\$d\\" -name '*.py' | grep -q .; then printf \\"%s \\" \\"\\$d\\"; fi; done || true", returnStdout: true).trim()
+                            if (targets) {{
+                                def rc = sh(script: "${{VENV_BIN}}/black --check --diff ${{targets}} > black-diff.txt 2>&1", returnStatus: true)
+                                sh \"\"\"${{VENV_BIN}}/python3 -c "
+import sys, os
+if not os.path.exists('black-diff.txt'): sys.exit(0)
+lines = open('black-diff.txt').readlines()
+with open('black-checkstyle.xml', 'w') as f:
+    f.write('<?xml version=\\\\"1.0\\\\" encoding=\\\\"UTF-8\\\\"?>\\\\n<checkstyle version=\\\\"5.0\\\\">\\\\n')
+    for line in lines:
+        if line.startswith('would reformat '):
+            path = line.replace('would reformat ', '').strip()
+            f.write('  <file name=\\\\"' + path + '\\\\">\\\\n')
+            f.write('    <error line=\\\\"1\\\\" severity=\\\\"warning\\\\" message=\\\\"Black would reformat this file\\\\" source=\\\\"black\\\\"/>\\\\n')
+            f.write('  </file>\\\\n')
+    f.write('</checkstyle>\\\\n')
+" \"\"\"
+                            }} else {{
+                                echo "No python files found for Black. Skipping."
+                            }}
                         }}
                     }}
                     post {{
                         always {{
-                            recordIssues(
-                                id: 'black-{pkg_name}',
-                                name: 'Black Formatting ({project_name.capitalize()})',
-                                tools: [checkStyle(pattern: 'black-checkstyle.xml')]
-                            )
+                            script {{
+                                if (fileExists('black-checkstyle.xml')) {{
+                                    recordIssues(
+                                        id: 'black-{pkg_name}',
+                                        name: 'Black Formatting ({project_name.capitalize()})',
+                                        tools: [checkStyle(pattern: 'black-checkstyle.xml')]
+                                    )
+                                }}
+                            }}
                         }}
                     }}
                 }}
@@ -877,46 +908,91 @@ with open('isort-checkstyle.xml', 'w') as f:
                     steps {{
                         script {{
                             sh "rm -f isort-diff.txt isort-checkstyle.xml"
-                            sh "${{VENV_BIN}}/isort --check-only --diff {pkg_name} tests examples > isort-diff.txt 2>&1"
+                            def targets = sh(script: "for d in {pkg_name} tests examples; do if [ -d \\"\\$d\\" ] && find \\"\\$d\\" -name '*.py' | grep -q .; then printf \\"%s \\" \\"\\$d\\"; fi; done || true", returnStdout: true).trim()
+                            if (targets) {{
+                                def rc = sh(script: "${{VENV_BIN}}/isort --check-only --diff ${{targets}} > isort-diff.txt 2>&1", returnStatus: true)
+                                sh \"\"\"${{VENV_BIN}}/python3 -c "
+import sys, os
+if not os.path.exists('isort-diff.txt'): sys.exit(0)
+lines = open('isort-diff.txt').readlines()
+with open('isort-checkstyle.xml', 'w') as f:
+    f.write('<?xml version=\\\\"1.0\\\\" encoding=\\\\"UTF-8\\\\"?>\\\\n<checkstyle version=\\\\"5.0\\\\">\\\\n')
+    for line in lines:
+        if line.startswith('ERROR: '):
+            path = line.split(' ')[1].strip()
+            f.write('  <file name=\\\\"' + path + '\\\\">\\\\n')
+            f.write('    <error line=\\\\"1\\\\" severity=\\\\"warning\\\\" message=\\\\"Isort import order issues\\\\" source=\\\\"isort\\\\"/>\\\\n')
+            f.write('  </file>\\\\n')
+    f.write('</checkstyle>\\\\n')
+" \"\"\"
+                            }} else {{
+                                echo "No python files found for Isort. Skipping."
+                            }}
                         }}
                     }}
                     post {{
                         always {{
-                            recordIssues(
-                                id: 'isort-{pkg_name}',
-                                name: 'Isort Import Order ({project_name.capitalize()})',
-                                tools: [checkStyle(pattern: 'isort-checkstyle.xml')]
-                            )
+                            script {{
+                                if (fileExists('isort-checkstyle.xml')) {{
+                                    recordIssues(
+                                        id: 'isort-{pkg_name}',
+                                        name: 'Isort Import Order ({project_name.capitalize()})',
+                                        tools: [checkStyle(pattern: 'isort-checkstyle.xml')]
+                                    )
+                                }}
+                            }}
                         }}
                     }}
                 }}
                 stage('Flake8') {{
                     steps {{
-                        sh "rm -f flake8.txt"
-                        sh "${{VENV_BIN}}/flake8 {pkg_name} tests examples --tee --output-file=flake8.txt || true"
+                        script {{
+                            sh "rm -f flake8.txt"
+                            def targets = sh(script: "for d in {pkg_name} tests examples; do if [ -d \\"\\$d\\" ] && find \\"\\$d\\" -name '*.py' | grep -q .; then printf \\"%s \\" \\"\\$d\\"; fi; done || true", returnStdout: true).trim()
+                            if (targets) {{
+                                sh "${{VENV_BIN}}/flake8 ${{targets}} --tee --output-file=flake8.txt || true"
+                            }} else {{
+                                echo "No python files found for Flake8. Skipping."
+                            }}
+                        }}
                     }}
                     post {{
                         always {{
-                            recordIssues(
-                                id: 'flake8-{pkg_name}',
-                                name: 'Flake8 ({project_name.capitalize()})',
-                                tools: [flake8(pattern: 'flake8.txt')]
-                            )
+                            script {{
+                                if (fileExists('flake8.txt') && readFile('flake8.txt').trim()) {{
+                                    recordIssues(
+                                        id: 'flake8-{pkg_name}',
+                                        name: 'Flake8 ({project_name.capitalize()})',
+                                        tools: [flake8(pattern: 'flake8.txt')]
+                                    )
+                                }}
+                            }}
                         }}
                     }}
                 }}
                 stage('Mypy') {{
                     steps {{
-                        sh "rm -f mypy.txt"
-                        sh "${{VENV_BIN}}/mypy {pkg_name} tests examples > mypy.txt || true"
+                        script {{
+                            sh "rm -f mypy.txt"
+                            def targets = sh(script: "for d in {pkg_name} tests examples; do if [ -d \\"\\$d\\" ] && find \\"\\$d\\" -name '*.py' | grep -q .; then printf \\"%s \\" \\"\\$d\\"; fi; done || true", returnStdout: true).trim()
+                            if (targets) {{
+                                sh "${{VENV_BIN}}/mypy ${{targets}} > mypy.txt || true"
+                            }} else {{
+                                echo "No python files found for Mypy. Skipping."
+                            }}
+                        }}
                     }}
                     post {{
                         always {{
-                            recordIssues(
-                                id: 'mypy-{pkg_name}',
-                                name: 'Mypy ({project_name.capitalize()})',
-                                tools: [myPy(pattern: 'mypy.txt')]
-                            )
+                            script {{
+                                if (fileExists('mypy.txt') && readFile('mypy.txt').trim()) {{
+                                    recordIssues(
+                                        id: 'mypy-{pkg_name}',
+                                        name: 'Mypy ({project_name.capitalize()})',
+                                        tools: [myPy(pattern: 'mypy.txt')]
+                                    )
+                                }}
+                            }}
                         }}
                     }}
                 }}
@@ -925,17 +1001,43 @@ with open('isort-checkstyle.xml', 'w') as f:
 
         stage('Unit Tests') {{
             steps {{
-                sh "${{VENV_BIN}}/pytest tests --junitxml=test-report.xml --cov={pkg_name} --cov-report=xml:coverage.xml --cov-report=term"
+                script {{
+                    if (fileExists('tests') && sh(script: "find tests -name '*.py' | grep -q .", returnStatus: true) == 0) {{
+                        sh "${{VENV_BIN}}/pytest tests --junitxml=test-report.xml --cov={pkg_name} --cov-report=xml:coverage.xml --cov-report=term"
+                    }} else {{
+                        echo "No tests found in 'tests' directory. Skipping."
+                    }}
+                }}
             }}
             post {{
                 always {{
-                    junit allowEmptyResults: true, testResults: 'test-report.xml'
-                    recordCoverage(
-                        id: 'coverage',
-                        name: 'Code Coverage',
-                        tools: [[parser: 'COBERTURA', pattern: 'coverage.xml']]
-                    )
+                    script {{
+                        if (fileExists('test-report.xml')) {{
+                            junit allowEmptyResults: true, testResults: 'test-report.xml'
+                        }}
+                        if (fileExists('coverage.xml')) {{
+                            recordCoverage(
+                                id: 'coverage-{pkg_name}',
+                                name: '{project_name.capitalize()} Coverage',
+                                tools: [[parser: 'COBERTURA', pattern: 'coverage.xml']]
+                            )
+                        }}
+                    }}
                 }}
+            }}
+        }}
+
+        stage('Verify Examples') {{
+            steps {{
+                echo 'Running project examples...'
+                sh '''
+                    for f in examples/*.py; do
+                        if [ -f "$f" ]; then
+                            echo "Verifying $f..."
+                            ${{VENV_BIN}}/python3 "$f"
+                        fi
+                    done
+                '''
             }}
         }}
     }}
@@ -948,7 +1050,7 @@ with open('isort-checkstyle.xml', 'w') as f:
             echo '{project_name.capitalize()} is healthy.'
         }}
         failure {{
-            echo '{project_name.capitalize()} build failed.'
+            echo '{project_name.capitalize()} build failed. Please check linting or test failures.'
         }}
     }}
 }}
@@ -1007,7 +1109,11 @@ jobs:
         pip install -e ".[dev]"
     - name: Run Tests
       run: |
-        pytest tests --junitxml=test-report.xml --cov={pkg_name} --cov-report=xml --cov-report=term
+        if [ -d tests ] && find tests -name '*.py' | grep -q .; then
+          pytest tests --junitxml=test-report.xml --cov={pkg_name} --cov-report=xml --cov-report=term
+        else
+          echo "No tests found. Skipping."
+        fi
     - name: Upload Test Results
       uses: actions/upload-artifact@v4
       with:
@@ -1033,7 +1139,12 @@ jobs:
         pip install -e ".[dev]"
     - name: Run Examples
       run: |
-        for f in examples/*.py; do echo "Verifying $f..."; python "$f" --help; done
+        for f in examples/*.py; do
+          if [ -f "$f" ]; then
+            echo "Verifying $f..."
+            python3 "$f"
+          fi
+        done
 """
         _write_safe(project_path / ".github" / "workflows" / "ci.yml", gh_content, "GitHub CI Workflow")
 
