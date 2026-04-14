@@ -194,7 +194,7 @@ To quickly see the status and current branch of the root repository and all its 
 To configure the global `status-all` Git alias:
 
 ```bash
-git config --global alias.status-all '!f() { echo "ROOT (@$(git branch --show-current))"; git status --short; git submodule foreach "echo \"\$name (@\$(git branch --show-current))\"; git status --short"; }; f'
+git config --global alias.status-all '!f() { printf "%-25s (@%s)\n" "ROOT" "$(git branch --show-current)"; git status --short; git submodule foreach -q "echo \"\"; printf \"%-25s (@%s)\n\" \"\$name\" \"\$(git branch --show-current)\"; git status --short"; }; f'
 ```
 
 To use it:
