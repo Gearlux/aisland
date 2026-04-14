@@ -230,6 +230,79 @@ DROPDOWN_TEXT=""
 # Define projects to check
 PROJECTS=({projects_str})
 
+# Function to process a job/branch directory
+process_item() {{
+    local ITEM_DIR="$1"
+    local PROJECT_NAME="$2"
+    local DISPLAY_NAME="$3"
+    local IS_BRANCH="$4"
+
+    CONFIG_XML="${{ITEM_DIR}}/config.xml"
+    if [ -z "$DISPLAY_NAME" ] && [ -f "$CONFIG_XML" ]; then
+        # Extract name from config.xml
+        DISPLAY_NAME=$(sed -n 's/.*<displayName>\\([^<]*\\)<\\/displayName>.*/\\1/p' \\
+            "$CONFIG_XML" | head -n 1)
+        if [ -z "$DISPLAY_NAME" ]; then
+            DISPLAY_NAME=$(sed -n 's/.*<sourceBranch>\\([^<]*\\)<\\/sourceBranch>.*/\\1/p' \\
+                "$CONFIG_XML" | head -n 1)
+        fi
+        if [ -z "$DISPLAY_NAME" ]; then
+            DISPLAY_NAME=$(sed -n 's/.*<name>\\([^<]*\\)<\\/name>.*/\\1/p' \\
+                "$CONFIG_XML" | head -n 1)
+        fi
+    fi
+
+    if [ -z "$DISPLAY_NAME" ]; then
+        ITEM_NAME=$(basename "$ITEM_DIR")
+        # Strip Jenkins hash (e.g., dev-main.k31dj -> dev-main)
+        DISPLAY_NAME=$(echo "$ITEM_NAME" | cut -d. -f1)
+        # Reconstruct common branch patterns (e.g., dev-main -> dev/main)
+        if [[ "$DISPLAY_NAME" == "dev-main" ]]; then
+            DISPLAY_NAME="dev/main"
+        fi
+    fi
+
+    PERMALINKS="${{ITEM_DIR}}/builds/permalinks"
+    STATUS_STR=""
+
+    if [ -f "$PERMALINKS" ]; then
+        LAST_COMPLETED=$(grep "lastCompletedBuild" "$PERMALINKS" | awk '{{print $2}}')
+
+        if [ "$LAST_COMPLETED" == "-1" ] || [ -z "$LAST_COMPLETED" ]; then
+            STATUS_STR="⚪️ (No builds)"
+        else
+            BUILD_XML="${{ITEM_DIR}}/builds/${{LAST_COMPLETED}}/build.xml"
+            if [ -f "$BUILD_XML" ]; then
+                RESULT=$(sed -n 's/.*<result>\\([^<]*\\)<\\/result>.*/\\1/p' "$BUILD_XML" | head -n 1)
+
+                if [ "$RESULT" == "SUCCESS" ]; then
+                    STATUS_STR="🟢"
+                elif [ "$RESULT" == "FAILURE" ]; then
+                    STATUS_STR="🔴"
+                    GLOBAL_FAILED=true
+                elif [ "$RESULT" == "ABORTED" ]; then
+                    STATUS_STR="⚪️ (Aborted)"
+                else
+                    STATUS_STR="🟡 (${{RESULT}})"
+                fi
+            else
+                STATUS_STR="❔ (xml missing)"
+            fi
+        fi
+    else
+        STATUS_STR="⚪️ (Not indexed)"
+    fi
+
+    if [ "$IS_BRANCH" == "true" ]; then
+        ENCODED_BRANCH=$(echo "$DISPLAY_NAME" | sed 's/\\//%2F/g')
+        URL="http://localhost:9080/job/${{PROJECT_NAME}}/job/${{ENCODED_BRANCH}}"
+        DROPDOWN_TEXT+="${{DISPLAY_NAME}}: ${{STATUS_STR}} | href=${{URL}}\\n"
+    else
+        URL="http://localhost:9080/job/${{PROJECT_NAME}}"
+        DROPDOWN_TEXT+="Status: ${{STATUS_STR}} | href=${{URL}}\\n"
+    fi
+}}
+
 for PROJECT in "${{PROJECTS[@]}}"; do
     PROJECT_DIR="${{JOBS_DIR}}/${{PROJECT}}"
 
@@ -241,74 +314,21 @@ for PROJECT in "${{PROJECTS[@]}}"; do
 
     BRANCHES_DIR="${{PROJECT_DIR}}/branches"
     if [ -d "$BRANCHES_DIR" ]; then
+        # Handle multibranch pipeline
+        HAS_BRANCHES=false
         for BRANCH_DIR_PATH in "${{BRANCHES_DIR}}"/*; do
             if [ ! -d "$BRANCH_DIR_PATH" ]; then continue; fi
-
-            BRANCH_DIR_NAME=$(basename "$BRANCH_DIR_PATH")
-
-            CONFIG_XML="${{BRANCH_DIR_PATH}}/config.xml"
-            DISPLAY_NAME=""
-            if [ -f "$CONFIG_XML" ]; then
-                # Extract branch name from config.xml
-                DISPLAY_NAME=$(sed -n 's/.*<displayName>\\([^<]*\\)<\\/displayName>.*/\\1/p' \\
-                    "$CONFIG_XML" | head -n 1)
-                if [ -z "$DISPLAY_NAME" ]; then
-                    DISPLAY_NAME=$(sed -n 's/.*<sourceBranch>\\([^<]*\\)<\\/sourceBranch>.*/\\1/p' \\
-                        "$CONFIG_XML" | head -n 1)
-                fi
-                if [ -z "$DISPLAY_NAME" ]; then
-                    DISPLAY_NAME=$(sed -n 's/.*<name>\\([^<]*\\)<\\/name>.*/\\1/p' \\
-                        "$CONFIG_XML" | head -n 1)
-                fi
-            fi
-
-            if [ -z "$DISPLAY_NAME" ]; then
-                # Strip Jenkins hash (e.g., dev-main.k31dj -> dev-main)
-                DISPLAY_NAME=$(echo "$BRANCH_DIR_NAME" | cut -d. -f1)
-                # Reconstruct common branch patterns (e.g., dev-main -> dev/main)
-                if [[ "$DISPLAY_NAME" == "dev-main" ]]; then
-                    DISPLAY_NAME="dev/main"
-                fi
-            fi
-
-            PERMALINKS="${{BRANCH_DIR_PATH}}/builds/permalinks"
-            STATUS_STR=""
-
-            if [ -f "$PERMALINKS" ]; then
-                LAST_COMPLETED=$(grep "lastCompletedBuild" "$PERMALINKS" | awk '{{print $2}}')
-
-                if [ "$LAST_COMPLETED" == "-1" ] || [ -z "$LAST_COMPLETED" ]; then
-                    STATUS_STR="⚪️ (No builds)"
-                else
-                    BUILD_XML="${{BRANCH_DIR_PATH}}/builds/${{LAST_COMPLETED}}/build.xml"
-                    if [ -f "$BUILD_XML" ]; then
-                        RESULT=$(sed -n 's/.*<result>\\([^<]*\\)<\\/result>.*/\\1/p' "$BUILD_XML" | head -n 1)
-
-                        if [ "$RESULT" == "SUCCESS" ]; then
-                            STATUS_STR="🟢"
-                        elif [ "$RESULT" == "FAILURE" ]; then
-                            STATUS_STR="🔴"
-                            GLOBAL_FAILED=true
-                        elif [ "$RESULT" == "ABORTED" ]; then
-                            STATUS_STR="⚪️ (Aborted)"
-                        else
-                            STATUS_STR="🟡 (${{RESULT}})"
-                        fi
-                    else
-                        STATUS_STR="❔ (xml missing)"
-                    fi
-                fi
-            else
-                STATUS_STR="⚪️ (Not indexed)"
-            fi
-
-            ENCODED_BRANCH=$(echo "$DISPLAY_NAME" | sed 's/\\//%2F/g')
-            BRANCH_URL="http://localhost:9080/job/${{PROJECT}}/job/${{ENCODED_BRANCH}}"
-
-            DROPDOWN_TEXT+="${{DISPLAY_NAME}}: ${{STATUS_STR}} | href=${{BRANCH_URL}}\\n"
+            HAS_BRANCHES=true
+            process_item "$BRANCH_DIR_PATH" "$PROJECT" "" "true"
         done
+        if [ "$HAS_BRANCHES" = false ]; then
+            DROPDOWN_TEXT+="No branches discovered | color=red\\n"
+        fi
+    elif [ -d "${{PROJECT_DIR}}/builds" ]; then
+        # Handle direct job (like .local jobs)
+        process_item "$PROJECT_DIR" "$PROJECT" "$PROJECT" "false"
     else
-        DROPDOWN_TEXT+="No branches found | color=red\\n"
+        DROPDOWN_TEXT+="No builds or branches found | color=red\\n"
     fi
     DROPDOWN_TEXT+="---\\n"
 done
@@ -361,18 +381,26 @@ DROPDOWN_TEXT=""
 
 for REPO in $REPOS; do
     # Get last run status
-    LAST_RUN=$(gh run list --repo "$REPO" --limit 1 --json conclusion,workflowName --jq '.[0]' 2>/dev/null)
+    LAST_RUN=$(gh run list --repo "$REPO" --limit 1 --json status,conclusion,workflowName --jq '.[0]' 2>/dev/null)
 
+    STATUS=$(echo "$LAST_RUN" | jq -r '.status')
     CONCLUSION=$(echo "$LAST_RUN" | jq -r '.conclusion')
     WORKFLOW=$(echo "$LAST_RUN" | jq -r '.workflowName')
 
-    if [ "$CONCLUSION" == "failure" ]; then
+    if [ "$STATUS" == "in_progress" ] || [ "$STATUS" == "queued" ]; then
+        DROPDOWN_TEXT+="${{REPO}}: 🟡 (Running) | href=https://github.com/${{REPO}}/actions\\n"
+    elif [ "$CONCLUSION" == "failure" ]; then
         GLOBAL_FAILED=true
         DROPDOWN_TEXT+="${{REPO}}: 🔴 (Failed: ${{WORKFLOW}}) | href=https://github.com/${{REPO}}/actions\\n"
     elif [ "$CONCLUSION" == "success" ]; then
         DROPDOWN_TEXT+="${{REPO}}: 🟢 | href=https://github.com/${{REPO}}/actions\\n"
     elif [ "$CONCLUSION" == "null" ] || [ -z "$CONCLUSION" ]; then
-        DROPDOWN_TEXT+="${{REPO}}: ⚪️ (No runs) | href=https://github.com/${{REPO}}/actions\\n"
+        # Check if we have NO runs at all or if it is running but jq failed status
+        if [ "$STATUS" == "null" ]; then
+             DROPDOWN_TEXT+="${{REPO}}: ⚪️ (No runs) | href=https://github.com/${{REPO}}/actions\\n"
+        else
+             DROPDOWN_TEXT+="${{REPO}}: 🟡 (Running) | href=https://github.com/${{REPO}}/actions\\n"
+        fi
     else
         DROPDOWN_TEXT+="${{REPO}}: 🟡 (${{CONCLUSION}}) | href=https://github.com/${{REPO}}/actions\\n"
     fi
