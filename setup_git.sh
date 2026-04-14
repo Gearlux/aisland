@@ -16,43 +16,7 @@ git config --global alias.switch-all '!f() { git checkout "$1" && git submodule 
 
 git config --global alias.merge-all '!f() { git merge "$1" && git submodule foreach "git merge $1"; }; f'
 
-git config --global alias.status-all '!f() { 
-    get_div() {
-        local div=$(git rev-list --left-right --count HEAD...@{u} 2>/dev/null)
-        [ -z "$div" ] && return
-        local ahead=$(echo $div | cut -f1); local behind=$(echo $div | cut -f2)
-        local res=""
-        if [ "$ahead" -gt 0 ] || [ "$behind" -gt 0 ]; then
-            res=" ("
-            [ "$ahead" -gt 0 ] && res="${res}\033[32m${ahead} ahead\033[0m"
-            [ "$ahead" -gt 0 ] && [ "$behind" -gt 0 ] && res="${res}, "
-            [ "$behind" -gt 0 ] && res="${res}\033[31m${behind} behind\033[0m"
-            res="${res})"
-        fi
-        printf "%s" "$res"
-    };
-    printf "%-25s (@%s%s)\n" "ROOT" "$(git branch --show-current)" "$(get_div)";
-    git status --short;
-    git submodule foreach -q '\''
-        get_div() {
-            local div=$(git rev-list --left-right --count HEAD...@{u} 2>/dev/null)
-            [ -z "$div" ] && return
-            local ahead=$(echo $div | cut -f1); local behind=$(echo $div | cut -f2)
-            local res=""
-            if [ "$ahead" -gt 0 ] || [ "$behind" -gt 0 ]; then
-                res=" ("
-                [ "$ahead" -gt 0 ] && res="${res}\033[32m${ahead} ahead\033[0m"
-                [ "$ahead" -gt 0 ] && [ "$behind" -gt 0 ] && res="${res}, "
-                [ "$behind" -gt 0 ] && res="${res}\033[31m${behind} behind\033[0m"
-                res="${res})"
-            fi
-            printf "%s" "$res"
-        };
-        echo "";
-        printf "%-25s (@%s%s)\n" "$name" "$(git branch --show-current)" "$(get_div)";
-        git status --short
-    '\''; 
-}; f'
+git config --global alias.status-all '!f() { printf "%-25s (@%s%s)\n" "ROOT" "$(git branch --show-current)" "$(git rev-list --left-right --count HEAD...@{u} 2>/dev/null | while read a b; do [ -z \"$a\" ] && continue; res=\"\"; if [ \"$a\" -gt 0 ] || [ \"$b\" -gt 0 ]; then res=\" (\"; [ \"$a\" -gt 0 ] && res=\"${res}\033[32m${a} ahead\033[0m\"; [ \"$a\" -gt 0 ] && [ \"$b\" -gt 0 ] && res=\"${res}, \"; [ \"$b\" -gt 0 ] && res=\"${res}\033[31m${b} behind\033[0m\"; res=\"${res})\"; fi; printf \"%s\" \"$res\"; done)"; git status --short; git submodule foreach -q "echo \"\"; printf \"%-25s (@%s%s)\n\" \"\$name\" \"\$(git branch --show-current)\" \"\$(git rev-list --left-right --count HEAD...@{u} 2>/dev/null | while read a b; do [ -z \"\$a\" ] && continue; res=\"\"; if [ \"\$a\" -gt 0 ] || [ \"\$b\" -gt 0 ]; then res=\" (\"; [ \"\$a\" -gt 0 ] && res=\"\${res}\033[32m\${a} ahead\033[0m\"; [ \"\$a\" -gt 0 ] && [ \"\$b\" -gt 0 ] && res=\"\${res}, \"; [ \"\$b\" -gt 0 ] && res=\"\${res}\033[31m\${b} behind\033[0m\"; res=\"\${res})\"; fi; printf \"%s\" \"\$res\"; done)\"; git status --short"; }; f'
 
 git config --global alias.safe '!f() { if [ -z "$1" ]; then echo "Error: Please provide a commit message. Example: git safe \"feat: my message\""; exit 1; fi; if [ -d ".venv" ]; then echo "Activating virtual environment..."; source .venv/bin/activate; fi; echo "Running formatting (isort, black)..."; isort . && black . || { echo "Formatting failed!"; exit 1; }; echo "Running linting (flake8)..."; flake8 . || { echo "Flake8 linting failed!"; exit 1; }; echo "Running type checking (mypy)..."; mypy . || { echo "Mypy type checking failed!"; exit 1; }; echo "Running tests (pytest)..."; pytest || { echo "Tests failed!"; exit 1; }; echo "All checks passed! Committing and pushing..."; git add . && git commit -m "$1"; CURRENT_BRANCH=$(git branch --show-current); if [ -z "$CURRENT_BRANCH" ]; then git push origin HEAD:dev/main || git push origin HEAD:main; else git push origin "$CURRENT_BRANCH" || { echo "Falling back to dev/main push..."; git push origin HEAD:dev/main; }; fi; }; f'
 

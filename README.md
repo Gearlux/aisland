@@ -194,43 +194,7 @@ To quickly see the status and current branch of the root repository and all its 
 To configure the global `status-all` Git alias:
 
 ```bash
-git config --global alias.status-all '!f() { 
-    get_div() {
-        local div=$(git rev-list --left-right --count HEAD...@{u} 2>/dev/null)
-        [ -z "$div" ] && return
-        local ahead=$(echo $div | cut -f1); local behind=$(echo $div | cut -f2)
-        local res=""
-        if [ "$ahead" -gt 0 ] || [ "$behind" -gt 0 ]; then
-            res=" ("
-            [ "$ahead" -gt 0 ] && res="${res}\033[32m${ahead} ahead\033[0m"
-            [ "$ahead" -gt 0 ] && [ "$behind" -gt 0 ] && res="${res}, "
-            [ "$behind" -gt 0 ] && res="${res}\033[31m${behind} behind\033[0m"
-            res="${res})"
-        fi
-        printf "%s" "$res"
-    };
-    printf "%-25s (@%s%s)\n" "ROOT" "$(git branch --show-current)" "$(get_div)";
-    git status --short;
-    git submodule foreach -q '\''
-        get_div() {
-            local div=$(git rev-list --left-right --count HEAD...@{u} 2>/dev/null)
-            [ -z "$div" ] && return
-            local ahead=$(echo $div | cut -f1); local behind=$(echo $div | cut -f2)
-            local res=""
-            if [ "$ahead" -gt 0 ] || [ "$behind" -gt 0 ]; then
-                res=" ("
-                [ "$ahead" -gt 0 ] && res="${res}\033[32m${ahead} ahead\033[0m"
-                [ "$ahead" -gt 0 ] && [ "$behind" -gt 0 ] && res="${res}, "
-                [ "$behind" -gt 0 ] && res="${res}\033[31m${behind} behind\033[0m"
-                res="${res})"
-            fi
-            printf "%s" "$res"
-        };
-        echo "";
-        printf "%-25s (@%s%s)\n" "$name" "$(git branch --show-current)" "$(get_div)";
-        git status --short
-    '\''; 
-}; f'
+git config --global alias.status-all '!f() { printf "%-25s (@%s%s)\n" "ROOT" "$(git branch --show-current)" "$(git rev-list --left-right --count HEAD...@{u} 2>/dev/null | while read a b; do [ -z \"$a\" ] && continue; res=\"\"; if [ \"$a\" -gt 0 ] || [ \"$b\" -gt 0 ]; then res=\" (\"; [ \"$a\" -gt 0 ] && res=\"${res}\033[32m${a} ahead\033[0m\"; [ \"$a\" -gt 0 ] && [ \"$b\" -gt 0 ] && res=\"${res}, \"; [ \"$b\" -gt 0 ] && res=\"${res}\033[31m${b} behind\033[0m\"; res=\"${res})\"; fi; printf \"%s\" \"$res\"; done)"; git status --short; git submodule foreach -q "echo \"\"; printf \"%-25s (@%s%s)\n\" \"\$name\" \"\$(git branch --show-current)\" \"\$(git rev-list --left-right --count HEAD...@{u} 2>/dev/null | while read a b; do [ -z \"\$a\" ] && continue; res=\"\"; if [ \"\$a\" -gt 0 ] || [ \"\$b\" -gt 0 ]; then res=\" (\"; [ \"\$a\" -gt 0 ] && res=\"\${res}\033[32m\${a} ahead\033[0m\"; [ \"\$a\" -gt 0 ] && [ \"\$b\" -gt 0 ] && res=\"\${res}, \"; [ \"\$b\" -gt 0 ] && res=\"\${res}\033[31m\${b} behind\033[0m\"; res=\"\${res})\"; fi; printf \"%s\" \"\$res\"; done)\"; git status --short"; }; f'
 ```
 
 To use it:
