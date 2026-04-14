@@ -189,12 +189,12 @@ git merge-all dev/main
 
 ### Checking Status of All Submodules (`status-all`)
 
-To quickly see the status of the root repository and all its constituent submodules, you can use the `status-all` alias.
+To quickly see the status and current branch of the root repository and all its constituent submodules, you can use the `status-all` alias.
 
 To configure the global `status-all` Git alias:
 
 ```bash
-git config --global alias.status-all '!git status && git submodule foreach "echo \"--- \$name ---\"; git status --short"'
+git config --global alias.status-all '!f() { echo "ROOT (@$(git branch --show-current))"; git status --short; git submodule foreach "echo \"\$name (@\$(git branch --show-current))\"; git status --short"; }; f'
 ```
 
 To use it:
