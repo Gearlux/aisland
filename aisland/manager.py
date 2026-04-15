@@ -418,7 +418,7 @@ def run_quality_gates(arg1: Optional[str] = None, arg2: Optional[str] = None) ->
     project_names = {p["name"] for p in all_projects}
 
     # Tool mapping
-    supported_tools = ["isort", "black", "flake8", "mypy", "pytest"]
+    supported_tools = ["isort", "black", "flake8", "mypy", "pytest", "act"]
 
     target_project: Optional[str] = None
     target_tool: Optional[str] = None
@@ -460,6 +460,9 @@ def run_quality_gates(arg1: Optional[str] = None, arg2: Optional[str] = None) ->
             ("mypy", ["mypy", str(project_dir.relative_to(workspace_root))], False),
             ("pytest", ["pytest"], True),
         ]
+
+        if (project_dir / ".github" / "workflows").exists():
+            all_tools.append(("act", ["act", "--list"], True))
 
         if target_tool:
             active_tools = [t for t in all_tools if t[0] == target_tool]

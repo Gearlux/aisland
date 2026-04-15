@@ -7,6 +7,7 @@ from aisland.services.jenkins import JenkinsService
 from aisland.services.labelstudio import LabelStudioService
 from aisland.services.mlflow import MLflowService
 from aisland.services.swiftbar import SwiftBarService
+from aisland.services.docker import DockerService
 
 
 @click.group()
@@ -45,6 +46,46 @@ def provision() -> None:
 def setup() -> None:
     """Full workspace setup: provision system tools and install all projects in editable mode."""
     setup_workspace()
+
+
+# --- Docker Commands ---
+
+
+@main.group()
+def docker() -> None:
+    """Manage local Docker container engine (via Colima)."""
+    pass
+
+
+@docker.command(name="start")
+def docker_start() -> None:
+    """Start Docker."""
+    DockerService().launch()
+
+
+@docker.command(name="stop")
+def docker_stop() -> None:
+    """Stop Docker."""
+    DockerService().stop()
+
+
+@docker.command(name="status")
+def docker_status() -> None:
+    """Show Docker status."""
+    DockerService().status()
+
+
+@docker.command(name="restart")
+def docker_restart() -> None:
+    """Restart Docker."""
+    DockerService().restart()
+
+
+@docker.command(name="reset")
+@click.confirmation_option(prompt="Are you sure you want to wipe all Docker data?")
+def docker_reset() -> None:
+    """Stop Docker and wipe all its data."""
+    DockerService().reset()
 
 
 # --- Jenkins Commands ---
@@ -281,6 +322,7 @@ def swiftbar_reset() -> None:
 def status() -> None:
     """Show status of all aisland services."""
     click.echo("Aisland Infrastructure Status:")
+    DockerService().status()
     JenkinsService().status()
     MLflowService().status()
     LabelStudioService().status()
@@ -292,6 +334,7 @@ def status() -> None:
 def start(background: bool) -> None:
     """Start all aisland services."""
     click.echo("Starting all services...")
+    DockerService().launch()
     JenkinsService().launch(background=background)
     MLflowService().launch(background=background)
     LabelStudioService().launch(background=background)
@@ -306,6 +349,7 @@ def stop() -> None:
     MLflowService().stop()
     LabelStudioService().stop()
     SwiftBarService().stop()
+    DockerService().stop()
 
 
 @main.command(name="restart")
@@ -313,6 +357,7 @@ def stop() -> None:
 def restart(background: bool) -> None:
     """Restart all aisland services."""
     click.echo("Restarting all services...")
+    DockerService().restart()
     JenkinsService().restart(background=background)
     MLflowService().restart(background=background)
     LabelStudioService().restart(background=background)
@@ -328,6 +373,7 @@ def reset() -> None:
     MLflowService().reset()
     LabelStudioService().reset()
     SwiftBarService().reset()
+    DockerService().reset()
 
 
 @main.command(name="check")

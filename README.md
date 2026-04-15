@@ -54,11 +54,21 @@ aisland mlflow status
 ```
 Default: [http://localhost:5005](http://localhost:5005)
 
-## Jenkins Configuration
-- **JENKINS_HOME:** All data, jobs, and configurations are stored in `aisland/data/jenkins`. This directory is ignored by Git to keep your local environment clean.
-- **Pipelines:** Each project (e.g., `logflow/`) contains its own `Jenkinsfile`. When creating a new job in Jenkins, point it to the local repository path and select "Pipeline from SCM" with the script path set to `logflow/Jenkinsfile`.
+### 4. Manage Docker
+The `act` tool and other containerized services require a Docker engine. Aisland uses **Colima** for a lightweight, CLI-first Docker experience on macOS.
 
-### 4. Manage Label Studio
+```bash
+# Start Docker engine
+aisland docker start
+
+# Stop Docker engine
+aisland docker stop
+
+# Check Docker status
+aisland docker status
+```
+
+### 5. Manage Label Studio
 ```bash
 # Start Label Studio (foreground)
 aisland labelstudio start
@@ -71,6 +81,43 @@ aisland labelstudio stop
 aisland labelstudio status
 ```
 Default: [http://localhost:9081](http://localhost:9081)
+
+## Jenkins Configuration
+- **JENKINS_HOME:** All data, jobs, and configurations are stored in `aisland/data/jenkins`. This directory is ignored by Git to keep your local environment clean.
+- **Pipelines:** Each project (e.g., `logflow/`) contains its own `Jenkinsfile`. When creating a new job in Jenkins, point it to the local repository path and select "Pipeline from SCM" with the script path set to `logflow/Jenkinsfile`.
+
+### 6. Check Quality Gates
+You can run automated quality checks across projects using the `check` command. This includes formatting (`isort`, `black`), linting (`flake8`), type checking (`mypy`), unit tests (`pytest`), and GitHub Actions validation (`act`).
+
+```bash
+# Run all checks for all projects
+aisland check
+
+# Run checks for a specific project
+aisland check confluid
+
+# Run a specific tool for all projects
+aisland check pytest
+
+# Run a specific tool for a specific project
+aisland check pytest confluid
+```
+
+## GitHub Actions Local Testing
+
+The `act` tool is installed to allow you to run and test GitHub Actions locally. 
+
+```bash
+# List all workflows and jobs in the current project
+act --list
+
+# Run all workflows for the current push event
+act
+
+# Run a specific job
+act -j unit-tests
+```
+*Note: Running `act` requires Docker to be installed and running on your machine.*
 
 ## Submodule Management
 
