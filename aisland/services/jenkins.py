@@ -594,11 +594,12 @@ class JenkinsService(BaseService):
             if base_name in gearlux_projects:
                 internal_deps.append(base_name)
 
-        # GH Actions — raw pip commands (valid inside `run: |` blocks)
+        # GH Actions — raw uv commands (valid inside `run: |` blocks)
         # Use --no-deps to avoid PyPI name collisions (e.g. logflow exists on PyPI)
+        # --system installs into the runner's Python rather than requiring a venv
         pip_install_cmds = []
         for dep in internal_deps:
-            pip_install_cmds.append(f"pip install --no-deps git+https://github.com/Gearlux/{dep}.git@main")
+            pip_install_cmds.append(f"uv pip install --system --no-deps git+https://github.com/Gearlux/{dep}.git@main")
 
         pip_install_str = "\n        ".join(pip_install_cmds)
         if pip_install_str:
@@ -622,20 +623,20 @@ class JenkinsService(BaseService):
         else:
             app_token_step = ""
 
-        # Jenkinsfile (standard) — sh-wrapped, installs from GitHub
+        # Jenkinsfile (standard) — sh-wrapped, installs from GitHub via uv
         jenkins_pip_cmds = []
         for dep in internal_deps:
             jenkins_pip_cmds.append(
-                f'sh "${{VENV_BIN}}/pip install --no-deps git+https://github.com/Gearlux/{dep}.git@main"'
+                f'sh "${{VENV_BIN}}/uv pip install --no-deps git+https://github.com/Gearlux/{dep}.git@main"'
             )
         jenkins_pip_str = "\n                ".join(jenkins_pip_cmds)
         if jenkins_pip_str:
             jenkins_pip_str = "\n                // Internal Gearlux dependencies\n                " + jenkins_pip_str
 
-        # Jenkinsfile.local — sh-wrapped, editable installs from local workspace
+        # Jenkinsfile.local — sh-wrapped, editable installs from local workspace via uv
         local_pip_cmds = []
         for dep in internal_deps:
-            local_pip_cmds.append(f'sh "${{VENV_BIN}}/pip install -e ${{env.WORKSPACE_ROOT}}/{dep}"')
+            local_pip_cmds.append(f'sh "${{VENV_BIN}}/uv pip install -e ${{env.WORKSPACE_ROOT}}/{dep}"')
         local_pip_str = "\n                ".join(local_pip_cmds)
         if local_pip_str:
             local_pip_str = (
@@ -673,7 +674,7 @@ class JenkinsService(BaseService):
                 sh "${{VENV_BIN}}/python3 --version"
                 echo 'Installing Project in Editable Mode...'
                 {local_pip_str}
-                sh "${{VENV_BIN}}/pip install -e .[dev]"
+                sh "${{VENV_BIN}}/uv pip install -e .[dev]"
             }}
         }}
 
@@ -893,10 +894,11 @@ with open('isort-checkstyle.xml', 'w') as f:
             steps {{
                 echo 'Creating Isolated Virtual Environment...'
                 sh "python3 -m venv ${{VENV_PATH}}"
+                echo 'Bootstrapping uv for fast dependency resolution...'
+                sh "${{VENV_BIN}}/pip install --upgrade pip uv"
                 echo 'Installing Dependencies...'
-                sh "${{VENV_BIN}}/pip install --upgrade pip"
                 {jenkins_pip_str}
-                sh "${{VENV_BIN}}/pip install -e .[dev]"
+                sh "${{VENV_BIN}}/uv pip install -e .[dev]"
             }}
         }}
 
@@ -1119,12 +1121,12 @@ jobs:
       uses: actions/setup-python@v5
       with:
         python-version: "3.12"
-        cache: 'pip'
+    - name: Install uv
+      uses: astral-sh/setup-uv@v4
     - name: Install dependencies
       run: |
-        python -m pip install --upgrade pip
         {pip_install_str}
-        pip install -e ".[dev]"
+        uv pip install --system -e ".[dev]"
     - name: Run Isort
       run: isort --check-only .
     - name: Run Black
@@ -1144,12 +1146,12 @@ jobs:
       uses: actions/setup-python@v5
       with:
         python-version: "3.12"
-        cache: 'pip'
+    - name: Install uv
+      uses: astral-sh/setup-uv@v4
     - name: Install dependencies
       run: |
-        python -m pip install --upgrade pip
         {pip_install_str}
-        pip install -e ".[dev]"
+        uv pip install --system -e ".[dev]"
     - name: Run Tests
       run: |
         if [ -d tests ] && find tests -name '*.py' | grep -q .; then
@@ -1174,12 +1176,12 @@ jobs:
       uses: actions/setup-python@v5
       with:
         python-version: "3.12"
-        cache: 'pip'
+    - name: Install uv
+      uses: astral-sh/setup-uv@v4
     - name: Install dependencies
       run: |
-        python -m pip install --upgrade pip
         {pip_install_str}
-        pip install -e ".[dev]"
+        uv pip install --system -e ".[dev]"
     - name: Run Examples
       run: |
         for f in examples/*.py; do

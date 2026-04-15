@@ -13,8 +13,8 @@ pipeline {
                 echo 'Creating Isolated Virtual Environment...'
                 sh "python3 -m venv ${VENV_PATH}"
                 echo 'Installing Dependencies...'
-                sh "${VENV_BIN}/pip install --upgrade pip"
-                sh "${VENV_BIN}/pip install -e .[dev] || ${VENV_BIN}/pip install -e ."
+                sh "${VENV_BIN}/pip install --upgrade pip uv"
+                sh "${VENV_BIN}/uv pip install -e .[dev] || ${VENV_BIN}/uv pip install -e ."
             }
         }
 

@@ -6,7 +6,7 @@ build-backend = "setuptools.build_meta"
 name = "aisland-manager"
 version = "0.1.0"
 description = "Development Infrastructure Aisland Manager"
-authors = [{name = "gearlux"}]
+authors = [{name = "Acme"}]
 license = {text = "MIT"}
 dependencies = [
     "click>=8.0.0",

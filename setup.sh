@@ -48,10 +48,12 @@ fi
 source "$VENV_DIR/bin/activate"
 echo "==> Upgrading core build tools..."
 pip install --upgrade pip setuptools wheel
+echo "==> Installing uv for fast dependency resolution..."
+pip install uv
 
 # 3. Install Aisland Manager in editable mode
 echo "==> Installing aisland manager..."
-pip install -e "$WORKSPACE_ROOT/aisland"
+uv pip install -e "$WORKSPACE_ROOT/aisland"
 
 # 4. Hand off to 'aisland setup' for full project provisioning
 echo "==> Handing off to 'aisland setup' for full project provisioning..."

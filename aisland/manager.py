@@ -359,7 +359,7 @@ def setup_workspace() -> None:
     """Perform a full workspace setup: system provisioning followed by editable pip installs."""
     workspace_root = get_workspace_root()
     venv_bin = workspace_root / ".venv" / "bin"
-    pip_cmd = str(venv_bin / "pip")
+    uv_cmd = str(venv_bin / "uv")
 
     if not venv_bin.exists():
         click.echo(f"Error: Virtual environment not found at {workspace_root / '.venv'}. Run aisland/setup.sh first.")
@@ -386,7 +386,7 @@ def setup_workspace() -> None:
         target = f"{project_dir}[dev]" if project["has_dev"] else str(project_dir)
         click.echo(f"==> Installing {project['name']} ({target})...")
         try:
-            subprocess.check_call([pip_cmd, "install", "-e", target])
+            subprocess.check_call([uv_cmd, "pip", "install", "-e", target])
         except subprocess.CalledProcessError as e:
             click.echo(f"  - Error: Failed to install {project['name']}: {e}")
 
