@@ -155,6 +155,22 @@ To use it (e.g., to grab everything latest before starting a new feature):
 git pull-all
 ```
 
+### Pushing All Submodule Changes (`push-all`)
+
+When you have committed changes across multiple submodules and the parent repository, you can use `push-all` to push the current branch of every project to its respective remote in one command.
+
+To configure the global `push-all` Git alias:
+
+```bash
+git config --global alias.push-all '!git push origin $(git branch --show-current) && git submodule foreach "git push origin \$(git branch --show-current)"'
+```
+
+To use it:
+
+```bash
+git push-all
+```
+
 ### Switching All Submodules (`switch-all`)
 
 When moving between development streams (e.g., switching from a feature branch back to `dev/main`), you often need to update the branch context for both the parent repository and all its constituent submodules simultaneously.
