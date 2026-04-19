@@ -45,21 +45,56 @@ class SwiftBarService(BaseService):
             pass
         return None
 
+    def _dependency_ordered_projects(self, workspace_root: Path) -> List[Path]:
+        """Return project directories ordered so dependencies precede dependents.
+
+        Alphabetical tie-breaking is applied within each dependency level so
+        the resulting order is deterministic. The workspace root itself is
+        excluded (it has no ``pyproject.toml``); callers add it separately.
+        """
+        import graphlib
+
+        from aisland.manager import discover_projects, get_project_metadata
+
+        projects = [get_project_metadata(p) for p in discover_projects(workspace_root)]
+        project_names = {p["name"] for p in projects if p["name"]}
+        name_to_path = {p["name"]: p["path"] for p in projects if p["name"]}
+
+        graph: dict[str, set[str]] = {}
+        for p in projects:
+            if not p["name"]:
+                continue
+            deps: set[str] = set()
+            for raw in p["dependencies"]:
+                # Strip version specifiers, extras, and URL fragments so that
+                # 'logflow>=0.1.0', 'pkg[extra]', and 'torchsig @ git+https://...'
+                # all reduce to the bare distribution name.
+                dep_name = (
+                    raw.split("@")[0].split(">=")[0].split("==")[0].split("<=")[0].split("[")[0].split()[0].strip()
+                )
+                if dep_name in project_names and dep_name != p["name"]:
+                    deps.add(dep_name)
+            graph[p["name"]] = deps
+
+        sorter = graphlib.TopologicalSorter(graph)
+        sorter.prepare()
+        ordered: List[str] = []
+        while sorter.is_active():
+            # sorted() here gives alphabetical tie-breaking within a level.
+            for name in sorted(sorter.get_ready()):
+                ordered.append(name)
+                sorter.done(name)
+        return [name_to_path[n] for n in ordered]
+
     def init_scripts(self) -> None:
         """Scan workspace and generate SwiftBar scripts for Jenkins and GitHub."""
         workspace_root = get_workspace_root()
         click.echo(f"Initializing SwiftBar scripts in {self.plugins_dir}...")
 
-        # 1. Discover Projects
-        from aisland.manager import discover_projects
-
-        # Get all project pyproject.toml paths
-        project_configs = discover_projects(workspace_root)
-
-        # Collect unique project directories
-        project_dirs = {p.parent for p in project_configs}
-        # Also include the root itself
-        project_dirs.add(workspace_root)
+        # 1. Determine project traversal order (dependencies before dependents)
+        ordered_dirs = self._dependency_ordered_projects(workspace_root)
+        # Workspace root is not a project but is still monitored for Jenkins / GH remote.
+        iteration_order = [*ordered_dirs, workspace_root]
 
         # 2. Monitored Jenkins jobs
         jenkins_home = DATA_DIR / "jenkins"
@@ -69,7 +104,7 @@ class SwiftBarService(BaseService):
         # For GitHub script
         github_repos = []
 
-        for p_dir in sorted(project_dirs, key=lambda x: x.name):
+        for p_dir in iteration_order:
             p_name = p_dir.name
 
             # Check Jenkins jobs
