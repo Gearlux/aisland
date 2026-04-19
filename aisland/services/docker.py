@@ -1,8 +1,7 @@
 import os
 import subprocess
-import time
 from pathlib import Path
-from typing import Any, Optional
+from typing import Any
 
 import click
 
@@ -101,7 +100,7 @@ class DockerService(BaseService):
             click.echo(f"  - Warning: Colima socket not found at {colima_socket}")
             return
 
-        click.echo(f"Configuring Docker socket symlink...")
+        click.echo("Configuring Docker socket symlink...")
         try:
             # Check if /var/run/docker.sock already exists and points to the right place
             if standard_socket.exists() or standard_socket.is_symlink():

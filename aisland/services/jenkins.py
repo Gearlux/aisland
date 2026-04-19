@@ -702,7 +702,7 @@ pipeline {{
                             def targets = sh(script: "for d in {pkg_name} tests examples; do if [ -d \\"\\$d\\" ] && find \\"\\$d\\" -name '*.py' | grep -q .; then printf \\"%s \\" \\"\\$d\\"; fi; done || true", returnStdout: true).trim()
                             if (targets) {{
                                 def exitCode = sh(script: "set -o pipefail; ${{VENV_BIN}}/black --check --diff ${{targets}} 2>&1 | tee black-diff.txt", returnStatus: true)
-                                
+
                                 // Generate checkstyle report
                                 sh \"\"\"${{VENV_BIN}}/python3 -c "
 import sys, os
@@ -751,7 +751,7 @@ with open('black-checkstyle.xml', 'w') as f:
                             def targets = sh(script: "for d in {pkg_name} tests examples; do if [ -d \\"\\$d\\" ] && find \\"\\$d\\" -name '*.py' | grep -q .; then printf \\"%s \\" \\"\\$d\\"; fi; done || true", returnStdout: true).trim()
                             if (targets) {{
                                 def exitCode = sh(script: "set -o pipefail; ${{VENV_BIN}}/isort --check-only --diff ${{targets}} 2>&1 | tee isort-diff.txt", returnStatus: true)
-                                
+
                                 // Generate checkstyle report
                                 sh \"\"\"${{VENV_BIN}}/python3 -c "
 import sys, os
@@ -958,7 +958,7 @@ pipeline {{
                             def targets = sh(script: "for d in {pkg_name} tests examples; do if [ -d \\"\\$d\\" ] && find \\"\\$d\\" -name '*.py' | grep -q .; then printf \\"%s \\" \\"\\$d\\"; fi; done || true", returnStdout: true).trim()
                             if (targets) {{
                                 def exitCode = sh(script: "set -o pipefail; ${{VENV_BIN}}/black --check --diff ${{targets}} 2>&1 | tee black-diff.txt", returnStatus: true)
-                                
+
                                 // Generate checkstyle report
                                 sh \"\"\"${{VENV_BIN}}/python3 -c "
 import sys, os
@@ -1007,7 +1007,7 @@ with open('black-checkstyle.xml', 'w') as f:
                             def targets = sh(script: "for d in {pkg_name} tests examples; do if [ -d \\"\\$d\\" ] && find \\"\\$d\\" -name '*.py' | grep -q .; then printf \\"%s \\" \\"\\$d\\"; fi; done || true", returnStdout: true).trim()
                             if (targets) {{
                                 def exitCode = sh(script: "set -o pipefail; ${{VENV_BIN}}/isort --check-only --diff ${{targets}} 2>&1 | tee isort-diff.txt", returnStatus: true)
-                                
+
                                 // Generate checkstyle report
                                 sh \"\"\"${{VENV_BIN}}/python3 -c "
 import sys, os
@@ -1471,12 +1471,32 @@ jobs:
             ET.SubElement(all_view, "filterQueue").text = "false"
             ET.SubElement(all_view, "properties").set("class", "hudson.model.View$PropertyList")
 
-        # Find or create the view
+        # Find or create the view.
+        # First pass: look for an exact name match.
+        # Second pass: if not found, look for ANY existing "<Anything> Ecosystem Dashboard"
+        # view and RENAME it in place. This handles workspace rename (e.g. the repo is
+        # renamed on GitHub, so get_workspace_name() returns a new string) without
+        # stranding the old view or creating a duplicate.
         dashboard_view = None
         for v in views:
             if v.findtext("name") == name:
                 dashboard_view = v
                 break
+        if dashboard_view is None:
+            for v in views:
+                existing = v.findtext("name") or ""
+                if existing.endswith(" Ecosystem Dashboard"):
+                    click.echo(
+                        f"  - Renaming stale dashboard view '{existing}' -> '{name}' " f"(workspace was renamed)."
+                    )
+                    name_elem = v.find("name")
+                    if name_elem is not None:
+                        name_elem.text = name
+                    title_elem = v.find("title")
+                    if title_elem is not None:
+                        title_elem.text = name
+                    dashboard_view = v
+                    break
 
         if dashboard_view is None:
             click.echo(
