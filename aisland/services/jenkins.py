@@ -594,16 +594,25 @@ class JenkinsService(BaseService):
             if base_name in gearlux_projects:
                 internal_deps.append(base_name)
 
-        # GH Actions — raw uv commands (valid inside `run: |` blocks)
-        # Use --no-deps to avoid PyPI name collisions (e.g. logflow exists on PyPI)
-        # --system installs into the runner's Python rather than requiring a venv
+        # GH Actions — raw uv commands (valid inside `run: |` blocks).
+        # Install order matters: `.[dev]` FIRST (so third-party deps resolve from PyPI),
+        # THEN the Gearlux deps with --reinstall --no-deps to force-overwrite any PyPI
+        # name collisions (e.g. logflow, confluid, dataflux, liquify all exist as
+        # unrelated PyPI packages and would be silently installed by the resolver).
+        # --system installs into the runner's Python rather than requiring a venv.
         pip_install_cmds = []
         for dep in internal_deps:
-            pip_install_cmds.append(f"uv pip install --system --no-deps git+https://github.com/Gearlux/{dep}.git@main")
+            pip_install_cmds.append(
+                f"uv pip install --system --reinstall --no-deps " f"git+https://github.com/Gearlux/{dep}.git@main"
+            )
 
         pip_install_str = "\n        ".join(pip_install_cmds)
         if pip_install_str:
-            pip_install_str = "\n        # Internal Gearlux dependencies\n        " + pip_install_str
+            pip_install_str = (
+                "\n        # Internal Gearlux dependencies — installed LAST with --reinstall so any"
+                "\n        # PyPI name collisions from `-e .[dev]` resolution get overwritten.\n        "
+                + pip_install_str
+            )
 
         # Detect private Gearlux dependencies — if any, CI needs a GitHub App token
         # to clone them (default GITHUB_TOKEN only grants access to the current repo).
@@ -623,24 +632,37 @@ class JenkinsService(BaseService):
         else:
             app_token_step = ""
 
-        # Jenkinsfile (standard) — sh-wrapped, installs from GitHub via uv
+        # Jenkinsfile (standard) — sh-wrapped, installs from GitHub via uv.
+        # Install order identical to the GH Actions path: `.[dev]` first, Gearlux
+        # deps LAST with --reinstall so PyPI name collisions get overwritten.
         jenkins_pip_cmds = []
         for dep in internal_deps:
             jenkins_pip_cmds.append(
-                f'sh "${{VENV_BIN}}/uv pip install --no-deps git+https://github.com/Gearlux/{dep}.git@main"'
+                f'sh "${{VENV_BIN}}/uv pip install --reinstall --no-deps '
+                f'git+https://github.com/Gearlux/{dep}.git@main"'
             )
         jenkins_pip_str = "\n                ".join(jenkins_pip_cmds)
         if jenkins_pip_str:
-            jenkins_pip_str = "\n                // Internal Gearlux dependencies\n                " + jenkins_pip_str
+            jenkins_pip_str = (
+                "\n                // Internal Gearlux dependencies — installed LAST with --reinstall"
+                "\n                // so PyPI name collisions from .[dev] resolution get overwritten."
+                "\n                " + jenkins_pip_str
+            )
 
-        # Jenkinsfile.local — sh-wrapped, editable installs from local workspace via uv
+        # Jenkinsfile.local — sh-wrapped, editable installs from local workspace via uv.
+        # Order: `.[dev]` first (PyPI resolution), THEN local editables with --reinstall
+        # so any Gearlux package that got pulled from PyPI gets replaced by the local
+        # workspace copy. --reinstall is critical: without it, uv sees the dep as
+        # "already satisfied" by the PyPI version and skips the editable install.
         local_pip_cmds = []
         for dep in internal_deps:
-            local_pip_cmds.append(f'sh "${{VENV_BIN}}/uv pip install -e ${{env.WORKSPACE_ROOT}}/{dep}"')
+            local_pip_cmds.append(f'sh "${{VENV_BIN}}/uv pip install --reinstall -e ${{env.WORKSPACE_ROOT}}/{dep}"')
         local_pip_str = "\n                ".join(local_pip_cmds)
         if local_pip_str:
             local_pip_str = (
-                "\n                // Internal Gearlux dependencies (local editable)\n                " + local_pip_str
+                "\n                // Internal Gearlux dependencies (local editable) — installed LAST"
+                "\n                // with --reinstall so any PyPI name collision gets overwritten."
+                "\n                " + local_pip_str
             )
 
         # Helper to write file safely
@@ -687,8 +709,8 @@ pipeline {{
                 echo 'Validating Environment...'
                 sh "${{VENV_BIN}}/python3 --version"
                 echo 'Installing Project in Editable Mode...'
-                {local_pip_str}
                 sh "${{VENV_BIN}}/uv pip install -e .[dev]"
+                {local_pip_str}
             }}
         }}
 
@@ -943,8 +965,8 @@ pipeline {{
                 echo 'Bootstrapping uv for fast dependency resolution...'
                 sh "${{VENV_BIN}}/pip install --upgrade pip uv"
                 echo 'Installing Dependencies...'
-                {jenkins_pip_str}
                 sh "${{VENV_BIN}}/uv pip install -e .[dev]"
+                {jenkins_pip_str}
             }}
         }}
 
@@ -1195,8 +1217,8 @@ jobs:
       uses: astral-sh/setup-uv@v4
     - name: Install dependencies
       run: |
-        {pip_install_str}
         uv pip install --system -e ".[dev]"
+        {pip_install_str}
     - name: Run Isort
       run: isort --check-only .
     - name: Run Black
@@ -1220,8 +1242,8 @@ jobs:
       uses: astral-sh/setup-uv@v4
     - name: Install dependencies
       run: |
-        {pip_install_str}
         uv pip install --system -e ".[dev]"
+        {pip_install_str}
     - name: Run Tests
       run: |
         if [ -d tests ] && find tests -name '*.py' | grep -q .; then
@@ -1250,8 +1272,8 @@ jobs:
       uses: astral-sh/setup-uv@v4
     - name: Install dependencies
       run: |
-        {pip_install_str}
         uv pip install --system -e ".[dev]"
+        {pip_install_str}
     - name: Run Examples
       run: |
         for f in examples/*.py; do
