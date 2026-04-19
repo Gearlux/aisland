@@ -45,15 +45,15 @@ class DockerService(BaseService):
             # We always run colima start in a way that it can return or background
             # Colima start itself backgrounds by default but we can check if it succeeds.
             cmd = ["colima", "start"]
-            
+
             # For Apple Silicon, we might need specific architecture if the user encountered issues
             # but we'll stick to defaults for now as per brew installation.
-            
+
             subprocess.check_call(cmd)
-            
+
             # Ensure Docker socket is configured
             self.configure_socket()
-            
+
             click.echo("Docker (Colima) started successfully.")
         except subprocess.CalledProcessError as e:
             click.echo(f"Error starting Docker (Colima): {e}", err=True)
@@ -108,7 +108,7 @@ class DockerService(BaseService):
                 if standard_socket.is_symlink() and os.readlink(standard_socket) == str(colima_socket):
                     click.echo("  - Standard socket symlink already configured.")
                     return
-                
+
                 # If it exists but is wrong/different, we need to remove it
                 click.echo(f"  - Removing existing {standard_socket}...")
                 subprocess.run(["sudo", "rm", "-f", str(standard_socket)], check=True)

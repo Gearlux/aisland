@@ -3,11 +3,11 @@ from typing import Optional
 import click
 
 from aisland.manager import provision_system, run_quality_gates, setup_workspace
+from aisland.services.docker import DockerService
 from aisland.services.jenkins import JenkinsService
 from aisland.services.labelstudio import LabelStudioService
 from aisland.services.mlflow import MLflowService
 from aisland.services.swiftbar import SwiftBarService
-from aisland.services.docker import DockerService
 
 
 @click.group()
