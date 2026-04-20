@@ -436,29 +436,44 @@ class JenkinsService(BaseService):
         install_order = get_install_order(workspace_root)
         base_name = get_workspace_name()
 
-        initialized_names = {p for p in initialized_projects}
+        # `initialized_projects` is a list of Jenkins job dir names, which follow the
+        # workspace directory names (e.g. "logflow", "dataflux") — NOT the pyproject
+        # distribution names (which may differ: "log-flow", "data-flux"). Build a
+        # lookup that maps both forms to the canonical workspace-dir form so we can
+        # match either a pyproject name or a dir name against initialized_projects.
+        initialized_set = set(initialized_projects)
+
+        def _to_dir_name(pyproject_name: str) -> str:
+            """PyPI/pyproject name -> workspace dir name (handles dashed PyPI names)."""
+            if pyproject_name in initialized_set:
+                return pyproject_name
+            dashless = pyproject_name.replace("-", "")
+            if dashless in initialized_set:
+                return dashless
+            return pyproject_name  # unknown; pass through
 
         depths: dict[str, int] = {}
         for p in install_order:
-            name = p["name"]
-            if name not in initialized_names:
+            dir_name = _to_dir_name(p["name"])
+            if dir_name not in initialized_set:
                 continue
 
             deps = []
             for dep in p["dependencies"]:
                 dep_name = dep.split(">=")[0].split("==")[0].split("<=")[0].split("[")[0].strip()
-                if dep_name in initialized_names and dep_name != name:
-                    deps.append(dep_name)
+                dep_dir = _to_dir_name(dep_name)
+                if dep_dir in initialized_set and dep_dir != dir_name:
+                    deps.append(dep_dir)
 
             max_dep_depth = -1
             for d in deps:
                 max_dep_depth = max(max_dep_depth, depths.get(d, -1))
 
-            depths[name] = max_dep_depth + 1
+            depths[dir_name] = max_dep_depth + 1
 
         phases: dict[int, list[str]] = {}
-        for name, d in depths.items():
-            phases.setdefault(d, []).append(name)
+        for proj_name, depth_val in depths.items():
+            phases.setdefault(depth_val, []).append(proj_name)
 
         stages_str = ""
         for depth in sorted(phases.keys()):
@@ -547,27 +562,46 @@ class JenkinsService(BaseService):
 
         metadata = get_project_metadata(pyproject_path)
         pkg_name = metadata["name"].replace("-manager", "")
-        # Detect actual package directory if different
+        # Detect actual package directory.
+        #   Step 1: try the literal distribution name (e.g. "confluid").
+        #   Step 2: try the PEP 503 module form — distribution names allow dashes
+        #           but Python import names don't, so "data-flux" -> "dataflux",
+        #           "log-flow" -> "logflow", etc. Try that before the heuristic
+        #           fallback so we don't accidentally pick up "examples/".
+        #   Step 3: scan for any inner dir with __init__.py, skipping known
+        #           non-package dirs (tests, examples, notebooks, docs).
+        SKIP_DIRS = {"tests", "examples", "notebooks", "docs", "scripts"}
         if not (project_path / pkg_name).exists():
-            # Fallback to searching for directories with __init__.py
-            for d in project_path.iterdir():
-                if d.is_dir() and (d / "__init__.py").exists() and d.name != "tests":
-                    pkg_name = d.name
-                    break
+            dash_stripped = pkg_name.replace("-", "")
+            if (project_path / dash_stripped / "__init__.py").exists():
+                pkg_name = dash_stripped
+            else:
+                for d in project_path.iterdir():
+                    if d.is_dir() and (d / "__init__.py").exists() and d.name not in SKIP_DIRS:
+                        pkg_name = d.name
+                        break
 
         click.echo(f"Scaffolding CI/CD for {project_name} (Package: {pkg_name})...")
 
-        # Internal Gearlux Dependencies (order matters for install)
+        # Internal Gearlux Dependencies (order matters for install).
+        # PyPI names — these are what appear in pyproject `dependencies` lists and
+        # (by the GitHub-repo-name = PyPI-name convention) also the GitHub repo names
+        # under the Gearlux org. Four of them deliberately differ from the Python
+        # import name to avoid collisions with existing PyPI packages:
+        #   log-flow   (import logflow)   — squats at PyPI logflow 0.0.1
+        #   data-flux  (import dataflux)  — squats at PyPI dataflux 0.1.2
+        #   liquifai   (import liquifai)  — squats at PyPI liquify 0.3
+        #   torpaido   (import torpaido)  — squats at PyPI torpedo 0.0.2
         gearlux_projects = [
-            "logflow",
+            "log-flow",
             "confluid",
-            "dataflux",
-            "liquify",
+            "data-flux",
+            "liquifai",
             "navigaitor",
             "signals",
             "signals-rfuav",
             "annotaide",
-            "torpedo",
+            "torpaido",
             "aisland",
             "marainer",
         ]
@@ -594,16 +628,29 @@ class JenkinsService(BaseService):
             if base_name in gearlux_projects:
                 internal_deps.append(base_name)
 
-        # GH Actions — raw uv commands (valid inside `run: |` blocks)
-        # Use --no-deps to avoid PyPI name collisions (e.g. logflow exists on PyPI)
-        # --system installs into the runner's Python rather than requiring a venv
+        # GH Actions — raw uv commands (valid inside `run: |` blocks).
+        #
+        # Install order: git-URL Gearlux deps FIRST (--no-deps), then `-e .[dev]`.
+        # Rationale: all Gearlux distribution names (log-flow, data-flux, liquifai,
+        # torpaido, confluid, ...) are intentionally NOT published on PyPI. If
+        # `.[dev]` ran first, uv would try to resolve `log-flow>=0.1.0` from PyPI,
+        # fail ("not found in the package registry"), and abort the whole install.
+        # By installing each Gearlux dep from its git URL first (with --no-deps to
+        # skip its own Gearlux transitive deps — each is handled in its own loop
+        # iteration, topologically ordered), we pre-satisfy the constraints so
+        # `-e .[dev]` resolves cleanly against the already-installed packages.
+        # --system installs into the runner's Python rather than requiring a venv.
         pip_install_cmds = []
         for dep in internal_deps:
             pip_install_cmds.append(f"uv pip install --system --no-deps git+https://github.com/Gearlux/{dep}.git@main")
 
         pip_install_str = "\n        ".join(pip_install_cmds)
         if pip_install_str:
-            pip_install_str = "\n        # Internal Gearlux dependencies\n        " + pip_install_str
+            pip_install_str = (
+                "\n        # Internal Gearlux dependencies — installed FIRST with --no-deps so"
+                "\n        # `-e .[dev]` below finds them pre-satisfied instead of hitting PyPI."
+                "\n        " + pip_install_str
+            )
 
         # Detect private Gearlux dependencies — if any, CI needs a GitHub App token
         # to clone them (default GITHUB_TOKEN only grants access to the current repo).
@@ -623,42 +670,137 @@ class JenkinsService(BaseService):
         else:
             app_token_step = ""
 
-        # Jenkinsfile (standard) — sh-wrapped, installs from GitHub via uv
+        # Jenkinsfile (standard) — sh-wrapped, installs from GitHub via uv.
+        # Install order identical to the GH Actions path: `.[dev]` first, Gearlux
+        # deps LAST with --reinstall so PyPI name collisions get overwritten.
         jenkins_pip_cmds = []
         for dep in internal_deps:
             jenkins_pip_cmds.append(
-                f'sh "${{VENV_BIN}}/uv pip install --no-deps git+https://github.com/Gearlux/{dep}.git@main"'
+                f'sh "${{VENV_BIN}}/uv pip install --no-deps ' f'git+https://github.com/Gearlux/{dep}.git@main"'
             )
         jenkins_pip_str = "\n                ".join(jenkins_pip_cmds)
         if jenkins_pip_str:
-            jenkins_pip_str = "\n                // Internal Gearlux dependencies\n                " + jenkins_pip_str
+            jenkins_pip_str = (
+                "\n                // Internal Gearlux dependencies — installed FIRST with --no-deps"
+                "\n                // so .[dev] below finds them pre-satisfied instead of hitting PyPI"
+                "\n                // (Gearlux distribution names are intentionally unpublished on PyPI)."
+                "\n                " + jenkins_pip_str
+            )
 
-        # Jenkinsfile.local — sh-wrapped, editable installs from local workspace via uv
+        # Jenkinsfile.local — sh-wrapped, editable installs from local workspace via uv.
+        #
+        # Order (mirrors GH Actions): local editables FIRST with --no-deps, then
+        # `.[dev]`. Gearlux distribution names are unpublished on PyPI, so `.[dev]`
+        # alone can't resolve them. Installing each workspace editable first
+        # pre-satisfies the constraint; `.[dev]` then resolves its remaining
+        # third-party deps from PyPI without touching the Gearlux ones.
+        #
+        # PyPI distribution names CAN have dashes ("log-flow", "data-flux") but
+        # filesystem / workspace directory names are conventionally dashless
+        # ("logflow/", "dataflux/"). For each dep, resolve the workspace path:
+        # prefer a dir matching the pyproject name exactly, otherwise try the
+        # dash-stripped form. This lets a project carry a dashed PyPI name while
+        # keeping its Python import and workspace dir as one unbroken word.
+        def _dep_to_workspace_dir(dep_name: str) -> str:
+            if (workspace_root / dep_name).is_dir():
+                return dep_name
+            stripped = dep_name.replace("-", "")
+            if (workspace_root / stripped).is_dir():
+                return stripped
+            return dep_name  # fall through; scaffold error visible later
+
         local_pip_cmds = []
         for dep in internal_deps:
-            local_pip_cmds.append(f'sh "${{VENV_BIN}}/uv pip install -e ${{env.WORKSPACE_ROOT}}/{dep}"')
+            ws_dir = _dep_to_workspace_dir(dep)
+            # --no-deps is CRITICAL. Without it, uv would re-resolve this target's
+            # transitive Gearlux deps (e.g. confluid -> log-flow), and since
+            # log-flow isn't on PyPI the resolution would fail. The outer dep loop
+            # is already topologically ordered (log-flow before confluid before
+            # liquifai, etc.) so each dep's own deps are guaranteed installed by
+            # the time we get to it.
+            local_pip_cmds.append(f'sh "${{VENV_BIN}}/uv pip install --no-deps -e ${{env.WORKSPACE_ROOT}}/{ws_dir}"')
         local_pip_str = "\n                ".join(local_pip_cmds)
         if local_pip_str:
             local_pip_str = (
-                "\n                // Internal Gearlux dependencies (local editable)\n                " + local_pip_str
+                "\n                // Internal Gearlux dependencies — installed FIRST with --no-deps"
+                "\n                // so .[dev] below finds them pre-satisfied instead of hitting PyPI"
+                "\n                // (Gearlux distribution names are intentionally unpublished on PyPI)."
+                "\n                " + local_pip_str
             )
 
         # Helper to write file safely
+        def _validate_jenkinsfile(content: str, desc: str) -> bool:
+            """POST the content to Jenkins' declarative linter. Returns True if the file
+            validates (or if Jenkins isn't running — we can't check then). Returns False
+            only when Jenkins actively rejects the file."""
+            import urllib.error
+            import urllib.parse
+            import urllib.request
+
+            try:
+                # Fetch CSRF crumb — required for all POSTs even with security disabled.
+                crumb_req = urllib.request.Request("http://localhost:9080/crumbIssuer/api/json")
+                with urllib.request.urlopen(crumb_req, timeout=3) as resp:
+                    crumb_data = json.loads(resp.read().decode())
+                crumb_header = {crumb_data["crumbRequestField"]: crumb_data["crumb"]}
+            except (urllib.error.URLError, OSError, TimeoutError, KeyError):
+                click.echo(f"  [WARN] Jenkins not reachable — skipped validation of {desc}.")
+                return True
+
+            try:
+                body = urllib.parse.urlencode({"jenkinsfile": content}).encode()
+                req = urllib.request.Request(
+                    "http://localhost:9080/pipeline-model-converter/validate",
+                    data=body,
+                    headers={**crumb_header, "Content-Type": "application/x-www-form-urlencoded"},
+                )
+                with urllib.request.urlopen(req, timeout=10) as resp:
+                    result = resp.read().decode().strip()
+            except urllib.error.URLError as e:
+                click.echo(f"  [WARN] Linter call failed ({e}); skipped validation of {desc}.")
+                return True
+
+            if result.startswith("Jenkinsfile successfully validated"):
+                return True
+            click.echo(click.style(f"  [FAIL] {desc} did not validate:\n{result}", fg="red"))
+            return False
+
         def _write_safe(path: Path, content: str, desc: str) -> None:
             if path.exists() and not force:
                 click.echo(f"  [SKIP] {desc} already exists. Use --force to overwrite.")
                 return
+            # For Jenkinsfile-type content, validate against the Jenkins linter BEFORE
+            # writing to disk so a broken template is caught at scaffold time, not
+            # when a build fails hours later.
+            if desc.startswith("Jenkinsfile"):
+                if not _validate_jenkinsfile(content, desc):
+                    click.echo(click.style(f"  [ABORT] Not writing {desc} — fix the template.", fg="red"))
+                    raise click.ClickException(f"Template produced invalid {desc}")
             path.parent.mkdir(parents=True, exist_ok=True)
             path.write_text(content)
             click.echo(f"  [OK] Created {desc}")
 
         # 1. Jenkinsfile.local
-        local_content = f"""pipeline {{
+        local_content = f"""// =========================================================================
+// AUTO-GENERATED FILE — DO NOT EDIT BY HAND
+// Generated by: aisland jenkins scaffold --project {project_name}
+// Source template: aisland/services/jenkins.py (JenkinsService.scaffold_pipelines)
+// To regenerate:  aisland jenkins scaffold --project {project_name} --force
+// =========================================================================
+pipeline {{
     agent {{
         node {{
             label 'built-in'
             customWorkspace "${{env.WORKSPACE_ROOT}}/{project_name}"
         }}
+    }}
+
+    parameters {{
+        booleanParam(
+            name: 'REPORT_ALL_WARNINGS',
+            defaultValue: false,
+            description: 'If true, run every quality gate to completion and report all issues. Default (false) fails fast on the first failing gate.'
+        )
     }}
 
     environment {{
@@ -672,6 +814,12 @@ class JenkinsService(BaseService):
             steps {{
                 echo 'Validating Environment...'
                 sh "${{VENV_BIN}}/python3 --version"
+                // uv MUST be present in the workspace venv. It is installed by
+                // `aisland setup` (which runs on initial bootstrap) and verified/
+                // repaired on every subsequent call. Jenkins jobs deliberately do NOT
+                // install it here — that responsibility lives with aisland so the
+                // venv stays under a single owner.
+                sh "${{VENV_BIN}}/uv --version"
                 echo 'Installing Project in Editable Mode...'
                 {local_pip_str}
                 sh "${{VENV_BIN}}/uv pip install -e .[dev]"
@@ -679,6 +827,7 @@ class JenkinsService(BaseService):
         }}
 
         stage('Quality Gates') {{
+            failFast true
             parallel {{
                 stage('Black') {{
                     steps {{
@@ -686,8 +835,8 @@ class JenkinsService(BaseService):
                             sh "rm -f black-diff.txt black-checkstyle.xml"
                             def targets = sh(script: "for d in {pkg_name} tests examples; do if [ -d \\"\\$d\\" ] && find \\"\\$d\\" -name '*.py' | grep -q .; then printf \\"%s \\" \\"\\$d\\"; fi; done || true", returnStdout: true).trim()
                             if (targets) {{
-                                def exitCode = sh(script: "${{VENV_BIN}}/black --check --diff ${{targets}} > black-diff.txt 2>&1", returnStatus: true)
-                                
+                                def exitCode = sh(script: "set -o pipefail; ${{VENV_BIN}}/black --check --diff ${{targets}} 2>&1 | tee black-diff.txt", returnStatus: true)
+
                                 // Generate checkstyle report
                                 sh \"\"\"${{VENV_BIN}}/python3 -c "
 import sys, os
@@ -704,7 +853,11 @@ with open('black-checkstyle.xml', 'w') as f:
     f.write('</checkstyle>\\\\n')
 " \"\"\"
                                 if (exitCode != 0) {{
-                                    error("Black found formatting issues. See Checkstyle report.")
+                                    if (params.REPORT_ALL_WARNINGS) {{
+                                        unstable("Black found formatting issues. See Checkstyle report.")
+                                    }} else {{
+                                        error("Black found formatting issues. See Checkstyle report.")
+                                    }}
                                 }}
                             }} else {{
                                 echo "No python files found for Black. Skipping."
@@ -716,7 +869,7 @@ with open('black-checkstyle.xml', 'w') as f:
                             script {{
                                 if (fileExists('black-checkstyle.xml')) {{
                                     recordIssues(
-                                        id: 'black-{pkg_name}',
+                                        id: 'black-{project_name}',
                                         name: 'Black Formatting ({project_name.capitalize()})',
                                         tools: [checkStyle(pattern: 'black-checkstyle.xml')]
                                     )
@@ -731,8 +884,8 @@ with open('black-checkstyle.xml', 'w') as f:
                             sh "rm -f isort-diff.txt isort-checkstyle.xml"
                             def targets = sh(script: "for d in {pkg_name} tests examples; do if [ -d \\"\\$d\\" ] && find \\"\\$d\\" -name '*.py' | grep -q .; then printf \\"%s \\" \\"\\$d\\"; fi; done || true", returnStdout: true).trim()
                             if (targets) {{
-                                def exitCode = sh(script: "${{VENV_BIN}}/isort --check-only --diff ${{targets}} > isort-diff.txt 2>&1", returnStatus: true)
-                                
+                                def exitCode = sh(script: "set -o pipefail; ${{VENV_BIN}}/isort --check-only --diff ${{targets}} 2>&1 | tee isort-diff.txt", returnStatus: true)
+
                                 // Generate checkstyle report
                                 sh \"\"\"${{VENV_BIN}}/python3 -c "
 import sys, os
@@ -749,7 +902,11 @@ with open('isort-checkstyle.xml', 'w') as f:
     f.write('</checkstyle>\\\\n')
 " \"\"\"
                                 if (exitCode != 0) {{
-                                    error("Isort found import order issues. See Checkstyle report.")
+                                    if (params.REPORT_ALL_WARNINGS) {{
+                                        unstable("Isort found import order issues. See Checkstyle report.")
+                                    }} else {{
+                                        error("Isort found import order issues. See Checkstyle report.")
+                                    }}
                                 }}
                             }} else {{
                                 echo "No python files found for Isort. Skipping."
@@ -761,7 +918,7 @@ with open('isort-checkstyle.xml', 'w') as f:
                             script {{
                                 if (fileExists('isort-checkstyle.xml')) {{
                                     recordIssues(
-                                        id: 'isort-{pkg_name}',
+                                        id: 'isort-{project_name}',
                                         name: 'Isort Import Order ({project_name.capitalize()})',
                                         tools: [checkStyle(pattern: 'isort-checkstyle.xml')]
                                     )
@@ -787,7 +944,7 @@ with open('isort-checkstyle.xml', 'w') as f:
                             script {{
                                 if (fileExists('flake8.txt') && readFile('flake8.txt').trim()) {{
                                     recordIssues(
-                                        id: 'flake8-{pkg_name}',
+                                        id: 'flake8-{project_name}',
                                         name: 'Flake8 ({project_name.capitalize()})',
                                         tools: [flake8(pattern: 'flake8.txt')]
                                     )
@@ -800,8 +957,17 @@ with open('isort-checkstyle.xml', 'w') as f:
                     steps {{
                         script {{
                             sh "rm -f mypy.txt"
-                            // Run from workspace root to ensure root mypy.ini is picked up and imports resolve correctly.
-                            sh "cd ${{env.WORKSPACE_ROOT}} && ${{VENV_BIN}}/mypy {project_name} > ${{env.WORKSPACE_ROOT}}/{project_name}/mypy.txt"
+                            // Run from workspace root so root mypy.ini is picked up and cross-project imports resolve.
+                            // tee streams errors to the Jenkins console; pipefail ensures mypy's exit code (not tee's) propagates
+                            // so the stage fails visibly when types break.
+                            def exitCode = sh(script: "set -o pipefail; cd ${{env.WORKSPACE_ROOT}} && ${{VENV_BIN}}/mypy {project_name} 2>&1 | tee ${{env.WORKSPACE_ROOT}}/{project_name}/mypy.txt", returnStatus: true)
+                            if (exitCode != 0) {{
+                                if (params.REPORT_ALL_WARNINGS) {{
+                                    unstable("Mypy found type errors. See console output above and Mypy report.")
+                                }} else {{
+                                    error("Mypy found type errors. See console output above and Mypy report.")
+                                }}
+                            }}
                         }}
                     }}
                     post {{
@@ -809,7 +975,7 @@ with open('isort-checkstyle.xml', 'w') as f:
                             script {{
                                 if (fileExists('mypy.txt') && readFile('mypy.txt').trim()) {{
                                     recordIssues(
-                                        id: 'mypy-{pkg_name}',
+                                        id: 'mypy-{project_name}',
                                         name: 'Mypy ({project_name.capitalize()})',
                                         tools: [myPy(pattern: 'mypy.txt')]
                                     )
@@ -880,8 +1046,22 @@ with open('isort-checkstyle.xml', 'w') as f:
         _write_safe(project_path / "Jenkinsfile.local", local_content, "Jenkinsfile.local")
 
         # 2. Jenkinsfile (Standard) — aligned with Jenkinsfile.local
-        standard_content = f"""pipeline {{
+        standard_content = f"""// =========================================================================
+// AUTO-GENERATED FILE — DO NOT EDIT BY HAND
+// Generated by: aisland jenkins scaffold --project {project_name}
+// Source template: aisland/services/jenkins.py (JenkinsService.scaffold_pipelines)
+// To regenerate:  aisland jenkins scaffold --project {project_name} --force
+// =========================================================================
+pipeline {{
     agent any
+
+    parameters {{
+        booleanParam(
+            name: 'REPORT_ALL_WARNINGS',
+            defaultValue: false,
+            description: 'If true, run every quality gate to completion and report all issues. Default (false) fails fast on the first failing gate.'
+        )
+    }}
 
     environment {{
         VENV_PATH = "${{WORKSPACE}}/.venv"
@@ -903,6 +1083,7 @@ with open('isort-checkstyle.xml', 'w') as f:
         }}
 
         stage('Quality Gates') {{
+            failFast true
             parallel {{
                 stage('Black') {{
                     steps {{
@@ -910,8 +1091,8 @@ with open('isort-checkstyle.xml', 'w') as f:
                             sh "rm -f black-diff.txt black-checkstyle.xml"
                             def targets = sh(script: "for d in {pkg_name} tests examples; do if [ -d \\"\\$d\\" ] && find \\"\\$d\\" -name '*.py' | grep -q .; then printf \\"%s \\" \\"\\$d\\"; fi; done || true", returnStdout: true).trim()
                             if (targets) {{
-                                def exitCode = sh(script: "${{VENV_BIN}}/black --check --diff ${{targets}} > black-diff.txt 2>&1", returnStatus: true)
-                                
+                                def exitCode = sh(script: "set -o pipefail; ${{VENV_BIN}}/black --check --diff ${{targets}} 2>&1 | tee black-diff.txt", returnStatus: true)
+
                                 // Generate checkstyle report
                                 sh \"\"\"${{VENV_BIN}}/python3 -c "
 import sys, os
@@ -928,7 +1109,11 @@ with open('black-checkstyle.xml', 'w') as f:
     f.write('</checkstyle>\\\\n')
 " \"\"\"
                                 if (exitCode != 0) {{
-                                    error("Black found formatting issues. See Checkstyle report.")
+                                    if (params.REPORT_ALL_WARNINGS) {{
+                                        unstable("Black found formatting issues. See Checkstyle report.")
+                                    }} else {{
+                                        error("Black found formatting issues. See Checkstyle report.")
+                                    }}
                                 }}
                             }} else {{
                                 echo "No python files found for Black. Skipping."
@@ -940,7 +1125,7 @@ with open('black-checkstyle.xml', 'w') as f:
                             script {{
                                 if (fileExists('black-checkstyle.xml')) {{
                                     recordIssues(
-                                        id: 'black-{pkg_name}',
+                                        id: 'black-{project_name}',
                                         name: 'Black Formatting ({project_name.capitalize()})',
                                         tools: [checkStyle(pattern: 'black-checkstyle.xml')]
                                     )
@@ -955,8 +1140,8 @@ with open('black-checkstyle.xml', 'w') as f:
                             sh "rm -f isort-diff.txt isort-checkstyle.xml"
                             def targets = sh(script: "for d in {pkg_name} tests examples; do if [ -d \\"\\$d\\" ] && find \\"\\$d\\" -name '*.py' | grep -q .; then printf \\"%s \\" \\"\\$d\\"; fi; done || true", returnStdout: true).trim()
                             if (targets) {{
-                                def exitCode = sh(script: "${{VENV_BIN}}/isort --check-only --diff ${{targets}} > isort-diff.txt 2>&1", returnStatus: true)
-                                
+                                def exitCode = sh(script: "set -o pipefail; ${{VENV_BIN}}/isort --check-only --diff ${{targets}} 2>&1 | tee isort-diff.txt", returnStatus: true)
+
                                 // Generate checkstyle report
                                 sh \"\"\"${{VENV_BIN}}/python3 -c "
 import sys, os
@@ -973,7 +1158,11 @@ with open('isort-checkstyle.xml', 'w') as f:
     f.write('</checkstyle>\\\\n')
 " \"\"\"
                                 if (exitCode != 0) {{
-                                    error("Isort found import order issues. See Checkstyle report.")
+                                    if (params.REPORT_ALL_WARNINGS) {{
+                                        unstable("Isort found import order issues. See Checkstyle report.")
+                                    }} else {{
+                                        error("Isort found import order issues. See Checkstyle report.")
+                                    }}
                                 }}
                             }} else {{
                                 echo "No python files found for Isort. Skipping."
@@ -985,7 +1174,7 @@ with open('isort-checkstyle.xml', 'w') as f:
                             script {{
                                 if (fileExists('isort-checkstyle.xml')) {{
                                     recordIssues(
-                                        id: 'isort-{pkg_name}',
+                                        id: 'isort-{project_name}',
                                         name: 'Isort Import Order ({project_name.capitalize()})',
                                         tools: [checkStyle(pattern: 'isort-checkstyle.xml')]
                                     )
@@ -1011,7 +1200,7 @@ with open('isort-checkstyle.xml', 'w') as f:
                             script {{
                                 if (fileExists('flake8.txt') && readFile('flake8.txt').trim()) {{
                                     recordIssues(
-                                        id: 'flake8-{pkg_name}',
+                                        id: 'flake8-{project_name}',
                                         name: 'Flake8 ({project_name.capitalize()})',
                                         tools: [flake8(pattern: 'flake8.txt')]
                                     )
@@ -1024,7 +1213,16 @@ with open('isort-checkstyle.xml', 'w') as f:
                     steps {{
                         script {{
                             sh "rm -f mypy.txt"
-                            sh "${{VENV_BIN}}/mypy . > mypy.txt"
+                            // tee streams errors to the Jenkins console; pipefail ensures mypy's exit code (not tee's)
+                            // propagates so the stage fails visibly when types break.
+                            def exitCode = sh(script: "set -o pipefail; ${{VENV_BIN}}/mypy . 2>&1 | tee mypy.txt", returnStatus: true)
+                            if (exitCode != 0) {{
+                                if (params.REPORT_ALL_WARNINGS) {{
+                                    unstable("Mypy found type errors. See console output above and Mypy report.")
+                                }} else {{
+                                    error("Mypy found type errors. See console output above and Mypy report.")
+                                }}
+                            }}
                         }}
                     }}
                     post {{
@@ -1032,7 +1230,7 @@ with open('isort-checkstyle.xml', 'w') as f:
                             script {{
                                 if (fileExists('mypy.txt') && readFile('mypy.txt').trim()) {{
                                     recordIssues(
-                                        id: 'mypy-{pkg_name}',
+                                        id: 'mypy-{project_name}',
                                         name: 'Mypy ({project_name.capitalize()})',
                                         tools: [myPy(pattern: 'mypy.txt')]
                                     )
@@ -1103,7 +1301,13 @@ with open('isort-checkstyle.xml', 'w') as f:
         _write_safe(project_path / "Jenkinsfile", standard_content, "Jenkinsfile")
 
         # 3. GitHub Actions (.github/workflows/ci.yml)
-        gh_content = f"""name: {project_name.capitalize()} CI
+        gh_content = f"""# =========================================================================
+# AUTO-GENERATED FILE — DO NOT EDIT BY HAND
+# Generated by: aisland jenkins scaffold --project {project_name}
+# Source template: aisland/services/jenkins.py (JenkinsService.scaffold_pipelines)
+# To regenerate:  aisland jenkins scaffold --project {project_name} --force
+# =========================================================================
+name: {project_name.capitalize()} CI
 
 on:
   push:
@@ -1401,12 +1605,32 @@ jobs:
             ET.SubElement(all_view, "filterQueue").text = "false"
             ET.SubElement(all_view, "properties").set("class", "hudson.model.View$PropertyList")
 
-        # Find or create the view
+        # Find or create the view.
+        # First pass: look for an exact name match.
+        # Second pass: if not found, look for ANY existing "<Anything> Ecosystem Dashboard"
+        # view and RENAME it in place. This handles workspace rename (e.g. the repo is
+        # renamed on GitHub, so get_workspace_name() returns a new string) without
+        # stranding the old view or creating a duplicate.
         dashboard_view = None
         for v in views:
             if v.findtext("name") == name:
                 dashboard_view = v
                 break
+        if dashboard_view is None:
+            for v in views:
+                existing = v.findtext("name") or ""
+                if existing.endswith(" Ecosystem Dashboard"):
+                    click.echo(
+                        f"  - Renaming stale dashboard view '{existing}' -> '{name}' " f"(workspace was renamed)."
+                    )
+                    name_elem = v.find("name")
+                    if name_elem is not None:
+                        name_elem.text = name
+                    title_elem = v.find("title")
+                    if title_elem is not None:
+                        title_elem.text = name
+                    dashboard_view = v
+                    break
 
         if dashboard_view is None:
             click.echo(
