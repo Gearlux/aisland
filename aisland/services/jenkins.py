@@ -436,25 +436,40 @@ class JenkinsService(BaseService):
         install_order = get_install_order(workspace_root)
         base_name = get_workspace_name()
 
-        initialized_names = {p for p in initialized_projects}
+        # `initialized_projects` is a list of Jenkins job dir names, which follow the
+        # workspace directory names (e.g. "logflow", "dataflux") — NOT the pyproject
+        # distribution names (which may differ: "log-flow", "data-flux"). Build a
+        # lookup that maps both forms to the canonical workspace-dir form so we can
+        # match either a pyproject name or a dir name against initialized_projects.
+        initialized_set = set(initialized_projects)
+
+        def _to_dir_name(pyproject_name: str) -> str:
+            """PyPI/pyproject name -> workspace dir name (handles dashed PyPI names)."""
+            if pyproject_name in initialized_set:
+                return pyproject_name
+            dashless = pyproject_name.replace("-", "")
+            if dashless in initialized_set:
+                return dashless
+            return pyproject_name  # unknown; pass through
 
         depths: dict[str, int] = {}
         for p in install_order:
-            name = p["name"]
-            if name not in initialized_names:
+            dir_name = _to_dir_name(p["name"])
+            if dir_name not in initialized_set:
                 continue
 
             deps = []
             for dep in p["dependencies"]:
                 dep_name = dep.split(">=")[0].split("==")[0].split("<=")[0].split("[")[0].strip()
-                if dep_name in initialized_names and dep_name != name:
-                    deps.append(dep_name)
+                dep_dir = _to_dir_name(dep_name)
+                if dep_dir in initialized_set and dep_dir != dir_name:
+                    deps.append(dep_dir)
 
             max_dep_depth = -1
             for d in deps:
                 max_dep_depth = max(max_dep_depth, depths.get(d, -1))
 
-            depths[name] = max_dep_depth + 1
+            depths[dir_name] = max_dep_depth + 1
 
         phases: dict[int, list[str]] = {}
         for name, d in depths.items():
@@ -547,27 +562,46 @@ class JenkinsService(BaseService):
 
         metadata = get_project_metadata(pyproject_path)
         pkg_name = metadata["name"].replace("-manager", "")
-        # Detect actual package directory if different
+        # Detect actual package directory.
+        #   Step 1: try the literal distribution name (e.g. "confluid").
+        #   Step 2: try the PEP 503 module form — distribution names allow dashes
+        #           but Python import names don't, so "data-flux" -> "dataflux",
+        #           "log-flow" -> "logflow", etc. Try that before the heuristic
+        #           fallback so we don't accidentally pick up "examples/".
+        #   Step 3: scan for any inner dir with __init__.py, skipping known
+        #           non-package dirs (tests, examples, notebooks, docs).
+        SKIP_DIRS = {"tests", "examples", "notebooks", "docs", "scripts"}
         if not (project_path / pkg_name).exists():
-            # Fallback to searching for directories with __init__.py
-            for d in project_path.iterdir():
-                if d.is_dir() and (d / "__init__.py").exists() and d.name != "tests":
-                    pkg_name = d.name
-                    break
+            dash_stripped = pkg_name.replace("-", "")
+            if (project_path / dash_stripped / "__init__.py").exists():
+                pkg_name = dash_stripped
+            else:
+                for d in project_path.iterdir():
+                    if d.is_dir() and (d / "__init__.py").exists() and d.name not in SKIP_DIRS:
+                        pkg_name = d.name
+                        break
 
         click.echo(f"Scaffolding CI/CD for {project_name} (Package: {pkg_name})...")
 
-        # Internal Gearlux Dependencies (order matters for install)
+        # Internal Gearlux Dependencies (order matters for install).
+        # PyPI names — these are what appear in pyproject `dependencies` lists and
+        # (by the GitHub-repo-name = PyPI-name convention) also the GitHub repo names
+        # under the Gearlux org. Four of them deliberately differ from the Python
+        # import name to avoid collisions with existing PyPI packages:
+        #   log-flow   (import logflow)   — squats at PyPI logflow 0.0.1
+        #   data-flux  (import dataflux)  — squats at PyPI dataflux 0.1.2
+        #   liquifai   (import liquifai)  — squats at PyPI liquify 0.3
+        #   torpaido   (import torpaido)  — squats at PyPI torpedo 0.0.2
         gearlux_projects = [
-            "logflow",
+            "log-flow",
             "confluid",
-            "dataflux",
-            "liquify",
+            "data-flux",
+            "liquifai",
             "navigaitor",
             "signals",
             "signals-rfuav",
             "annotaide",
-            "torpedo",
+            "torpaido",
             "aisland",
             "marainer",
         ]
@@ -597,7 +631,7 @@ class JenkinsService(BaseService):
         # GH Actions — raw uv commands (valid inside `run: |` blocks).
         # Install order matters: `.[dev]` FIRST (so third-party deps resolve from PyPI),
         # THEN the Gearlux deps with --reinstall --no-deps to force-overwrite any PyPI
-        # name collisions (e.g. logflow, confluid, dataflux, liquify all exist as
+        # name collisions (e.g. logflow, confluid, dataflux, liquifai all exist as
         # unrelated PyPI packages and would be silently installed by the resolver).
         # --system installs into the runner's Python rather than requiring a venv.
         pip_install_cmds = []
@@ -654,14 +688,41 @@ class JenkinsService(BaseService):
         # so any Gearlux package that got pulled from PyPI gets replaced by the local
         # workspace copy. --reinstall is critical: without it, uv sees the dep as
         # "already satisfied" by the PyPI version and skips the editable install.
+        # PyPI distribution names CAN have dashes ("log-flow", "data-flux") but
+        # filesystem / workspace directory names are conventionally dashless
+        # ("logflow/", "dataflux/"). For each dep, resolve the workspace path:
+        # prefer a dir matching the pyproject name exactly, otherwise try the
+        # dash-stripped form. This lets a project carry a dashed PyPI name while
+        # keeping its Python import and workspace dir as one unbroken word.
+        def _dep_to_workspace_dir(dep_name: str) -> str:
+            if (workspace_root / dep_name).is_dir():
+                return dep_name
+            stripped = dep_name.replace("-", "")
+            if (workspace_root / stripped).is_dir():
+                return stripped
+            return dep_name  # fall through; scaffold error visible later
+
         local_pip_cmds = []
         for dep in internal_deps:
-            local_pip_cmds.append(f'sh "${{VENV_BIN}}/uv pip install --reinstall -e ${{env.WORKSPACE_ROOT}}/{dep}"')
+            ws_dir = _dep_to_workspace_dir(dep)
+            # --no-deps is CRITICAL. Without it, `uv pip install --reinstall -e <path>`
+            # re-resolves the target's full dep tree, and any transitive Gearlux dep
+            # (confluid -> logflow, liquifai -> confluid -> logflow, ...) gets silently
+            # replaced by its PyPI namesake because the project pyproject specifiers
+            # are unpinned. Every Gearlux package name (logflow, confluid, dataflux,
+            # liquifai) is ALSO a published public PyPI package unrelated to ours.
+            # With --no-deps only the target is reinstalled from its local path; the
+            # earlier iterations of this loop already handle the deps (aisland sorts
+            # them topologically so logflow is reinstalled before confluid, etc.).
+            local_pip_cmds.append(
+                f'sh "${{VENV_BIN}}/uv pip install --reinstall --no-deps -e ${{env.WORKSPACE_ROOT}}/{ws_dir}"'
+            )
         local_pip_str = "\n                ".join(local_pip_cmds)
         if local_pip_str:
             local_pip_str = (
                 "\n                // Internal Gearlux dependencies (local editable) — installed LAST"
-                "\n                // with --reinstall so any PyPI name collision gets overwritten."
+                "\n                // with --reinstall --no-deps to overwrite any PyPI name collision"
+                "\n                // WITHOUT re-resolving transitive deps (which would undo the fix)."
                 "\n                " + local_pip_str
             )
 
