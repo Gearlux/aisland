@@ -355,15 +355,44 @@ def get_install_order(workspace_root: Path) -> List[dict]:
     return [name_to_meta[name] for name in order]
 
 
+def ensure_uv_in_venv(venv_bin: Path) -> str:
+    """Guarantee ``uv`` is present in the workspace venv and return its path.
+
+    Every Jenkins .local job, every ``aisland setup`` run, and every call into the
+    workspace's Python tools assumes ``${VENV_BIN}/uv`` exists. If the venv was
+    created without uv (or uv got uninstalled by some downstream ``uv pip install``
+    shenanigan), this function installs it via the venv's own ``pip``.
+
+    Idempotent: if uv is already executable, returns its path immediately.
+    """
+    uv_path = venv_bin / "uv"
+    if uv_path.exists() and os.access(uv_path, os.X_OK):
+        return str(uv_path)
+
+    pip_path = venv_bin / "pip"
+    if not pip_path.exists():
+        click.echo(
+            f"  - Error: {pip_path} not found. Cannot bootstrap uv; " f"the venv is broken. Re-run aisland/setup.sh."
+        )
+        raise click.ClickException("Workspace venv missing pip")
+
+    click.echo(f"==> Bootstrapping uv into {venv_bin}...")
+    subprocess.check_call([str(pip_path), "install", "--quiet", "--upgrade", "uv"])
+    return str(uv_path)
+
+
 def setup_workspace() -> None:
     """Perform a full workspace setup: system provisioning followed by editable pip installs."""
     workspace_root = get_workspace_root()
     venv_bin = workspace_root / ".venv" / "bin"
-    uv_cmd = str(venv_bin / "uv")
 
     if not venv_bin.exists():
         click.echo(f"Error: Virtual environment not found at {workspace_root / '.venv'}. Run aisland/setup.sh first.")
         return
+
+    # 0. Ensure uv is present in the venv — required by everything below and by
+    #    every Jenkinsfile.local job that targets this workspace.
+    uv_cmd = ensure_uv_in_venv(venv_bin)
 
     # 1. System Provisioning
     provision_system()

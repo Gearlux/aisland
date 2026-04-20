@@ -666,10 +666,53 @@ class JenkinsService(BaseService):
             )
 
         # Helper to write file safely
+        def _validate_jenkinsfile(content: str, desc: str) -> bool:
+            """POST the content to Jenkins' declarative linter. Returns True if the file
+            validates (or if Jenkins isn't running — we can't check then). Returns False
+            only when Jenkins actively rejects the file."""
+            import urllib.error
+            import urllib.parse
+            import urllib.request
+
+            try:
+                # Fetch CSRF crumb — required for all POSTs even with security disabled.
+                crumb_req = urllib.request.Request("http://localhost:9080/crumbIssuer/api/json")
+                with urllib.request.urlopen(crumb_req, timeout=3) as resp:
+                    crumb_data = json.loads(resp.read().decode())
+                crumb_header = {crumb_data["crumbRequestField"]: crumb_data["crumb"]}
+            except (urllib.error.URLError, OSError, TimeoutError, KeyError):
+                click.echo(f"  [WARN] Jenkins not reachable — skipped validation of {desc}.")
+                return True
+
+            try:
+                body = urllib.parse.urlencode({"jenkinsfile": content}).encode()
+                req = urllib.request.Request(
+                    "http://localhost:9080/pipeline-model-converter/validate",
+                    data=body,
+                    headers={**crumb_header, "Content-Type": "application/x-www-form-urlencoded"},
+                )
+                with urllib.request.urlopen(req, timeout=10) as resp:
+                    result = resp.read().decode().strip()
+            except urllib.error.URLError as e:
+                click.echo(f"  [WARN] Linter call failed ({e}); skipped validation of {desc}.")
+                return True
+
+            if result.startswith("Jenkinsfile successfully validated"):
+                return True
+            click.echo(click.style(f"  [FAIL] {desc} did not validate:\n{result}", fg="red"))
+            return False
+
         def _write_safe(path: Path, content: str, desc: str) -> None:
             if path.exists() and not force:
                 click.echo(f"  [SKIP] {desc} already exists. Use --force to overwrite.")
                 return
+            # For Jenkinsfile-type content, validate against the Jenkins linter BEFORE
+            # writing to disk so a broken template is caught at scaffold time, not
+            # when a build fails hours later.
+            if desc.startswith("Jenkinsfile"):
+                if not _validate_jenkinsfile(content, desc):
+                    click.echo(click.style(f"  [ABORT] Not writing {desc} — fix the template.", fg="red"))
+                    raise click.ClickException(f"Template produced invalid {desc}")
             path.parent.mkdir(parents=True, exist_ok=True)
             path.write_text(content)
             click.echo(f"  [OK] Created {desc}")
@@ -708,6 +751,12 @@ pipeline {{
             steps {{
                 echo 'Validating Environment...'
                 sh "${{VENV_BIN}}/python3 --version"
+                // uv MUST be present in the workspace venv. It is installed by
+                // `aisland setup` (which runs on initial bootstrap) and verified/
+                // repaired on every subsequent call. Jenkins jobs deliberately do NOT
+                // install it here — that responsibility lives with aisland so the
+                // venv stays under a single owner.
+                sh "${{VENV_BIN}}/uv --version"
                 echo 'Installing Project in Editable Mode...'
                 sh "${{VENV_BIN}}/uv pip install -e .[dev]"
                 {local_pip_str}
@@ -715,8 +764,8 @@ pipeline {{
         }}
 
         stage('Quality Gates') {{
+            failFast true
             parallel {{
-                failFast true
                 stage('Black') {{
                     steps {{
                         script {{
@@ -971,8 +1020,8 @@ pipeline {{
         }}
 
         stage('Quality Gates') {{
+            failFast true
             parallel {{
-                failFast true
                 stage('Black') {{
                     steps {{
                         script {{
