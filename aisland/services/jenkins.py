@@ -629,23 +629,27 @@ class JenkinsService(BaseService):
                 internal_deps.append(base_name)
 
         # GH Actions — raw uv commands (valid inside `run: |` blocks).
-        # Install order matters: `.[dev]` FIRST (so third-party deps resolve from PyPI),
-        # THEN the Gearlux deps with --reinstall --no-deps to force-overwrite any PyPI
-        # name collisions (e.g. logflow, confluid, dataflux, liquifai all exist as
-        # unrelated PyPI packages and would be silently installed by the resolver).
+        #
+        # Install order: git-URL Gearlux deps FIRST (--no-deps), then `-e .[dev]`.
+        # Rationale: all Gearlux distribution names (log-flow, data-flux, liquifai,
+        # torpaido, confluid, ...) are intentionally NOT published on PyPI. If
+        # `.[dev]` ran first, uv would try to resolve `log-flow>=0.1.0` from PyPI,
+        # fail ("not found in the package registry"), and abort the whole install.
+        # By installing each Gearlux dep from its git URL first (with --no-deps to
+        # skip its own Gearlux transitive deps — each is handled in its own loop
+        # iteration, topologically ordered), we pre-satisfy the constraints so
+        # `-e .[dev]` resolves cleanly against the already-installed packages.
         # --system installs into the runner's Python rather than requiring a venv.
         pip_install_cmds = []
         for dep in internal_deps:
-            pip_install_cmds.append(
-                f"uv pip install --system --reinstall --no-deps " f"git+https://github.com/Gearlux/{dep}.git@main"
-            )
+            pip_install_cmds.append(f"uv pip install --system --no-deps git+https://github.com/Gearlux/{dep}.git@main")
 
         pip_install_str = "\n        ".join(pip_install_cmds)
         if pip_install_str:
             pip_install_str = (
-                "\n        # Internal Gearlux dependencies — installed LAST with --reinstall so any"
-                "\n        # PyPI name collisions from `-e .[dev]` resolution get overwritten.\n        "
-                + pip_install_str
+                "\n        # Internal Gearlux dependencies — installed FIRST with --no-deps so"
+                "\n        # `-e .[dev]` below finds them pre-satisfied instead of hitting PyPI."
+                "\n        " + pip_install_str
             )
 
         # Detect private Gearlux dependencies — if any, CI needs a GitHub App token
@@ -672,22 +676,25 @@ class JenkinsService(BaseService):
         jenkins_pip_cmds = []
         for dep in internal_deps:
             jenkins_pip_cmds.append(
-                f'sh "${{VENV_BIN}}/uv pip install --reinstall --no-deps '
-                f'git+https://github.com/Gearlux/{dep}.git@main"'
+                f'sh "${{VENV_BIN}}/uv pip install --no-deps ' f'git+https://github.com/Gearlux/{dep}.git@main"'
             )
         jenkins_pip_str = "\n                ".join(jenkins_pip_cmds)
         if jenkins_pip_str:
             jenkins_pip_str = (
-                "\n                // Internal Gearlux dependencies — installed LAST with --reinstall"
-                "\n                // so PyPI name collisions from .[dev] resolution get overwritten."
+                "\n                // Internal Gearlux dependencies — installed FIRST with --no-deps"
+                "\n                // so .[dev] below finds them pre-satisfied instead of hitting PyPI"
+                "\n                // (Gearlux distribution names are intentionally unpublished on PyPI)."
                 "\n                " + jenkins_pip_str
             )
 
         # Jenkinsfile.local — sh-wrapped, editable installs from local workspace via uv.
-        # Order: `.[dev]` first (PyPI resolution), THEN local editables with --reinstall
-        # so any Gearlux package that got pulled from PyPI gets replaced by the local
-        # workspace copy. --reinstall is critical: without it, uv sees the dep as
-        # "already satisfied" by the PyPI version and skips the editable install.
+        #
+        # Order (mirrors GH Actions): local editables FIRST with --no-deps, then
+        # `.[dev]`. Gearlux distribution names are unpublished on PyPI, so `.[dev]`
+        # alone can't resolve them. Installing each workspace editable first
+        # pre-satisfies the constraint; `.[dev]` then resolves its remaining
+        # third-party deps from PyPI without touching the Gearlux ones.
+        #
         # PyPI distribution names CAN have dashes ("log-flow", "data-flux") but
         # filesystem / workspace directory names are conventionally dashless
         # ("logflow/", "dataflux/"). For each dep, resolve the workspace path:
@@ -705,24 +712,19 @@ class JenkinsService(BaseService):
         local_pip_cmds = []
         for dep in internal_deps:
             ws_dir = _dep_to_workspace_dir(dep)
-            # --no-deps is CRITICAL. Without it, `uv pip install --reinstall -e <path>`
-            # re-resolves the target's full dep tree, and any transitive Gearlux dep
-            # (confluid -> logflow, liquifai -> confluid -> logflow, ...) gets silently
-            # replaced by its PyPI namesake because the project pyproject specifiers
-            # are unpinned. Every Gearlux package name (logflow, confluid, dataflux,
-            # liquifai) is ALSO a published public PyPI package unrelated to ours.
-            # With --no-deps only the target is reinstalled from its local path; the
-            # earlier iterations of this loop already handle the deps (aisland sorts
-            # them topologically so logflow is reinstalled before confluid, etc.).
-            local_pip_cmds.append(
-                f'sh "${{VENV_BIN}}/uv pip install --reinstall --no-deps -e ${{env.WORKSPACE_ROOT}}/{ws_dir}"'
-            )
+            # --no-deps is CRITICAL. Without it, uv would re-resolve this target's
+            # transitive Gearlux deps (e.g. confluid -> log-flow), and since
+            # log-flow isn't on PyPI the resolution would fail. The outer dep loop
+            # is already topologically ordered (log-flow before confluid before
+            # liquifai, etc.) so each dep's own deps are guaranteed installed by
+            # the time we get to it.
+            local_pip_cmds.append(f'sh "${{VENV_BIN}}/uv pip install --no-deps -e ${{env.WORKSPACE_ROOT}}/{ws_dir}"')
         local_pip_str = "\n                ".join(local_pip_cmds)
         if local_pip_str:
             local_pip_str = (
-                "\n                // Internal Gearlux dependencies (local editable) — installed LAST"
-                "\n                // with --reinstall --no-deps to overwrite any PyPI name collision"
-                "\n                // WITHOUT re-resolving transitive deps (which would undo the fix)."
+                "\n                // Internal Gearlux dependencies — installed FIRST with --no-deps"
+                "\n                // so .[dev] below finds them pre-satisfied instead of hitting PyPI"
+                "\n                // (Gearlux distribution names are intentionally unpublished on PyPI)."
                 "\n                " + local_pip_str
             )
 
@@ -819,8 +821,8 @@ pipeline {{
                 // venv stays under a single owner.
                 sh "${{VENV_BIN}}/uv --version"
                 echo 'Installing Project in Editable Mode...'
-                sh "${{VENV_BIN}}/uv pip install -e .[dev]"
                 {local_pip_str}
+                sh "${{VENV_BIN}}/uv pip install -e .[dev]"
             }}
         }}
 
@@ -1075,8 +1077,8 @@ pipeline {{
                 echo 'Bootstrapping uv for fast dependency resolution...'
                 sh "${{VENV_BIN}}/pip install --upgrade pip uv"
                 echo 'Installing Dependencies...'
-                sh "${{VENV_BIN}}/uv pip install -e .[dev]"
                 {jenkins_pip_str}
+                sh "${{VENV_BIN}}/uv pip install -e .[dev]"
             }}
         }}
 
@@ -1327,8 +1329,8 @@ jobs:
       uses: astral-sh/setup-uv@v4
     - name: Install dependencies
       run: |
-        uv pip install --system -e ".[dev]"
         {pip_install_str}
+        uv pip install --system -e ".[dev]"
     - name: Run Isort
       run: isort --check-only .
     - name: Run Black
@@ -1352,8 +1354,8 @@ jobs:
       uses: astral-sh/setup-uv@v4
     - name: Install dependencies
       run: |
-        uv pip install --system -e ".[dev]"
         {pip_install_str}
+        uv pip install --system -e ".[dev]"
     - name: Run Tests
       run: |
         if [ -d tests ] && find tests -name '*.py' | grep -q .; then
@@ -1382,8 +1384,8 @@ jobs:
       uses: astral-sh/setup-uv@v4
     - name: Install dependencies
       run: |
-        uv pip install --system -e ".[dev]"
         {pip_install_str}
+        uv pip install --system -e ".[dev]"
     - name: Run Examples
       run: |
         for f in examples/*.py; do
