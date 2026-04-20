@@ -633,14 +633,26 @@ class JenkinsService(BaseService):
             return re.split(r"[>=< ]", dep_str)[0].strip()
 
         def _read_internal_deps(pyproject: Path) -> list[str]:
-            """Return the direct Gearlux deps of one pyproject.toml."""
+            """Return the direct Gearlux deps of one pyproject.toml, including all extras.
+
+            Walks both `project.dependencies` (runtime) and every extras group in
+            `project.optional-dependencies` (dev, test, notebook, ...). Reason:
+            extras like dev can list sibling workspace packages (e.g. navigaitor's
+            dev extra depends on signals-rfuav for tests). CI runs `.[dev]`, so
+            those extras ARE installed and must be pre-satisfied by the
+            --no-deps Gearlux install loop — otherwise `.[dev]` can't resolve
+            them from PyPI.
+            """
             try:
                 with open(pyproject, "rb") as f:
                     data = tomllib.load(f)
             except Exception:
                 return []
-            deps = data.get("project", {}).get("dependencies", []) or []
-            return [_strip_specifier(d) for d in deps if _strip_specifier(d) in gearlux_projects]
+            project = data.get("project", {})
+            all_specs: list[str] = list(project.get("dependencies") or [])
+            for extra_name, extras in (project.get("optional-dependencies") or {}).items():
+                all_specs.extend(extras or [])
+            return [_strip_specifier(d) for d in all_specs if _strip_specifier(d) in gearlux_projects]
 
         # Map each Gearlux project name to its workspace dir (for locating its
         # pyproject.toml). PyPI-dashed names resolve to dashless dirs.
@@ -651,9 +663,10 @@ class JenkinsService(BaseService):
             return workspace_root / stripped
 
         # BFS over Gearlux deps starting from this project, accumulating all
-        # reachable Gearlux packages.
-        direct = [_strip_specifier(d) for d in metadata["dependencies"]]
-        direct = [d for d in direct if d in gearlux_projects]
+        # reachable Gearlux packages. Start from BOTH runtime and extras deps
+        # (see `_read_internal_deps` rationale): CI's `.[dev]` step installs
+        # every extras group, so extras must be pre-satisfied too.
+        direct = _read_internal_deps(pyproject_path)
 
         seen: set[str] = set()
         stack = list(direct)
