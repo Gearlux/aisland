@@ -618,15 +618,80 @@ class JenkinsService(BaseService):
             "aisland",
         }
 
-        # Filter metadata dependencies to only those in the Gearlux org
-        # Strip version specifiers (e.g., "logflow>=0.1.0" -> "logflow")
+        # Collect the FULL TRANSITIVE closure of internal Gearlux deps, not just
+        # the direct ones. When CI installs a direct dep like `confluid` with
+        # --no-deps, `.[dev]` below still needs to resolve confluid's own deps
+        # (e.g. log-flow) — and Gearlux distribution names aren't on PyPI, so uv
+        # fails unless WE'VE ALSO pre-installed those transitive deps first.
+        #
+        # Build the closure by walking each Gearlux dep's own pyproject.toml.
+        # Topologically sort so every package's deps are installed before it.
         import re
+        import tomllib
 
-        internal_deps = []
-        for dep_str in metadata["dependencies"]:
-            base_name = re.split(r"[>=< ]", dep_str)[0].strip()
-            if base_name in gearlux_projects:
-                internal_deps.append(base_name)
+        def _strip_specifier(dep_str: str) -> str:
+            return re.split(r"[>=< ]", dep_str)[0].strip()
+
+        def _read_internal_deps(pyproject: Path) -> list[str]:
+            """Return the direct Gearlux deps of one pyproject.toml."""
+            try:
+                with open(pyproject, "rb") as f:
+                    data = tomllib.load(f)
+            except Exception:
+                return []
+            deps = data.get("project", {}).get("dependencies", []) or []
+            return [_strip_specifier(d) for d in deps if _strip_specifier(d) in gearlux_projects]
+
+        # Map each Gearlux project name to its workspace dir (for locating its
+        # pyproject.toml). PyPI-dashed names resolve to dashless dirs.
+        def _gearlux_workspace_path(name: str) -> Path:
+            if (workspace_root / name).is_dir():
+                return workspace_root / name
+            stripped = name.replace("-", "")
+            return workspace_root / stripped
+
+        # BFS over Gearlux deps starting from this project, accumulating all
+        # reachable Gearlux packages.
+        direct = [_strip_specifier(d) for d in metadata["dependencies"]]
+        direct = [d for d in direct if d in gearlux_projects]
+
+        seen: set[str] = set()
+        stack = list(direct)
+        while stack:
+            dep = stack.pop()
+            if dep in seen:
+                continue
+            seen.add(dep)
+            sub_pyproject = _gearlux_workspace_path(dep) / "pyproject.toml"
+            if sub_pyproject.exists():
+                for sub_dep in _read_internal_deps(sub_pyproject):
+                    if sub_dep not in seen:
+                        stack.append(sub_dep)
+
+        # Topological sort so log-flow is installed before confluid, etc.
+        # Build adjacency: dep -> set(prerequisites)
+        prereqs: dict[str, set[str]] = {name: set() for name in seen}
+        for name in seen:
+            sub_pyproject = _gearlux_workspace_path(name) / "pyproject.toml"
+            if sub_pyproject.exists():
+                for sub_dep in _read_internal_deps(sub_pyproject):
+                    if sub_dep in seen:
+                        prereqs[name].add(sub_dep)
+
+        # Kahn's algorithm.
+        internal_deps: list[str] = []
+        remaining = dict(prereqs)
+        while remaining:
+            ready = sorted(n for n, pre in remaining.items() if not pre)
+            if not ready:
+                # Cycle — fall back to seen order.
+                internal_deps.extend(sorted(remaining))
+                break
+            for n in ready:
+                internal_deps.append(n)
+                del remaining[n]
+                for pre in remaining.values():
+                    pre.discard(n)
 
         # GH Actions — raw uv commands (valid inside `run: |` blocks).
         #
