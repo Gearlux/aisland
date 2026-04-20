@@ -472,8 +472,8 @@ class JenkinsService(BaseService):
             depths[dir_name] = max_dep_depth + 1
 
         phases: dict[int, list[str]] = {}
-        for name, d in depths.items():
-            phases.setdefault(d, []).append(name)
+        for proj_name, depth_val in depths.items():
+            phases.setdefault(depth_val, []).append(proj_name)
 
         stages_str = ""
         for depth in sorted(phases.keys()):
