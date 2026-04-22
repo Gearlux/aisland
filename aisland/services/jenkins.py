@@ -901,6 +901,11 @@ pipeline {{
                 echo 'Installing Project in Editable Mode...'
                 {local_pip_str}
                 sh "${{VENV_BIN}}/uv pip install -e .[dev]"
+                // Notebook-only extras (matplotlib, jupyter kernels, etc.) live
+                // in the optional `[notebook]` extra when the project ships
+                // notebooks; absence is not an error.
+                sh "${{VENV_BIN}}/uv pip install -e .[notebook] 2>/dev/null || echo 'No [notebook] extras declared; continuing with defaults.'"
+                sh "${{VENV_BIN}}/uv pip install jupyter nbconvert"
             }}
         }}
 
@@ -1180,6 +1185,11 @@ pipeline {{
                 echo 'Installing Dependencies...'
                 {jenkins_pip_str}
                 sh "${{VENV_BIN}}/uv pip install -e .[dev]"
+                // Notebook-only extras (matplotlib, jupyter kernels, etc.) live
+                // in the optional `[notebook]` extra when the project ships
+                // notebooks; absence is not an error.
+                sh "${{VENV_BIN}}/uv pip install -e .[notebook] 2>/dev/null || echo 'No [notebook] extras declared; continuing with defaults.'"
+                sh "${{VENV_BIN}}/uv pip install jupyter nbconvert"
             }}
         }}
 
@@ -1535,6 +1545,9 @@ jobs:
       run: |
         {pip_install_str}
         uv pip install --system -e ".[dev]"
+        # Notebook-only dependencies live in the optional `[notebook]` extra
+        # when a project ships notebooks; absence is not an error.
+        uv pip install --system -e ".[notebook]" 2>/dev/null || echo "No [notebook] extras declared; continuing with defaults."
         uv pip install --system jupyter nbconvert
     - name: Execute Notebooks
       run: |
