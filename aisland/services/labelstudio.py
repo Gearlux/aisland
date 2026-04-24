@@ -13,6 +13,11 @@ class LabelStudioService(BaseService):
         super().__init__("labelstudio")
         # Label Studio uses a base directory for its data, including its own SQLite DB
         self.data_dir = self.service_data_dir
+        # Where Label Studio serves user-supplied local files from. Pipelines
+        # that produce PNGs (e.g. the signals segmentation visualize stage)
+        # write into this directory so LS references them via
+        # /data/local-files/?d=<rel-path> without a re-encode.
+        self.local_files_root = self.data_dir / "local-files"
 
     def setup(self) -> None:
         """Ensure label-studio is installed in the current environment."""
@@ -47,14 +52,21 @@ class LabelStudioService(BaseService):
         if username is None:
             username = get_git_email()
 
-        # Update .env file with the token and URL
+        # Ensure the local-files document root exists before LS opens it.
+        self.local_files_root.mkdir(parents=True, exist_ok=True)
+
+        # Update .env file with the token, URL, and local-files root (so
+        # downstream pipelines like signals segmentation can write their
+        # PNGs inside it and annotaide can reference them via
+        # /data/local-files/?d=<rel>).
         self._update_env_file(user_token, port)
 
         click.echo(f"Label Studio: http://localhost:{port}")
         click.echo(f"  Username: {username}")
         click.echo(f"  Password: {password}")
+        click.echo(f"  Local files root: {self.local_files_root}")
 
-        # Label Studio environment variables for data persistence
+        # Label Studio environment variables for data persistence + local-files serving
         env = {
             "LABEL_STUDIO_BASE_DATA_DIR": str(self.data_dir),
             "LABEL_STUDIO_DISABLE_SIGNUP_WITHOUT_LINK": "true",  # Security best practice
@@ -62,6 +74,10 @@ class LabelStudioService(BaseService):
             "LABEL_STUDIO_USERNAME": username,
             "LABEL_STUDIO_PASSWORD": password,
             "LABEL_STUDIO_USER_TOKEN": user_token,
+            # Enable reading PNGs / images from the local-files root so tasks
+            # can use /data/local-files/?d=<rel-path> image URLs.
+            "LABEL_STUDIO_LOCAL_FILES_SERVING_ENABLED": "true",
+            "LABEL_STUDIO_LOCAL_FILES_DOCUMENT_ROOT": str(self.local_files_root),
         }
 
         cmd = [
@@ -82,7 +98,15 @@ class LabelStudioService(BaseService):
         self.start(cmd, env=env, background=background)
 
     def _update_env_file(self, token: str, port: int = 9081) -> None:
-        """Add or replace LABELSTUDIO_TOKEN and LABELSTUDIO_URL in the root .env file."""
+        """Add/replace LABELSTUDIO_* entries in the root .env file.
+
+        Writes:
+          * ``LABELSTUDIO_TOKEN`` — legacy API token for programmatic access.
+          * ``LABELSTUDIO_URL`` — base URL the client uses.
+          * ``LABELSTUDIO_LOCAL_FILES_ROOT`` — absolute path to the directory
+            LS serves via ``/data/local-files/?d=<rel>``. Pipelines write
+            PNGs under this path so LS can reference them without a copy.
+        """
         from aisland.manager import get_workspace_root
 
         workspace_root = get_workspace_root()
@@ -91,11 +115,15 @@ class LabelStudioService(BaseService):
         entries = {
             "LABELSTUDIO_TOKEN": token,
             "LABELSTUDIO_URL": url,
+            "LABELSTUDIO_LOCAL_FILES_ROOT": str(self.local_files_root),
         }
 
         if not env_file.exists():
             env_file.write_text("\n".join(f"{k}={v}" for k, v in entries.items()) + "\n")
-            click.echo(f"Created .env with LABELSTUDIO_TOKEN and LABELSTUDIO_URL={url}.")
+            click.echo(
+                f"Created .env with LABELSTUDIO_TOKEN, LABELSTUDIO_URL={url}, "
+                f"LABELSTUDIO_LOCAL_FILES_ROOT={self.local_files_root}."
+            )
             return
 
         content = env_file.read_text().splitlines()
@@ -117,4 +145,6 @@ class LabelStudioService(BaseService):
                 new_content.append(f"{key}={value}")
 
         env_file.write_text("\n".join(new_content) + "\n")
-        click.echo(f"Updated .env with LABELSTUDIO_TOKEN and LABELSTUDIO_URL={url}.")
+        click.echo(
+            f"Updated .env with LABELSTUDIO_TOKEN, LABELSTUDIO_URL={url}, LABELSTUDIO_LOCAL_FILES_ROOT={self.local_files_root}."
+        )
