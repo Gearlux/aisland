@@ -229,9 +229,11 @@ def labelstudio() -> None:
 @click.option("--port", default=9081, help="HTTP port for Label Studio.")
 @click.option("--background", "-b", is_flag=True, help="Run in background.")
 @click.option("--username", default=None, help="Username for default user (defaults to git email).")
-@click.option("--password", default="gearlux", help="Password for default user.")
-@click.option("--token", default="gearlux_token_1234567890abcdef12345678", help="User token for API access.")
-def labelstudio_start(port: int, background: bool, username: Optional[str], password: str, token: str) -> None:
+@click.option("--password", default=None, help="Password for default user (defaults to workspace name).")
+@click.option("--token", default=None, help="User token for API access (defaults to <workspace>_token_<hex>).")
+def labelstudio_start(
+    port: int, background: bool, username: Optional[str], password: Optional[str], token: Optional[str]
+) -> None:
     """Start Label Studio."""
     LabelStudioService().launch(
         port=port, background=background, username=username, password=password, user_token=token
@@ -254,9 +256,11 @@ def labelstudio_status() -> None:
 @click.option("--port", default=9081, help="HTTP port for Label Studio.")
 @click.option("--background", "-b", is_flag=True, help="Run in background.")
 @click.option("--username", default=None, help="Username for default user (defaults to git email).")
-@click.option("--password", default="gearlux", help="Password for default user.")
-@click.option("--token", default="gearlux_token_1234567890abcdef12345678", help="User token for API access.")
-def labelstudio_restart(port: int, background: bool, username: Optional[str], password: str, token: str) -> None:
+@click.option("--password", default=None, help="Password for default user (defaults to workspace name).")
+@click.option("--token", default=None, help="User token for API access (defaults to <workspace>_token_<hex>).")
+def labelstudio_restart(
+    port: int, background: bool, username: Optional[str], password: Optional[str], token: Optional[str]
+) -> None:
     """Restart Label Studio."""
     LabelStudioService().restart(
         port=port, background=background, username=username, password=password, user_token=token

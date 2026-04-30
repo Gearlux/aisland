@@ -34,30 +34,55 @@ class BaseService:
                 os.kill(pid, 0)
                 return True
             except (OSError, ValueError):
-                pass
+                # Stale or unparseable PID file — drop it so we don't keep
+                # printing "already running (PID: <ghost>)".
+                try:
+                    self.pid_file.unlink()
+                except OSError:
+                    pass
 
         # 2. Fallback: Search for process by name/pattern
         return self._find_process_by_pattern()
 
     def _find_process_by_pattern(self) -> bool:
-        """Search for a running process that looks like this service using pgrep."""
+        """Search for a running process that looks like this service using pgrep.
+
+        The pattern must be specific enough that the running ``aisland <svc>``
+        command itself does not match — otherwise the CLI detects itself and
+        falsely reports the service as already running.
+        """
         try:
             patterns = {
                 "jenkins": "jenkins.war",
                 "mlflow": "mlflow server",
+                # The actual binary name is ``label-studio`` (with dash);
+                # ``labelstudio`` (no dash) would also match the aisland CLI's
+                # own argv, the .pid file path, etc.
+                "labelstudio": "label-studio start",
             }
             pattern = patterns.get(self.name, self.name)
 
-            # Use pgrep -f to search the full command line
+            # Use pgrep -f to search the full command line, excluding our own
+            # process tree so the running CLI invocation isn't a self-match.
             cmd = ["pgrep", "-f", pattern]
             output = subprocess.check_output(cmd, text=True).strip()
 
             if output:
-                # Take the first PID returned
-                pids = output.splitlines()
-                if pids:
-                    pid = pids[0]
-                    self.pid_file.write_text(pid)
+                own_pid = os.getpid()
+                own_pgid = os.getpgrp()
+                for raw in output.splitlines():
+                    try:
+                        pid = int(raw)
+                    except ValueError:
+                        continue
+                    if pid == own_pid:
+                        continue
+                    try:
+                        if os.getpgid(pid) == own_pgid:
+                            continue
+                    except OSError:
+                        continue
+                    self.pid_file.write_text(str(pid))
                     return True
         except (subprocess.CalledProcessError, FileNotFoundError, OSError):
             pass
