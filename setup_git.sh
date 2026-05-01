@@ -9,6 +9,27 @@ cd "$WORKSPACE_ROOT"
 echo "==> Configuring Git Submodule Tracking..."
 git config submodule.recurse true
 
+# Submodules declared `active = false` in .gitmodules are externally
+# inaccessible to most contributors (e.g. private Bitbucket hosts).
+# `git submodule init` skips populating their URL in .git/config, but a
+# contributor whose local config has `submodule.active = .` (a common
+# ergonomic default that recurses into all submodules) will still see
+# `git pull --recurse-submodules` try to fetch+clone them. Set a per-name
+# `active = false` in local .git/config — it takes precedence over the
+# multi-pattern `submodule.active` setting and makes the skip stick.
+INACTIVE_SUBMODULES=()
+if [ -f "$WORKSPACE_ROOT/.gitmodules" ]; then
+    while read -r key value; do
+        if [ "$value" = "false" ]; then
+            name="${key#submodule.}"
+            name="${name%.active}"
+            echo "    - marking submodule '$name' as locally inactive"
+            git config --local "submodule.$name.active" false
+            INACTIVE_SUBMODULES+=("$name")
+        fi
+    done < <(git config -f "$WORKSPACE_ROOT/.gitmodules" --get-regexp '^submodule\..*\.active$' 2>/dev/null)
+fi
+
 echo "==> Configuring Git Aliases..."
 # git config --global alias.pull-all '!PARENT_BRANCH=$(git branch --show-current) && git pull origin $PARENT_BRANCH && git submodule foreach "git pull origin \$PARENT_BRANCH"'
 git config --global alias.pull-all '!PARENT_BRANCH=$(git branch --show-current) && git submodule foreach "git pull origin \$PARENT_BRANCH"'
@@ -60,3 +81,18 @@ if git rev-parse --is-inside-work-tree >/dev/null 2>&1; then
 fi
 
 echo "==> Git configuration complete!"
+
+if [ ${#INACTIVE_SUBMODULES[@]} -gt 0 ]; then
+    echo ""
+    echo "Note: the following submodules are inactive on this machine and will be"
+    echo "skipped by 'git pull --recurse-submodules' and 'git submodule update':"
+    for name in "${INACTIVE_SUBMODULES[@]}"; do
+        url=$(git config -f "$WORKSPACE_ROOT/.gitmodules" --get "submodule.$name.url" 2>/dev/null || echo "")
+        echo "    - $name  ($url)"
+    done
+    echo ""
+    echo "If you have access and want to enable one, run from the workspace root:"
+    echo "    git config --local --unset submodule.<name>.active"
+    echo "    git submodule update --init --recursive <name>"
+    echo "(Replace <name> with one of the names above.)"
+fi
