@@ -1134,6 +1134,22 @@ with open('isort-checkstyle.xml', 'w') as f:
                 '''
             }}
         }}
+
+        stage('Verify Frontend') {{
+            when {{
+                expression {{ return fileExists('frontend/package.json') }}
+            }}
+            steps {{
+                echo 'Installing frontend deps + running tests + production build...'
+                dir('frontend') {{
+                    sh '''
+                        npm ci
+                        npm run test --if-present
+                        npm run build --if-present
+                    '''
+                }}
+            }}
+        }}
     }}
 
     post {{
@@ -1417,6 +1433,22 @@ with open('isort-checkstyle.xml', 'w') as f:
                 '''
             }}
         }}
+
+        stage('Verify Frontend') {{
+            when {{
+                expression {{ return fileExists('frontend/package.json') }}
+            }}
+            steps {{
+                echo 'Installing frontend deps + running tests + production build...'
+                dir('frontend') {{
+                    sh '''
+                        npm ci
+                        npm run test --if-present
+                        npm run build --if-present
+                    '''
+                }}
+            }}
+        }}
     }}
 
     post {{
@@ -1567,6 +1599,39 @@ jobs:
             --output "/tmp/$(basename "$nb" .ipynb)-ci.ipynb" \\
             "$nb"
         done
+
+  verify-frontend:
+    name: Verify Frontend
+    needs: [unit-tests]
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v4
+    - name: Detect frontend
+      id: detect
+      run: |
+        if [ -f frontend/package.json ]; then
+          echo "present=true" >> "$GITHUB_OUTPUT"
+        else
+          echo "present=false" >> "$GITHUB_OUTPUT"
+          echo "No frontend/package.json. Skipping."
+        fi
+    - name: Set up Node.js
+      if: steps.detect.outputs.present == 'true'
+      uses: actions/setup-node@v4
+      with:
+        node-version: "20"
+    - name: Install frontend dependencies
+      if: steps.detect.outputs.present == 'true'
+      working-directory: frontend
+      run: npm ci
+    - name: Run frontend tests
+      if: steps.detect.outputs.present == 'true'
+      working-directory: frontend
+      run: npm run test --if-present
+    - name: Build frontend
+      if: steps.detect.outputs.present == 'true'
+      working-directory: frontend
+      run: npm run build --if-present
 """
         _write_safe(project_path / ".github" / "workflows" / "ci.yml", gh_content, "GitHub CI Workflow")
 
