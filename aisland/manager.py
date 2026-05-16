@@ -1,4 +1,5 @@
 import os
+import platform
 import signal
 import subprocess
 import time
@@ -321,6 +322,74 @@ def provision_system() -> None:
             click.echo(f"  - {pkg} installed successfully.")
         except subprocess.CalledProcessError as e:
             click.echo(f"  - Error: Failed to install {pkg}: {e}")
+
+    # Post-install: if `bash` is in the required deps, offer to make brew's
+    # bash the login shell — macOS ships bash 3.2 which is missing features
+    # (e.g. `compopt`) that modern CLI completions rely on.
+    _maybe_offer_shell_switch(brew_packages)
+
+
+def _maybe_offer_shell_switch(required_pkgs: set) -> None:
+    """If ``bash`` is declared as a sys-dep, offer to make brew's bash the login shell.
+
+    No-op on non-macOS (chsh / /etc/shells flow is macOS-specific) and when
+    ``bash`` is not among the required packages. Interactive: prompts before
+    each side-effecting step (adding to ``/etc/shells`` via sudo, and ``chsh``
+    itself which prompts the user for their own password).
+    """
+    if platform.system() != "Darwin":
+        return
+    if "bash" not in required_pkgs:
+        return
+
+    # brew installs to /opt/homebrew/bin/bash (Apple Silicon) or
+    # /usr/local/bin/bash (Intel). Probe both.
+    candidates = [Path("/opt/homebrew/bin/bash"), Path("/usr/local/bin/bash")]
+    new_bash = next((str(p) for p in candidates if p.exists()), None)
+    if not new_bash:
+        click.echo("  - Warning: Homebrew bash not found on disk; skipping shell-switch offer.")
+        return
+
+    current_shell = os.environ.get("SHELL", "")
+    if current_shell == new_bash:
+        return  # Already using brew bash — nothing to do.
+
+    click.echo(f"\n==> Modern bash is installed at {new_bash}, but your login shell is {current_shell or '(unknown)'}.")
+    if not click.confirm("    Switch your login shell to the new bash?", default=False):
+        return
+
+    # /etc/shells gate: chsh refuses any shell not listed there.
+    shells_path = Path("/etc/shells")
+    listed = False
+    if shells_path.exists():
+        listed = new_bash in shells_path.read_text().splitlines()
+    if not listed:
+        click.echo(f"  - {new_bash} is not in /etc/shells (chsh requires it).")
+        if not click.confirm("    Add it now? (requires sudo)", default=True):
+            click.echo("  - Skipping shell switch.")
+            return
+        try:
+            # `sudo tee -a` is the canonical pattern for appending to a
+            # root-owned file with a single password prompt.
+            subprocess.run(
+                ["sudo", "tee", "-a", str(shells_path)],
+                input=f"{new_bash}\n",
+                text=True,
+                stdout=subprocess.DEVNULL,
+                check=True,
+            )
+            click.echo(f"  - Added {new_bash} to {shells_path}.")
+        except subprocess.CalledProcessError as e:
+            click.echo(f"  - Failed to update {shells_path}: {e}")
+            return
+
+    click.echo("==> Running chsh (will prompt for your USER password, not sudo)...")
+    try:
+        subprocess.check_call(["chsh", "-s", new_bash])
+        click.echo(f"  - Login shell switched to {new_bash}.")
+        click.echo("  - Open a new terminal window for it to take effect.")
+    except subprocess.CalledProcessError as e:
+        click.echo(f"  - chsh failed: {e}")
 
 
 def get_project_metadata(pyproject_path: Path) -> dict:

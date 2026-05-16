@@ -33,14 +33,59 @@ fi
 
 if [ ! -d "$VENV_DIR" ]; then
     echo "==> Creating virtual environment ($PYTHON_BIN) with prompt: $PROMPT_NAME..."
-    "$PYTHON_BIN" -m venv --prompt "$PROMPT_NAME" "$VENV_DIR"
+    if command -v uv &> /dev/null; then
+        uv venv --prompt "$PROMPT_NAME" --python "$PYTHON_BIN" "$VENV_DIR"
+    else
+        "$PYTHON_BIN" -m venv --prompt "$PROMPT_NAME" "$VENV_DIR"
+        # Fix the double-parenthesis prompt bug in some venv versions (e.g. Python 3.12)
+        # The template in some versions is PS1="("__VENV_PROMPT__") ${PS1:-}"
+        # while context.prompt already includes parentheses.
+        if [ -d "$VENV_DIR/bin" ]; then
+            # Bash/Zsh
+            if [ -f "$VENV_DIR/bin/activate" ]; then
+                sed -i "" 's/PS1="(\(.*\)) /PS1="\1 /' "$VENV_DIR/bin/activate" 2>/dev/null || \
+                sed -i 's/PS1="(\(.*\)) /PS1="\1 /' "$VENV_DIR/bin/activate"
+            fi
+            # Fish
+            if [ -f "$VENV_DIR/bin/activate.fish" ]; then
+                sed -i "" "s/printf '%s%s%s' (set_color 4B8BBE) '(\(.*\)) ' (set_color normal)/printf '%s%s%s' (set_color 4B8BBE) '\1 ' (set_color normal)/" "$VENV_DIR/bin/activate.fish" 2>/dev/null || \
+                sed -i "s/printf '%s%s%s' (set_color 4B8BBE) '(\(.*\)) ' (set_color normal)/printf '%s%s%s' (set_color 4B8BBE) '\1 ' (set_color normal)/" "$VENV_DIR/bin/activate.fish"
+            fi
+            # Csh
+            if [ -f "$VENV_DIR/bin/activate.csh" ]; then
+                sed -i "" 's/set env_name = "(\(.*\)) "/set env_name = "\1 "/' "$VENV_DIR/bin/activate.csh" 2>/dev/null || \
+                sed -i 's/set env_name = "(\(.*\)) "/set env_name = "\1 "/' "$VENV_DIR/bin/activate.csh"
+            fi
+        fi
+    fi
 else
     # Check version of existing venv
     VENV_PYTHON_VERSION=$("$VENV_DIR/bin/python" --version 2>/dev/null | cut -d' ' -f2 || echo "0.0.0")
     if [[ ! "$VENV_PYTHON_VERSION" =~ ^3\.1[2-9] ]]; then
          echo "==> Existing virtual environment is version $VENV_PYTHON_VERSION. Recreating with 3.12+..."
          rm -rf "$VENV_DIR"
-         "$PYTHON_BIN" -m venv --prompt "$PROMPT_NAME" "$VENV_DIR"
+         if command -v uv &> /dev/null; then
+             uv venv --prompt "$PROMPT_NAME" --python "$PYTHON_BIN" "$VENV_DIR"
+         else
+             "$PYTHON_BIN" -m venv --prompt "$PROMPT_NAME" "$VENV_DIR"
+             if [ -d "$VENV_DIR/bin" ]; then
+                 # Bash/Zsh
+                 if [ -f "$VENV_DIR/bin/activate" ]; then
+                     sed -i "" 's/PS1="(\(.*\)) /PS1="\1 /' "$VENV_DIR/bin/activate" 2>/dev/null || \
+                     sed -i 's/PS1="(\(.*\)) /PS1="\1 /' "$VENV_DIR/bin/activate"
+                 fi
+                 # Fish
+                 if [ -f "$VENV_DIR/bin/activate.fish" ]; then
+                     sed -i "" "s/printf '%s%s%s' (set_color 4B8BBE) '(\(.*\)) ' (set_color normal)/printf '%s%s%s' (set_color 4B8BBE) '\1 ' (set_color normal)/" "$VENV_DIR/bin/activate.fish" 2>/dev/null || \
+                     sed -i "s/printf '%s%s%s' (set_color 4B8BBE) '(\(.*\)) ' (set_color normal)/printf '%s%s%s' (set_color 4B8BBE) '\1 ' (set_color normal)/" "$VENV_DIR/bin/activate.fish"
+                 fi
+                 # Csh
+                 if [ -f "$VENV_DIR/bin/activate.csh" ]; then
+                     sed -i "" 's/set env_name = "(\(.*\)) "/set env_name = "\1 "/' "$VENV_DIR/bin/activate.csh" 2>/dev/null || \
+                     sed -i 's/set env_name = "(\(.*\)) "/set env_name = "\1 "/' "$VENV_DIR/bin/activate.csh"
+                 fi
+             fi
+         fi
     fi
 fi
 

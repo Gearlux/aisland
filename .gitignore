@@ -35,3 +35,6 @@ mypy.txt
 coverage.xml
 test-report.xml
 coverage/
+
+# Coverage artifacts
+.coverage

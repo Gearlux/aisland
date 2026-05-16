@@ -1,6 +1,7 @@
 import json
 import os
 import sys
+import time
 import urllib.request
 import xml.etree.ElementTree as ET
 from pathlib import Path
@@ -9,6 +10,30 @@ from typing import Any, List, Optional, cast
 import click
 
 from aisland.manager import BIN_DIR, BaseService
+
+
+def pyproject_to_workspace_dir(pyproject_name: str, initialized_set: set) -> str:
+    """Map a pyproject distribution name to its workspace directory name.
+
+    Handles three conventions in use across acme:
+      1. Identity (most projects): ``confluid`` -> ``confluid``.
+      2. Dashed PyPI name -> dashless dir: ``log-flow`` -> ``logflow``,
+         ``data-flux`` -> ``dataflux``.
+      3. ``-manager`` suffix dropped: ``aisland-manager`` -> ``aisland``.
+
+    Returns the input unchanged if no rule matches (caller decides whether
+    that unknown name is a problem).
+    """
+    if pyproject_name in initialized_set:
+        return pyproject_name
+    dashless = pyproject_name.replace("-", "")
+    if dashless in initialized_set:
+        return dashless
+    if pyproject_name.endswith("-manager"):
+        trimmed = pyproject_name[: -len("-manager")]
+        if trimmed in initialized_set:
+            return trimmed
+    return pyproject_name
 
 
 class JenkinsService(BaseService):
@@ -444,13 +469,7 @@ class JenkinsService(BaseService):
         initialized_set = set(initialized_projects)
 
         def _to_dir_name(pyproject_name: str) -> str:
-            """PyPI/pyproject name -> workspace dir name (handles dashed PyPI names)."""
-            if pyproject_name in initialized_set:
-                return pyproject_name
-            dashless = pyproject_name.replace("-", "")
-            if dashless in initialized_set:
-                return dashless
-            return pyproject_name  # unknown; pass through
+            return pyproject_to_workspace_dir(pyproject_name, initialized_set)
 
         depths: dict[str, int] = {}
         for p in install_order:
@@ -543,9 +562,11 @@ class JenkinsService(BaseService):
         workspace_root = get_workspace_root()
 
         if project_name is None:
-            # Scaffold all projects that have a pyproject.toml
+            # Scaffold all projects that have a pyproject.toml — including
+            # aisland itself, so its own CI surface stays in sync with the
+            # template it generates for everyone else.
             for child in sorted(workspace_root.iterdir()):
-                if child.is_dir() and (child / "pyproject.toml").exists() and child.name != "aisland":
+                if child.is_dir() and (child / "pyproject.toml").exists():
                     self.scaffold_pipelines(project_name=child.name, force=force)
             return
 
@@ -1638,7 +1659,6 @@ jobs:
     def init_pipelines(self, project_name: Optional[str] = None, local: bool = False) -> None:
         """Seed Jenkins with Multi-branch pipelines for projects discovered in the workspace."""
         self.setup()
-        was_running = self.is_running()
         # setup_plugins returns True if it actually installed/updated something
         plugins_changed = self.setup_plugins()
 
@@ -1789,6 +1809,26 @@ jobs:
         initialized_names = [p.name for p in projects if p.name]
         self._create_orchestrator_job(local, initialized_names)
 
+        # Two failure modes to avoid when injecting globalProperties:
+        #   1. Jenkins is running → our config.xml edits get clobbered by
+        #      Jenkins's in-memory model on its next save.
+        #   2. Jenkins has never been started (clean reset) → config.xml
+        #      doesn't exist yet, and setup_global_properties early-returns
+        #      silently, leaving env.WORKSPACE_ROOT null in every build
+        #      (manifests as `null/.venv/bin/python3: No such file`).
+        # Solution: warm-start Jenkins to materialize config.xml, then stop
+        # it before mutating the file, then cold-start for real.
+        if not self.is_running():
+            click.echo("Warm-starting Jenkins to generate baseline config.xml...")
+            self.launch(background=True)
+            config_file = self.service_data_dir / "config.xml"
+            deadline = time.time() + 90
+            while not config_file.exists() and time.time() < deadline:
+                time.sleep(1)
+            if not config_file.exists():
+                click.echo("  - Warning: config.xml did not appear within 90s.")
+        self.stop()
+
         self.setup_dashboard_view()
         self.setup_global_properties()
 
@@ -1796,17 +1836,11 @@ jobs:
             if click.confirm("Reduce Jenkins security for faster local access? (Disables CSRF, allows anonymous read)"):
                 self.reduce_security()
 
-        if was_running:
-            # We always restart after seeding to ensure jobs and plugins are loaded correctly
-            self.safe_restart()
-            if plugins_changed:
-                click.echo("Jenkins plugins updated and restart initiated.")
-            else:
-                click.echo("Jenkins pipelines seeded and restart initiated.")
-        else:
-            click.echo("Starting Jenkins to load the new plugins and pipelines...")
-            self.launch(background=True)
-            click.echo("Jenkins started in the background.")
+        click.echo("Starting Jenkins to load the new plugins, pipelines, and globalProperties...")
+        self.launch(background=True)
+        if plugins_changed:
+            click.echo("Jenkins plugins updated.")
+        click.echo("Jenkins started in the background.")
 
     def setup_dashboard_view(self, name: Optional[str] = None) -> None:
         """Create a Build Monitor View for the Ecosystem branching workflow."""
