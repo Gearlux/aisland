@@ -1,7 +1,11 @@
+import functools
 import json
 import os
+import re
+import subprocess
 import sys
 import time
+import tomllib
 import urllib.request
 import xml.etree.ElementTree as ET
 from pathlib import Path
@@ -10,6 +14,103 @@ from typing import Any, List, Optional, cast
 import click
 
 from aisland.manager import BIN_DIR, BaseService
+
+# Match the Gearlux GitHub URL forms (SSH and HTTPS), capturing the repo name.
+# Trailing ``.git`` is optional. Anchored so a repo path like "Gearlux/x/y" can't
+# accidentally match — Gearlux repos are always top-level under the org.
+_GEARLUX_URL_RE = re.compile(r"(?:git@github\.com:|https://github\.com/)Gearlux/([^/]+?)(?:\.git)?$")
+_SUBMODULE_KEY_RE = re.compile(r"^submodule\.(.+)\.url$")
+
+
+def discover_gearlux_projects(workspace_root: Path) -> list[str]:
+    """Return every sibling project's PyPI distribution name that is a Gearlux GitHub submodule.
+
+    Walks ``<workspace_root>/.gitmodules`` for entries whose URL is on
+    ``github.com:Gearlux/`` (SSH or HTTPS form), then reads each submodule's
+    ``pyproject.toml`` for the ``[project] name`` field — the canonical
+    distribution name, which equals both the PyPI key and the GitHub repo
+    name. Submodules without a pyproject.toml or with an unparseable one are
+    silently skipped (they are not Python projects aisland needs to install).
+
+    Replaces a previously hard-coded list. The whole point: when a new sibling
+    project is added (a new submodule + pyproject), CI scaffolding picks it up
+    on the next ``aisland jenkins scaffold`` run with no aisland-side edit.
+
+    Returns:
+        Alphabetically sorted list. Topological ordering is computed by the
+        caller from each project's own deps, not here.
+    """
+    gitmodules = workspace_root / ".gitmodules"
+    if not gitmodules.exists():
+        return []
+
+    try:
+        cp = subprocess.run(
+            ["git", "config", "--file", str(gitmodules), "--get-regexp", r"submodule\..*\.url"],
+            capture_output=True,
+            text=True,
+            check=True,
+        )
+    except (FileNotFoundError, subprocess.CalledProcessError):
+        return []
+
+    names: list[str] = []
+    for line in cp.stdout.splitlines():
+        parts = line.strip().split(maxsplit=1)
+        if len(parts) != 2:
+            continue
+        cfg_key, url = parts
+        if not _GEARLUX_URL_RE.match(url.strip()):
+            continue
+        path_match = _SUBMODULE_KEY_RE.match(cfg_key)
+        if not path_match:
+            continue
+        pyproject = workspace_root / path_match.group(1) / "pyproject.toml"
+        if not pyproject.exists():
+            continue
+        try:
+            with open(pyproject, "rb") as fh:
+                data = tomllib.load(fh)
+        except (OSError, tomllib.TOMLDecodeError):
+            continue
+        dist_name = (data.get("project") or {}).get("name")
+        if isinstance(dist_name, str) and dist_name:
+            # Match the ``-manager`` strip convention used elsewhere in this file
+            # (search for ``metadata["name"].replace("-manager", "")``). aisland's
+            # pyproject distribution is ``aisland-manager`` but the repo, and what
+            # consumers actually list as a dep, is ``aisland``.
+            names.append(dist_name.removesuffix("-manager"))
+    return sorted(names)
+
+
+@functools.lru_cache(maxsize=None)
+def is_private_gearlux_repo(name: str) -> bool:
+    """Return True iff ``Gearlux/<name>`` is a private GitHub repository.
+
+    Queries ``gh api repos/Gearlux/<name> --jq .private`` with a 5 s timeout.
+    Falls back to False (assume public) on any error — gh missing, not
+    authenticated, network down, repo doesn't exist, etc. The result is
+    cached for the process so a single scaffold run makes at most one API
+    call per distinct dep name.
+
+    Note: gh CLI must be installed and authenticated for this to correctly
+    distinguish private from public. Without it, the CI template will omit
+    the GitHub-App-token step, and any actual private dep will fail to
+    clone on the runner — which is the right failure mode (fast and obvious)
+    versus silently emitting a token-injection step that does nothing on
+    runners missing the secrets.
+    """
+    try:
+        cp = subprocess.run(
+            ["gh", "api", f"repos/Gearlux/{name}", "--jq", ".private"],
+            capture_output=True,
+            text=True,
+            timeout=5,
+            check=True,
+        )
+    except (FileNotFoundError, subprocess.CalledProcessError, subprocess.TimeoutExpired):
+        return False
+    return cp.stdout.strip().lower() == "true"
 
 
 def pyproject_to_workspace_dir(pyproject_name: str, initialized_set: set) -> str:
@@ -604,40 +705,12 @@ class JenkinsService(BaseService):
 
         click.echo(f"Scaffolding CI/CD for {project_name} (Package: {pkg_name})...")
 
-        # Internal Gearlux Dependencies (order matters for install).
-        # PyPI names — these are what appear in pyproject `dependencies` lists and
-        # (by the GitHub-repo-name = PyPI-name convention) also the GitHub repo names
-        # under the Gearlux org. Four of them deliberately differ from the Python
-        # import name to avoid collisions with existing PyPI packages:
-        #   log-flow   (import logflow)   — squats at PyPI logflow 0.0.1
-        #   data-flux  (import dataflux)  — squats at PyPI dataflux 0.1.2
-        #   liquifai   (import liquifai)  — squats at PyPI liquify 0.3
-        #   torpaido   (import torpaido)  — squats at PyPI torpedo 0.0.2
-        gearlux_projects = [
-            "log-flow",
-            "confluid",
-            "data-flux",
-            "liquifai",
-            "navigaitor",
-            "signals",
-            "signals-rfuav",
-            "annotaide",
-            "torpaido",
-            "aisland",
-            "marainer",
-        ]
-
-        # Private Gearlux repos require GitHub App authentication for cross-repo CI installs.
-        # The default GITHUB_TOKEN only grants access to the current repo, so a GitHub App
-        # token is minted and git HTTPS URLs are rewritten to include it.
-        private_gearlux_repos = {
-            "signals",
-            "signals-rfuav",
-            "marainer",
-            "navigaitor",
-            "annotaide",
-            "aisland",
-        }
+        # Internal Gearlux Dependencies — discovered, not hardcoded.
+        # Walks .gitmodules at the workspace root, includes every sibling
+        # submodule hosted at github.com:Gearlux/* that has a pyproject.toml,
+        # and returns each project's PyPI distribution name. Adding a new
+        # workspace project is now a zero-aisland-edit operation.
+        gearlux_projects = discover_gearlux_projects(workspace_root)
 
         # Collect the FULL TRANSITIVE closure of internal Gearlux deps, not just
         # the direct ones. When CI installs a direct dep like `confluid` with
@@ -647,8 +720,6 @@ class JenkinsService(BaseService):
         #
         # Build the closure by walking each Gearlux dep's own pyproject.toml.
         # Topologically sort so every package's deps are installed before it.
-        import re
-        import tomllib
 
         def _strip_specifier(dep_str: str) -> str:
             return re.split(r"[>=< ]", dep_str)[0].strip()
@@ -753,7 +824,10 @@ class JenkinsService(BaseService):
 
         # Detect private Gearlux dependencies — if any, CI needs a GitHub App token
         # to clone them (default GITHUB_TOKEN only grants access to the current repo).
-        needs_app_token = any(dep in private_gearlux_repos for dep in internal_deps)
+        # is_private_gearlux_repo() queries `gh api` with a per-process cache; it
+        # falls back to False (assume public) on any error, so this is safe to call
+        # in environments without gh CLI configured.
+        needs_app_token = any(is_private_gearlux_repo(dep) for dep in internal_deps)
 
         if needs_app_token:
             app_token_step = """    - name: Mint GitHub App token for private Gearlux deps
