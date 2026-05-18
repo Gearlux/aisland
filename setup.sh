@@ -92,7 +92,9 @@ fi
 # 3. Activate and upgrade core tools
 source "$VENV_DIR/bin/activate"
 echo "==> Upgrading core build tools..."
-pip install --upgrade pip setuptools wheel
+# torch 2.11.0 pins `setuptools<82`; unconstrained upgrades pull 82.0.1
+# and break the next torch install. Cap the upgrade until torch lifts it.
+pip install --upgrade pip "setuptools<82" wheel
 echo "==> Installing uv for fast dependency resolution..."
 pip install uv
 

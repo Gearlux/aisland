@@ -23,6 +23,15 @@ if [ -f "$WORKSPACE_ROOT/.gitmodules" ]; then
         if [ "$value" = "false" ]; then
             name="${key#submodule.}"
             name="${name%.active}"
+            # Respect a pre-existing local `true` — that's a user opt-in
+            # (e.g. a Company contributor with Bitbucket access enabling
+            # signals-bridge). Without this guard, every setup.sh run
+            # would silently flip the user's choice back to inactive.
+            current=$(git config --local --get "submodule.$name.active" 2>/dev/null || true)
+            if [ "$current" = "true" ]; then
+                echo "    - keeping submodule '$name' locally active (user opt-in)"
+                continue
+            fi
             echo "    - marking submodule '$name' as locally inactive"
             git config --local "submodule.$name.active" false
             INACTIVE_SUBMODULES+=("$name")
@@ -85,14 +94,15 @@ echo "==> Git configuration complete!"
 if [ ${#INACTIVE_SUBMODULES[@]} -gt 0 ]; then
     echo ""
     echo "Note: the following submodules are inactive on this machine and will be"
-    echo "skipped by 'git pull --recurse-submodules' and 'git submodule update':"
+    echo "skipped by 'git pull --recurse-submodules' and 'git submodule update'."
+    echo "If you have access and want to enable one, copy/paste the matching line:"
+    echo ""
     for name in "${INACTIVE_SUBMODULES[@]}"; do
         url=$(git config -f "$WORKSPACE_ROOT/.gitmodules" --get "submodule.$name.url" 2>/dev/null || echo "")
-        echo "    - $name  ($url)"
+        echo "    # $name  ($url)"
+        echo "    git config --local submodule.$name.active true && git submodule update --init --recursive $name"
+        echo ""
     done
-    echo ""
-    echo "If you have access and want to enable one, run from the workspace root:"
-    echo "    git config --local --unset submodule.<name>.active"
-    echo "    git submodule update --init --recursive <name>"
-    echo "(Replace <name> with one of the names above.)"
+    echo "To opt back out later:"
+    echo "    git config --local submodule.<name>.active false"
 fi
