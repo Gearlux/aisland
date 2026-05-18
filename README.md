@@ -18,6 +18,16 @@ All ports are configurable via `--port` flag.
 
 ## Setup & Usage
 
+### Bootstrap
+
+`bash aisland/setup.sh` (run from the workspace root) provisions the
+`.venv`, installs aisland in editable mode, hands off to `aisland setup`
+for project provisioning, installs liquifai shell completion for every
+Liquifai CLI in the venv into a workspace-local `.project.bashrc.completion`
+file (sourced by `project.bashrc`, gitignored — so the user's global
+`~/.bashrc` stays clean and re-running setup never dirties the tree),
+and finally runs `setup_git.sh` to configure submodule + git aliases.
+
 ### 1. Check Status
 Retrieve service information for all infrastructure components:
 ```bash
