@@ -92,7 +92,9 @@ fi
 # 3. Activate and upgrade core tools
 source "$VENV_DIR/bin/activate"
 echo "==> Upgrading core build tools..."
-pip install --upgrade pip setuptools wheel
+# torch 2.11.0 pins `setuptools<82`; unconstrained upgrades pull 82.0.1
+# and break the next torch install. Cap the upgrade until torch lifts it.
+pip install --upgrade pip "setuptools<82" wheel
 echo "==> Installing uv for fast dependency resolution..."
 pip install uv
 
@@ -106,7 +108,20 @@ cd "$WORKSPACE_ROOT"
 # We call it from the root so Path.glob("**/*.toml") works correctly
 "$VENV_DIR/bin/aisland" setup
 
-# 5. Initialize Git Configuration
+# 5. Install liquifai shell completion into a workspace-local rc file.
+# The generated file is sourced by project.bashrc and is gitignored, so
+# this step keeps the user's global ~/.bashrc clean and leaves no diff
+# in the tracked tree. Auto-discovers every Liquifai app in the venv.
+COMPLETION_RC="$WORKSPACE_ROOT/.project.bashrc.completion"
+echo "==> Installing liquifai shell completion → $COMPLETION_RC"
+if command -v liquifai-install-completions >/dev/null 2>&1; then
+    liquifai-install-completions --target-rc "$COMPLETION_RC" \
+        || echo "    (completion install failed; non-fatal — re-run setup.sh after fixing)"
+else
+    echo "    skip: liquifai-install-completions not found (liquifai not installed yet?)"
+fi
+
+# 6. Initialize Git Configuration
 echo "==> Setting up Git configurations..."
 bash "$WORKSPACE_ROOT/aisland/setup_git.sh"
 
