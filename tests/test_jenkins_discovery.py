@@ -109,26 +109,32 @@ class TestIsPrivateGearluxRepo:
         monkeypatch.setattr(jenkins_mod.subprocess, "run", fake_run)
         assert is_private_gearlux_repo("purifai") is False
 
-    def test_returns_false_when_gh_missing(self, monkeypatch: pytest.MonkeyPatch) -> None:
+    def test_returns_true_when_gh_missing(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """Conservative fallback: assume private so the Mint-GitHub-App-token step survives."""
+
         def fake_run(*args, **kwargs):  # type: ignore[no-untyped-def]
             raise FileNotFoundError("gh not installed")
 
         monkeypatch.setattr(jenkins_mod.subprocess, "run", fake_run)
-        assert is_private_gearlux_repo("anything") is False
+        assert is_private_gearlux_repo("anything") is True
 
-    def test_returns_false_on_subprocess_error(self, monkeypatch: pytest.MonkeyPatch) -> None:
+    def test_returns_true_on_subprocess_error(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """Conservative fallback: assume private on probe failure."""
+
         def fake_run(*args, **kwargs):  # type: ignore[no-untyped-def]
             raise subprocess.CalledProcessError(returncode=1, cmd=args[0])
 
         monkeypatch.setattr(jenkins_mod.subprocess, "run", fake_run)
-        assert is_private_gearlux_repo("nonexistent") is False
+        assert is_private_gearlux_repo("nonexistent") is True
 
-    def test_returns_false_on_timeout(self, monkeypatch: pytest.MonkeyPatch) -> None:
+    def test_returns_true_on_timeout(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """Conservative fallback: assume private on probe timeout."""
+
         def fake_run(*args, **kwargs):  # type: ignore[no-untyped-def]
             raise subprocess.TimeoutExpired(cmd=args[0], timeout=5)
 
         monkeypatch.setattr(jenkins_mod.subprocess, "run", fake_run)
-        assert is_private_gearlux_repo("slow") is False
+        assert is_private_gearlux_repo("slow") is True
 
     def test_result_is_cached(self, monkeypatch: pytest.MonkeyPatch) -> None:
         """Two calls for the same name only invoke gh once (lru_cache)."""
