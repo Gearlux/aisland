@@ -12,6 +12,28 @@ import click
 from aisland.manager import BIN_DIR, BaseService
 
 
+def _parse_dotenv(env_path: Path) -> dict[str, str]:
+    """Parse KEY=VALUE pairs from a workspace ``.env`` file.
+
+    Mirrors the loose semantics of ``project.bashrc`` (``export $(grep -v '^#' .env | xargs)``):
+    skip blank and comment lines, split on the first ``=``, strip surrounding quotes.
+    Returns an empty dict when the file is absent so callers can no-op silently.
+    """
+    if not env_path.exists():
+        return {}
+    result: dict[str, str] = {}
+    for raw in env_path.read_text().splitlines():
+        line = raw.strip()
+        if not line or line.startswith("#") or "=" not in line:
+            continue
+        key, _, value = line.partition("=")
+        key = key.strip()
+        value = value.strip().strip('"').strip("'")
+        if key:
+            result[key] = value
+    return result
+
+
 def pyproject_to_workspace_dir(pyproject_name: str, initialized_set: set) -> str:
     """Map a pyproject distribution name to its workspace directory name.
 
@@ -2000,18 +2022,36 @@ jobs:
         ET.SubElement(default_elem, "comparator").set("class", "hudson.util.CaseInsensitiveComparator")
 
         workspace_root = get_workspace_root()
+        dotenv_path = workspace_root / ".env"
+        dotenv_vars = _parse_dotenv(dotenv_path)
+        if dotenv_vars:
+            click.echo(f"  - Loaded {len(dotenv_vars)} key(s) from {dotenv_path}")
+        else:
+            click.echo("  - No workspace .env found; skipping injection.")
+
+        # Computed keys come first so a typo'd .env can't override the workspace
+        # path or the forced-Node24 toggle. ** dotenv_vars adds the remainder.
         env_data = {
             "WORKSPACE_ROOT": str(workspace_root),
             "FORCE_JAVASCRIPT_ACTIONS_TO_NODE24": "true",
+            **{
+                k: v
+                for k, v in dotenv_vars.items()
+                if k not in ("WORKSPACE_ROOT", "FORCE_JAVASCRIPT_ACTIONS_TO_NODE24")
+            },
         }
 
         # int size
         ET.SubElement(tree_map, "int").text = str(len(env_data))
 
+        computed_keys = {"WORKSPACE_ROOT", "FORCE_JAVASCRIPT_ACTIONS_TO_NODE24"}
         for key, value in env_data.items():
             ET.SubElement(tree_map, "string").text = key
             ET.SubElement(tree_map, "string").text = value
-            click.echo(f"  - Added global Jenkins property: {key}={value}")
+            if key in computed_keys:
+                click.echo(f"  - Added global Jenkins property: {key}={value}")
+            else:
+                click.echo(f"  - Added global Jenkins property: {key}=<from .env>")
 
         tree.write(config_file, encoding="UTF-8", xml_declaration=True)
 
