@@ -2,7 +2,9 @@ import os
 import platform
 import signal
 import subprocess
+import tarfile
 import time
+import urllib.request
 from pathlib import Path
 from typing import Any, List, Optional
 
@@ -14,6 +16,21 @@ SERVICES_DIR = Path(__file__).parent.absolute()
 BASE_DIR = SERVICES_DIR.parent.absolute()
 BIN_DIR = BASE_DIR / "bin"
 DATA_DIR = BASE_DIR / "data"
+TOOLS_DIR = BASE_DIR / "tools"
+
+# Registry of tools aisland can install entirely in userspace (no sudo / package
+# manager required). Used on Linux where the macOS brew flow is unavailable.
+# Each entry pins a specific version; bump as new LTS / stable lines land.
+# TODO: pin sha256 checksums from upstream SHASUMS files before relying on this
+# in untrusted environments.
+USERSPACE_TOOLS: dict[str, dict[str, Any]] = {
+    "node": {
+        "version": "v22.11.0",
+        "url": "https://nodejs.org/dist/{version}/node-{version}-linux-x64.tar.xz",
+        "extract_subdir": "node-{version}-linux-x64",
+        "binaries": ["node", "npm", "npx"],
+    },
+}
 
 
 class BaseService:
@@ -381,57 +398,164 @@ def discover_projects(root: Path) -> List[Path]:
 
 
 def provision_system() -> None:
-    """Scan all projects for [tool.aisland.sys-dependencies] and install via Homebrew."""
+    """Scan all projects for [tool.aisland.sys-dependencies] and install them.
+
+    Honoured schema (per pyproject)::
+
+        [tool.aisland.sys-dependencies]
+        brew      = ["pkg", ...]   # macOS: installed via Homebrew
+        userspace = ["tool", ...]  # Linux: installed via aisland's userspace registry
+
+    Behaviour by platform:
+      * Darwin: install ``brew`` deps via Homebrew; ``userspace`` is ignored.
+      * Linux:  install ``userspace`` deps via :data:`USERSPACE_TOOLS`; ``brew`` is ignored.
+      * Other:  log and skip — no provisioning implemented yet.
+    """
     workspace_root = get_workspace_root()
     click.echo(f"==> Scanning for system dependencies in {workspace_root}...")
 
     import tomllib
 
-    brew_packages = set()
+    brew_packages: set[str] = set()
+    userspace_tools: set[str] = set()
 
     for pyproject in discover_projects(workspace_root):
         try:
             with open(pyproject, "rb") as f:
                 data = tomllib.load(f)
-                aisland_config = data.get("tool", {}).get("aisland", {})
-                sys_deps = aisland_config.get("sys-dependencies", {})
+                sys_deps = data.get("tool", {}).get("aisland", {}).get("sys-dependencies", {})
                 brew_deps = sys_deps.get("brew", [])
                 if isinstance(brew_deps, list):
-                    for dep in brew_deps:
-                        brew_packages.add(dep)
+                    brew_packages.update(brew_deps)
+                user_deps = sys_deps.get("userspace", [])
+                if isinstance(user_deps, list):
+                    userspace_tools.update(user_deps)
         except Exception as e:
             click.echo(f"  - Warning: Failed to parse {pyproject}: {e}")
 
-    if not brew_packages:
+    if not brew_packages and not userspace_tools:
         click.echo("  - No system dependencies found.")
         return
 
-    click.echo(f"  - Found required brew packages: {', '.join(sorted(brew_packages))}")
+    system = platform.system()
+    if system == "Darwin":
+        if brew_packages:
+            click.echo(f"  - Found required brew packages: {', '.join(sorted(brew_packages))}")
+            _install_brew_packages(brew_packages)
+            _maybe_offer_shell_switch(brew_packages)
+        else:
+            click.echo("  - No brew packages declared; nothing to install on macOS.")
+    elif system == "Linux":
+        if userspace_tools:
+            click.echo(f"  - Found required userspace tools: {', '.join(sorted(userspace_tools))}")
+            for tool in sorted(userspace_tools):
+                _install_userspace_tool(tool)
+        else:
+            click.echo("  - No userspace tools declared; nothing to install on Linux.")
+    else:
+        click.echo(f"  - sys-deps provisioning not implemented for platform '{system}'; skipping.")
 
-    # Check for brew command
+
+def _install_brew_packages(packages: set) -> None:
+    """Install the given packages via Homebrew (macOS).
+
+    Silent no-op if ``brew`` is not on PATH. Idempotent — brew skips packages
+    that are already installed.
+    """
     try:
         subprocess.check_call(["brew", "--version"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
     except (subprocess.CalledProcessError, FileNotFoundError):
         click.echo("  - Error: 'brew' command not found. Homebrew is required for system provisioning.")
         return
 
-    # Non-interactive installation
     env = os.environ.copy()
     env["HOMEBREW_NO_AUTO_UPDATE"] = "1"
 
-    for pkg in sorted(brew_packages):
+    for pkg in sorted(packages):
         click.echo(f"==> Installing {pkg} via Homebrew...")
         try:
-            # --quiet flag for non-interactive output reduction
             subprocess.check_call(["brew", "install", "--quiet", pkg], env=env)
             click.echo(f"  - {pkg} installed successfully.")
         except subprocess.CalledProcessError as e:
             click.echo(f"  - Error: Failed to install {pkg}: {e}")
 
-    # Post-install: if `bash` is in the required deps, offer to make brew's
-    # bash the login shell — macOS ships bash 3.2 which is missing features
-    # (e.g. `compopt`) that modern CLI completions rely on.
-    _maybe_offer_shell_switch(brew_packages)
+
+def _install_userspace_tool(name: str) -> None:
+    """Install a tool from :data:`USERSPACE_TOOLS` entirely in userspace.
+
+    Downloads the upstream tarball into ``aisland/tools/cache/``, extracts it
+    under ``aisland/tools/``, and symlinks the named binaries into
+    ``aisland/bin/`` (which ``project.bashrc`` puts on ``PATH``). Idempotent:
+    if every target binary symlink already exists, the download is skipped.
+
+    TODO: verify upstream SHASUMS before relying on this in untrusted setups.
+    """
+    spec = USERSPACE_TOOLS.get(name)
+    if spec is None:
+        click.echo(f"  - Error: '{name}' is not a known userspace tool. Known: {sorted(USERSPACE_TOOLS)}")
+        return
+
+    version = spec["version"]
+    url = spec["url"].format(version=version)
+    extract_subdir = spec["extract_subdir"].format(version=version)
+    binaries: list[str] = spec["binaries"]
+
+    BIN_DIR.mkdir(parents=True, exist_ok=True)
+    if all((BIN_DIR / b).exists() for b in binaries):
+        click.echo(f"  - {name} {version} already installed (symlinks present in {BIN_DIR}).")
+        return
+
+    cache_dir = TOOLS_DIR / "cache"
+    cache_dir.mkdir(parents=True, exist_ok=True)
+    tarball = cache_dir / Path(url).name
+
+    if not tarball.exists() or tarball.stat().st_size == 0:
+        click.echo(f"==> Downloading {name} {version} from {url}...")
+        try:
+            urllib.request.urlretrieve(url, tarball)
+        except Exception as e:
+            click.echo(f"  - Error: Failed to download {url}: {e}")
+            if tarball.exists():
+                tarball.unlink()
+            return
+        click.echo(f"  - Cached at {tarball}.")
+    else:
+        click.echo(f"  - Using cached tarball {tarball}.")
+
+    extract_root = TOOLS_DIR / extract_subdir
+    if not extract_root.exists():
+        click.echo(f"==> Extracting {tarball.name} into {TOOLS_DIR}...")
+        try:
+            with tarfile.open(tarball, "r:*") as tf:
+                # `filter="data"` is the safe default in py3.14+ — block links/devices outside dest.
+                tf.extractall(TOOLS_DIR, filter="data")
+        except Exception as e:
+            click.echo(f"  - Error: Failed to extract {tarball}: {e}")
+            return
+
+    tool_bin_dir = extract_root / "bin"
+    if not tool_bin_dir.is_dir():
+        click.echo(f"  - Error: Expected {tool_bin_dir} to exist after extraction.")
+        return
+
+    for binary in binaries:
+        src = tool_bin_dir / binary
+        dst = BIN_DIR / binary
+        if not src.exists():
+            click.echo(f"  - Warning: {src} missing in extracted tarball; skipping.")
+            continue
+        if dst.is_symlink() or dst.exists():
+            # Replace stale symlinks; refuse to clobber real files.
+            if dst.is_symlink():
+                dst.unlink()
+            else:
+                click.echo(f"  - Error: {dst} exists and is not a symlink; refusing to overwrite.")
+                continue
+        os.symlink(src, dst)
+        click.echo(f"  - linked {binary} -> {src}")
+
+    click.echo(f"==> {name} {version} installed under {extract_root}.")
+    click.echo(f"  - Ensure {BIN_DIR} is on PATH (project.bashrc handles this).")
 
 
 def _maybe_offer_shell_switch(required_pkgs: set) -> None:
@@ -580,6 +704,38 @@ def ensure_uv_in_venv(venv_bin: Path) -> str:
     return str(uv_path)
 
 
+def _link_project_bashrc(workspace_root: Path) -> None:
+    """Symlink ``<workspace>/project.bashrc`` to the canonical aisland-managed copy.
+
+    The source of truth lives at ``aisland/project.bashrc`` (tracked). The
+    workspace-root entry is a symlink so `source ./project.bashrc` from the
+    workspace still works for muscle-memory. Replaces a stale symlink in place,
+    but refuses to clobber a real file — that would silently destroy the user's
+    customizations if they ever predated this migration.
+    """
+    target = BASE_DIR / "project.bashrc"
+    link = workspace_root / "project.bashrc"
+
+    if not target.exists():
+        click.echo(f"  - Warning: {target} not found; skipping project.bashrc symlink.")
+        return
+
+    if link.is_symlink():
+        if link.resolve() == target.resolve():
+            return  # Already pointing at the right place.
+        link.unlink()
+    elif link.exists():
+        click.echo(
+            f"  - Warning: {link} exists as a regular file. Move or delete it manually so "
+            f"`aisland setup` can symlink it to {target}."
+        )
+        return
+
+    rel = os.path.relpath(target, workspace_root)
+    os.symlink(rel, link)
+    click.echo(f"==> Linked {link} -> {rel}")
+
+
 def setup_workspace() -> None:
     """Perform a full workspace setup: system provisioning followed by editable pip installs."""
     workspace_root = get_workspace_root()
@@ -592,6 +748,10 @@ def setup_workspace() -> None:
     # 0. Ensure uv is present in the venv — required by everything below and by
     #    every Jenkinsfile.local job that targets this workspace.
     uv_cmd = ensure_uv_in_venv(venv_bin)
+
+    # 0b. Symlink the aisland-managed project.bashrc to the workspace root so
+    #     users can `source ./project.bashrc` from the workspace as before.
+    _link_project_bashrc(workspace_root)
 
     # 1. System Provisioning
     provision_system()

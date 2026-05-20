@@ -88,17 +88,20 @@ def is_private_gearlux_repo(name: str) -> bool:
     """Return True iff ``Gearlux/<name>`` is a private GitHub repository.
 
     Queries ``gh api repos/Gearlux/<name> --jq .private`` with a 5 s timeout.
-    Falls back to False (assume public) on any error — gh missing, not
+    Falls back to True (assume private) on any error — gh missing, not
     authenticated, network down, repo doesn't exist, etc. The result is
     cached for the process so a single scaffold run makes at most one API
     call per distinct dep name.
 
-    Note: gh CLI must be installed and authenticated for this to correctly
-    distinguish private from public. Without it, the CI template will omit
-    the GitHub-App-token step, and any actual private dep will fail to
-    clone on the runner — which is the right failure mode (fast and obvious)
-    versus silently emitting a token-injection step that does nothing on
-    runners missing the secrets.
+    Why the conservative fallback: a previous version defaulted to False
+    ("assume public") so projects with only public deps wouldn't carry a
+    useless token-minting step. That backfired when a workstation without
+    ``gh`` regenerated CI for projects that DO have private deps — every
+    re-scaffold silently stripped the ``Mint GitHub App token`` step from
+    every ``ci.yml``, and the breakage only surfaced on the next CI run.
+    Defaulting to True keeps the token step in place by default; the cost
+    on a runner that's missing ``GEARLUX_APP_*`` secrets is one no-op step,
+    not a broken build. Set the secrets at the org level once and forget.
     """
     try:
         cp = subprocess.run(
@@ -109,7 +112,7 @@ def is_private_gearlux_repo(name: str) -> bool:
             check=True,
         )
     except (FileNotFoundError, subprocess.CalledProcessError, subprocess.TimeoutExpired):
-        return False
+        return True
     return cp.stdout.strip().lower() == "true"
 
 
@@ -401,9 +404,14 @@ class JenkinsService(BaseService):
         cmd = ["java", *jvm_args, "-jar", str(self.war_file), f"--httpPort={port}"]
         workspace_root = Path(__file__).resolve().parents[3]
         venv_bin = workspace_root / ".venv" / "bin"
+        # BIN_DIR (aisland/bin) hosts symlinks to userspace-installed tools like
+        # node/npm/npx (see manager._install_userspace_tool). Putting it on
+        # Jenkins' PATH means every job inherits these without per-Jenkinsfile
+        # plumbing. Order: venv first (its `python`/`uv` shadow any system ones),
+        # then aisland-vendored tools, then whatever the parent shell exposed.
         env = {
             "JENKINS_HOME": str(self.service_data_dir),
-            "PATH": f"{venv_bin}:{os.environ.get('PATH', '')}",
+            "PATH": f"{venv_bin}:{BIN_DIR}:{os.environ.get('PATH', '')}",
         }
 
         self.start(cmd, env=env, background=background)
