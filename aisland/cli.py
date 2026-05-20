@@ -4,6 +4,7 @@ import click
 
 from aisland.manager import provision_system, run_quality_gates, setup_workspace
 from aisland.services.docker import DockerService
+from aisland.services.fiftyone import FiftyOneService
 from aisland.services.jenkins import JenkinsService
 from aisland.services.labelstudio import LabelStudioService
 from aisland.services.mlflow import MLflowService
@@ -298,6 +299,56 @@ def labelstudio_reset() -> None:
     LabelStudioService().reset()
 
 
+# --- FiftyOne Commands ---
+
+
+@main.group()
+def fiftyone() -> None:
+    """Manage local FiftyOne (voxel51) app for visual dataset/annotation review."""
+    pass
+
+
+@fiftyone.command(name="start")
+@click.option("--port", default=5151, help="HTTP port for FiftyOne.")
+@click.option("--background", "-b", is_flag=True, help="Run in background.")
+def fiftyone_start(port: int, background: bool) -> None:
+    """Start FiftyOne."""
+    FiftyOneService().launch(port=port, background=background)
+
+
+@fiftyone.command(name="stop")
+def fiftyone_stop() -> None:
+    """Stop FiftyOne."""
+    FiftyOneService().stop()
+
+
+@fiftyone.command(name="status")
+def fiftyone_status() -> None:
+    """Show FiftyOne status."""
+    FiftyOneService().status()
+
+
+@fiftyone.command(name="info")
+def fiftyone_info() -> None:
+    """Show detailed FiftyOne configuration (URL, database dir, registered datasets)."""
+    FiftyOneService().info()
+
+
+@fiftyone.command(name="restart")
+@click.option("--port", default=5151, help="HTTP port for FiftyOne.")
+@click.option("--background", "-b", is_flag=True, help="Run in background.")
+def fiftyone_restart(port: int, background: bool) -> None:
+    """Restart FiftyOne."""
+    FiftyOneService().restart(port=port, background=background)
+
+
+@fiftyone.command(name="reset")
+@click.confirmation_option(prompt="Are you sure you want to wipe all FiftyOne data?")
+def fiftyone_reset() -> None:
+    """Stop FiftyOne and wipe all its data."""
+    FiftyOneService().reset()
+
+
 # --- SwiftBar Commands ---
 
 
@@ -360,6 +411,7 @@ def status() -> None:
     JenkinsService().status()
     MLflowService().status()
     LabelStudioService().status()
+    FiftyOneService().status()
     SwiftBarService().status()
 
 
@@ -371,6 +423,7 @@ def info() -> None:
     JenkinsService().info()
     MLflowService().info()
     LabelStudioService().info()
+    FiftyOneService().info()
     SwiftBarService().info()
 
 
@@ -383,6 +436,7 @@ def start(background: bool) -> None:
     JenkinsService().launch(background=background)
     MLflowService().launch(background=background)
     LabelStudioService().launch(background=background)
+    FiftyOneService().launch(background=background)
     SwiftBarService().launch()
 
 
@@ -393,6 +447,7 @@ def stop() -> None:
     JenkinsService().stop()
     MLflowService().stop()
     LabelStudioService().stop()
+    FiftyOneService().stop()
     SwiftBarService().stop()
     DockerService().stop()
 
@@ -406,6 +461,7 @@ def restart(background: bool) -> None:
     JenkinsService().restart(background=background)
     MLflowService().restart(background=background)
     LabelStudioService().restart(background=background)
+    FiftyOneService().restart(background=background)
     SwiftBarService().restart()
 
 
@@ -417,6 +473,7 @@ def reset() -> None:
     JenkinsService().reset()
     MLflowService().reset()
     LabelStudioService().reset()
+    FiftyOneService().reset()
     SwiftBarService().reset()
     DockerService().reset()
 

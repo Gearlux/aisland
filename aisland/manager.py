@@ -77,6 +77,10 @@ class BaseService:
                 # ``labelstudio`` (no dash) would also match the aisland CLI's
                 # own argv, the .pid file path, etc.
                 "labelstudio": "label-studio start",
+                # FiftyOne's app subprocess shows up in ps as
+                # ``python -m fiftyone app launch ...``; match the suffix so
+                # we don't also catch unrelated python invocations.
+                "fiftyone": "fiftyone app launch",
             }
             pattern = patterns.get(self.name, self.name)
 
