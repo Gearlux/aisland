@@ -77,16 +77,36 @@ git config --global alias.safe '!f() { if [ -z "$1" ]; then echo "Error: Please 
 echo "==> Configuring Notebook Clean Filter..."
 # Only configure locally if inside a git repository
 if git rev-parse --is-inside-work-tree >/dev/null 2>&1; then
+    # The filter has to invoke aisland by absolute path: git runs filters in a
+    # minimal env where the workspace .venv is not activated and `aisland`
+    # is not on PATH. Falling back to bare `aisland` means every `git status`
+    # / `git add` from a fresh shell spews `aisland: command not found`.
+    if [ -x "$WORKSPACE_ROOT/.venv/bin/aisland" ]; then
+        AISLAND_CLEAN_CMD="$WORKSPACE_ROOT/.venv/bin/aisland notebooks clean"
+    else
+        AISLAND_CLEAN_CMD="aisland notebooks clean"
+    fi
+
     # We use a local config so it only applies here
-    git config filter.ipynb-cleaner.clean "aisland notebooks clean"
+    git config filter.ipynb-cleaner.clean "$AISLAND_CLEAN_CMD"
     git config filter.ipynb-cleaner.smudge cat
-    
+
     # Create .gitattributes in root if it doesn't exist
     if [ ! -f ".gitattributes" ]; then
         echo "*.ipynb filter=ipynb-cleaner" > .gitattributes
     elif ! grep -q "filter=ipynb-cleaner" .gitattributes; then
         echo "*.ipynb filter=ipynb-cleaner" >> .gitattributes
     fi
+
+    # Submodules have their own .git/config — the root registration above
+    # does not propagate, so commits inside a submodule would write notebook
+    # outputs as-is. Register the filter in every active submodule too.
+    # `git submodule foreach` skips submodules marked `active = false`,
+    # which is what we want (e.g. signals-bridge on non-Company hosts).
+    git submodule foreach --quiet "
+        git config filter.ipynb-cleaner.clean '$AISLAND_CLEAN_CMD'
+        git config filter.ipynb-cleaner.smudge cat
+    "
 fi
 
 echo "==> Git configuration complete!"
