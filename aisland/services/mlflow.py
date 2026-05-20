@@ -23,6 +23,17 @@ class MLflowService(BaseService):
 
             subprocess.run([sys.executable, "-m", "pip", "install", "mlflow"], check=True)
 
+    def info(self) -> None:
+        """Show detailed MLflow configuration."""
+        super().info()
+        default_port = 5005
+        pid = self.get_pid()
+        ports = self._get_listening_ports(pid) if pid is not None else []
+        url_port = ports[0] if ports else default_port
+        click.echo(f"  URL           : http://localhost:{url_port}")
+        click.echo(f"  Backend store : sqlite:///{self.db_path}")
+        click.echo(f"  Artifacts dir : {self.artifacts_path}")
+
     def launch(self, port: int = 5005, background: bool = False) -> None:
         """Start the MLflow tracking server."""
         self.setup()

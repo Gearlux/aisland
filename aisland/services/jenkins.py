@@ -416,6 +416,29 @@ class JenkinsService(BaseService):
             password = admin_pass_file.read_text().strip()
             click.echo(f"    Initial Admin Password: {password}")
 
+    def info(self) -> None:
+        """Show detailed Jenkins configuration."""
+        super().info()
+        default_port = 9080
+        pid = self.get_pid()
+        ports = self._get_listening_ports(pid) if pid is not None else []
+        url_port = ports[0] if ports else default_port
+        click.echo(f"  URL           : http://localhost:{url_port}")
+        click.echo(f"  JENKINS_HOME  : {self.service_data_dir}")
+        click.echo(f"  WAR file      : {self.war_file}")
+        click.echo(f"  Plugin manager: {self.manager_jar}")
+        click.echo(f"  Plugins dir   : {self.service_data_dir / 'plugins'}")
+        click.echo(f"  Jobs dir      : {self.service_data_dir / 'jobs'}")
+        admin_pass_file = self.service_data_dir / "secrets/initialAdminPassword"
+        if admin_pass_file.exists():
+            password = admin_pass_file.read_text().strip()
+            click.echo("  Admin user    : admin")
+            click.echo(f"  Admin password: {password}")
+        else:
+            click.echo("  Admin password: (not yet generated — start Jenkins to create it)")
+        creds_file = self.service_data_dir / "credentials.xml"
+        click.echo(f"  Credentials   : {creds_file} " + ("(present)" if creds_file.exists() else "(not configured)"))
+
     def _get_git_remote(self, project_path: Path) -> Optional[str]:
         """Get the Git remote origin URL for a project."""
         import subprocess

@@ -30,6 +30,46 @@ class LabelStudioService(BaseService):
             # Use the project-standard venv's python to install
             subprocess.run([sys.executable, "-m", "pip", "install", "label-studio"], check=True)
 
+    def info(self) -> None:
+        """Show detailed Label Studio configuration."""
+        super().info()
+        default_port = 9081
+        pid = self.get_pid()
+        ports = self._get_listening_ports(pid) if pid is not None else []
+        url_port = ports[0] if ports else default_port
+
+        env_values = self._read_env_values()
+        url = env_values.get("LABELSTUDIO_URL") or f"http://localhost:{url_port}"
+        token = env_values.get("LABELSTUDIO_TOKEN")
+        local_files_root = env_values.get("LABELSTUDIO_LOCAL_FILES_ROOT") or str(self.local_files_root)
+
+        from aisland.manager import get_git_email, get_workspace_name, get_workspace_root
+
+        click.echo(f"  URL           : {url}")
+        click.echo(f"  Username      : {get_git_email()} (default — git email)")
+        click.echo(f"  Password      : {get_workspace_name()} (default — workspace name)")
+        click.echo(f"  API token     : {token if token else '(not yet generated — start Label Studio to create it)'}")
+        click.echo(f"  Data dir      : {self.data_dir}")
+        click.echo(f"  Local files   : {local_files_root}")
+        click.echo(f"  .env file     : {get_workspace_root() / '.env'}")
+
+    def _read_env_values(self) -> dict:
+        """Return ``LABELSTUDIO_*`` entries from the workspace .env file (best-effort)."""
+        from aisland.manager import get_workspace_root
+
+        env_file = get_workspace_root() / ".env"
+        if not env_file.exists():
+            return {}
+        out: dict = {}
+        for line in env_file.read_text().splitlines():
+            line = line.strip()
+            if not line or line.startswith("#") or "=" not in line:
+                continue
+            key, _, value = line.partition("=")
+            if key.startswith("LABELSTUDIO_"):
+                out[key] = value
+        return out
+
     def launch(
         self,
         port: int = 9081,

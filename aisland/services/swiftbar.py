@@ -236,6 +236,23 @@ class SwiftBarService(BaseService):
 
         click.echo(f"  Swiftbar        : {status_str}")
 
+    def info(self) -> None:
+        """Show detailed SwiftBar configuration."""
+        click.echo(click.style("Swiftbar:", bold=True))
+        try:
+            subprocess.check_output(["pgrep", "SwiftBar"])
+            click.echo(f"  Status        : {click.style('Running', fg='green')}")
+        except (subprocess.CalledProcessError, FileNotFoundError):
+            click.echo(f"  Status        : {click.style('Stopped', fg='red')}")
+        click.echo(f"  Plugins dir   : {self.plugins_dir}")
+        if self.plugins_dir.exists():
+            scripts = sorted(p.name for p in self.plugins_dir.iterdir() if p.is_file())
+            if scripts:
+                click.echo(f"  Plugin scripts: {', '.join(scripts)}")
+            else:
+                click.echo("  Plugin scripts: (none — run `aisland swiftbar init`)")
+        click.echo(f"  App support   : {Path.home() / 'Library' / 'Application Support' / 'SwiftBar'}")
+
     def _generate_jenkins_script(self, projects: List[str]) -> None:
         """Generate the Jenkins status script."""
         script_path = self.plugins_dir / "jenkins_status.5m.sh"

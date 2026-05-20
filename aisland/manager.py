@@ -173,7 +173,112 @@ class BaseService:
         """Display service status."""
         running = self.is_running()
         status_str = click.style("Running", fg="green") if running else click.style("Stopped", fg="red")
-        click.echo(f"  {self.name.capitalize():<15} : {status_str} " + (f"(PID: {self.get_pid()})" if running else ""))
+        detail = ""
+        if running:
+            pid = self.get_pid()
+            ports = self._get_listening_ports(pid) if pid is not None else []
+            if ports:
+                ports_str = ", ".join(str(p) for p in ports)
+                detail = f"(PID: {pid}, port: {ports_str})"
+            else:
+                detail = f"(PID: {pid})"
+        click.echo(f"  {self.name.capitalize():<15} : {status_str} {detail}")
+
+    @staticmethod
+    def _get_listening_ports(pid: int) -> List[int]:
+        """Return the TCP ports the given PID (or its children) is LISTENing on.
+
+        Uses ``lsof`` on Unix and ``netstat`` on Windows. Best-effort: if the
+        underlying tool is missing or fails, returns an empty list.
+        """
+        ports: List[int] = []
+        try:
+            if os.name == "nt":
+                # Windows: netstat -ano | findstr LISTENING + filter by PID
+                result = subprocess.run(
+                    ["netstat", "-ano", "-p", "TCP"],
+                    capture_output=True,
+                    text=True,
+                    check=False,
+                )
+                for line in result.stdout.splitlines():
+                    parts = line.split()
+                    if len(parts) >= 5 and parts[3].upper() == "LISTENING" and parts[4] == str(pid):
+                        local_addr = parts[1]
+                        if ":" in local_addr:
+                            try:
+                                ports.append(int(local_addr.rsplit(":", 1)[1]))
+                            except ValueError:
+                                continue
+            else:
+                # Unix: include child processes via -R, then filter listening sockets.
+                # -F pn formats output as machine-readable: p<pid>\nn<addr>:port\n...
+                pids_to_check = [str(pid)] + BaseService._get_descendant_pids(pid)
+                result = subprocess.run(
+                    ["lsof", "-nP", "-iTCP", "-sTCP:LISTEN", "-a", "-p", ",".join(pids_to_check), "-F", "n"],
+                    capture_output=True,
+                    text=True,
+                    check=False,
+                )
+                for line in result.stdout.splitlines():
+                    if not line.startswith("n"):
+                        continue
+                    addr = line[1:]
+                    if ":" not in addr:
+                        continue
+                    port_str = addr.rsplit(":", 1)[1]
+                    try:
+                        port = int(port_str)
+                    except ValueError:
+                        continue
+                    if port not in ports:
+                        ports.append(port)
+        except (FileNotFoundError, OSError, subprocess.SubprocessError):
+            return []
+        return sorted(ports)
+
+    @staticmethod
+    def _get_descendant_pids(pid: int) -> List[str]:
+        """Return descendant PIDs of ``pid`` using ``pgrep -P`` (Unix only)."""
+        descendants: List[str] = []
+        stack = [pid]
+        while stack:
+            parent = stack.pop()
+            try:
+                output = subprocess.check_output(["pgrep", "-P", str(parent)], text=True).strip()
+            except (subprocess.CalledProcessError, FileNotFoundError, OSError):
+                continue
+            for raw in output.splitlines():
+                try:
+                    child = int(raw)
+                except ValueError:
+                    continue
+                descendants.append(str(child))
+                stack.append(child)
+        return descendants
+
+    def info(self) -> None:
+        """Display detailed service information.
+
+        Shows the common attributes every BaseService has: data directory,
+        log file, PID file, and the live PID/port if running. Subclasses
+        extend this to print service-specific details (URLs, credentials,
+        config paths) via ``super().info()``.
+        """
+        click.echo(click.style(f"{self.name.capitalize()}:", bold=True))
+        running = self.is_running()
+        status_str = click.style("Running", fg="green") if running else click.style("Stopped", fg="red")
+        click.echo(f"  Status        : {status_str}")
+        if running:
+            pid = self.get_pid()
+            click.echo(f"  PID           : {pid}")
+            if pid is not None:
+                ports = self._get_listening_ports(pid)
+                if ports:
+                    click.echo(f"  Listening port: {', '.join(str(p) for p in ports)}")
+        click.echo(f"  Data dir      : {self.service_data_dir}")
+        click.echo(f"  Log file      : {self.log_file}")
+        click.echo(f"  PID file      : {self.pid_file}")
 
     def restart(self, **kwargs: Any) -> None:
         """Restart the service."""

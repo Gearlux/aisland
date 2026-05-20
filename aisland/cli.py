@@ -75,6 +75,12 @@ def docker_status() -> None:
     DockerService().status()
 
 
+@docker.command(name="info")
+def docker_info() -> None:
+    """Show detailed Docker configuration (socket paths, colima status)."""
+    DockerService().info()
+
+
 @docker.command(name="restart")
 def docker_restart() -> None:
     """Restart Docker."""
@@ -115,6 +121,12 @@ def jenkins_stop() -> None:
 def jenkins_status() -> None:
     """Show Jenkins status."""
     JenkinsService().status()
+
+
+@jenkins.command(name="info")
+def jenkins_info() -> None:
+    """Show detailed Jenkins configuration (URL, JENKINS_HOME, admin password)."""
+    JenkinsService().info()
 
 
 @jenkins.command(name="restart")
@@ -193,6 +205,12 @@ def mlflow_status() -> None:
     MLflowService().status()
 
 
+@mlflow.command(name="info")
+def mlflow_info() -> None:
+    """Show detailed MLflow configuration (URL, backend store, artifacts)."""
+    MLflowService().info()
+
+
 @mlflow.command(name="restart")
 @click.option("--port", default=5005, help="HTTP port for MLflow.")
 @click.option("--background", "-b", is_flag=True, help="Run in background.")
@@ -250,6 +268,12 @@ def labelstudio_stop() -> None:
 def labelstudio_status() -> None:
     """Show Label Studio status."""
     LabelStudioService().status()
+
+
+@labelstudio.command(name="info")
+def labelstudio_info() -> None:
+    """Show detailed Label Studio configuration (URL, credentials, API token)."""
+    LabelStudioService().info()
 
 
 @labelstudio.command(name="restart")
@@ -313,6 +337,12 @@ def swiftbar_remove() -> None:
     SwiftBarService().remove()
 
 
+@swiftbar.command(name="info")
+def swiftbar_info() -> None:
+    """Show detailed SwiftBar configuration (plugins dir, registered scripts)."""
+    SwiftBarService().info()
+
+
 @swiftbar.command(name="reset")
 def swiftbar_reset() -> None:
     """Alias for remove."""
@@ -331,6 +361,17 @@ def status() -> None:
     MLflowService().status()
     LabelStudioService().status()
     SwiftBarService().status()
+
+
+@main.command(name="info")
+def info() -> None:
+    """Show detailed info (URLs, credentials, paths) for all aisland services."""
+    click.echo("Aisland Infrastructure Info:")
+    DockerService().info()
+    JenkinsService().info()
+    MLflowService().info()
+    LabelStudioService().info()
+    SwiftBarService().info()
 
 
 @main.command(name="start")

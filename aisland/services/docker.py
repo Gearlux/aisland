@@ -86,6 +86,40 @@ class DockerService(BaseService):
         except FileNotFoundError:
             click.echo(f"  Docker (Colima)  : {click.style('Not Installed', fg='yellow')}")
 
+    def info(self) -> None:
+        """Show detailed Docker (Colima) configuration."""
+        click.echo(click.style("Docker (Colima):", bold=True))
+        try:
+            result = subprocess.run(["colima", "status"], capture_output=True, text=True)
+            if result.returncode == 0:
+                click.echo(f"  Status        : {click.style('Running', fg='green')}")
+            else:
+                click.echo(f"  Status        : {click.style('Stopped', fg='red')}")
+            for line in result.stdout.splitlines():
+                line = line.strip()
+                if line:
+                    click.echo(f"  colima        : {line}")
+        except FileNotFoundError:
+            click.echo(f"  Status        : {click.style('Not Installed', fg='yellow')}")
+            click.echo("  Install with  : brew install colima")
+            return
+
+        colima_socket_default = Path.home() / ".colima" / "default" / "docker.sock"
+        colima_socket_legacy = Path.home() / ".colima" / "docker.sock"
+        colima_socket = colima_socket_default if colima_socket_default.exists() else colima_socket_legacy
+        standard_socket = Path("/var/run/docker.sock")
+        click.echo(f"  Colima socket : {colima_socket} " + ("(present)" if colima_socket.exists() else "(missing)"))
+        link_info = ""
+        if standard_socket.is_symlink():
+            try:
+                link_info = f" -> {os.readlink(standard_socket)}"
+            except OSError:
+                link_info = ""
+        click.echo(
+            f"  Docker socket : {standard_socket}{link_info} "
+            + ("(present)" if standard_socket.exists() or standard_socket.is_symlink() else "(missing)")
+        )
+
     def configure_socket(self) -> None:
         """Ensure the Docker client is pointing to the standard /var/run/docker.sock."""
         # Colima socket path
