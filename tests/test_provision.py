@@ -18,21 +18,27 @@ import pytest
 from aisland import manager
 
 
-def test_shell_switch_skipped_on_non_darwin(monkeypatch: pytest.MonkeyPatch, capsys: Any) -> None:
+def test_shell_switch_skipped_on_non_darwin(
+    monkeypatch: pytest.MonkeyPatch, capsys: Any
+) -> None:
     """On Linux / Windows the chsh flow is irrelevant — must early-return silently."""
     monkeypatch.setattr(manager.platform, "system", lambda: "Linux", raising=False)
     manager._maybe_offer_shell_switch({"bash"})
     assert capsys.readouterr().out == ""
 
 
-def test_shell_switch_skipped_when_bash_not_required(monkeypatch: pytest.MonkeyPatch, capsys: Any) -> None:
+def test_shell_switch_skipped_when_bash_not_required(
+    monkeypatch: pytest.MonkeyPatch, capsys: Any
+) -> None:
     """If `bash` is not in the project's sys-deps, the offer must not appear."""
     monkeypatch.setattr(manager.platform, "system", lambda: "Darwin", raising=False)
     manager._maybe_offer_shell_switch({"libomp", "openjdk"})
     assert capsys.readouterr().out == ""
 
 
-def test_shell_switch_skipped_when_brew_bash_missing(monkeypatch: pytest.MonkeyPatch, capsys: Any) -> None:
+def test_shell_switch_skipped_when_brew_bash_missing(
+    monkeypatch: pytest.MonkeyPatch, capsys: Any
+) -> None:
     """If neither /opt/homebrew/bin/bash nor /usr/local/bin/bash exists, warn + skip."""
     monkeypatch.setattr(manager.platform, "system", lambda: "Darwin", raising=False)
     monkeypatch.setattr(Path, "exists", lambda self: False)
@@ -41,7 +47,9 @@ def test_shell_switch_skipped_when_brew_bash_missing(monkeypatch: pytest.MonkeyP
     assert "Homebrew bash not found" in out
 
 
-def test_shell_switch_silent_when_already_current(monkeypatch: pytest.MonkeyPatch, capsys: Any) -> None:
+def test_shell_switch_silent_when_already_current(
+    monkeypatch: pytest.MonkeyPatch, capsys: Any
+) -> None:
     """If SHELL already points to brew bash, no offer should appear (idempotency)."""
     monkeypatch.setattr(manager.platform, "system", lambda: "Darwin", raising=False)
     # Pretend /opt/homebrew/bin/bash exists, /usr/local one doesn't.
@@ -58,7 +66,9 @@ def test_shell_switch_silent_when_already_current(monkeypatch: pytest.MonkeyPatc
     assert capsys.readouterr().out == ""
 
 
-def test_shell_switch_declined_exits_cleanly(monkeypatch: pytest.MonkeyPatch, capsys: Any) -> None:
+def test_shell_switch_declined_exits_cleanly(
+    monkeypatch: pytest.MonkeyPatch, capsys: Any
+) -> None:
     """User declines the prompt — function must return without touching the system."""
     monkeypatch.setattr(manager.platform, "system", lambda: "Darwin", raising=False)
     real_exists = Path.exists
@@ -94,9 +104,14 @@ def test_shell_switch_declined_exits_cleanly(monkeypatch: pytest.MonkeyPatch, ca
 # ---------------------------------------------------------------------------
 
 
-def _write_pyproject(path: Path, *, brew: list[str] | None = None, userspace: list[str] | None = None) -> None:
+def _write_pyproject(
+    path: Path, *, brew: list[str] | None = None, userspace: list[str] | None = None
+) -> None:
     """Write a minimal pyproject.toml declaring sys-dependencies."""
-    lines = ["[project]\nname = 'fake'\nversion = '0.0.0'\n", "[tool.aisland.sys-dependencies]\n"]
+    lines = [
+        "[project]\nname = 'fake'\nversion = '0.0.0'\n",
+        "[tool.aisland.sys-dependencies]\n",
+    ]
     if brew is not None:
         lines.append(f"brew = {brew!r}\n")
     if userspace is not None:
@@ -112,18 +127,26 @@ def _make_fake_workspace(tmp_path: Path) -> Path:
     return workspace
 
 
-def test_provision_dispatches_to_brew_on_darwin(monkeypatch: pytest.MonkeyPatch, tmp_path: Path, capsys: Any) -> None:
+def test_provision_dispatches_to_brew_on_darwin(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, capsys: Any
+) -> None:
     """Darwin: only brew installer runs; userspace deps are ignored."""
     workspace = _make_fake_workspace(tmp_path)
-    _write_pyproject(workspace / "proj" / "pyproject.toml", brew=["node"], userspace=["node"])
+    _write_pyproject(
+        workspace / "proj" / "pyproject.toml", brew=["node"], userspace=["node"]
+    )
 
     monkeypatch.setattr(manager, "get_workspace_root", lambda: workspace)
     monkeypatch.setattr(manager.platform, "system", lambda: "Darwin", raising=False)
 
     brew_calls: list = []
     user_calls: list = []
-    monkeypatch.setattr(manager, "_install_brew_packages", lambda pkgs: brew_calls.append(set(pkgs)))
-    monkeypatch.setattr(manager, "_install_userspace_tool", lambda name: user_calls.append(name))
+    monkeypatch.setattr(
+        manager, "_install_brew_packages", lambda pkgs: brew_calls.append(set(pkgs))
+    )
+    monkeypatch.setattr(
+        manager, "_install_userspace_tool", lambda name: user_calls.append(name)
+    )
     monkeypatch.setattr(manager, "_maybe_offer_shell_switch", lambda pkgs: None)
 
     manager.provision_system()
@@ -132,18 +155,26 @@ def test_provision_dispatches_to_brew_on_darwin(monkeypatch: pytest.MonkeyPatch,
     assert user_calls == []
 
 
-def test_provision_dispatches_to_userspace_on_linux(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+def test_provision_dispatches_to_userspace_on_linux(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
     """Linux: only userspace installer runs; brew deps are ignored."""
     workspace = _make_fake_workspace(tmp_path)
-    _write_pyproject(workspace / "proj" / "pyproject.toml", brew=["node"], userspace=["node"])
+    _write_pyproject(
+        workspace / "proj" / "pyproject.toml", brew=["node"], userspace=["node"]
+    )
 
     monkeypatch.setattr(manager, "get_workspace_root", lambda: workspace)
     monkeypatch.setattr(manager.platform, "system", lambda: "Linux", raising=False)
 
     brew_calls: list = []
     user_calls: list = []
-    monkeypatch.setattr(manager, "_install_brew_packages", lambda pkgs: brew_calls.append(set(pkgs)))
-    monkeypatch.setattr(manager, "_install_userspace_tool", lambda name: user_calls.append(name))
+    monkeypatch.setattr(
+        manager, "_install_brew_packages", lambda pkgs: brew_calls.append(set(pkgs))
+    )
+    monkeypatch.setattr(
+        manager, "_install_userspace_tool", lambda name: user_calls.append(name)
+    )
 
     manager.provision_system()
 
@@ -151,16 +182,22 @@ def test_provision_dispatches_to_userspace_on_linux(monkeypatch: pytest.MonkeyPa
     assert user_calls == ["node"]
 
 
-def test_provision_no_deps_short_circuits(monkeypatch: pytest.MonkeyPatch, tmp_path: Path, capsys: Any) -> None:
+def test_provision_no_deps_short_circuits(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, capsys: Any
+) -> None:
     """If no projects declare sys-deps, no installers should run."""
     workspace = _make_fake_workspace(tmp_path)
-    (workspace / "proj" / "pyproject.toml").write_text("[project]\nname='fake'\nversion='0.0.0'\n")
+    (workspace / "proj" / "pyproject.toml").write_text(
+        "[project]\nname='fake'\nversion='0.0.0'\n"
+    )
 
     monkeypatch.setattr(manager, "get_workspace_root", lambda: workspace)
     monkeypatch.setattr(manager.platform, "system", lambda: "Linux", raising=False)
 
     user_calls: list = []
-    monkeypatch.setattr(manager, "_install_userspace_tool", lambda name: user_calls.append(name))
+    monkeypatch.setattr(
+        manager, "_install_userspace_tool", lambda name: user_calls.append(name)
+    )
 
     manager.provision_system()
 
@@ -168,7 +205,9 @@ def test_provision_no_deps_short_circuits(monkeypatch: pytest.MonkeyPatch, tmp_p
     assert "No system dependencies found" in capsys.readouterr().out
 
 
-def test_provision_unknown_platform_skips(monkeypatch: pytest.MonkeyPatch, tmp_path: Path, capsys: Any) -> None:
+def test_provision_unknown_platform_skips(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, capsys: Any
+) -> None:
     """Unsupported platform → log + skip, never raise."""
     workspace = _make_fake_workspace(tmp_path)
     _write_pyproject(workspace / "proj" / "pyproject.toml", brew=["node"])
@@ -180,7 +219,9 @@ def test_provision_unknown_platform_skips(monkeypatch: pytest.MonkeyPatch, tmp_p
     assert "not implemented for platform 'Windows'" in capsys.readouterr().out
 
 
-def test_userspace_install_unknown_tool_errors(monkeypatch: pytest.MonkeyPatch, capsys: Any) -> None:
+def test_userspace_install_unknown_tool_errors(
+    monkeypatch: pytest.MonkeyPatch, capsys: Any
+) -> None:
     """A tool name not in the registry must be reported, not silently skipped."""
     manager._install_userspace_tool("definitely-not-a-real-tool")
     assert "not a known userspace tool" in capsys.readouterr().out
@@ -222,7 +263,9 @@ def _build_fake_node_tarball(staging: Path, extract_subdir: str) -> Path:
     return tarball
 
 
-def test_userspace_install_extracts_and_symlinks(monkeypatch: pytest.MonkeyPatch, tmp_path: Path, capsys: Any) -> None:
+def test_userspace_install_extracts_and_symlinks(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, capsys: Any
+) -> None:
     """End-to-end: a fake tarball is extracted and binaries are symlinked into BIN_DIR."""
     bin_dir = tmp_path / "bin"
     tools_dir = tmp_path / "tools"
@@ -293,7 +336,9 @@ def test_userspace_install_refuses_to_clobber_real_file(
 # ---------------------------------------------------------------------------
 
 
-def test_link_project_bashrc_creates_symlink(monkeypatch: pytest.MonkeyPatch, tmp_path: Path, capsys: Any) -> None:
+def test_link_project_bashrc_creates_symlink(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, capsys: Any
+) -> None:
     """First-time setup: workspace gains a relative symlink to aisland/project.bashrc."""
     workspace = tmp_path / "ws"
     aisland_dir = workspace / "aisland"
@@ -310,7 +355,9 @@ def test_link_project_bashrc_creates_symlink(monkeypatch: pytest.MonkeyPatch, tm
     assert link.resolve() == target.resolve()
 
 
-def test_link_project_bashrc_idempotent(monkeypatch: pytest.MonkeyPatch, tmp_path: Path, capsys: Any) -> None:
+def test_link_project_bashrc_idempotent(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, capsys: Any
+) -> None:
     """Re-running setup with the correct symlink in place is a no-op (no log noise)."""
     workspace = tmp_path / "ws"
     aisland_dir = workspace / "aisland"
@@ -345,7 +392,9 @@ def test_link_project_bashrc_refuses_to_clobber_real_file(
     assert "exists as a regular file" in capsys.readouterr().out
 
 
-def test_link_project_bashrc_replaces_stale_symlink(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+def test_link_project_bashrc_replaces_stale_symlink(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
     """A symlink pointing somewhere else gets repointed to aisland/project.bashrc."""
     workspace = tmp_path / "ws"
     aisland_dir = workspace / "aisland"

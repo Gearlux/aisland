@@ -24,7 +24,9 @@ def test_init_pipelines_stops_before_writing_global_config() -> None:
     src = inspect.getsource(JenkinsService.init_pipelines)
     # The stop must precede setup_global_properties to prevent Jenkins
     # from overwriting our config.xml edits with its in-memory state.
-    assert "self.stop()" in src, "init_pipelines must stop Jenkins before mutating config.xml"
+    assert (
+        "self.stop()" in src
+    ), "init_pipelines must stop Jenkins before mutating config.xml"
     assert "self.setup_global_properties()" in src
     stop_pos = src.index("self.stop()")
     setup_props_pos = src.index("self.setup_global_properties()")
@@ -44,7 +46,9 @@ def test_init_pipelines_final_launch_is_after_writing_global_config() -> None:
     setup_props_pos = src.index("self.setup_global_properties()")
     # rfind = last occurrence, which is the cold-start that loads our edits.
     final_launch_pos = src.rfind("self.launch(")
-    assert setup_props_pos < final_launch_pos, "final launch() must follow setup_global_properties()"
+    assert (
+        setup_props_pos < final_launch_pos
+    ), "final launch() must follow setup_global_properties()"
 
 
 def test_init_pipelines_warm_starts_when_jenkins_is_not_running() -> None:
@@ -64,5 +68,6 @@ def test_init_pipelines_warm_starts_when_jenkins_is_not_running() -> None:
     assert warm_pos < setup_props_pos
     # And waiting for config.xml to appear is what makes it deterministic.
     assert (
-        "config_file.exists()" in src or 'config_file = self.service_data_dir / "config.xml"' in src
+        "config_file.exists()" in src
+        or 'config_file = self.service_data_dir / "config.xml"' in src
     ), "warm-start must wait for config.xml to materialize, otherwise the stop may race the file creation"

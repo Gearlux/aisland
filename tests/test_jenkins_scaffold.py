@@ -27,7 +27,9 @@ def _make_pyproject(dir_: Path, name: str) -> None:
     (pkg / "__init__.py").touch()
 
 
-def test_scaffold_all_projects_includes_aisland(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+def test_scaffold_all_projects_includes_aisland(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
     """When scaffolding all projects, aisland MUST be in the list of recursed
     targets — previously it was filtered out by `child.name != "aisland"`.
     """
@@ -45,7 +47,9 @@ def test_scaffold_all_projects_includes_aisland(monkeypatch: pytest.MonkeyPatch,
     visited: List[str] = []
     original = JenkinsService.scaffold_pipelines
 
-    def _spy(self: JenkinsService, project_name: Any = None, force: bool = False) -> None:
+    def _spy(
+        self: JenkinsService, project_name: Any = None, force: bool = False
+    ) -> None:
         if project_name is None:
             # Fall through to the real "iterate all projects" branch.
             return original(self, project_name=None, force=force)
@@ -56,5 +60,7 @@ def test_scaffold_all_projects_includes_aisland(monkeypatch: pytest.MonkeyPatch,
     svc = JenkinsService()
     svc.scaffold_pipelines(project_name=None)
 
-    assert "aisland" in visited, "aisland must not be filtered out of the all-projects loop"
+    assert (
+        "aisland" in visited
+    ), "aisland must not be filtered out of the all-projects loop"
     assert {"aisland", "marainer", "traidwind"} <= set(visited)
