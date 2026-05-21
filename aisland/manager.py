@@ -116,14 +116,10 @@ class BaseService:
             return int(self.pid_file.read_text().strip())
         return None
 
-    def start(
-        self, cmd: List[str], env: Optional[dict] = None, background: bool = False
-    ) -> None:
+    def start(self, cmd: List[str], env: Optional[dict] = None, background: bool = False) -> None:
         """Execute the service command."""
         if self.is_running():
-            click.echo(
-                f"{self.name.capitalize()} is already running (PID: {self.get_pid()})."
-            )
+            click.echo(f"{self.name.capitalize()} is already running (PID: {self.get_pid()}).")
             return
 
         click.echo(f"Starting {self.name.capitalize()}...")
@@ -153,9 +149,7 @@ class BaseService:
                     start_new_session=True,
                 )
                 self.pid_file.write_text(str(process.pid))
-            click.echo(
-                f"{self.name.capitalize()} started in background (PID: {process.pid})"
-            )
+            click.echo(f"{self.name.capitalize()} started in background (PID: {process.pid})")
             click.echo(f"Logs: {self.log_file}")
         else:
             try:
@@ -180,9 +174,7 @@ class BaseService:
         click.echo(f"Stopping {self.name.capitalize()} (PID: {pid})...")
         try:
             if os.name == "nt":  # Windows
-                subprocess.run(
-                    ["taskkill", "/F", "/T", "/PID", str(pid)], capture_output=True
-                )
+                subprocess.run(["taskkill", "/F", "/T", "/PID", str(pid)], capture_output=True)
             else:
                 os.kill(pid, signal.SIGTERM)
 
@@ -201,11 +193,7 @@ class BaseService:
     def status(self) -> None:
         """Display service status."""
         running = self.is_running()
-        status_str = (
-            click.style("Running", fg="green")
-            if running
-            else click.style("Stopped", fg="red")
-        )
+        status_str = click.style("Running", fg="green") if running else click.style("Stopped", fg="red")
         detail = ""
         if running:
             pid = self.get_pid()
@@ -236,11 +224,7 @@ class BaseService:
                 )
                 for line in result.stdout.splitlines():
                     parts = line.split()
-                    if (
-                        len(parts) >= 5
-                        and parts[3].upper() == "LISTENING"
-                        and parts[4] == str(pid)
-                    ):
+                    if len(parts) >= 5 and parts[3].upper() == "LISTENING" and parts[4] == str(pid):
                         local_addr = parts[1]
                         if ":" in local_addr:
                             try:
@@ -292,9 +276,7 @@ class BaseService:
         while stack:
             parent = stack.pop()
             try:
-                output = subprocess.check_output(
-                    ["pgrep", "-P", str(parent)], text=True
-                ).strip()
+                output = subprocess.check_output(["pgrep", "-P", str(parent)], text=True).strip()
             except (subprocess.CalledProcessError, FileNotFoundError, OSError):
                 continue
             for raw in output.splitlines():
@@ -316,11 +298,7 @@ class BaseService:
         """
         click.echo(click.style(f"{self.name.capitalize()}:", bold=True))
         running = self.is_running()
-        status_str = (
-            click.style("Running", fg="green")
-            if running
-            else click.style("Stopped", fg="red")
-        )
+        status_str = click.style("Running", fg="green") if running else click.style("Stopped", fg="red")
         click.echo(f"  Status        : {status_str}")
         if running:
             pid = self.get_pid()
@@ -370,9 +348,7 @@ def get_git_email() -> str:
     try:
         # Use workspace root to ensure we get the project's git config
         root = get_workspace_root()
-        return subprocess.check_output(
-            ["git", "-C", str(root), "config", "user.email"], text=True
-        ).strip()
+        return subprocess.check_output(["git", "-C", str(root), "config", "user.email"], text=True).strip()
     except (subprocess.CalledProcessError, FileNotFoundError):
         return "gearlux@gearlux.com"
 
@@ -464,9 +440,7 @@ def provision_system() -> None:
         try:
             with open(pyproject, "rb") as f:
                 data = tomllib.load(f)
-                sys_deps = (
-                    data.get("tool", {}).get("aisland", {}).get("sys-dependencies", {})
-                )
+                sys_deps = data.get("tool", {}).get("aisland", {}).get("sys-dependencies", {})
                 brew_deps = sys_deps.get("brew", [])
                 if isinstance(brew_deps, list):
                     brew_packages.update(brew_deps)
@@ -483,26 +457,20 @@ def provision_system() -> None:
     system = platform.system()
     if system == "Darwin":
         if brew_packages:
-            click.echo(
-                f"  - Found required brew packages: {', '.join(sorted(brew_packages))}"
-            )
+            click.echo(f"  - Found required brew packages: {', '.join(sorted(brew_packages))}")
             _install_brew_packages(brew_packages)
             _maybe_offer_shell_switch(brew_packages)
         else:
             click.echo("  - No brew packages declared; nothing to install on macOS.")
     elif system == "Linux":
         if userspace_tools:
-            click.echo(
-                f"  - Found required userspace tools: {', '.join(sorted(userspace_tools))}"
-            )
+            click.echo(f"  - Found required userspace tools: {', '.join(sorted(userspace_tools))}")
             for tool in sorted(userspace_tools):
                 _install_userspace_tool(tool)
         else:
             click.echo("  - No userspace tools declared; nothing to install on Linux.")
     else:
-        click.echo(
-            f"  - sys-deps provisioning not implemented for platform '{system}'; skipping."
-        )
+        click.echo(f"  - sys-deps provisioning not implemented for platform '{system}'; skipping.")
 
 
 def _install_brew_packages(packages: set) -> None:
@@ -512,13 +480,9 @@ def _install_brew_packages(packages: set) -> None:
     that are already installed.
     """
     try:
-        subprocess.check_call(
-            ["brew", "--version"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL
-        )
+        subprocess.check_call(["brew", "--version"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
     except (subprocess.CalledProcessError, FileNotFoundError):
-        click.echo(
-            "  - Error: 'brew' command not found. Homebrew is required for system provisioning."
-        )
+        click.echo("  - Error: 'brew' command not found. Homebrew is required for system provisioning.")
         return
 
     env = os.environ.copy()
@@ -545,9 +509,7 @@ def _install_userspace_tool(name: str) -> None:
     """
     spec = USERSPACE_TOOLS.get(name)
     if spec is None:
-        click.echo(
-            f"  - Error: '{name}' is not a known userspace tool. Known: {sorted(USERSPACE_TOOLS)}"
-        )
+        click.echo(f"  - Error: '{name}' is not a known userspace tool. Known: {sorted(USERSPACE_TOOLS)}")
         return
 
     version = spec["version"]
@@ -557,9 +519,7 @@ def _install_userspace_tool(name: str) -> None:
 
     BIN_DIR.mkdir(parents=True, exist_ok=True)
     if all((BIN_DIR / b).exists() for b in binaries):
-        click.echo(
-            f"  - {name} {version} already installed (symlinks present in {BIN_DIR})."
-        )
+        click.echo(f"  - {name} {version} already installed (symlinks present in {BIN_DIR}).")
         return
 
     cache_dir = TOOLS_DIR / "cache"
@@ -606,9 +566,7 @@ def _install_userspace_tool(name: str) -> None:
             if dst.is_symlink():
                 dst.unlink()
             else:
-                click.echo(
-                    f"  - Error: {dst} exists and is not a symlink; refusing to overwrite."
-                )
+                click.echo(f"  - Error: {dst} exists and is not a symlink; refusing to overwrite.")
                 continue
         os.symlink(src, dst)
         click.echo(f"  - linked {binary} -> {src}")
@@ -635,18 +593,14 @@ def _maybe_offer_shell_switch(required_pkgs: set) -> None:
     candidates = [Path("/opt/homebrew/bin/bash"), Path("/usr/local/bin/bash")]
     new_bash = next((str(p) for p in candidates if p.exists()), None)
     if not new_bash:
-        click.echo(
-            "  - Warning: Homebrew bash not found on disk; skipping shell-switch offer."
-        )
+        click.echo("  - Warning: Homebrew bash not found on disk; skipping shell-switch offer.")
         return
 
     current_shell = os.environ.get("SHELL", "")
     if current_shell == new_bash:
         return  # Already using brew bash — nothing to do.
 
-    click.echo(
-        f"\n==> Modern bash is installed at {new_bash}, but your login shell is {current_shell or '(unknown)'}."
-    )
+    click.echo(f"\n==> Modern bash is installed at {new_bash}, but your login shell is {current_shell or '(unknown)'}.")
     if not click.confirm("    Switch your login shell to the new bash?", default=False):
         return
 
@@ -717,9 +671,7 @@ def get_install_order(workspace_root: Path) -> List[dict]:
     for p in projects:
         for dep in p["dependencies"]:
             # Extract package name from dependency string (e.g., 'logflow>=0.1.0' -> 'logflow')
-            dep_name = (
-                dep.split(">=")[0].split("==")[0].split("<=")[0].split("[")[0].strip()
-            )
+            dep_name = dep.split(">=")[0].split("==")[0].split("<=")[0].split("[")[0].strip()
             if dep_name in project_names and dep_name != p["name"]:
                 adj[p["name"]].append(dep_name)
 
@@ -765,8 +717,7 @@ def ensure_uv_in_venv(venv_bin: Path) -> str:
     pip_path = venv_bin / "pip"
     if not pip_path.exists():
         click.echo(
-            f"  - Error: {pip_path} not found. Cannot bootstrap uv; "
-            f"the venv is broken. Re-run aisland/setup.sh."
+            f"  - Error: {pip_path} not found. Cannot bootstrap uv; " f"the venv is broken. Re-run aisland/setup.sh."
         )
         raise click.ClickException("Workspace venv missing pip")
 
@@ -813,9 +764,7 @@ def setup_workspace() -> None:
     venv_bin = workspace_root / ".venv" / "bin"
 
     if not venv_bin.exists():
-        click.echo(
-            f"Error: Virtual environment not found at {workspace_root / '.venv'}. Run aisland/setup.sh first."
-        )
+        click.echo(f"Error: Virtual environment not found at {workspace_root / '.venv'}. Run aisland/setup.sh first.")
         return
 
     # 0. Ensure uv is present in the venv — required by everything below and by
@@ -839,9 +788,7 @@ def setup_workspace() -> None:
 
         # Git Configuration (pull.rebase false)
         try:
-            subprocess.check_call(
-                ["git", "config", "pull.rebase", "false"], cwd=project_dir
-            )
+            subprocess.check_call(["git", "config", "pull.rebase", "false"], cwd=project_dir)
         except (subprocess.CalledProcessError, FileNotFoundError):
             pass
 
@@ -868,9 +815,7 @@ def run_quality_gates(arg1: Optional[str] = None, arg2: Optional[str] = None) ->
     venv_bin = workspace_root / ".venv" / "bin"
 
     if not venv_bin.exists():
-        click.echo(
-            f"Error: Virtual environment not found at {workspace_root / '.venv'}. Run aisland/setup.sh first."
-        )
+        click.echo(f"Error: Virtual environment not found at {workspace_root / '.venv'}. Run aisland/setup.sh first.")
         return
 
     env = os.environ.copy()
@@ -960,11 +905,7 @@ def run_quality_gates(arg1: Optional[str] = None, arg2: Optional[str] = None) ->
     if len(results) > 1:
         click.echo("\nQuality Gate Summary:")
         for name, success in results:
-            status = (
-                click.style("SUCCESS", fg="green")
-                if success
-                else click.style("FAILURE", fg="red")
-            )
+            status = click.style("SUCCESS", fg="green") if success else click.style("FAILURE", fg="red")
             click.echo(f"  {name:<25} : {status}")
 
     if any(not r[1] for r in results):

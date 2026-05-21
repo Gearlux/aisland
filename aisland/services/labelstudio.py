@@ -28,9 +28,7 @@ class LabelStudioService(BaseService):
             import subprocess
 
             # Use the project-standard venv's python to install
-            subprocess.run(
-                [sys.executable, "-m", "pip", "install", "label-studio"], check=True
-            )
+            subprocess.run([sys.executable, "-m", "pip", "install", "label-studio"], check=True)
 
     def info(self) -> None:
         """Show detailed Label Studio configuration."""
@@ -43,24 +41,14 @@ class LabelStudioService(BaseService):
         env_values = self._read_env_values()
         url = env_values.get("LABELSTUDIO_URL") or f"http://localhost:{url_port}"
         token = env_values.get("LABELSTUDIO_TOKEN")
-        local_files_root = env_values.get("LABELSTUDIO_LOCAL_FILES_ROOT") or str(
-            self.local_files_root
-        )
+        local_files_root = env_values.get("LABELSTUDIO_LOCAL_FILES_ROOT") or str(self.local_files_root)
 
-        from aisland.manager import (
-            get_git_email,
-            get_workspace_name,
-            get_workspace_root,
-        )
+        from aisland.manager import get_git_email, get_workspace_name, get_workspace_root
 
         click.echo(f"  URL           : {url}")
         click.echo(f"  Username      : {get_git_email()} (default — git email)")
-        click.echo(
-            f"  Password      : {get_workspace_name()} (default — workspace name)"
-        )
-        click.echo(
-            f"  API token     : {token if token else '(not yet generated — start Label Studio to create it)'}"
-        )
+        click.echo(f"  Password      : {get_workspace_name()} (default — workspace name)")
+        click.echo(f"  API token     : {token if token else '(not yet generated — start Label Studio to create it)'}")
         click.echo(f"  Data dir      : {self.data_dir}")
         click.echo(f"  Local files   : {local_files_root}")
         click.echo(f"  .env file     : {get_workspace_root() / '.env'}")
@@ -171,9 +159,7 @@ class LabelStudioService(BaseService):
         }
 
         if not env_file.exists():
-            env_file.write_text(
-                "\n".join(f"{k}={v}" for k, v in entries.items()) + "\n"
-            )
+            env_file.write_text("\n".join(f"{k}={v}" for k, v in entries.items()) + "\n")
             click.echo(
                 f"Created .env with LABELSTUDIO_TOKEN, LABELSTUDIO_URL={url}, "
                 f"LABELSTUDIO_LOCAL_FILES_ROOT={self.local_files_root}."

@@ -73,13 +73,7 @@ class SwiftBarService(BaseService):
                 # 'logflow>=0.1.0', 'pkg[extra]', and 'torchsig @ git+https://...'
                 # all reduce to the bare distribution name.
                 dep_name = (
-                    raw.split("@")[0]
-                    .split(">=")[0]
-                    .split("==")[0]
-                    .split("<=")[0]
-                    .split("[")[0]
-                    .split()[0]
-                    .strip()
+                    raw.split("@")[0].split(">=")[0].split("==")[0].split("<=")[0].split("[")[0].split()[0].strip()
                 )
                 if dep_name in project_names and dep_name != p["name"]:
                     deps.add(dep_name)
@@ -139,9 +133,7 @@ class SwiftBarService(BaseService):
         # 5. Finalize
         click.echo("SwiftBar scripts initialized.")
 
-        if click.confirm(
-            f"Do you want to point SwiftBar directly to {self.plugins_dir}?"
-        ):
+        if click.confirm(f"Do you want to point SwiftBar directly to {self.plugins_dir}?"):
             try:
                 # 1. Stop SwiftBar to ensure settings are written cleanly
                 self.stop()
@@ -195,11 +187,7 @@ class SwiftBarService(BaseService):
 
                 self.launch()
             except Exception as e:
-                click.echo(
-                    click.style(
-                        f"  [ERROR] Failed to configure SwiftBar: {e}", fg="red"
-                    )
-                )
+                click.echo(click.style(f"  [ERROR] Failed to configure SwiftBar: {e}", fg="red"))
         else:
             click.echo(f"\nPlease manually point SwiftBar to: {self.plugins_dir}")
 
@@ -242,17 +230,11 @@ class SwiftBarService(BaseService):
         keys = ["PluginDirectory", "PluginsDirectory"]
         for key in keys:
             try:
-                current = subprocess.check_output(
-                    ["defaults", "read", "com.ameba.SwiftBar", key], text=True
-                ).strip()
+                current = subprocess.check_output(["defaults", "read", "com.ameba.SwiftBar", key], text=True).strip()
                 if current == str(self.plugins_dir):
-                    click.echo(
-                        f"Clearing SwiftBar {key} setting (was {self.plugins_dir})..."
-                    )
+                    click.echo(f"Clearing SwiftBar {key} setting (was {self.plugins_dir})...")
                     self.stop()
-                    subprocess.run(
-                        ["defaults", "delete", "com.ameba.SwiftBar", key], check=True
-                    )
+                    subprocess.run(["defaults", "delete", "com.ameba.SwiftBar", key], check=True)
                     click.echo(f"  - SwiftBar {key} configuration cleared.")
             except subprocess.CalledProcessError:
                 # Key might not exist or app not installed
@@ -289,9 +271,7 @@ class SwiftBarService(BaseService):
                 click.echo(f"  Plugin scripts: {', '.join(scripts)}")
             else:
                 click.echo("  Plugin scripts: (none — run `aisland swiftbar init`)")
-        click.echo(
-            f"  App support   : {Path.home() / 'Library' / 'Application Support' / 'SwiftBar'}"
-        )
+        click.echo(f"  App support   : {Path.home() / 'Library' / 'Application Support' / 'SwiftBar'}")
 
     def _generate_jenkins_script(self, projects: List[str]) -> None:
         """Generate the Jenkins status script."""
@@ -309,12 +289,8 @@ class SwiftBarService(BaseService):
                     fg="yellow",
                 )
             )
-            click.echo(
-                "            The SwiftBar script might not display project status correctly."
-            )
-            click.echo(
-                "            Please check your terminal's permissions for the 'aisland' data directory."
-            )
+            click.echo("            The SwiftBar script might not display project status correctly.")
+            click.echo("            Please check your terminal's permissions for the 'aisland' data directory.")
 
         projects_str = " ".join([f'"{p}"' for p in projects])
 

@@ -79,9 +79,7 @@ def test_parse_dotenv_keeps_equals_in_value(tmp_path: Path) -> None:
 # --------------------------------------------------------------------------- #
 
 
-def _make_service(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> tuple[JenkinsService, Path]:
+def _make_service(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> tuple[JenkinsService, Path]:
     """Build a JenkinsService whose service_data_dir + workspace root live under tmp_path."""
     workspace = tmp_path / "ws"
     workspace.mkdir()
@@ -97,15 +95,10 @@ def _make_service(
     return svc, workspace
 
 
-def test_setup_global_properties_injects_dotenv_keys(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_setup_global_properties_injects_dotenv_keys(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     svc, workspace = _make_service(tmp_path, monkeypatch)
     (workspace / ".env").write_text(
-        "# the workspace data store\n"
-        "DATA_ROOT=/tmp/data\n"
-        "\n"
-        'HF_HOME="/tmp/hf"\n',
+        "# the workspace data store\n" "DATA_ROOT=/tmp/data\n" "\n" 'HF_HOME="/tmp/hf"\n',
         encoding="utf-8",
     )
 
@@ -118,9 +111,7 @@ def test_setup_global_properties_injects_dotenv_keys(
     assert envvars["HF_HOME"] == "/tmp/hf"
 
 
-def test_setup_global_properties_no_dotenv_only_computed_keys(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_setup_global_properties_no_dotenv_only_computed_keys(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     svc, workspace = _make_service(tmp_path, monkeypatch)
     # No .env in workspace.
 
@@ -133,15 +124,11 @@ def test_setup_global_properties_no_dotenv_only_computed_keys(
     }
 
 
-def test_setup_global_properties_computed_keys_win_collision(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_setup_global_properties_computed_keys_win_collision(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """A typo'd .env that re-declares WORKSPACE_ROOT must not override the computed value."""
     svc, workspace = _make_service(tmp_path, monkeypatch)
     (workspace / ".env").write_text(
-        "WORKSPACE_ROOT=/should/not/win\n"
-        "FORCE_JAVASCRIPT_ACTIONS_TO_NODE24=false\n"
-        "DATA_ROOT=/tmp/data\n",
+        "WORKSPACE_ROOT=/should/not/win\n" "FORCE_JAVASCRIPT_ACTIONS_TO_NODE24=false\n" "DATA_ROOT=/tmp/data\n",
         encoding="utf-8",
     )
 
@@ -153,9 +140,7 @@ def test_setup_global_properties_computed_keys_win_collision(
     assert envvars["DATA_ROOT"] == "/tmp/data"
 
 
-def test_setup_global_properties_envvars_int_size_matches(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_setup_global_properties_envvars_int_size_matches(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """The leading <int> count in the tree-map must match the number of KV pairs."""
     svc, workspace = _make_service(tmp_path, monkeypatch)
     (workspace / ".env").write_text("A=1\nB=2\nC=3\n", encoding="utf-8")

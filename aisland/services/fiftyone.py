@@ -23,9 +23,7 @@ class FiftyOneService(BaseService):
             click.echo("FiftyOne is not installed. Installing via pip...")
             import subprocess
 
-            subprocess.run(
-                [sys.executable, "-m", "pip", "install", "fiftyone"], check=True
-            )
+            subprocess.run([sys.executable, "-m", "pip", "install", "fiftyone"], check=True)
 
     def info(self) -> None:
         """Show detailed FiftyOne configuration."""
@@ -131,12 +129,8 @@ class FiftyOneService(BaseService):
         }
 
         if not env_file.exists():
-            env_file.write_text(
-                "\n".join(f"{k}={v}" for k, v in entries.items()) + "\n"
-            )
-            click.echo(
-                f"Created .env with FIFTYONE_URL={url}, FIFTYONE_DATABASE_DIR={self.database_dir}."
-            )
+            env_file.write_text("\n".join(f"{k}={v}" for k, v in entries.items()) + "\n")
+            click.echo(f"Created .env with FIFTYONE_URL={url}, FIFTYONE_DATABASE_DIR={self.database_dir}.")
             return
 
         content = env_file.read_text().splitlines()
@@ -158,9 +152,7 @@ class FiftyOneService(BaseService):
                 new_content.append(f"{key}={value}")
 
         env_file.write_text("\n".join(new_content) + "\n")
-        click.echo(
-            f"Updated .env with FIFTYONE_URL={url}, FIFTYONE_DATABASE_DIR={self.database_dir}."
-        )
+        click.echo(f"Updated .env with FIFTYONE_URL={url}, FIFTYONE_DATABASE_DIR={self.database_dir}.")
 
     def restart(self, **kwargs: Any) -> None:
         """Restart the service, forwarding launch kwargs."""

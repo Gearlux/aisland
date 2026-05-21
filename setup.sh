@@ -125,5 +125,17 @@ fi
 echo "==> Setting up Git configurations..."
 bash "$WORKSPACE_ROOT/aisland/setup_git.sh"
 
+# 7. Link workspace .vscode/tasks.json to aisland/tasks.json so the integrated
+# Simple Browser shortcuts (Jenkins, MLflow, LabelStudio, FiftyOne, ...) are
+# available in every fresh checkout. The canonical, version-controlled copy
+# lives in aisland/tasks.json; idempotent `ln -sf` replaces any pre-existing
+# link without erroring.
+TASKS_LINK="$WORKSPACE_ROOT/.vscode/tasks.json"
+if [ -f "$WORKSPACE_ROOT/aisland/tasks.json" ]; then
+    mkdir -p "$WORKSPACE_ROOT/.vscode"
+    echo "==> Linking .vscode/tasks.json → aisland/tasks.json"
+    ln -sf "../aisland/tasks.json" "$TASKS_LINK"
+fi
+
 echo "==> Setup complete! Your environment is ready."
 echo "==> Run 'source .venv/bin/activate' to start working."

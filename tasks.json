@@ -1,0 +1,111 @@
+// VSCode tasks for opening Acme workspace services in the integrated
+// Simple Browser. Canonical copy lives here at `aisland/tasks.json`;
+// `aisland/setup.sh` symlinks `<workspace_root>/.vscode/tasks.json` to it
+// during bootstrap so VSCode picks it up automatically.
+//
+// How it works:
+//
+//   - Each entry in `tasks[]` shows up in the "Tasks: Run Task" Quick Pick
+//     (Cmd/Ctrl+Shift+P → "Tasks: Run Task", or Terminal → Run Task...).
+//   - Selecting a task resolves its `${input:<id>}` reference, which fires
+//     the matching `inputs[]` entry of `type: "command"`. The command
+//     `simpleBrowser.show` opens the supplied URL in VSCode's built-in
+//     Simple Browser panel.
+//   - The trailing `echo` is a no-op shell — required because tasks of
+//     `type: "shell"` need a `command` field. The real work happens in the
+//     `inputs` resolution before `echo` runs.
+//
+// Adding a new service:
+//
+//   1. Append a `{label, type: "shell", command: "echo",
+//      args: ["${input:openX}"], problemMatcher: []}` block under `tasks`.
+//   2. Append a `{id: "openX", type: "command",
+//      command: "simpleBrowser.show", args: "http://..."}` block under
+//      `inputs`.
+//   3. Save — VSCode auto-reloads the task list.
+//
+// Default ports (mirror `aisland/aisland/services/*.py`):
+//   - Jenkins      : 9080
+//   - MLflow       : 5005   (the aisland-launched service, not the
+//                            `mlflow ui` subcommand which defaults to 5000)
+//   - LabelStudio  : 9081
+//   - FiftyOne     : 5151
+{
+    "version": "2.0.0",
+    "tasks": [
+        {
+            "label": "Open Jenkins (integrated browser)",
+            "type": "shell",
+            "command": "echo",
+            "args": ["${input:openJenkins}"],
+            "problemMatcher": [],
+            "presentation": {
+                "reveal": "silent",
+                "panel": "dedicated",
+                "close": true
+            }
+        },
+        {
+            "label": "Open MLflow (integrated browser)",
+            "type": "shell",
+            "command": "echo",
+            "args": ["${input:openMlflow}"],
+            "problemMatcher": [],
+            "presentation": {
+                "reveal": "silent",
+                "panel": "dedicated",
+                "close": true
+            }
+        },
+        {
+            "label": "Open LabelStudio (integrated browser)",
+            "type": "shell",
+            "command": "echo",
+            "args": ["${input:openLabelStudio}"],
+            "problemMatcher": [],
+            "presentation": {
+                "reveal": "silent",
+                "panel": "dedicated",
+                "close": true
+            }
+        },
+        {
+            "label": "Open FiftyOne (integrated browser)",
+            "type": "shell",
+            "command": "echo",
+            "args": ["${input:openFiftyOne}"],
+            "problemMatcher": [],
+            "presentation": {
+                "reveal": "silent",
+                "panel": "dedicated",
+                "close": true
+            }
+        }
+    ],
+    "inputs": [
+        {
+            "id": "openJenkins",
+            "type": "command",
+            "command": "simpleBrowser.show",
+            "args": "http://localhost:9080"
+        },
+        {
+            "id": "openMlflow",
+            "type": "command",
+            "command": "simpleBrowser.show",
+            "args": "http://localhost:5005"
+        },
+        {
+            "id": "openLabelStudio",
+            "type": "command",
+            "command": "simpleBrowser.show",
+            "args": "http://localhost:9081"
+        },
+        {
+            "id": "openFiftyOne",
+            "type": "command",
+            "command": "simpleBrowser.show",
+            "args": "http://localhost:5151"
+        }
+    ]
+}

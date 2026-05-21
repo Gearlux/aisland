@@ -52,8 +52,6 @@ def test_pyproject_to_workspace_dir_unknown_passes_through() -> None:
         ("signals-rfuav", {"signals-rfuav"}, "signals-rfuav"),
     ],
 )
-def test_pyproject_to_workspace_dir_priority(
-    pyproject_name: str, initialized: set, expected: str
-) -> None:
+def test_pyproject_to_workspace_dir_priority(pyproject_name: str, initialized: set, expected: str) -> None:
     """Identity match wins; dashless and ``-manager`` trim are fallbacks."""
     assert pyproject_to_workspace_dir(pyproject_name, initialized) == expected

@@ -17,9 +17,7 @@ from aisland import manager
 from aisland.services.fiftyone import FiftyOneService
 
 
-def _make_service(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> tuple[FiftyOneService, Path]:
+def _make_service(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> tuple[FiftyOneService, Path]:
     """Build a FiftyOneService whose service_data_dir + workspace root live under tmp_path."""
     workspace = tmp_path / "ws"
     workspace.mkdir()
@@ -49,9 +47,7 @@ def _read_env(workspace: Path) -> dict[str, str]:
     return out
 
 
-def test_update_env_creates_new_file(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_update_env_creates_new_file(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     svc, workspace = _make_service(tmp_path, monkeypatch)
     svc._update_env_file(port=5151)
 
@@ -60,9 +56,7 @@ def test_update_env_creates_new_file(
     assert env["FIFTYONE_DATABASE_DIR"] == str(svc.database_dir)
 
 
-def test_update_env_replaces_existing_keys(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_update_env_replaces_existing_keys(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     svc, workspace = _make_service(tmp_path, monkeypatch)
     (workspace / ".env").write_text(
         "FIFTYONE_URL=http://localhost:9999\nFIFTYONE_DATABASE_DIR=/old\n",
@@ -76,9 +70,7 @@ def test_update_env_replaces_existing_keys(
     assert env["FIFTYONE_DATABASE_DIR"] == str(svc.database_dir)
 
 
-def test_update_env_preserves_unrelated_entries(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_update_env_preserves_unrelated_entries(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     svc, workspace = _make_service(tmp_path, monkeypatch)
     (workspace / ".env").write_text(
         "# comment\nLABELSTUDIO_TOKEN=abc123\nDATA_ROOT=/tmp/data\n",
@@ -93,9 +85,7 @@ def test_update_env_preserves_unrelated_entries(
     assert env["FIFTYONE_URL"] == "http://localhost:5151"
 
 
-def test_update_env_custom_port(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_update_env_custom_port(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     svc, workspace = _make_service(tmp_path, monkeypatch)
     svc._update_env_file(port=6000)
 
@@ -103,9 +93,7 @@ def test_update_env_custom_port(
     assert env["FIFTYONE_URL"] == "http://localhost:6000"
 
 
-def test_read_env_values_returns_only_fiftyone_keys(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_read_env_values_returns_only_fiftyone_keys(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     svc, workspace = _make_service(tmp_path, monkeypatch)
     (workspace / ".env").write_text(
         "FIFTYONE_URL=http://localhost:5151\nLABELSTUDIO_TOKEN=abc\nFIFTYONE_DATABASE_DIR=/tmp/db\n",
@@ -119,8 +107,6 @@ def test_read_env_values_returns_only_fiftyone_keys(
     }
 
 
-def test_read_env_values_missing_file(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_read_env_values_missing_file(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     svc, _workspace = _make_service(tmp_path, monkeypatch)
     assert svc._read_env_values() == {}

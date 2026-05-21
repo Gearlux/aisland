@@ -88,11 +88,7 @@ def _normalize_notebook_metadata(nb_data: Dict[str, Any]) -> None:
 
     language_info = metadata.get("language_info")
     if isinstance(language_info, dict):
-        normalized: Dict[str, Any] = {
-            k: language_info[k]
-            for k in _STABLE_LANGUAGE_INFO_KEYS
-            if k in language_info
-        }
+        normalized: Dict[str, Any] = {k: language_info[k] for k in _STABLE_LANGUAGE_INFO_KEYS if k in language_info}
         codemirror = language_info.get("codemirror_mode")
         if isinstance(codemirror, dict) and "name" in codemirror:
             normalized["codemirror_mode"] = {"name": codemirror["name"]}
@@ -133,10 +129,7 @@ def clean_notebook_outputs(nb_data: Dict[str, Any]) -> Dict[str, Any]:
     """
     _normalize_notebook_metadata(nb_data)
 
-    is_documentation = (
-        isinstance(nb_data.get("metadata"), dict)
-        and nb_data["metadata"].get("is_documentation") is True
-    )
+    is_documentation = isinstance(nb_data.get("metadata"), dict) and nb_data["metadata"].get("is_documentation") is True
 
     for cell in nb_data.get("cells", []):
         if not isinstance(cell, dict):
@@ -166,9 +159,7 @@ def clean_notebook_stdin() -> None:
         nb = json.loads(data)
     except json.JSONDecodeError as e:
         sys.stdout.write(data)
-        sys.stderr.write(
-            f"Warning: Failed to parse notebook JSON, passing through unchanged: {e}\n"
-        )
+        sys.stderr.write(f"Warning: Failed to parse notebook JSON, passing through unchanged: {e}\n")
         return
     cleaned_nb = clean_notebook_outputs(nb)
     json.dump(cleaned_nb, sys.stdout, indent=1, ensure_ascii=False)

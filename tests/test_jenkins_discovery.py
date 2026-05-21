@@ -11,9 +11,7 @@ from aisland.services import jenkins as jenkins_mod
 from aisland.services.jenkins import discover_gearlux_projects, is_private_gearlux_repo
 
 
-def _write_submodule(
-    workspace: Path, name: str, url: str, pyproject_name: str | None = "pkg"
-) -> None:
+def _write_submodule(workspace: Path, name: str, url: str, pyproject_name: str | None = "pkg") -> None:
     """Add a submodule entry to .gitmodules and (optionally) create its pyproject.toml."""
     gitmodules = workspace / ".gitmodules"
     entry = f'[submodule "{name}"]\n\tpath = {name}\n\turl = {url}\n'
@@ -24,9 +22,7 @@ def _write_submodule(
     if pyproject_name is not None:
         sub = workspace / name
         sub.mkdir(parents=True, exist_ok=True)
-        (sub / "pyproject.toml").write_text(
-            f'[project]\nname = "{pyproject_name}"\nversion = "0.1.0"\n'
-        )
+        (sub / "pyproject.toml").write_text(f'[project]\nname = "{pyproject_name}"\nversion = "0.1.0"\n')
 
 
 class TestDiscoverGearluxProjects:
@@ -38,15 +34,11 @@ class TestDiscoverGearluxProjects:
         assert discover_gearlux_projects(tmp_path) == []
 
     def test_includes_ssh_gearlux_submodule(self, tmp_path: Path) -> None:
-        _write_submodule(
-            tmp_path, "confluid", "git@github.com:Gearlux/confluid.git", "confluid"
-        )
+        _write_submodule(tmp_path, "confluid", "git@github.com:Gearlux/confluid.git", "confluid")
         assert discover_gearlux_projects(tmp_path) == ["confluid"]
 
     def test_includes_https_gearlux_submodule(self, tmp_path: Path) -> None:
-        _write_submodule(
-            tmp_path, "purifai", "https://github.com/Gearlux/purifai.git", "purifai"
-        )
+        _write_submodule(tmp_path, "purifai", "https://github.com/Gearlux/purifai.git", "purifai")
         assert discover_gearlux_projects(tmp_path) == ["purifai"]
 
     def test_excludes_non_gearlux_github_submodule(self, tmp_path: Path) -> None:
@@ -74,9 +66,7 @@ class TestDiscoverGearluxProjects:
 
     def test_strips_manager_suffix(self, tmp_path: Path) -> None:
         """aisland's pyproject distribution is ``aisland-manager`` but the repo is ``aisland``."""
-        _write_submodule(
-            tmp_path, "aisland", "git@github.com:Gearlux/aisland.git", "aisland-manager"
-        )
+        _write_submodule(tmp_path, "aisland", "git@github.com:Gearlux/aisland.git", "aisland-manager")
         assert discover_gearlux_projects(tmp_path) == ["aisland"]
 
     def test_returns_sorted(self, tmp_path: Path) -> None:
@@ -86,29 +76,21 @@ class TestDiscoverGearluxProjects:
         assert discover_gearlux_projects(tmp_path) == ["aaa", "mmm", "zzz"]
 
     def test_url_without_dot_git_suffix(self, tmp_path: Path) -> None:
-        _write_submodule(
-            tmp_path, "confluid", "git@github.com:Gearlux/confluid", "confluid"
-        )
+        _write_submodule(tmp_path, "confluid", "git@github.com:Gearlux/confluid", "confluid")
         assert discover_gearlux_projects(tmp_path) == ["confluid"]
 
     def test_skips_malformed_pyproject_silently(self, tmp_path: Path) -> None:
         """Garbage TOML is ignored, not raised — other submodules still discovered."""
         _write_submodule(tmp_path, "good", "git@github.com:Gearlux/good.git", "good")
-        _write_submodule(
-            tmp_path, "bad", "git@github.com:Gearlux/bad.git", pyproject_name=None
-        )
+        _write_submodule(tmp_path, "bad", "git@github.com:Gearlux/bad.git", pyproject_name=None)
         (tmp_path / "bad").mkdir(exist_ok=True)
         (tmp_path / "bad" / "pyproject.toml").write_text("not = valid = toml = at all")
         assert discover_gearlux_projects(tmp_path) == ["good"]
 
     def test_skips_pyproject_missing_project_name(self, tmp_path: Path) -> None:
-        _write_submodule(
-            tmp_path, "noname", "git@github.com:Gearlux/noname.git", pyproject_name=None
-        )
+        _write_submodule(tmp_path, "noname", "git@github.com:Gearlux/noname.git", pyproject_name=None)
         (tmp_path / "noname").mkdir(exist_ok=True)
-        (tmp_path / "noname" / "pyproject.toml").write_text(
-            '[build-system]\nrequires = ["setuptools"]\n'
-        )
+        (tmp_path / "noname" / "pyproject.toml").write_text('[build-system]\nrequires = ["setuptools"]\n')
         assert discover_gearlux_projects(tmp_path) == []
 
 
@@ -118,31 +100,21 @@ class TestIsPrivateGearluxRepo:
         """lru_cache leaks across tests; clear before each."""
         is_private_gearlux_repo.cache_clear()
 
-    def test_returns_true_when_gh_says_true(
-        self, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
+    def test_returns_true_when_gh_says_true(self, monkeypatch: pytest.MonkeyPatch) -> None:
         def fake_run(*args, **kwargs):  # type: ignore[no-untyped-def]
-            return subprocess.CompletedProcess(
-                args=args[0], returncode=0, stdout="true\n", stderr=""
-            )
+            return subprocess.CompletedProcess(args=args[0], returncode=0, stdout="true\n", stderr="")
 
         monkeypatch.setattr(jenkins_mod.subprocess, "run", fake_run)
         assert is_private_gearlux_repo("signals") is True
 
-    def test_returns_false_when_gh_says_false(
-        self, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
+    def test_returns_false_when_gh_says_false(self, monkeypatch: pytest.MonkeyPatch) -> None:
         def fake_run(*args, **kwargs):  # type: ignore[no-untyped-def]
-            return subprocess.CompletedProcess(
-                args=args[0], returncode=0, stdout="false\n", stderr=""
-            )
+            return subprocess.CompletedProcess(args=args[0], returncode=0, stdout="false\n", stderr="")
 
         monkeypatch.setattr(jenkins_mod.subprocess, "run", fake_run)
         assert is_private_gearlux_repo("purifai") is False
 
-    def test_returns_true_when_gh_missing(
-        self, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
+    def test_returns_true_when_gh_missing(self, monkeypatch: pytest.MonkeyPatch) -> None:
         """Conservative fallback: assume private so the Mint-GitHub-App-token step survives."""
 
         def fake_run(*args, **kwargs):  # type: ignore[no-untyped-def]
@@ -151,9 +123,7 @@ class TestIsPrivateGearluxRepo:
         monkeypatch.setattr(jenkins_mod.subprocess, "run", fake_run)
         assert is_private_gearlux_repo("anything") is True
 
-    def test_returns_true_on_subprocess_error(
-        self, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
+    def test_returns_true_on_subprocess_error(self, monkeypatch: pytest.MonkeyPatch) -> None:
         """Conservative fallback: assume private on probe failure."""
 
         def fake_run(*args, **kwargs):  # type: ignore[no-untyped-def]
@@ -177,9 +147,7 @@ class TestIsPrivateGearluxRepo:
 
         def fake_run(*args, **kwargs):  # type: ignore[no-untyped-def]
             call_count["n"] += 1
-            return subprocess.CompletedProcess(
-                args=args[0], returncode=0, stdout="true\n", stderr=""
-            )
+            return subprocess.CompletedProcess(args=args[0], returncode=0, stdout="true\n", stderr="")
 
         monkeypatch.setattr(jenkins_mod.subprocess, "run", fake_run)
         is_private_gearlux_repo("xx")

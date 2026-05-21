@@ -73,9 +73,7 @@ class DockerService(BaseService):
     def status(self) -> None:
         """Display Docker engine status."""
         try:
-            result = subprocess.run(
-                ["colima", "status"], capture_output=True, text=True
-            )
+            result = subprocess.run(["colima", "status"], capture_output=True, text=True)
             if result.returncode == 0:
                 click.echo(f"  Docker (Colima)  : {click.style('Running', fg='green')}")
                 # Show socket info if available
@@ -86,17 +84,13 @@ class DockerService(BaseService):
             else:
                 click.echo(f"  Docker (Colima)  : {click.style('Stopped', fg='red')}")
         except FileNotFoundError:
-            click.echo(
-                f"  Docker (Colima)  : {click.style('Not Installed', fg='yellow')}"
-            )
+            click.echo(f"  Docker (Colima)  : {click.style('Not Installed', fg='yellow')}")
 
     def info(self) -> None:
         """Show detailed Docker (Colima) configuration."""
         click.echo(click.style("Docker (Colima):", bold=True))
         try:
-            result = subprocess.run(
-                ["colima", "status"], capture_output=True, text=True
-            )
+            result = subprocess.run(["colima", "status"], capture_output=True, text=True)
             if result.returncode == 0:
                 click.echo(f"  Status        : {click.style('Running', fg='green')}")
             else:
@@ -112,16 +106,9 @@ class DockerService(BaseService):
 
         colima_socket_default = Path.home() / ".colima" / "default" / "docker.sock"
         colima_socket_legacy = Path.home() / ".colima" / "docker.sock"
-        colima_socket = (
-            colima_socket_default
-            if colima_socket_default.exists()
-            else colima_socket_legacy
-        )
+        colima_socket = colima_socket_default if colima_socket_default.exists() else colima_socket_legacy
         standard_socket = Path("/var/run/docker.sock")
-        click.echo(
-            f"  Colima socket : {colima_socket} "
-            + ("(present)" if colima_socket.exists() else "(missing)")
-        )
+        click.echo(f"  Colima socket : {colima_socket} " + ("(present)" if colima_socket.exists() else "(missing)"))
         link_info = ""
         if standard_socket.is_symlink():
             try:
@@ -130,11 +117,7 @@ class DockerService(BaseService):
                 link_info = ""
         click.echo(
             f"  Docker socket : {standard_socket}{link_info} "
-            + (
-                "(present)"
-                if standard_socket.exists() or standard_socket.is_symlink()
-                else "(missing)"
-            )
+            + ("(present)" if standard_socket.exists() or standard_socket.is_symlink() else "(missing)")
         )
 
     def configure_socket(self) -> None:
@@ -155,9 +138,7 @@ class DockerService(BaseService):
         try:
             # Check if /var/run/docker.sock already exists and points to the right place
             if standard_socket.exists() or standard_socket.is_symlink():
-                if standard_socket.is_symlink() and os.readlink(standard_socket) == str(
-                    colima_socket
-                ):
+                if standard_socket.is_symlink() and os.readlink(standard_socket) == str(colima_socket):
                     click.echo("  - Standard socket symlink already configured.")
                     return
 
@@ -174,17 +155,11 @@ class DockerService(BaseService):
             click.echo("  - Socket configuration complete.")
         except subprocess.CalledProcessError as e:
             click.echo(f"  - Error configuring socket symlink: {e}")
-            click.echo(
-                "    (You may need to manually run: sudo ln -s "
-                + str(colima_socket)
-                + " /var/run/docker.sock)"
-            )
+            click.echo("    (You may need to manually run: sudo ln -s " + str(colima_socket) + " /var/run/docker.sock)")
 
     def reset(self) -> None:
         """Factory reset Colima (wipes all containers/images)."""
-        if click.confirm(
-            "Are you sure you want to delete ALL Docker data (containers, images, volumes)?"
-        ):
+        if click.confirm("Are you sure you want to delete ALL Docker data (containers, images, volumes)?"):
             if self.is_running():
                 self.stop()
             click.echo("Deleting Colima instance...")

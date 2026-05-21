@@ -333,9 +333,7 @@ def labelstudio_restart(
 
 
 @labelstudio.command(name="reset")
-@click.confirmation_option(
-    prompt="Are you sure you want to wipe all Label Studio data?"
-)
+@click.confirmation_option(prompt="Are you sure you want to wipe all Label Studio data?")
 def labelstudio_reset() -> None:
     """Stop Label Studio and wipe all its data."""
     LabelStudioService().reset()

@@ -54,9 +54,7 @@ def test_fiftyone_in_process_pattern_dict() -> None:
     # the patterns dict lookup without depending on the real ps state.
     import subprocess
 
-    with patch(
-        "subprocess.check_output", side_effect=subprocess.CalledProcessError(1, "pgrep")
-    ) as check_mock:
+    with patch("subprocess.check_output", side_effect=subprocess.CalledProcessError(1, "pgrep")) as check_mock:
         svc._find_process_by_pattern()
     # First call should be pgrep -f <pattern>; the pattern must be the
     # fiftyone-specific one, not the literal name "fiftyone".

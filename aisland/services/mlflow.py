@@ -21,9 +21,7 @@ class MLflowService(BaseService):
             click.echo("MLflow is not installed. Installing via pip...")
             import subprocess
 
-            subprocess.run(
-                [sys.executable, "-m", "pip", "install", "mlflow"], check=True
-            )
+            subprocess.run([sys.executable, "-m", "pip", "install", "mlflow"], check=True)
 
     def info(self) -> None:
         """Show detailed MLflow configuration."""

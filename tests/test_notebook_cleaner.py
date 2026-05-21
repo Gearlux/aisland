@@ -23,11 +23,7 @@ from unittest.mock import patch
 
 import pytest
 
-from aisland.notebook_utils import (
-    _CANONICAL_KERNELSPEC,
-    clean_notebook_outputs,
-    clean_notebook_stdin,
-)
+from aisland.notebook_utils import _CANONICAL_KERNELSPEC, clean_notebook_outputs, clean_notebook_stdin
 
 
 def _make_nb(
@@ -262,9 +258,7 @@ def _run_stdin_clean(stdin_text: str) -> tuple[str, str]:
     stdin = io.StringIO(stdin_text)
     stdout = io.StringIO()
     stderr = io.StringIO()
-    with patch("sys.stdin", stdin), patch("sys.stdout", stdout), patch(
-        "sys.stderr", stderr
-    ):
+    with patch("sys.stdin", stdin), patch("sys.stdout", stdout), patch("sys.stderr", stderr):
         clean_notebook_stdin()
     return stdout.getvalue(), stderr.getvalue()
 
@@ -334,9 +328,7 @@ def test_vscode_interpreter_hash_stripped_from_notebook_metadata() -> None:
     """VSCode writes sha256(local-venv-path) into metadata.vscode.interpreter.hash."""
     nb = _make_nb()
     nb["metadata"]["vscode"] = {
-        "interpreter": {
-            "hash": "d4e0a3b5f2c8e7a1b9d2c4f6e8a0b2d4f6e8a0b2d4f6e8a0b2d4f6e8a0b2d4f6"
-        },
+        "interpreter": {"hash": "d4e0a3b5f2c8e7a1b9d2c4f6e8a0b2d4f6e8a0b2d4f6e8a0b2d4f6e8a0b2d4f6"},
     }
     cleaned = clean_notebook_outputs(nb)
     assert "vscode" not in cleaned["metadata"]
