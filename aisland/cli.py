@@ -2,7 +2,14 @@ from typing import Optional
 
 import click
 
-from aisland.manager import generate_gemini_settings, provision_system, run_quality_gates, setup_workspace
+from aisland.manager import (
+    generate_gemini_settings,
+    get_workspace_root,
+    provision_system,
+    reconcile_submodules,
+    run_quality_gates,
+    setup_workspace,
+)
 from aisland.services.docker import DockerService
 from aisland.services.fiftyone import FiftyOneService
 from aisland.services.jenkins import JenkinsService
@@ -47,6 +54,12 @@ def provision() -> None:
 def setup() -> None:
     """Full workspace setup: provision system tools and install all projects in editable mode."""
     setup_workspace()
+
+
+@main.command()
+def reconcile() -> None:
+    """Align submodule checkouts with .gitmodules `active` flags (init active, deinit inactive)."""
+    reconcile_submodules(get_workspace_root())
 
 
 # --- Docker Commands ---

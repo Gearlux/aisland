@@ -7,7 +7,7 @@ import tarfile
 import time
 import urllib.request
 from pathlib import Path
-from typing import Any, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 
 import click
 
@@ -869,6 +869,71 @@ def generate_gemini_settings() -> None:
     _write_gemini_settings(workspace_root, venv_bin)
 
 
+def submodule_active_map(workspace_root: Path) -> List[Tuple[str, str, bool]]:
+    """Return ``(name, path, active)`` for every submodule declared in ``.gitmodules``.
+
+    ``active`` is the declared intent: ``False`` only when the entry has an explicit
+    ``active = false`` key; otherwise ``True`` (git's default — a submodule with no ``active``
+    key is active). This is the shared, committed source of truth for which submodules a
+    checkout should carry; an ``active = false`` marks one this workspace deliberately skips
+    (e.g. an optional or access-gated remote).
+    """
+    gitmodules = workspace_root / ".gitmodules"
+    if not gitmodules.exists():
+        return []
+    listing = subprocess.run(
+        ["git", "config", "-f", str(gitmodules), "--get-regexp", r"^submodule\..*\.path$"],
+        cwd=workspace_root,
+        text=True,
+        capture_output=True,
+    ).stdout
+    entries: List[Tuple[str, str, bool]] = []
+    for line in listing.splitlines():
+        key, _, path = line.partition(" ")
+        name = key[len("submodule.") : -len(".path")]
+        active_raw = subprocess.run(
+            ["git", "config", "-f", str(gitmodules), "--get", f"submodule.{name}.active"],
+            cwd=workspace_root,
+            text=True,
+            capture_output=True,
+        ).stdout.strip()
+        entries.append((name, path, active_raw.lower() != "false"))
+    return entries
+
+
+def reconcile_submodules(workspace_root: Path) -> None:
+    """Align each submodule's checkout with its ``.gitmodules`` ``active`` flag.
+
+    * active (``true`` / key absent) and not checked out -> ``git submodule update --init <path>``.
+    * inactive (``active = false``) and checked out       -> ``git submodule deinit <path>``.
+
+    Idempotent and non-fatal: an init that fails (e.g. an auth-gated remote unreachable from this
+    machine) or a deinit that refuses (a submodule with uncommitted changes) is logged and skipped,
+    so one inaccessible/dirty submodule never aborts ``aisland setup``. Keeps ``git submodule
+    foreach`` (and tools like push-all) seeing exactly the submodules this workspace declares.
+    """
+    entries = submodule_active_map(workspace_root)
+    if not entries:
+        return
+    click.echo("==> Reconciling submodule checkouts with .gitmodules `active` flags...")
+    for _name, path, active in entries:
+        # A submodule's ``.git`` is a gitlink file (or dir) only when it is checked out.
+        initialized = (workspace_root / path / ".git").exists()
+        if active and not initialized:
+            click.echo(f"  - init {path} (active)")
+            try:
+                subprocess.check_call(["git", "submodule", "update", "--init", path], cwd=workspace_root)
+            except subprocess.CalledProcessError as e:
+                click.echo(f"    skip {path}: init failed ({e}); remote may be unreachable from this machine.")
+        elif not active and initialized:
+            click.echo(f"  - deinit {path} (inactive)")
+            try:
+                # No ``-f``: a deinit that would discard uncommitted work refuses, protecting it.
+                subprocess.check_call(["git", "submodule", "deinit", path], cwd=workspace_root)
+            except subprocess.CalledProcessError as e:
+                click.echo(f"    skip {path}: deinit refused ({e}); resolve local changes and re-run.")
+
+
 def setup_workspace() -> None:
     """Perform a full workspace setup: system provisioning followed by editable pip installs."""
     workspace_root = get_workspace_root()
@@ -888,6 +953,11 @@ def setup_workspace() -> None:
 
     # 1. System Provisioning
     provision_system()
+
+    # 1b. Submodule reconciliation — init the active submodules / deinit the inactive ones so the
+    #     install set (and `git submodule foreach`, push-all, discovery) matches the declared
+    #     `.gitmodules` `active` flags. Runs before discovery so inactive checkouts drop out.
+    reconcile_submodules(workspace_root)
 
     # 2. Dependency Discovery
     click.echo(f"==> Resolving workspace dependency graph in {workspace_root}...")
