@@ -2,7 +2,7 @@ from typing import Optional
 
 import click
 
-from aisland.manager import provision_system, run_quality_gates, setup_workspace
+from aisland.manager import generate_gemini_settings, provision_system, run_quality_gates, setup_workspace
 from aisland.services.docker import DockerService
 from aisland.services.fiftyone import FiftyOneService
 from aisland.services.jenkins import JenkinsService
@@ -175,6 +175,21 @@ def jenkins_scaffold(project: Optional[str], force: bool) -> None:
 def jenkins_remove(project: Optional[str]) -> None:
     """Remove a specific project pipeline or all pipelines from Jenkins."""
     JenkinsService().remove_pipelines(project_name=project)
+
+
+# --- MCP Commands ---
+
+
+@main.group()
+def mcp() -> None:
+    """Manage MCP client configuration for workspace MCP servers."""
+    pass
+
+
+@mcp.command(name="gemini")
+def mcp_gemini() -> None:
+    """Generate .gemini/settings.json for the workspace MCP servers (gitignored; regenerated)."""
+    generate_gemini_settings()
 
 
 # --- MLflow Commands ---

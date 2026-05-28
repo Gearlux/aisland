@@ -795,6 +795,80 @@ def _write_pyrightconfig(workspace_root: Path, projects: List[dict]) -> None:
     click.echo(f"==> Wrote {out} ({len(extra_paths)} project paths)")
 
 
+def _discover_mcp_servers(workspace_root: Path, venv_bin: Path) -> dict[str, dict]:
+    """Discover workspace MCP servers and how to launch them.
+
+    A project is treated as an MCP server when its ``[project.scripts]`` declares
+    an entry whose target is ``<pkg>.server:main`` AND that ``server.py`` actually
+    references FastMCP (``mcp.server.fastmcp``). The script name is the console
+    command installed into the venv; the server is keyed by the project name.
+    Discovery (not a hand-maintained list) keeps the output tracking the live set
+    — drop in a new ``*-mcp`` project and it appears automatically.
+
+    Returns ``{server_name: {"command": "<venv_bin>/<script>"}}`` with ABSOLUTE
+    commands resolved against the LOCAL venv. Gemini launches each as a
+    subprocess from an arbitrary cwd, so the command must be absolute — which is
+    exactly why ``.gemini/settings.json`` is gitignored and regenerated per
+    machine instead of committed.
+    """
+    import tomllib
+
+    servers: dict[str, dict] = {}
+    for pyproject in discover_projects(workspace_root):
+        try:
+            with open(pyproject, "rb") as f:
+                data = tomllib.load(f)
+        except Exception:
+            continue
+        project = data.get("project", {})
+        name = project.get("name")
+        scripts = project.get("scripts", {})
+        if not name or not isinstance(scripts, dict):
+            continue
+        for script_name, target in scripts.items():
+            module, _, attr = str(target).partition(":")
+            if not module.endswith(".server") or attr != "main":
+                continue
+            server_file = pyproject.parent.joinpath(*module.split(".")).with_suffix(".py")
+            try:
+                text = server_file.read_text(encoding="utf-8")
+            except OSError:
+                continue
+            if "FastMCP" not in text and "mcp.server.fastmcp" not in text:
+                continue
+            servers[name] = {"command": str(venv_bin / script_name)}
+            break  # one MCP server per project
+    return servers
+
+
+def _write_gemini_settings(workspace_root: Path, venv_bin: Path) -> None:
+    """Generate ``<workspace>/.gemini/settings.json`` registering workspace MCP servers.
+
+    Unlike ``pyrightconfig.json`` (relative paths), Gemini CLI launches each
+    server as a subprocess, so ``command`` must be an ABSOLUTE venv path. That
+    machine-specific absolute is why this file is gitignored and regenerated on
+    every ``aisland setup`` (and via ``aisland mcp gemini``) rather than
+    committed. The server set is discovered, never hand-maintained.
+    """
+    servers = _discover_mcp_servers(workspace_root, venv_bin)
+    gemini_dir = workspace_root / ".gemini"
+    gemini_dir.mkdir(exist_ok=True)
+    out = gemini_dir / "settings.json"
+    out.write_text(json.dumps({"mcpServers": servers}, indent=2) + "\n")
+    listed = ", ".join(sorted(servers)) or "none"
+    click.echo(f"==> Wrote {out} ({len(servers)} MCP server(s): {listed})")
+
+
+def generate_gemini_settings() -> None:
+    """Regenerate ``.gemini/settings.json`` for the local workspace + venv (standalone command)."""
+    workspace_root = get_workspace_root()
+    venv_bin = workspace_root / ".venv" / "bin"
+    if not venv_bin.exists():
+        click.echo(f"Error: Virtual environment not found at {workspace_root / '.venv'}. Run aisland/setup.sh first.")
+        return
+    _write_gemini_settings(workspace_root, venv_bin)
+
+
 def setup_workspace() -> None:
     """Perform a full workspace setup: system provisioning followed by editable pip installs."""
     workspace_root = get_workspace_root()
@@ -840,6 +914,11 @@ def setup_workspace() -> None:
             subprocess.check_call([uv_cmd, "pip", "install", "-e", target])
         except subprocess.CalledProcessError as e:
             click.echo(f"  - Error: Failed to install {project['name']}: {e}")
+
+    # 4. MCP client config — register every workspace MCP server (navigaitor,
+    #    vendorcli, …) for Gemini CLI with locally-resolved absolute venv paths.
+    #    Written after the editable installs so the console scripts exist.
+    _write_gemini_settings(workspace_root, venv_bin)
 
     click.echo("==> Workspace setup complete!")
 
