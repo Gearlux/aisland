@@ -28,6 +28,15 @@ file (sourced by `project.bashrc`, gitignored — so the user's global
 `~/.bashrc` stays clean and re-running setup never dirties the tree),
 and finally runs `setup_git.sh` to configure submodule + git aliases.
 
+`aisland setup` also writes a workspace-root **`pyrightconfig.json`** so
+Pyright / Pylance resolve cross-project imports against the same project
+set installed editable into the `.venv`. It uses relative paths only
+(`venvPath: "."`, plus each project dir on `extraPaths`), so the file is
+portable across machines — and it is gitignored + regenerated on every
+setup, so it always tracks the live project list and never dirties the
+tree. Don't hand-edit it; add a project's `pyproject.toml` and re-run
+`aisland setup`.
+
 ### 1. Check Status
 Retrieve service information for all infrastructure components:
 ```bash

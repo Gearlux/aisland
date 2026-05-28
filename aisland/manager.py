@@ -1,3 +1,4 @@
+import json
 import os
 import platform
 import signal
@@ -758,6 +759,42 @@ def _link_project_bashrc(workspace_root: Path) -> None:
     click.echo(f"==> Linked {link} -> {rel}")
 
 
+def _write_pyrightconfig(workspace_root: Path, projects: List[dict]) -> None:
+    """Generate ``<workspace>/pyrightconfig.json`` so editors resolve every workspace package.
+
+    The mono-repo lays each project out as ``<proj>/<pkg>/`` and installs them
+    editable into the shared ``.venv``. Pyright / Pylance need each project root
+    on ``extraPaths`` to resolve cross-project imports the same way the venv does
+    (e.g. ``import confluid`` finds ``confluid/confluid``).
+
+    Portability: every path is RELATIVE to the workspace root (where this file
+    lives) — ``venvPath: "."`` + ``venv: ".venv"`` point at ``./.venv`` without a
+    hardcoded absolute path, satisfying the workspace No-Hardcoded-Paths mandate.
+    The file is a generated artifact (gitignored, like
+    ``.project.bashrc.completion``) and is rewritten on every ``aisland setup`` so
+    it always tracks the live project set.
+
+    Plain JSON (no comments): ``pyrightconfig.json`` is consumed by an external
+    tool whose comment tolerance we don't control, so provenance is carried by
+    the ``.gitignore`` entry + this function rather than an in-file header.
+    """
+    extra_paths = sorted(os.path.relpath(p["path"], workspace_root) for p in projects)
+    config = {
+        "venvPath": ".",
+        "venv": ".venv",
+        "extraPaths": extra_paths,
+        "exclude": [
+            "**/__pycache__",
+            "**/.venv",
+            "**/.*_cache",
+            "**/node_modules",
+        ],
+    }
+    out = workspace_root / "pyrightconfig.json"
+    out.write_text(json.dumps(config, indent=4) + "\n")
+    click.echo(f"==> Wrote {out} ({len(extra_paths)} project paths)")
+
+
 def setup_workspace() -> None:
     """Perform a full workspace setup: system provisioning followed by editable pip installs."""
     workspace_root = get_workspace_root()
@@ -781,6 +818,10 @@ def setup_workspace() -> None:
     # 2. Dependency Discovery
     click.echo(f"==> Resolving workspace dependency graph in {workspace_root}...")
     install_order = get_install_order(workspace_root)
+
+    # 2b. Editor config — generate pyrightconfig.json so Pyright/Pylance resolve
+    #     cross-project imports against the same project set we install editable.
+    _write_pyrightconfig(workspace_root, install_order)
 
     # 3. Provisioning (Git & Python)
     for project in install_order:
