@@ -51,9 +51,21 @@ def provision() -> None:
 
 
 @main.command()
-def setup() -> None:
-    """Full workspace setup: provision system tools and install all projects in editable mode."""
-    setup_workspace()
+@click.option(
+    "--non-interactive",
+    "-y",
+    is_flag=True,
+    help="Reuse saved activation decisions; still prompt for new/undecided optional submodules.",
+)
+@click.option(
+    "--activate", multiple=True, help="Activate the named optional submodule(s) without prompting (repeatable)."
+)
+@click.option(
+    "--deactivate", multiple=True, help="Deactivate the named optional submodule(s) without prompting (repeatable)."
+)
+def setup(non_interactive: bool, activate: tuple[str, ...], deactivate: tuple[str, ...]) -> None:
+    """Full workspace setup: provision tools, resolve optional-submodule activation, install activated projects."""
+    setup_workspace(non_interactive=non_interactive, activate=activate, deactivate=deactivate)
 
 
 @main.command()

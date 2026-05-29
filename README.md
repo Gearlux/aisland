@@ -37,6 +37,34 @@ setup, so it always tracks the live project list and never dirties the
 tree. Don't hand-edit it; add a project's `pyproject.toml` and re-run
 `aisland setup`.
 
+#### Optional submodules & the generated `uv.toml`
+
+Some projects are **optional** — they ship their own `uv.toml` (a private
+package index) or are marked `active = false` in `.gitmodules` (e.g. the
+corporate-only `vendorcli` / `signals-bridge`). `aisland setup` **prompts**
+whether to activate each one and remembers the answer **per-machine** in
+`.git/config` (`submodule.<name>.active`), never in the committed
+`.gitmodules`. A decided module is honored silently on later runs; a *new*
+optional module is prompted **even with `--non-interactive/-y`** (a machine
+must consciously opt into a private project). Drive it non-interactively with
+`--activate <name>` / `--deactivate <name>` (repeatable). Activating runs
+`git submodule update --init`; deactivating deinits the working tree.
+
+```bash
+aisland setup                          # interactive: prompts for optional submodules
+aisland setup -y                       # reuse saved decisions; still ask about new modules
+aisland setup --activate vendorcli        # opt this machine into vendorcli (no prompt)
+aisland setup --deactivate vendorcli      # opt out (deinits its working tree)
+```
+
+From the activated set, setup **generates the workspace-root `uv.toml`** =
+a workspace base (e.g. `override-dependencies`) merged with each *activated*
+project's own `uv.toml` (union of `extra-index-url`, etc.). Like
+`pyrightconfig.json`, it is **gitignored and regenerated** on every setup, so
+a private index (the Company Artifactory in `vendorcli/uv.toml`) lands in the
+root file **only on a machine that activates that project** — a non-corporate
+machine that skips it never tries to contact the unreachable index.
+
 ### 1. Check Status
 Retrieve service information for all infrastructure components:
 ```bash

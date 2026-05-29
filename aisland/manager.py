@@ -915,8 +915,14 @@ def reconcile_submodules(workspace_root: Path) -> None:
     entries = submodule_active_map(workspace_root)
     if not entries:
         return
-    click.echo("==> Reconciling submodule checkouts with .gitmodules `active` flags...")
-    for _name, path, active in entries:
+    click.echo("==> Reconciling submodule checkouts with active flags...")
+    for name, path, committed_active in entries:
+        # Effective state = the per-machine ``.git/config`` override (set by the
+        # activation prompt) when present, else the shared ``.gitmodules`` default.
+        # This is what lets one machine activate vendorcli while another skips it,
+        # without committing the choice.
+        local = _local_submodule_active(workspace_root, name)
+        active = committed_active if local is None else local
         # A submodule's ``.git`` is a gitlink file (or dir) only when it is checked out.
         initialized = (workspace_root / path / ".git").exists()
         if active and not initialized:
@@ -934,7 +940,169 @@ def reconcile_submodules(workspace_root: Path) -> None:
                 click.echo(f"    skip {path}: deinit refused ({e}); resolve local changes and re-run.")
 
 
-def setup_workspace() -> None:
+def _local_submodule_active(workspace_root: Path, name: str) -> Optional[bool]:
+    """Per-machine activation override from ``.git/config`` (``submodule.<name>.active``).
+
+    Returns ``True`` / ``False`` for an explicit local value, or ``None`` when undecided
+    (no local override yet). Read from ``--local`` only, so the shared ``.gitmodules``
+    default is NOT consulted here — that's the caller's fallback.
+    """
+    res = subprocess.run(
+        ["git", "config", "--local", "--get", f"submodule.{name}.active"],
+        cwd=workspace_root,
+        text=True,
+        capture_output=True,
+    )
+    if res.returncode != 0:
+        return None
+    val = res.stdout.strip().lower()
+    if val in ("true", "1", "yes", "on"):
+        return True
+    if val in ("false", "0", "no", "off"):
+        return False
+    return None
+
+
+def _set_local_submodule_active(workspace_root: Path, name: str, active: bool) -> None:
+    """Record the per-machine activation decision in ``.git/config`` (never committed)."""
+    subprocess.run(
+        ["git", "config", "--local", f"submodule.{name}.active", "true" if active else "false"],
+        cwd=workspace_root,
+        check=False,
+    )
+
+
+def _project_is_optional(project_path: Path, committed_active: bool) -> bool:
+    """A submodule is *optional* (activation is prompted) when it ships its own ``uv.toml``
+    (private-index needs) or is ``active = false`` in ``.gitmodules`` (a deliberately opt-in /
+    access-gated remote). Ordinary submodules auto-activate and are never prompted.
+    """
+    return (project_path / "uv.toml").exists() or committed_active is False
+
+
+def _resolve_submodule_activation(
+    workspace_root: Path,
+    non_interactive: bool = False,
+    activate: Tuple[str, ...] = (),
+    deactivate: Tuple[str, ...] = (),
+) -> None:
+    """Decide + record (per machine) which OPTIONAL submodules are active, prompting as needed.
+
+    Explicit ``activate`` / ``deactivate`` names are applied first (write the local override,
+    no prompt). Each remaining optional submodule is then resolved:
+
+    * already decided locally AND ``non_interactive`` -> keep the saved choice silently;
+    * otherwise (interactive, or a NEW/undecided module even under ``non_interactive``) ->
+      ``click.confirm`` (default = current effective state) and record the answer.
+
+    Decisions are written to ``.git/config submodule.<name>.active`` (per machine, never
+    committed); :func:`reconcile_submodules` then checks out / deinits accordingly.
+    """
+    entries = submodule_active_map(workspace_root)
+    if not entries:
+        return
+    forced: Dict[str, bool] = {name: True for name in activate}
+    forced.update({name: False for name in deactivate})
+    optional = [(n, p, c) for n, p, c in entries if _project_is_optional(workspace_root / p, c)]
+    if not optional:
+        return
+    click.echo("==> Resolving optional (corporate/private) submodule activation...")
+    for name, _path, committed in optional:
+        if name in forced:
+            _set_local_submodule_active(workspace_root, name, forced[name])
+            click.echo(f"  - {name}: {'activate' if forced[name] else 'deactivate'} (flag)")
+            continue
+        local = _local_submodule_active(workspace_root, name)
+        if non_interactive and local is not None:
+            continue  # previously decided — honor it silently
+        default = committed if local is None else local
+        active = click.confirm(f"  Activate '{name}'? (clone + install + merge its uv.toml)", default=default)
+        _set_local_submodule_active(workspace_root, name, active)
+
+
+# Workspace-wide uv settings that are no single project's concern (the unified ``lightning``
+# package conflicts with ``pytorch-lightning`` across the workspace, so it's pinned to
+# never-install). Merged into the generated root uv.toml beneath every activated project's
+# own uv.toml.
+_ROOT_UV_BASE: Dict[str, Any] = {
+    "override-dependencies": ["lightning ; sys_platform == 'never'"],
+}
+
+
+def _merge_uv(into: Dict[str, Any], other: Dict[str, Any]) -> None:
+    """Merge ``other`` uv-config into ``into``: list values are unioned (dedup, order-preserving);
+    scalars are last-wins."""
+    for key, value in other.items():
+        if isinstance(value, list):
+            base = into.get(key)
+            base_list = list(base) if isinstance(base, list) else []
+            into[key] = base_list + [v for v in value if v not in base_list]
+        else:
+            into[key] = value
+
+
+def _emit_uv_toml(data: Dict[str, Any]) -> str:
+    """Hand-emit the flat key set uv.toml uses (string scalars + string/scalar lists + bools).
+
+    No `tomli-w` dependency for the realistic case; an unsupported (table/array-of-table) key is
+    skipped with a warning rather than mis-serialized — add `tomli-w` if a project ever needs one.
+    """
+    header = (
+        "# =========================================================================\n"
+        "# AUTO-GENERATED by `aisland setup` (manager._write_root_uv_toml) — DO NOT EDIT.\n"
+        "# Merged from the workspace base + each ACTIVATED project's uv.toml. Regenerate\n"
+        "# with `aisland setup`. Gitignored: a private index is present only when its\n"
+        "# project is activated, so a machine that skips it never contacts that index.\n"
+        "# =========================================================================\n\n"
+    )
+    lines: List[str] = []
+    for key, value in data.items():
+        if isinstance(value, bool):
+            lines.append(f"{key} = {'true' if value else 'false'}")
+        elif isinstance(value, (int, float)):
+            lines.append(f"{key} = {value}")
+        elif isinstance(value, str):
+            lines.append(f'{key} = "{value}"')
+        elif isinstance(value, list):
+            lines.append(f"{key} = [")
+            for item in value:
+                lines.append(f'    "{item}",')
+            lines.append("]")
+        else:
+            click.echo(f"  - Warning: skipping uv.toml key {key!r} (unsupported type {type(value).__name__})")
+    return header + "\n".join(lines) + "\n"
+
+
+def _write_root_uv_toml(workspace_root: Path, activated: List[dict]) -> None:
+    """Generate ``<workspace>/uv.toml`` = workspace base merged with each activated project's uv.toml.
+
+    Gitignored + regenerated on every setup (like ``pyrightconfig.json`` / ``.gemini/settings.json``)
+    so a private index (e.g. vendorcli's Company Artifactory URLs) is present ONLY when that project
+    is activated — never committed, so a machine that doesn't activate it never stalls on the index.
+    """
+    import tomllib
+
+    merged: Dict[str, Any] = {k: (list(v) if isinstance(v, list) else v) for k, v in _ROOT_UV_BASE.items()}
+    n_merged = 0
+    for project in activated:
+        uv_file = Path(project["path"]) / "uv.toml"
+        if not uv_file.exists():
+            continue
+        try:
+            with open(uv_file, "rb") as f:
+                _merge_uv(merged, tomllib.load(f))
+            n_merged += 1
+        except (OSError, tomllib.TOMLDecodeError) as e:
+            click.echo(f"  - Warning: failed to read {uv_file}: {e}")
+    out = workspace_root / "uv.toml"
+    out.write_text(_emit_uv_toml(merged))
+    extra = len(merged.get("extra-index-url", []) or [])
+    click.echo(f"==> Wrote {out} (base + {n_merged} project uv.toml; {extra} extra index URL(s))")
+
+
+def setup_workspace(
+    non_interactive: bool = False, activate: Tuple[str, ...] = (), deactivate: Tuple[str, ...] = ()
+) -> None:
     """Perform a full workspace setup: system provisioning followed by editable pip installs."""
     workspace_root = get_workspace_root()
     venv_bin = workspace_root / ".venv" / "bin"
@@ -954,18 +1122,25 @@ def setup_workspace() -> None:
     # 1. System Provisioning
     provision_system()
 
-    # 1b. Submodule reconciliation — init the active submodules / deinit the inactive ones so the
-    #     install set (and `git submodule foreach`, push-all, discovery) matches the declared
-    #     `.gitmodules` `active` flags. Runs before discovery so inactive checkouts drop out.
+    # 1b. Optional-submodule activation — prompt (per machine, recorded in .git/config) which
+    #     corporate/private submodules to activate, then reconcile checkouts to match: init the
+    #     active ones / deinit the inactive ones so the install set (and discovery, push-all,
+    #     `git submodule foreach`) matches. Runs before discovery so inactive checkouts drop out.
+    _resolve_submodule_activation(workspace_root, non_interactive, activate, deactivate)
     reconcile_submodules(workspace_root)
 
-    # 2. Dependency Discovery
+    # 2. Dependency Discovery (now reflects the active checkouts)
     click.echo(f"==> Resolving workspace dependency graph in {workspace_root}...")
     install_order = get_install_order(workspace_root)
 
     # 2b. Editor config — generate pyrightconfig.json so Pyright/Pylance resolve
     #     cross-project imports against the same project set we install editable.
     _write_pyrightconfig(workspace_root, install_order)
+
+    # 2c. Generated root uv.toml — workspace base merged with each activated project's uv.toml,
+    #     so a private index (e.g. vendorcli's Company Artifactory URLs) is present ONLY when that
+    #     project is active. Written BEFORE the install loop so `uv pip install` sees the index.
+    _write_root_uv_toml(workspace_root, install_order)
 
     # 3. Provisioning (Git & Python)
     for project in install_order:
@@ -981,7 +1156,9 @@ def setup_workspace() -> None:
         target = f"{project_dir}[dev]" if project["has_dev"] else str(project_dir)
         click.echo(f"==> Installing {project['name']} ({target})...")
         try:
-            subprocess.check_call([uv_cmd, "pip", "install", "-e", target])
+            # Run from the workspace root so uv reads the generated root uv.toml (the merged
+            # private indexes); the editable target is absolute, so cwd doesn't change WHAT installs.
+            subprocess.check_call([uv_cmd, "pip", "install", "-e", target], cwd=workspace_root)
         except subprocess.CalledProcessError as e:
             click.echo(f"  - Error: Failed to install {project['name']}: {e}")
 
