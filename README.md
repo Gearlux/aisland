@@ -297,6 +297,29 @@ To use it (e.g., to merge `dev/main` into your current branch everywhere):
 git merge-all dev/main
 ```
 
+### Tagging All Submodules (`tag-all`)
+
+When you want to mark a workspace-wide snapshot (a release, or a proof-of-concept milestone), you need the *same* tag on the root repository and every active submodule, then pushed to each remote. `tag-all` is the cross-repo analogue of a single `git tag`: it creates one **annotated** tag at the current `HEAD` of the parent and each active submodule, then pushes it. Tags are created everywhere **first** (cheap, local) before any push, so an unreachable remote (e.g. an off-VPN private host) leaves every local tag intact — you simply re-run to push the rest. The tag message defaults to the tag name if omitted.
+
+To configure the global `tag-all` Git alias:
+
+```bash
+git config --global alias.tag-all '!f() {
+    if [ -z "$1" ]; then echo "Usage: git tag-all <tag> [message]"; exit 1; fi;
+    msg="${2:-$1}";
+    git tag -a "$1" -m "$msg" && git submodule foreach --quiet "git tag -a \"$1\" -m \"$msg\"";
+    git push origin "$1" && git submodule foreach --quiet "git push origin \"$1\"";
+}; f'
+```
+
+To use it (creates the tag locally **and** pushes it to every remote in one command):
+
+```bash
+git tag-all 'v1.0.0' 'First stable release'
+```
+
+> Tags are non-forcing: if `<tag>` already exists, the command aborts before pushing. Delete it first (`git tag -d <tag>` / `git submodule foreach 'git tag -d <tag>'`) to re-tag.
+
 ### Checking Status of All Submodules (`status-all`)
 
 To quickly see the status and current branch of the root repository and all its constituent submodules, you can use the `status-all` alias.

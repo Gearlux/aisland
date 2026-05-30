@@ -48,7 +48,20 @@ git config --global alias.switch-all '!f() { git checkout "$1" && git submodule 
 
 git config --global alias.merge-all '!f() { git merge "$1" && git submodule foreach "git merge $1"; }; f'
 
-git config --global alias.status-all '!f() { 
+# tag-all: stamp the SAME annotated tag on the parent + every active submodule at
+# their current HEAD, then push it to each remote — the cross-repo analogue of a
+# single `git tag`. Tags are created EVERYWHERE first (cheap, local) before any
+# push, so an unreachable remote (e.g. an off-VPN private host) leaves every local
+# tag intact and you just re-run the push. Message defaults to the tag name.
+# Usage: git tag-all <tag> [message]
+git config --global alias.tag-all '!f() {
+    if [ -z "$1" ]; then echo "Usage: git tag-all <tag> [message]"; exit 1; fi;
+    msg="${2:-$1}";
+    git tag -a "$1" -m "$msg" && git submodule foreach --quiet "git tag -a \"$1\" -m \"$msg\"";
+    git push origin "$1" && git submodule foreach --quiet "git push origin \"$1\"";
+}; f'
+
+git config --global alias.status-all '!f() {
     printf "%-25s (@%s" "ROOT" "$(git branch --show-current)";
     git rev-list --left-right --count HEAD...@{u} 2>/dev/null | while read a b; do
         if [ -n "$a" ] && ([ "$a" -gt 0 ] || [ "$b" -gt 0 ]); then
