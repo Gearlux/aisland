@@ -70,7 +70,7 @@ class SwiftBarService(BaseService):
             deps: set[str] = set()
             for raw in p["dependencies"]:
                 # Strip version specifiers, extras, and URL fragments so that
-                # 'logflow>=0.1.0', 'pkg[extra]', and 'torchsig @ git+https://...'
+                # 'loggair>=0.1.0', 'pkg[extra]', and 'torchsig @ git+https://...'
                 # all reduce to the bare distribution name.
                 dep_name = (
                     raw.split("@")[0].split(">=")[0].split("==")[0].split("<=")[0].split("[")[0].split()[0].strip()

@@ -671,7 +671,7 @@ def get_install_order(workspace_root: Path) -> List[dict]:
     adj: dict[str, list[str]] = {p["name"]: [] for p in projects}
     for p in projects:
         for dep in p["dependencies"]:
-            # Extract package name from dependency string (e.g., 'logflow>=0.1.0' -> 'logflow')
+            # Extract package name from dependency string (e.g., 'loggair>=0.1.0' -> 'loggair')
             dep_name = dep.split(">=")[0].split("==")[0].split("<=")[0].split("[")[0].strip()
             if dep_name in project_names and dep_name != p["name"]:
                 adj[p["name"]].append(dep_name)

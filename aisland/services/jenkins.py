@@ -154,7 +154,7 @@ def pyproject_to_workspace_dir(pyproject_name: str, initialized_set: set) -> str
 
     Handles three conventions in use across acme:
       1. Identity (most projects): ``confluid`` -> ``confluid``.
-      2. Dashed PyPI name -> dashless dir: ``log-flow`` -> ``logflow``,
+      2. Dashed PyPI name -> dashless dir: ``loggair`` -> ``loggair``,
          ``data-flux`` -> ``dataflux``.
       3. ``-manager`` suffix dropped: ``aisland-manager`` -> ``aisland``.
 
@@ -627,8 +627,8 @@ class JenkinsService(BaseService):
         base_name = get_workspace_name()
 
         # `initialized_projects` is a list of Jenkins job dir names, which follow the
-        # workspace directory names (e.g. "logflow", "dataflux") — NOT the pyproject
-        # distribution names (which may differ: "log-flow", "data-flux"). Build a
+        # workspace directory names (e.g. "loggair", "dataflux") — NOT the pyproject
+        # distribution names (which may differ: "loggair", "data-flux"). Build a
         # lookup that maps both forms to the canonical workspace-dir form so we can
         # match either a pyproject name or a dir name against initialized_projects.
         initialized_set = set(initialized_projects)
@@ -776,7 +776,7 @@ class JenkinsService(BaseService):
         #   Step 1: try the literal distribution name (e.g. "confluid").
         #   Step 2: try the PEP 503 module form — distribution names allow dashes
         #           but Python import names don't, so "data-flux" -> "dataflux",
-        #           "log-flow" -> "logflow", etc. Try that before the heuristic
+        #           "loggair" -> "loggair", etc. Try that before the heuristic
         #           fallback so we don't accidentally pick up "examples/".
         #   Step 3: scan for any inner dir with __init__.py, skipping known
         #           non-package dirs (tests, examples, notebooks, docs).
@@ -803,7 +803,7 @@ class JenkinsService(BaseService):
         # Collect the FULL TRANSITIVE closure of internal Gearlux deps, not just
         # the direct ones. When CI installs a direct dep like `confluid` with
         # --no-deps, `.[dev]` below still needs to resolve confluid's own deps
-        # (e.g. log-flow) — and Gearlux distribution names aren't on PyPI, so uv
+        # (e.g. loggair) — and Gearlux distribution names aren't on PyPI, so uv
         # fails unless WE'VE ALSO pre-installed those transitive deps first.
         #
         # Build the closure by walking each Gearlux dep's own pyproject.toml.
@@ -861,7 +861,7 @@ class JenkinsService(BaseService):
                     if sub_dep not in seen:
                         stack.append(sub_dep)
 
-        # Topological sort so log-flow is installed before confluid, etc.
+        # Topological sort so loggair is installed before confluid, etc.
         # Build adjacency: dep -> set(prerequisites)
         prereqs: dict[str, set[str]] = {name: set() for name in seen}
         for name in seen:
@@ -889,9 +889,9 @@ class JenkinsService(BaseService):
         # GH Actions — raw uv commands (valid inside `run: |` blocks).
         #
         # Install order: git-URL Gearlux deps FIRST (--no-deps), then `-e .[dev]`.
-        # Rationale: all Gearlux distribution names (log-flow, data-flux, liquifai,
+        # Rationale: all Gearlux distribution names (loggair, data-flux, liquifai,
         # torpaido, confluid, ...) are intentionally NOT published on PyPI. If
-        # `.[dev]` ran first, uv would try to resolve `log-flow>=0.1.0` from PyPI,
+        # `.[dev]` ran first, uv would try to resolve `loggair>=0.1.0` from PyPI,
         # fail ("not found in the package registry"), and abort the whole install.
         # By installing each Gearlux dep from its git URL first (with --no-deps to
         # skip its own Gearlux transitive deps — each is handled in its own loop
@@ -956,9 +956,9 @@ class JenkinsService(BaseService):
         # pre-satisfies the constraint; `.[dev]` then resolves its remaining
         # third-party deps from PyPI without touching the Gearlux ones.
         #
-        # PyPI distribution names CAN have dashes ("log-flow", "data-flux") but
+        # PyPI distribution names CAN have dashes ("loggair", "data-flux") but
         # filesystem / workspace directory names are conventionally dashless
-        # ("logflow/", "dataflux/"). For each dep, resolve the workspace path:
+        # ("loggair/", "dataflux/"). For each dep, resolve the workspace path:
         # prefer a dir matching the pyproject name exactly, otherwise try the
         # dash-stripped form. This lets a project carry a dashed PyPI name while
         # keeping its Python import and workspace dir as one unbroken word.
@@ -974,9 +974,9 @@ class JenkinsService(BaseService):
         for dep in internal_deps:
             ws_dir = _dep_to_workspace_dir(dep)
             # --no-deps is CRITICAL. Without it, uv would re-resolve this target's
-            # transitive Gearlux deps (e.g. confluid -> log-flow), and since
-            # log-flow isn't on PyPI the resolution would fail. The outer dep loop
-            # is already topologically ordered (log-flow before confluid before
+            # transitive Gearlux deps (e.g. confluid -> loggair), and since
+            # loggair isn't on PyPI the resolution would fail. The outer dep loop
+            # is already topologically ordered (loggair before confluid before
             # liquifai, etc.) so each dep's own deps are guaranteed installed by
             # the time we get to it.
             local_pip_cmds.append(f'sh "${{VENV_BIN}}/uv pip install --no-deps -e ${{env.WORKSPACE_ROOT}}/{ws_dir}"')

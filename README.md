@@ -131,7 +131,7 @@ Default: [http://localhost:9081](http://localhost:9081)
 
 ## Jenkins Configuration
 - **JENKINS_HOME:** All data, jobs, and configurations are stored in `aisland/data/jenkins`. This directory is ignored by Git to keep your local environment clean.
-- **Pipelines:** Each project (e.g., `logflow/`) contains its own `Jenkinsfile`. When creating a new job in Jenkins, point it to the local repository path and select "Pipeline from SCM" with the script path set to `logflow/Jenkinsfile`.
+- **Pipelines:** Each project (e.g., `loggair/`) contains its own `Jenkinsfile`. When creating a new job in Jenkins, point it to the local repository path and select "Pipeline from SCM" with the script path set to `loggair/Jenkinsfile`.
 
 ### 6. Check Quality Gates
 You can run automated quality checks across projects using the `check` command. This includes formatting (`isort`, `black`), linting (`flake8`), type checking (`mypy`), unit tests (`pytest`), and GitHub Actions validation (`act`).
@@ -370,5 +370,5 @@ git config --global alias.safe '!f() { if [ -z "$1" ]; then echo "Error: Please 
 To use the shortcut:
 
 ```bash
-git safe "feat(logflow): fixed the configuration parser bug"
+git safe "feat(loggair): fixed the configuration parser bug"
 ```

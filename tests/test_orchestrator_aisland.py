@@ -15,15 +15,15 @@ from aisland.services.jenkins import pyproject_to_workspace_dir
 
 def test_pyproject_to_workspace_dir_identity() -> None:
     """Most projects: pyproject name == workspace dir name."""
-    initialized = {"confluid", "logflow", "marainer"}
+    initialized = {"confluid", "loggair", "marainer"}
     assert pyproject_to_workspace_dir("confluid", initialized) == "confluid"
     assert pyproject_to_workspace_dir("marainer", initialized) == "marainer"
 
 
 def test_pyproject_to_workspace_dir_dashed_pypi_name() -> None:
-    """Dashed PyPI name -> dashless dir (the log-flow / data-flux convention)."""
-    initialized = {"logflow", "dataflux"}
-    assert pyproject_to_workspace_dir("log-flow", initialized) == "logflow"
+    """Dashed PyPI name -> dashless dir (the loggair / data-flux convention)."""
+    initialized = {"loggair", "dataflux"}
+    assert pyproject_to_workspace_dir("loggair", initialized) == "loggair"
     assert pyproject_to_workspace_dir("data-flux", initialized) == "dataflux"
 
 
@@ -33,13 +33,13 @@ def test_pyproject_to_workspace_dir_handles_aisland_manager_suffix() -> None:
     Without this mapping, the orchestrator silently skipped aisland's own
     job, leaving its test suite out of the workspace-wide CI gate.
     """
-    initialized = {"aisland", "logflow"}
+    initialized = {"aisland", "loggair"}
     assert pyproject_to_workspace_dir("aisland-manager", initialized) == "aisland"
 
 
 def test_pyproject_to_workspace_dir_unknown_passes_through() -> None:
     """An unknown name (e.g. an external dep) is returned as-is — the caller decides what to do."""
-    initialized = {"logflow", "marainer"}
+    initialized = {"loggair", "marainer"}
     assert pyproject_to_workspace_dir("requests", initialized) == "requests"
 
 
