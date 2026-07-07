@@ -5,6 +5,7 @@ This directory contains the infrastructure and server management tools for the d
 ## Prerequisites
 - **Python 3.12+**
 - **Java OpenJDK 17 or higher** (Required for Jenkins)
+- **process-compose** (service supervisor — installed automatically by `aisland setup` / `setup.sh`; see [Service Supervision](#service-supervision-process-compose))
 
 ## Default Ports
 
@@ -70,6 +71,55 @@ Retrieve service information for all infrastructure components:
 ```bash
 aisland status
 ```
+
+## Service Supervision (process-compose)
+
+Aisland delegates process supervision (spawn, liveness, readiness, crash
+recovery, log capture, port discovery) to
+[process-compose](https://github.com/F1bonacc1/process-compose) — a
+single-binary, native-process orchestrator with docker-compose semantics. The
+`aisland <service> start/stop/status` UX is unchanged; under the hood:
+
+- **Desired state**: `aisland/data/process-compose.yaml` (generated,
+  gitignored) records which services should run. `start` enables a service's
+  entry and applies the document; `stop` disables it. The supervisor server
+  runs detached on a unix socket in `aisland/data/` (TCP on Windows — port
+  configurable via `AISLAND_SUPERVISOR_PORT`, default 9089), so multiple
+  workspace checkouts never collide.
+- **Readiness, not just liveness**: every service carries an HTTP readiness
+  probe (Jenkins `/login`, MLflow `/health`, Label Studio `/health`, FiftyOne
+  `/`). `aisland status` shows `ready: Ready` once the service actually
+  answers, not merely when its process exists.
+- **Crash recovery**: services restart automatically on failure (up to 3
+  times); a manual `aisland <service> stop` is always respected.
+- **Port pre-flight**: `start` refuses to launch when the service's port is
+  already taken and names the owning PID — typically an instance started
+  outside the supervisor.
+- **Foreground semantics**: `aisland <service> start` without `--background`
+  streams the service log; Ctrl+C stops the service (as before). The process
+  itself always runs detached under the supervisor, so a dropped terminal
+  never kills a service.
+- **Logs**: per-service logs stay at `aisland/data/<service>.log`; the
+  supervisor's own log is `aisland/data/process-compose.log`.
+
+Supervisor-level commands:
+
+```bash
+aisland supervisor status   # supervisor state + process table
+aisland supervisor attach   # process-compose TUI dashboard (q to detach)
+aisland supervisor down     # stop ALL supervised services + the supervisor
+```
+
+**Installation**: macOS via Homebrew (`f1bonacc1/tap/process-compose`,
+declared in aisland's `[tool.aisland.sys-dependencies]` and installed by
+`aisland setup` / `setup.sh`); Linux via the userspace registry into
+`aisland/bin/` (no sudo). If missing at `start` time, aisland installs it on
+demand.
+
+**Migrating from the PID-file implementation**: services started by a
+pre-supervisor aisland are invisible to the supervisor. Stop them before
+upgrading (or kill the process manually); the port pre-flight check will
+otherwise point you at the offending PID on the next `start`.
 
 ### 2. Manage Jenkins
 For a complete guide on setting up project pipelines and credentials, see the [Jenkins Setup Workflow](JENKINS_WORKFLOW.md).

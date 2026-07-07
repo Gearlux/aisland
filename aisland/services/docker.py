@@ -28,10 +28,6 @@ class DockerService(BaseService):
         except (subprocess.CalledProcessError, FileNotFoundError):
             return False
 
-    def _find_process_by_pattern(self) -> bool:
-        """Not used for Colima as it has its own status command."""
-        return self.is_running()
-
     def launch(self, background: bool = True, **kwargs: Any) -> None:
         """Start the Docker engine via Colima."""
         if self.is_running():

@@ -27,8 +27,7 @@ class MLflowService(BaseService):
         """Show detailed MLflow configuration."""
         super().info()
         default_port = 5005
-        pid = self.get_pid()
-        ports = self._get_listening_ports(pid) if pid is not None else []
+        ports = self.get_ports()
         url_port = ports[0] if ports else default_port
         click.echo(f"  URL           : http://localhost:{url_port}")
         click.echo(f"  Backend store : sqlite:///{self.db_path}")
@@ -55,7 +54,8 @@ class MLflowService(BaseService):
             str(self.artifacts_path),
         ]
 
-        self.start(cmd, background=background)
+        # MLflow's tracking server exposes a dedicated /health endpoint.
+        self.start(cmd, background=background, readiness={"port": port, "path": "/health"})
 
     def ui(self, db_path: str, port: int = 5000) -> None:
         """Run MLflow UI with a specific database file."""

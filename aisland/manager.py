@@ -1,15 +1,15 @@
 import json
 import os
 import platform
-import signal
 import subprocess
 import tarfile
-import time
 import urllib.request
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
 import click
+
+from aisland import supervisor
 
 # Path Configuration (relative to the file itself)
 SERVICES_DIR = Path(__file__).parent.absolute()
@@ -31,271 +31,211 @@ USERSPACE_TOOLS: dict[str, dict[str, Any]] = {
         "extract_subdir": "node-{version}-linux-x64",
         "binaries": ["node", "npm", "npx"],
     },
+    # The aisland service supervisor (see aisland/supervisor.py). macOS gets it
+    # via Homebrew (f1bonacc1/tap, declared in aisland's sys-dependencies);
+    # this entry covers Linux. Flat archive: the binary sits at the tarball
+    # root (bin_subdir "" — no bin/ directory), and upstream publishes
+    # per-architecture assets ({arch} = amd64 / arm64).
+    "process-compose": {
+        "version": "v1.116.0",
+        "url": (
+            "https://github.com/F1bonacc1/process-compose/releases/download/"
+            "{version}/process-compose_linux_{arch}.tar.gz"
+        ),
+        "extract_subdir": "process-compose-{version}",
+        "bin_subdir": "",
+        "binaries": ["process-compose"],
+    },
 }
+
+# platform.machine() → the architecture token used in release-asset names.
+_LINUX_ARCH_ALIASES = {"x86_64": "amd64", "amd64": "amd64", "aarch64": "arm64", "arm64": "arm64"}
 
 
 class BaseService:
-    """Standardized management logic for aisland services."""
+    """Standardized management logic for aisland services.
+
+    Process supervision (spawn, liveness, readiness, crash recovery, log
+    capture, port discovery) is delegated to the process-compose supervisor
+    (see :mod:`aisland.supervisor`). Service classes keep the domain logic:
+    building the command line, environment, and readiness probe that
+    ``launch()`` hands to :meth:`start`.
+    """
 
     def __init__(self, name: str) -> None:
         self.name = name
         self.service_data_dir = DATA_DIR / name
-        self.pid_file = DATA_DIR / f"{name}.pid"
         self.log_file = DATA_DIR / f"{name}.log"
         self.service_data_dir.mkdir(parents=True, exist_ok=True)
 
     def is_running(self) -> bool:
-        """Check if the service is currently running."""
-        # 1. Try PID file first
-        if self.pid_file.exists():
-            try:
-                pid = int(self.pid_file.read_text().strip())
-                os.kill(pid, 0)
-                return True
-            except (OSError, ValueError):
-                # Stale or unparseable PID file — drop it so we don't keep
-                # printing "already running (PID: <ghost>)".
-                try:
-                    self.pid_file.unlink()
-                except OSError:
-                    pass
-
-        # 2. Fallback: Search for process by name/pattern
-        return self._find_process_by_pattern()
-
-    def _find_process_by_pattern(self) -> bool:
-        """Search for a running process that looks like this service using pgrep.
-
-        The pattern must be specific enough that the running ``aisland <svc>``
-        command itself does not match — otherwise the CLI detects itself and
-        falsely reports the service as already running.
-        """
-        try:
-            patterns = {
-                "jenkins": "jenkins.war",
-                "mlflow": "mlflow server",
-                # The actual binary name is ``label-studio`` (with dash);
-                # ``labelstudio`` (no dash) would also match the aisland CLI's
-                # own argv, the .pid file path, etc.
-                "labelstudio": "label-studio start",
-                # FiftyOne's app subprocess shows up in ps as
-                # ``python -m fiftyone app launch ...``; match the suffix so
-                # we don't also catch unrelated python invocations.
-                "fiftyone": "fiftyone app launch",
-            }
-            pattern = patterns.get(self.name, self.name)
-
-            # Use pgrep -f to search the full command line, excluding our own
-            # process tree so the running CLI invocation isn't a self-match.
-            cmd = ["pgrep", "-f", pattern]
-            output = subprocess.check_output(cmd, text=True).strip()
-
-            if output:
-                own_pid = os.getpid()
-                own_pgid = os.getpgrp()
-                for raw in output.splitlines():
-                    try:
-                        pid = int(raw)
-                    except ValueError:
-                        continue
-                    if pid == own_pid:
-                        continue
-                    try:
-                        if os.getpgid(pid) == own_pgid:
-                            continue
-                    except OSError:
-                        continue
-                    self.pid_file.write_text(str(pid))
-                    return True
-        except (subprocess.CalledProcessError, FileNotFoundError, OSError):
-            pass
-        return False
+        """Check if the service is currently running (per the supervisor)."""
+        proc = supervisor.get_process(self.name)
+        return bool(proc and proc.get("is_running"))
 
     def get_pid(self) -> Optional[int]:
         """Return the current PID if running."""
-        if self.is_running():
-            return int(self.pid_file.read_text().strip())
+        proc = supervisor.get_process(self.name)
+        if proc and proc.get("is_running"):
+            return int(proc["pid"])
         return None
 
-    def start(self, cmd: List[str], env: Optional[dict] = None, background: bool = False) -> None:
-        """Execute the service command."""
+    def get_ports(self) -> List[int]:
+        """Return the TCP ports the service is listening on (best-effort)."""
+        if not self.is_running():
+            return []
+        return supervisor.get_ports(self.name)
+
+    def start(
+        self,
+        cmd: List[str],
+        env: Optional[dict] = None,
+        background: bool = False,
+        readiness: Optional[Dict[str, Any]] = None,
+    ) -> None:
+        """Register the service with the supervisor and bring it up.
+
+        Args:
+            cmd: argv list for the service process.
+            env: Extra environment variables (merged over the supervisor's
+                inherited environment). A caller-provided ``PATH`` wins;
+                otherwise the workspace venv is prepended so ``python3`` and
+                friends resolve to the project-standard environment.
+            background: When False, stream the service log to the terminal
+                after startup; Ctrl+C stops the service (matching the old
+                foreground semantics). The process itself always runs
+                detached under the supervisor.
+            readiness: Optional HTTP readiness probe ``{"port": int, "path": str}``.
+        """
         if self.is_running():
             click.echo(f"{self.name.capitalize()} is already running (PID: {self.get_pid()}).")
             return
 
+        # Pre-flight: a taken port means the service would crash-loop through
+        # its whole restart budget with only a log-side error. The usual
+        # culprit is an orphan instance the supervisor doesn't know about
+        # (e.g. started by a pre-supervisor aisland and never stopped).
+        if readiness is not None:
+            owner = supervisor.port_in_use(readiness["port"])
+            if owner is not None:
+                owner_hint = f"PID {owner}" if owner > 0 else "an unknown process"
+                click.echo(
+                    f"Error: port {readiness['port']} is already in use by {owner_hint} — "
+                    f"not managed by the aisland supervisor. Stop that process first "
+                    f"(it may be a {self.name} instance started by an older aisland).",
+                    err=True,
+                )
+                return
+
         click.echo(f"Starting {self.name.capitalize()}...")
 
-        # Prepare environment
-        process_env = os.environ.copy()
+        process_env = dict(env or {})
+        if "PATH" not in process_env:
+            venv_bin = get_workspace_root() / ".venv" / "bin"
+            current_path = os.environ.get("PATH", "")
+            if str(venv_bin) not in current_path:
+                current_path = f"{venv_bin}:{current_path}"
+            process_env["PATH"] = current_path
 
-        # Ensure the root workspace virtual environment is prioritized
-        # This guarantees that 'python3' and other tools point to the project-standard environment.
-        workspace_root = Path(__file__).resolve().parents[3]
-        venv_bin = workspace_root / ".venv" / "bin"
+        was_registered = supervisor.get_process(self.name) is not None
+        supervisor.register_process(
+            self.name,
+            cmd,
+            env=process_env,
+            log_file=self.log_file,
+            readiness=readiness,
+            enabled=True,
+        )
+        supervisor.apply()
+        if was_registered and not self.is_running():
+            # `project update` is a no-op when the config is byte-identical
+            # (a re-start after a failed run), so launch the process directly.
+            supervisor.start_process(self.name)
 
-        current_path = process_env.get("PATH", "")
-        if str(venv_bin) not in current_path:
-            current_path = f"{venv_bin}:{current_path}"
-        process_env["PATH"] = current_path
+        outcome, state = supervisor.wait_for_outcome(self.name)
+        if outcome == "failed":
+            status = (state or {}).get("status", "unknown")
+            exit_code = (state or {}).get("exit_code")
+            restarts = (state or {}).get("restarts", 0)
+            click.echo(
+                f"Error: {self.name.capitalize()} failed to start "
+                f"(status: {status}, exit code: {exit_code}, restarts: {restarts}). See {self.log_file}.",
+                err=True,
+            )
+            return
 
-        if env:
-            process_env.update(env)
-        if background:
-            with open(self.log_file, "w") as log:
-                process = subprocess.Popen(
-                    cmd,
-                    env=process_env,
-                    stdout=log,
-                    stderr=subprocess.STDOUT,
-                    start_new_session=True,
-                )
-                self.pid_file.write_text(str(process.pid))
-            click.echo(f"{self.name.capitalize()} started in background (PID: {process.pid})")
-            click.echo(f"Logs: {self.log_file}")
-        else:
+        assert state is not None  # ready/running/pending all carry a state
+        click.echo(f"{self.name.capitalize()} started (PID: {state.get('pid')})")
+        if outcome == "pending":
+            click.echo(f"  - Still initializing (readiness probe pending) — check 'aisland {self.name} status'.")
+        click.echo(f"Logs: {self.log_file}")
+
+        if not background:
+            click.echo(f"Following logs — press Ctrl+C to stop {self.name.capitalize()}...")
             try:
-                process = subprocess.Popen(cmd, env=process_env)
-                self.pid_file.write_text(str(process.pid))
-                process.wait()
+                supervisor.follow_logs(self.name)
             except KeyboardInterrupt:
-                click.echo(f"\nStopping {self.name.capitalize()}...")
-                process.terminate()
-                process.wait()
-            finally:
-                if self.pid_file.exists():
-                    self.pid_file.unlink()
+                pass
+            click.echo("")
+            self.stop()
 
     def stop(self) -> None:
-        """Stop the running service."""
-        pid = self.get_pid()
-        if not pid:
+        """Stop the running service (disable it in the desired state)."""
+        if not self.is_running():
             click.echo(f"{self.name.capitalize()} is not running.")
             return
 
-        click.echo(f"Stopping {self.name.capitalize()} (PID: {pid})...")
-        try:
-            if os.name == "nt":  # Windows
-                subprocess.run(["taskkill", "/F", "/T", "/PID", str(pid)], capture_output=True)
-            else:
-                os.kill(pid, signal.SIGTERM)
+        click.echo(f"Stopping {self.name.capitalize()} (PID: {self.get_pid()})...")
+        # Disable + apply (not a bare `process stop`): the desired-state
+        # document must record the stop, or the next config update would
+        # resurrect the process.
+        supervisor.set_enabled(self.name, False)
+        supervisor.apply()
+        state = supervisor.wait_for(self.name, running=False, timeout=15)
+        if state is not None and state.get("is_running"):
+            click.echo(f"Error: {self.name.capitalize()} did not stop in time.", err=True)
+            return
+        click.echo(f"{self.name.capitalize()} stopped.")
 
-            # Wait for shutdown
-            for _ in range(10):
-                if not self.is_running():
-                    break
-                time.sleep(0.5)
-
-            if self.pid_file.exists():
-                self.pid_file.unlink()
-            click.echo(f"{self.name.capitalize()} stopped.")
-        except OSError as e:
-            click.echo(f"Error stopping {self.name.capitalize()}: {e}")
+        # Post-flight: children that escaped the supervisor's process group
+        # (e.g. workers re-parented after their launcher died) can survive a
+        # stop and silently keep the port. Detect and tell the operator —
+        # the next `start` would otherwise fail its port pre-check mysteriously.
+        port = supervisor.get_registered_port(self.name)
+        if port is not None:
+            owner = supervisor.port_in_use(port)
+            if owner is not None:
+                owner_hint = f"PID {owner}" if owner and owner > 0 else "an unknown process"
+                click.echo(
+                    f"  - Warning: port {port} is still in use by {owner_hint} — "
+                    f"orphaned {self.name} child processes may have survived; stop them manually.",
+                    err=True,
+                )
 
     def status(self) -> None:
         """Display service status."""
-        running = self.is_running()
+        proc = supervisor.get_process(self.name)
+        running = bool(proc and proc.get("is_running"))
         status_str = click.style("Running", fg="green") if running else click.style("Stopped", fg="red")
         detail = ""
-        if running:
-            pid = self.get_pid()
-            ports = self._get_listening_ports(pid) if pid is not None else []
+        if running and proc is not None:
+            ports = supervisor.get_ports(self.name)
+            ready = proc.get("is_ready")
+            extras = [f"PID: {proc.get('pid')}"]
             if ports:
-                ports_str = ", ".join(str(p) for p in ports)
-                detail = f"(PID: {pid}, port: {ports_str})"
-            else:
-                detail = f"(PID: {pid})"
+                extras.append(f"port: {', '.join(str(p) for p in ports)}")
+            if ready and ready != "-":
+                extras.append(f"ready: {ready}")
+            detail = f"({', '.join(extras)})"
         click.echo(f"  {self.name.capitalize():<15} : {status_str} {detail}")
-
-    @staticmethod
-    def _get_listening_ports(pid: int) -> List[int]:
-        """Return the TCP ports the given PID (or its children) is LISTENing on.
-
-        Uses ``lsof`` on Unix and ``netstat`` on Windows. Best-effort: if the
-        underlying tool is missing or fails, returns an empty list.
-        """
-        ports: List[int] = []
-        try:
-            if os.name == "nt":
-                # Windows: netstat -ano | findstr LISTENING + filter by PID
-                result = subprocess.run(
-                    ["netstat", "-ano", "-p", "TCP"],
-                    capture_output=True,
-                    text=True,
-                    check=False,
-                )
-                for line in result.stdout.splitlines():
-                    parts = line.split()
-                    if len(parts) >= 5 and parts[3].upper() == "LISTENING" and parts[4] == str(pid):
-                        local_addr = parts[1]
-                        if ":" in local_addr:
-                            try:
-                                ports.append(int(local_addr.rsplit(":", 1)[1]))
-                            except ValueError:
-                                continue
-            else:
-                # Unix: include child processes via -R, then filter listening sockets.
-                # -F pn formats output as machine-readable: p<pid>\nn<addr>:port\n...
-                pids_to_check = [str(pid)] + BaseService._get_descendant_pids(pid)
-                result = subprocess.run(
-                    [
-                        "lsof",
-                        "-nP",
-                        "-iTCP",
-                        "-sTCP:LISTEN",
-                        "-a",
-                        "-p",
-                        ",".join(pids_to_check),
-                        "-F",
-                        "n",
-                    ],
-                    capture_output=True,
-                    text=True,
-                    check=False,
-                )
-                for line in result.stdout.splitlines():
-                    if not line.startswith("n"):
-                        continue
-                    addr = line[1:]
-                    if ":" not in addr:
-                        continue
-                    port_str = addr.rsplit(":", 1)[1]
-                    try:
-                        port = int(port_str)
-                    except ValueError:
-                        continue
-                    if port not in ports:
-                        ports.append(port)
-        except (FileNotFoundError, OSError, subprocess.SubprocessError):
-            return []
-        return sorted(ports)
-
-    @staticmethod
-    def _get_descendant_pids(pid: int) -> List[str]:
-        """Return descendant PIDs of ``pid`` using ``pgrep -P`` (Unix only)."""
-        descendants: List[str] = []
-        stack = [pid]
-        while stack:
-            parent = stack.pop()
-            try:
-                output = subprocess.check_output(["pgrep", "-P", str(parent)], text=True).strip()
-            except (subprocess.CalledProcessError, FileNotFoundError, OSError):
-                continue
-            for raw in output.splitlines():
-                try:
-                    child = int(raw)
-                except ValueError:
-                    continue
-                descendants.append(str(child))
-                stack.append(child)
-        return descendants
 
     def info(self) -> None:
         """Display detailed service information.
 
         Shows the common attributes every BaseService has: data directory,
-        log file, PID file, and the live PID/port if running. Subclasses
-        extend this to print service-specific details (URLs, credentials,
-        config paths) via ``super().info()``.
+        log file, and the live PID/port if running. Subclasses extend this to
+        print service-specific details (URLs, credentials, config paths) via
+        ``super().info()``.
         """
         click.echo(click.style(f"{self.name.capitalize()}:", bold=True))
         running = self.is_running()
@@ -304,13 +244,12 @@ class BaseService:
         if running:
             pid = self.get_pid()
             click.echo(f"  PID           : {pid}")
-            if pid is not None:
-                ports = self._get_listening_ports(pid)
-                if ports:
-                    click.echo(f"  Listening port: {', '.join(str(p) for p in ports)}")
+            ports = self.get_ports()
+            if ports:
+                click.echo(f"  Listening port: {', '.join(str(p) for p in ports)}")
         click.echo(f"  Data dir      : {self.service_data_dir}")
         click.echo(f"  Log file      : {self.log_file}")
-        click.echo(f"  PID file      : {self.pid_file}")
+        click.echo(f"  Supervisor    : process-compose ({supervisor.CONFIG_FILE})")
 
     def restart(self, **kwargs: Any) -> None:
         """Restart the service."""
@@ -324,9 +263,14 @@ class BaseService:
             click.echo(f"Error: {self.name} service does not have a launch method.")
 
     def reset(self) -> None:
-        """Stop the service and wipe its data directory, logs, and PID files."""
+        """Stop the service and wipe its data directory, logs, and registration."""
         if self.is_running():
             self.stop()
+
+        # Drop the supervisor registration too — a reset service should not
+        # linger (disabled) in the desired-state document.
+        if supervisor.remove_process(self.name) and supervisor.is_server_running():
+            supervisor.apply()
 
         if self.service_data_dir.exists():
             import shutil
@@ -337,9 +281,6 @@ class BaseService:
 
         if self.log_file.exists():
             self.log_file.unlink()
-
-        if self.pid_file.exists():
-            self.pid_file.unlink()
 
         click.echo(f"{self.name.capitalize()} data reset.")
 
@@ -514,8 +455,11 @@ def _install_userspace_tool(name: str) -> None:
         return
 
     version = spec["version"]
-    url = spec["url"].format(version=version)
-    extract_subdir = spec["extract_subdir"].format(version=version)
+    arch = _LINUX_ARCH_ALIASES.get(platform.machine().lower(), "amd64")
+    url = spec["url"].format(version=version, arch=arch)
+    extract_subdir = spec["extract_subdir"].format(version=version, arch=arch)
+    # "" means a flat archive: binaries at the archive root, no bin/ subdir.
+    bin_subdir = spec.get("bin_subdir", "bin")
     binaries: list[str] = spec["binaries"]
 
     BIN_DIR.mkdir(parents=True, exist_ok=True)
@@ -542,16 +486,21 @@ def _install_userspace_tool(name: str) -> None:
 
     extract_root = TOOLS_DIR / extract_subdir
     if not extract_root.exists():
-        click.echo(f"==> Extracting {tarball.name} into {TOOLS_DIR}...")
+        # A flat archive has no top-level directory of its own, so it must be
+        # extracted INTO extract_root; a subdir-style archive (node) brings
+        # its own top-level directory and extracts next to it in TOOLS_DIR.
+        extract_target = extract_root if not bin_subdir else TOOLS_DIR
+        extract_target.mkdir(parents=True, exist_ok=True)
+        click.echo(f"==> Extracting {tarball.name} into {extract_target}...")
         try:
             with tarfile.open(tarball, "r:*") as tf:
                 # `filter="data"` is the safe default in py3.14+ — block links/devices outside dest.
-                tf.extractall(TOOLS_DIR, filter="data")
+                tf.extractall(extract_target, filter="data")
         except Exception as e:
             click.echo(f"  - Error: Failed to extract {tarball}: {e}")
             return
 
-    tool_bin_dir = extract_root / "bin"
+    tool_bin_dir = extract_root / bin_subdir if bin_subdir else extract_root
     if not tool_bin_dir.is_dir():
         click.echo(f"  - Error: Expected {tool_bin_dir} to exist after extraction.")
         return

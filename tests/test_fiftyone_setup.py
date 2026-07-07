@@ -1,13 +1,13 @@
-"""Tests for ``FiftyOneService.setup`` and process-pattern matching.
+"""Tests for ``FiftyOneService.setup`` and supervisor registration.
 
 ``setup`` is the lazy-install hook that pulls ``fiftyone`` into the venv on the
 first launch. We only want pip to run when fiftyone is genuinely missing —
 re-installing on every ``aisland fiftyone start`` would block startup for
 ~30s while pip resolves a fully-installed package.
 
-The pattern dict in ``BaseService._find_process_by_pattern`` is what lets aisland
-recover a stale PID after a crash. Adding ``fiftyone`` there is what gives
-``aisland fiftyone status`` its self-healing behaviour.
+Process identity/liveness is owned by the process-compose supervisor
+(:mod:`aisland.supervisor`); what ``launch()`` must guarantee is that the
+service registers the right command, environment, and readiness probe.
 """
 
 from __future__ import annotations
@@ -37,28 +37,33 @@ def test_setup_skips_install_when_fiftyone_present() -> None:
     run_mock.assert_not_called()
 
 
-def test_fiftyone_in_process_pattern_dict() -> None:
-    """Regression guard: the pgrep pattern dict must include fiftyone.
+def test_launch_registers_supervised_process() -> None:
+    """``launch`` must hand the supervisor the full FiftyOne process spec.
 
-    Without this entry, a stale PID file (e.g. after a crash) would leave
-    ``aisland fiftyone status`` reporting "Stopped" even when the FO app is
-    still running, and a subsequent ``start`` would race a duplicate process.
+    The supervisor owns liveness and crash recovery, so a wrong command,
+    missing database-dir env, or missing readiness probe here means the
+    service either won't start or won't be observable via ``aisland status``.
     """
-    from aisland.manager import BaseService
+    svc = FiftyOneService()
+    with (
+        patch.object(FiftyOneService, "setup"),
+        patch.object(FiftyOneService, "_update_env_file"),
+        patch("aisland.supervisor.get_process", return_value=None),
+        patch("aisland.supervisor.register_process") as register_mock,
+        patch("aisland.supervisor.apply") as apply_mock,
+        patch(
+            "aisland.supervisor.wait_for",
+            return_value={"is_running": True, "pid": 4242, "status": "Running"},
+        ),
+    ):
+        svc.launch(port=5151, background=True)
 
-    svc = BaseService("fiftyone")
-    # Force the pattern path: clear the PID file (we won't have one anyway).
-    if svc.pid_file.exists():
-        svc.pid_file.unlink()
-    # Patch subprocess.check_output to fail (no matching process) so we exercise
-    # the patterns dict lookup without depending on the real ps state.
-    import subprocess
-
-    with patch("subprocess.check_output", side_effect=subprocess.CalledProcessError(1, "pgrep")) as check_mock:
-        svc._find_process_by_pattern()
-    # First call should be pgrep -f <pattern>; the pattern must be the
-    # fiftyone-specific one, not the literal name "fiftyone".
-    args, _kwargs = check_mock.call_args_list[0]
-    cmd = args[0]
-    assert cmd[:2] == ["pgrep", "-f"]
-    assert cmd[2] == "fiftyone app launch"
+    register_mock.assert_called_once()
+    _args, kwargs = register_mock.call_args
+    name, cmd = _args
+    assert name == "fiftyone"
+    assert cmd[-6:] == ["fiftyone", "app", "launch", "--port", "5151", "--remote"]
+    assert kwargs["readiness"] == {"port": 5151, "path": "/"}
+    assert kwargs["env"]["FIFTYONE_DATABASE_DIR"] == str(svc.database_dir)
+    assert kwargs["enabled"] is True
+    apply_mock.assert_called_once()

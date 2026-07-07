@@ -2,6 +2,7 @@ from typing import Optional
 
 import click
 
+from aisland import supervisor as supervisor_mod
 from aisland.manager import (
     generate_gemini_settings,
     get_workspace_root,
@@ -487,12 +488,41 @@ def swiftbar_reset() -> None:
 def status() -> None:
     """Show status of all aisland services."""
     click.echo("Aisland Infrastructure Status:")
+    supervisor_mod.print_status()
     DockerService().status()
     JenkinsService().status()
     MLflowService().status()
     LabelStudioService().status()
     FiftyOneService().status()
     SwiftBarService().status()
+
+
+# --- Supervisor Commands ---
+
+
+@main.group()
+def supervisor() -> None:
+    """Manage the process-compose supervisor backing aisland services."""
+    pass
+
+
+@supervisor.command(name="status")
+def supervisor_status() -> None:
+    """Show the supervisor state and its process table."""
+    supervisor_mod.print_status()
+
+
+@supervisor.command(name="attach")
+def supervisor_attach() -> None:
+    """Attach the process-compose TUI to the running supervisor."""
+    supervisor_mod.attach()
+
+
+@supervisor.command(name="down")
+@click.confirmation_option(prompt="Stop ALL supervised services and the supervisor itself?")
+def supervisor_down() -> None:
+    """Stop every supervised service and the supervisor process."""
+    supervisor_mod.shutdown_server()
 
 
 @main.command(name="info")

@@ -34,8 +34,7 @@ class LabelStudioService(BaseService):
         """Show detailed Label Studio configuration."""
         super().info()
         default_port = 9081
-        pid = self.get_pid()
-        ports = self._get_listening_ports(pid) if pid is not None else []
+        ports = self.get_ports()
         url_port = ports[0] if ports else default_port
 
         env_values = self._read_env_values()
@@ -135,7 +134,8 @@ class LabelStudioService(BaseService):
             "--no-browser",
         ]
 
-        self.start(cmd, env=env, background=background)
+        # Label Studio (Django) exposes /health for load-balancer checks.
+        self.start(cmd, env=env, background=background, readiness={"port": port, "path": "/health"})
 
     def _update_env_file(self, token: str, port: int = 9081) -> None:
         """Add/replace LABELSTUDIO_* entries in the root .env file.

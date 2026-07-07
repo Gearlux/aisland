@@ -447,7 +447,9 @@ class JenkinsService(BaseService):
             "PATH": f"{venv_bin}:{BIN_DIR}:{os.environ.get('PATH', '')}",
         }
 
-        self.start(cmd, env=env, background=background)
+        # /login answers 200 as soon as the Jenkins web UI is up (even while
+        # the setup wizard is pending), which is exactly "ready" for aisland.
+        self.start(cmd, env=env, background=background, readiness={"port": port, "path": "/login"})
 
     def status(self) -> None:
         """Show extended Jenkins status."""
@@ -461,8 +463,7 @@ class JenkinsService(BaseService):
         """Show detailed Jenkins configuration."""
         super().info()
         default_port = 9080
-        pid = self.get_pid()
-        ports = self._get_listening_ports(pid) if pid is not None else []
+        ports = self.get_ports()
         url_port = ports[0] if ports else default_port
         click.echo(f"  URL           : http://localhost:{url_port}")
         click.echo(f"  JENKINS_HOME  : {self.service_data_dir}")

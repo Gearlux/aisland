@@ -10,6 +10,8 @@ authors = [{name = "Acme"}]
 license = {text = "MIT"}
 dependencies = [
     "click>=8.0.0",
+    # Generates the process-compose desired-state document (aisland/supervisor.py).
+    "pyyaml>=6.0",
 ]
 requires-python = ">=3.12"
 
@@ -35,4 +37,8 @@ python_files = ["test_*.py"]
 norecursedirs = ["data", ".venv"]
 
 [tool.aisland.sys-dependencies]
-brew = ["openjdk", "swiftbar", "act", "docker", "colima"]
+# f1bonacc1/tap/process-compose: the service supervisor (aisland/supervisor.py)
+# — tap-qualified because homebrew-core has no process-compose formula.
+# Linux gets it from the userspace registry (manager.USERSPACE_TOOLS) instead.
+brew = ["openjdk", "swiftbar", "act", "docker", "colima", "f1bonacc1/tap/process-compose"]
+userspace = ["process-compose"]
