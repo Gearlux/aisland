@@ -38,6 +38,13 @@ setup, so it always tracks the live project list and never dirties the
 tree. Don't hand-edit it; add a project's `pyproject.toml` and re-run
 `aisland setup`.
 
+The root **`mypy.ini`** is the opposite: committed, hand-maintained policy
+(the per-module `[mypy-*]` sections). Setup only keeps its `mypy_path`
+line complete — any discovered project missing from it is **appended**
+(never removed: inactive submodules stay listed and mypy ignores path
+entries that don't exist on a given machine, so the committed file stays
+identical across machines).
+
 #### Optional submodules & the generated `uv.toml`
 
 Some projects are **optional** — they ship their own `uv.toml` (a private

@@ -744,6 +744,51 @@ def _write_pyrightconfig(workspace_root: Path, projects: List[dict]) -> None:
     click.echo(f"==> Wrote {out} ({len(extra_paths)} project paths)")
 
 
+def _sync_mypy_path(workspace_root: Path, projects: List[dict]) -> None:
+    """Append missing project dirs to the ``mypy_path`` line of the root mypy.ini.
+
+    Unlike ``pyrightconfig.json``, the root ``mypy.ini`` is COMMITTED,
+    hand-maintained policy (dozens of per-module ``[mypy-*]`` sections) — not a
+    generated artifact. The only part that must track the live project set is
+    the ``mypy_path`` search path (the run-mypy-from-workspace-root mandate),
+    so setup keeps exactly that line complete. Append-only by design:
+
+    * entries are never removed — inactive submodules (e.g. ``vendorcli`` on a
+      non-corporate machine) stay listed, and mypy silently ignores path
+      entries that don't exist on this machine, so the committed file stays
+      identical across machines instead of churning per activation set;
+    * hand-added nested entries (``confluid/confluid``, ``aisland/aisland``)
+      are preserved untouched.
+    """
+    ini = workspace_root / "mypy.ini"
+    if not ini.exists():
+        click.echo("  - Warning: no mypy.ini at the workspace root; skipping mypy_path sync.")
+        return
+
+    lines = ini.read_text().splitlines()
+    line_no = next(
+        (i for i, line in enumerate(lines) if line.lstrip().startswith("mypy_path") and "=" in line),
+        None,
+    )
+    if line_no is None:
+        click.echo("  - Warning: mypy.ini has no 'mypy_path =' line; skipping mypy_path sync.")
+        return
+
+    key, _, value = lines[line_no].partition("=")
+    # mypy accepts ':' or ',' as the separator; preserve whichever the file uses.
+    separator = "," if "," in value else ":"
+    entries = [entry.strip() for entry in value.split(separator) if entry.strip()]
+
+    known = set(entries)
+    missing = sorted({rel for p in projects if (rel := os.path.relpath(p["path"], workspace_root)) not in known})
+    if not missing:
+        return
+
+    lines[line_no] = f"{key.rstrip()} = {separator.join(entries + missing)}"
+    ini.write_text("\n".join(lines) + "\n")
+    click.echo(f"==> mypy.ini: added {', '.join(missing)} to mypy_path")
+
+
 def _discover_mcp_servers(workspace_root: Path, venv_bin: Path) -> dict[str, dict]:
     """Discover workspace MCP servers and how to launch them.
 
@@ -1085,6 +1130,10 @@ def setup_workspace(
     # 2b. Editor config — generate pyrightconfig.json so Pyright/Pylance resolve
     #     cross-project imports against the same project set we install editable.
     _write_pyrightconfig(workspace_root, install_order)
+
+    # 2b'. Keep the COMMITTED root mypy.ini's mypy_path covering every discovered
+    #      project (append-only — see _sync_mypy_path for why nothing is removed).
+    _sync_mypy_path(workspace_root, install_order)
 
     # 2c. Generated root uv.toml — workspace base merged with each activated project's uv.toml,
     #     so a private index (e.g. vendorcli's Company Artifactory URLs) is present ONLY when that
