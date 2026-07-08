@@ -115,9 +115,54 @@ def test_apply_updates_running_server(isolated_config: Path) -> None:
     with (
         patch("aisland.supervisor.is_server_running", return_value=True),
         patch("aisland.supervisor._run_client", return_value=_completed()) as run_mock,
+        patch("aisland.supervisor.read_workspace_env", return_value={}),
     ):
         supervisor.apply()
-    run_mock.assert_called_once_with(["project", "update", "-f", str(isolated_config)])
+    args, _kwargs = run_mock.call_args
+    assert args[0] == ["project", "update", "-f", str(isolated_config)]
+
+
+def test_apply_expands_refs_from_workspace_env(isolated_config: Path) -> None:
+    """${VAR} refs in the document expand CLIENT-side at `project update`,
+    so apply() must hand the client the workspace .env values — layered OVER
+    the inherited environment (a stale shell export must not win over the
+    freshly-written .env)."""
+    import os
+
+    supervisor.register_process("svc", ["sleep", "60"], enabled=True)
+    with (
+        patch("aisland.supervisor.is_server_running", return_value=True),
+        patch("aisland.supervisor._run_client", return_value=_completed()) as run_mock,
+        patch("aisland.supervisor.read_workspace_env", return_value={"LABELSTUDIO_TOKEN": "tok-from-dotenv"}),
+        patch.dict(os.environ, {"LABELSTUDIO_TOKEN": "stale-shell-value"}),
+    ):
+        supervisor.apply()
+    env = run_mock.call_args.kwargs["env"]
+    assert env["LABELSTUDIO_TOKEN"] == "tok-from-dotenv"
+    assert "PATH" in env  # os.environ still underneath
+
+
+def test_read_workspace_env_parses_and_skips_noise(tmp_path: Path) -> None:
+    (tmp_path / ".env").write_text(
+        "# comment\n"
+        "\n"
+        "LABELSTUDIO_TOKEN=abc123\n"
+        "SPACED_KEY = spaced value\n"
+        "malformed-line-without-equals\n"
+        "DATA_ROOT=/data/gert\n"
+    )
+    with patch("aisland.supervisor._workspace_root", return_value=tmp_path):
+        values = supervisor.read_workspace_env()
+    assert values == {
+        "LABELSTUDIO_TOKEN": "abc123",
+        "SPACED_KEY": "spaced value",
+        "DATA_ROOT": "/data/gert",
+    }
+
+
+def test_read_workspace_env_missing_file(tmp_path: Path) -> None:
+    with patch("aisland.supervisor._workspace_root", return_value=tmp_path):
+        assert supervisor.read_workspace_env() == {}
 
 
 def test_apply_raises_on_failed_update(isolated_config: Path) -> None:

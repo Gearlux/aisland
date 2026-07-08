@@ -118,7 +118,9 @@ def _connection_args() -> List[str]:
     return ["--use-uds", "--unix-socket", str(SOCKET_PATH)]
 
 
-def _run_client(args: List[str], capture: bool = True) -> subprocess.CompletedProcess:
+def _run_client(
+    args: List[str], capture: bool = True, env: Optional[Dict[str, str]] = None
+) -> subprocess.CompletedProcess:
     """Run a process-compose client command against the aisland server."""
     binary = ensure_binary()
     cmd = [binary, *args, *_connection_args()]
@@ -128,7 +130,29 @@ def _run_client(args: List[str], capture: bool = True) -> subprocess.CompletedPr
         text=True,
         check=False,
         timeout=_CLIENT_TIMEOUT,
+        env=env,
     )
+
+
+def read_workspace_env() -> Dict[str, str]:
+    """``KEY=VALUE`` pairs from the workspace ``.env`` (best-effort, verbatim).
+
+    Comments and malformed lines are skipped; values are NOT interpolated.
+    Used both by services that publish/consume workspace configuration (e.g.
+    Label Studio credentials) and by :func:`apply` for ``${VAR}`` expansion —
+    see the comment there.
+    """
+    env_file = _workspace_root() / ".env"
+    if not env_file.exists():
+        return {}
+    out: Dict[str, str] = {}
+    for line in env_file.read_text().splitlines():
+        line = line.strip()
+        if not line or line.startswith("#") or "=" not in line:
+            continue
+        key, _, value = line.partition("=")
+        out[key.strip()] = value.strip()
+    return out
 
 
 def is_server_running() -> bool:
@@ -244,9 +268,24 @@ def apply() -> None:
     Live server → ``project update`` (starts newly-enabled processes, stops
     newly-disabled ones). No server → start one detached, but only when at
     least one process is enabled (an all-disabled document needs no server).
+
+    ``${VAR}`` references in the desired-state document (e.g. Label Studio's
+    credential entries — kept as references so no secret value lands in the
+    generated YAML) are expanded CLIENT-side when the config is loaded, from
+    the environment of the process running ``project update`` — NOT from the
+    server's environment (which loaded ``.env`` once at startup and never
+    re-reads it). The workspace ``.env`` is therefore layered over
+    ``os.environ`` for every update; without this, an apply from a shell that
+    never sourced ``project.bashrc`` would expand the references to empty
+    strings and silently wipe the stored values. (Verified empirically
+    against process-compose v1.116.0.) Corollary: a literal ``$`` in any
+    document value would be expanded here — don't put one in.
     """
     if is_server_running():
-        result = _run_client(["project", "update", "-f", str(CONFIG_FILE)])
+        result = _run_client(
+            ["project", "update", "-f", str(CONFIG_FILE)],
+            env={**os.environ, **read_workspace_env()},
+        )
         if result.returncode != 0:
             raise click.ClickException(
                 f"process-compose config update failed: {result.stderr.strip() or result.stdout.strip()}"
