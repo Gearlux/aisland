@@ -286,6 +286,14 @@ git config submodule.recurse true
 
 *With this on, if a team member commits a new submodule hash to the parent repository, your next `git pull` will automatically download their updated submodule code.*
 
+### Workspace Git Aliases
+
+The aliases below (`pull-all`, `push-all`, `switch-all`, `merge-all`, `tag-all`, `status-all`, `safe`) are installed by `aisland/setup_git.sh` into the **local** config of the root repository *and* every active submodule. They assume the acme mono-repo layout and toolchain, so they are deliberately not written to the global config — that would leak workspace-specific behavior into unrelated repositories (the script also removes any global copies left by earlier versions of itself). The definitions live in `setup_git.sh`; to (re)install them — including after activating a new submodule — run:
+
+```bash
+bash aisland/setup_git.sh
+```
+
 ### Pulling Unrecorded Submodule Changes (`pull-all`)
 
 If `submodule.recurse` keeps things in sync, why do you need `pull-all`? 
@@ -293,12 +301,6 @@ If `submodule.recurse` keeps things in sync, why do you need `pull-all`?
 Because a standard `git pull` only syncs submodules to the exact snapshots recorded in the **parent repository**. If a teammate pushes a brand new commit directly to the `dataflux` submodule's remote branch, but *nobody* has updated the parent repository to point to it yet, a standard `git pull` will completely ignore that new `dataflux` commit.
 
 The `pull-all` alias is for **eagerly fetching unrecorded changes**. It reaches out directly to all submodule remote repositories, bypasses the parent's locked hashes, and forces your submodules to fast-forward to the absolute latest commits on their tracked branches.
-
-To configure the global `pull-all` Git alias:
-
-```bash
-git config --global alias.pull-all '!PARENT_BRANCH=$(git branch --show-current) && git pull origin $PARENT_BRANCH && git submodule foreach "git pull origin \$PARENT_BRANCH"'
-```
 
 To use it (e.g., to grab everything latest before starting a new feature):
 
@@ -310,12 +312,6 @@ git pull-all
 
 When you have committed changes across multiple submodules and the parent repository, you can use `push-all` to push the current branch of every project to its respective remote in one command.
 
-To configure the global `push-all` Git alias:
-
-```bash
-git config --global alias.push-all '!git push origin $(git branch --show-current) && git submodule foreach "git push origin \$(git branch --show-current)"'
-```
-
 To use it:
 
 ```bash
@@ -325,12 +321,6 @@ git push-all
 ### Switching All Submodules (`switch-all`)
 
 When moving between development streams (e.g., switching from a feature branch back to `dev/main`), you often need to update the branch context for both the parent repository and all its constituent submodules simultaneously.
-
-To configure the global `switch-all` Git alias:
-
-```bash
-git config --global alias.switch-all '!f() { git checkout "$1" && git submodule foreach "branch=\$(git config -f \"\$toplevel/.gitmodules\" submodule.\$name.branch); [ \"\$branch\" = \".\" ] && branch=\"$1\"; git checkout \${branch:-main}"; }; f'
-```
 
 To use it:
 
@@ -342,12 +332,6 @@ git switch-all dev/main
 
 When you need to merge a base branch (e.g., `main` or `dev/main`) into your current feature branch across all projects in the workspace, you can use `merge-all`. This ensures your entire dependency tree stays synchronized with upstream changes.
 
-To configure the global `merge-all` Git alias:
-
-```bash
-git config --global alias.merge-all '!f() { git merge "$1" && git submodule foreach "git merge $1"; }; f'
-```
-
 To use it (e.g., to merge `dev/main` into your current branch everywhere):
 
 ```bash
@@ -357,17 +341,6 @@ git merge-all dev/main
 ### Tagging All Submodules (`tag-all`)
 
 When you want to mark a workspace-wide snapshot (a release, or a proof-of-concept milestone), you need the *same* tag on the root repository and every active submodule, then pushed to each remote. `tag-all` is the cross-repo analogue of a single `git tag`: it creates one **annotated** tag at the current `HEAD` of the parent and each active submodule, then pushes it. Tags are created everywhere **first** (cheap, local) before any push, so an unreachable remote (e.g. an off-VPN private host) leaves every local tag intact — you simply re-run to push the rest. The tag message defaults to the tag name if omitted.
-
-To configure the global `tag-all` Git alias:
-
-```bash
-git config --global alias.tag-all '!f() {
-    if [ -z "$1" ]; then echo "Usage: git tag-all <tag> [message]"; exit 1; fi;
-    msg="${2:-$1}";
-    git tag -a "$1" -m "$msg" && git submodule foreach --quiet "git tag -a \"$1\" -m \"$msg\"";
-    git push origin "$1" && git submodule foreach --quiet "git push origin \"$1\"";
-}; f'
-```
 
 To use it (creates the tag locally **and** pushes it to every remote in one command):
 
@@ -381,33 +354,6 @@ git tag-all 'v1.0.0' 'First stable release'
 
 To quickly see the status and current branch of the root repository and all its constituent submodules, you can use the `status-all` alias.
 
-To configure the global `status-all` Git alias:
-
-```bash
-git config --global alias.status-all '!f() { 
-    printf "%-25s (@%s" "ROOT" "$(git branch --show-current)";
-    git rev-list --left-right --count HEAD...@{u} 2>/dev/null | while read a b; do
-        if [ -n "$a" ] && ([ "$a" -gt 0 ] || [ "$b" -gt 0 ]); then
-            printf " ("; [ "$a" -gt 0 ] && printf "\033[32m%s ahead\033[0m" "$a";
-            [ "$a" -gt 0 ] && [ "$b" -gt 0 ] && printf ", ";
-            [ "$b" -gt 0 ] && printf "\033[31m%s behind\033[0m" "$b"; printf ")";
-        fi;
-    done;
-    printf ")\n"; git status --short;
-    git submodule foreach -q '\''
-        printf "\n%-25s (@%s" "$name" "$(git branch --show-current)";
-        git rev-list --left-right --count HEAD...@{u} 2>/dev/null | while read a b; do
-            if [ -n "$a" ] && ([ "$a" -gt 0 ] || [ "$b" -gt 0 ]); then
-                printf " ("; [ "$a" -gt 0 ] && printf "\033[32m%s ahead\033[0m" "$a";
-                [ "$a" -gt 0 ] && [ "$b" -gt 0 ] && printf ", ";
-                [ "$b" -gt 0 ] && printf "\033[31m%s behind\033[0m" "$b"; printf ")";
-            fi;
-        done;
-        printf ")\n"; git status --short
-    '\''; 
-}; f'
-```
-
 To use it:
 
 ```bash
@@ -416,13 +362,7 @@ git status-all
 
 ### Safely Pushing Changes (`safe`)
 
-A custom Git alias exists to enforce the workspace mandates before pushing code. It automatically sets up the environment, formats the code with `isort` and `black`, lints with `flake8`, types checks with `mypy`, and runs `pytest`. If everything passes, it commits and pushes safely to the remote.
-
-To configure the global `safe` Git alias:
-
-```bash
-git config --global alias.safe '!f() { if [ -z "$1" ]; then echo "Error: Please provide a commit message. Example: git safe \"feat: my message\""; exit 1; fi; if [ -d ".venv" ]; then echo "Activating virtual environment..."; source .venv/bin/activate; fi; echo "Running formatting (isort, black)..."; isort . && black . || { echo "Formatting failed!"; exit 1; }; echo "Running linting (flake8)..."; flake8 . || { echo "Flake8 linting failed!"; exit 1; }; echo "Running type checking (mypy)..."; mypy . || { echo "Mypy type checking failed!"; exit 1; }; echo "Running tests (pytest)..."; pytest || { echo "Tests failed!"; exit 1; }; echo "All checks passed! Committing and pushing..."; git add . && git commit -m "$1"; CURRENT_BRANCH=$(git branch --show-current); if [ -z "$CURRENT_BRANCH" ]; then git push origin HEAD:dev/main || git push origin HEAD:main; else git push origin "$CURRENT_BRANCH" || { echo "Falling back to dev/main push..."; git push origin HEAD:dev/main; }; fi; }; f'
-```
+A custom Git alias exists to enforce the workspace mandates before pushing code. Run it from inside any project submodule (or the workspace root): it activates the shared workspace `.venv`, formats the code with `isort` and `black`, lints with `flake8`, type-checks with `mypy` (executed **from the workspace root** so the root `mypy.ini`'s `mypy_path` is honored), and runs `pytest`. If everything passes, it commits and pushes safely to the remote.
 
 To use the shortcut:
 
