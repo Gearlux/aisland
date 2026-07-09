@@ -1,3 +1,4 @@
+import hashlib
 import json
 import os
 import platform
@@ -21,15 +22,21 @@ TOOLS_DIR = BASE_DIR / "tools"
 
 # Registry of tools aisland can install entirely in userspace (no sudo / package
 # manager required). Used on Linux where the macOS brew flow is unavailable.
-# Each entry pins a specific version; bump as new LTS / stable lines land.
-# TODO: pin sha256 checksums from upstream SHASUMS files before relying on this
-# in untrusted environments.
+# Each entry pins a specific version AND per-architecture sha256 digests taken
+# from the upstream SHASUMS / checksums files. The downloaded tarball is verified
+# against its digest BEFORE extraction (see `_install_userspace_tool`); a mismatch
+# aborts the install rather than running an unverified binary. `sha256` is keyed
+# by the same {arch} token used in the URL — node ships an x64-only asset, so it
+# is keyed "amd64". When bumping `version`, refresh the digests from upstream in
+# the SAME edit (e.g. `curl -sL <checksums-url>`), or the install will abort.
 USERSPACE_TOOLS: dict[str, dict[str, Any]] = {
     "node": {
         "version": "v22.11.0",
         "url": "https://nodejs.org/dist/{version}/node-{version}-linux-x64.tar.xz",
         "extract_subdir": "node-{version}-linux-x64",
         "binaries": ["node", "npm", "npx"],
+        # https://nodejs.org/dist/v22.11.0/SHASUMS256.txt
+        "sha256": {"amd64": "83bf07dd343002a26211cf1fcd46a9d9534219aad42ee02847816940bf610a72"},
     },
     # The aisland service supervisor (see aisland/supervisor.py). macOS gets it
     # via Homebrew (f1bonacc1/tap, declared in aisland's sys-dependencies);
@@ -45,6 +52,11 @@ USERSPACE_TOOLS: dict[str, dict[str, Any]] = {
         "extract_subdir": "process-compose-{version}",
         "bin_subdir": "",
         "binaries": ["process-compose"],
+        # github.com/F1bonacc1/process-compose/releases/download/v1.116.0/process-compose_checksums.txt
+        "sha256": {
+            "amd64": "f3550750dd17c3d0d5e378aa6239b87ee8405dd0eeb460a83b8cc03ef48a87fb",
+            "arm64": "b82c4d6c633b4775d6f11c41dc5f7943f7b94a99ff6699298de813cb9c9ba76d",
+        },
     },
 }
 
@@ -439,6 +451,15 @@ def _install_brew_packages(packages: set) -> None:
             click.echo(f"  - Error: Failed to install {pkg}: {e}")
 
 
+def _sha256(path: Path) -> str:
+    """Return the hex sha256 of a file, read in chunks (constant memory)."""
+    digest = hashlib.sha256()
+    with open(path, "rb") as fh:
+        for chunk in iter(lambda: fh.read(1 << 20), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
 def _install_userspace_tool(name: str) -> None:
     """Install a tool from :data:`USERSPACE_TOOLS` entirely in userspace.
 
@@ -447,7 +468,10 @@ def _install_userspace_tool(name: str) -> None:
     ``aisland/bin/`` (which ``project.bashrc`` puts on ``PATH``). Idempotent:
     if every target binary symlink already exists, the download is skipped.
 
-    TODO: verify upstream SHASUMS before relying on this in untrusted setups.
+    Integrity: the tarball (freshly downloaded OR reused from the cache) is
+    verified against the pinned per-arch sha256 in :data:`USERSPACE_TOOLS`
+    before ANY extraction. A mismatch aborts and deletes the tarball; a tool
+    with no pinned digest for this arch installs with a loud warning.
     """
     spec = USERSPACE_TOOLS.get(name)
     if spec is None:
@@ -483,6 +507,31 @@ def _install_userspace_tool(name: str) -> None:
         click.echo(f"  - Cached at {tarball}.")
     else:
         click.echo(f"  - Using cached tarball {tarball}.")
+
+    # Integrity gate: verify BEFORE extracting anything. This covers both the
+    # fresh download and a reused cache entry (a poisoned cache must not be
+    # trusted just because it is on disk). A mismatch => corrupt download or a
+    # tampered/re-uploaded asset: drop the tarball so a re-run re-fetches, and
+    # refuse to extract. A tool with no pinned digest for this arch installs
+    # UNVERIFIED with a loud warning (keeps a not-yet-pinned addition working
+    # while making the gap visible) — see the USERSPACE_TOOLS docstring.
+    expected = spec.get("sha256", {}).get(arch)
+    if expected:
+        actual = _sha256(tarball)
+        if actual.lower() != expected.lower():
+            click.echo(
+                f"  - Error: checksum mismatch for {tarball.name} "
+                f"(expected {expected}, got {actual}). Refusing to install {name}; "
+                f"deleting the tarball — re-run to re-download."
+            )
+            tarball.unlink()
+            return
+        click.echo(f"  - Verified {tarball.name} (sha256 OK).")
+    else:
+        click.echo(
+            f"  - Warning: no pinned sha256 for {name}/{arch}; installing UNVERIFIED. "
+            f"Add a digest to USERSPACE_TOOLS['{name}']['sha256']['{arch}']."
+        )
 
     extract_root = TOOLS_DIR / extract_subdir
     if not extract_root.exists():

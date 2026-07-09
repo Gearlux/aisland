@@ -27,10 +27,13 @@ Unix.
 
 import json
 import os
+import platform
 import re
 import shlex
 import shutil
+import sqlite3
 import subprocess
+from contextlib import closing
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
@@ -63,6 +66,26 @@ _PROVENANCE_HEADER = """\
 """
 
 _CLIENT_TIMEOUT = 30  # seconds; every client call is a local RPC
+
+# macOS Full Disk Access pre-flight ------------------------------------------
+#
+# macOS TCC attributes a daemon tree's file access to the tree's ROOT process.
+# For every supervised service that root is the process-compose server itself,
+# so when workspace data lives on an external volume (/Volumes/...) the
+# SUPERVISOR binary must hold the Full Disk Access grant — grants held by
+# java/python further down the tree are ignored, and the denial surfaces as a
+# misleading `PermissionError: [Errno 1] Operation not permitted` deep inside
+# the service (canonical case: huggingface_hub cache reads during a Jenkins
+# notebook build, while the same command works from an interactive shell).
+# Grants are recorded against the resolved (versioned Cellar) binary path, so
+# every process-compose upgrade silently orphans the grant — the formula is
+# `brew pin`ned to make upgrades deliberate, and this pre-flight catches the
+# drift at server start. See aisland/README.md § "macOS: Full Disk Access".
+_TCC_SYSTEM_DB = Path("/Library/Application Support/com.apple.TCC/TCC.db")
+_TCC_FDA_SERVICE = "kTCCServiceSystemPolicyAllFiles"
+# Workspace .env keys that commonly point at an external volume; any of them
+# under /Volumes/ makes the grant a requirement for supervised services.
+_TCC_PROTECTED_ENV_KEYS = ("DATA_ROOT", "MODEL_ROOT", "HF_HOME")
 
 
 def find_binary() -> Optional[str]:
@@ -298,8 +321,65 @@ def apply() -> None:
     _start_server()
 
 
+def _tcc_full_disk_access_granted(binary: Path) -> Optional[bool]:
+    """Whether the system TCC database grants ``binary`` Full Disk Access.
+
+    Returns None when the database cannot be read — the invoking shell may
+    itself lack Full Disk Access, and an inconclusive probe must never warn.
+    Both the given path and its resolved target are checked because System
+    Settings records the resolved Cellar path while PATH holds the Homebrew
+    symlink.
+    """
+    try:
+        with closing(sqlite3.connect(f"file:{_TCC_SYSTEM_DB}?mode=ro", uri=True, timeout=1.0)) as db:
+            rows = db.execute(
+                "SELECT auth_value FROM access WHERE service = ? AND client IN (?, ?)",
+                (_TCC_FDA_SERVICE, str(binary), str(binary.resolve())),
+            ).fetchall()
+    except sqlite3.Error:
+        return None
+    # auth_value: 0 = denied, 1 = unknown, 2 = allowed, 3 = limited.
+    return any(row[0] is not None and row[0] >= 2 for row in rows)
+
+
+def _preflight_full_disk_access() -> None:
+    """Warn at server start when the supervisor binary lacks Full Disk Access.
+
+    Fires only when a workspace data path points at an external volume AND
+    the TCC database is readable AND the grant is definitively absent. Warns
+    (with the exact path to grant) instead of failing — services that never
+    touch the volume still work without the grant.
+    """
+    if platform.system() != "Darwin":
+        return
+    env = {**read_workspace_env(), **os.environ}
+    exposed = {key: value for key in _TCC_PROTECTED_ENV_KEYS if (value := env.get(key, "")).startswith("/Volumes/")}
+    if not exposed:
+        return
+    binary = Path(ensure_binary())
+    if _tcc_full_disk_access_granted(binary) is not False:
+        return
+    keys = ", ".join(f"{key}={value}" for key, value in sorted(exposed.items()))
+    click.echo(
+        click.style("WARNING: the supervisor binary has no macOS Full Disk Access grant.", fg="yellow", bold=True),
+        err=True,
+    )
+    click.echo(
+        f"  {keys} point(s) at an external volume, but macOS attributes every supervised\n"
+        "  service's file access to the process-compose binary (the daemon-tree root), so\n"
+        "  Jenkins builds etc. will fail there with 'Operation not permitted'.\n"
+        "  Fix: System Settings > Privacy & Security > Full Disk Access > + >\n"
+        f"       {binary.resolve()}\n"
+        "  then restart the supervisor: aisland supervisor down && aisland start --background\n"
+        "  (Re-grant after every process-compose upgrade — the grant pins to the versioned\n"
+        "  path, which is why the formula is kept `brew pin`ned.)",
+        err=True,
+    )
+
+
 def _start_server() -> None:
     """Start the detached process-compose server for the aisland project."""
+    _preflight_full_disk_access()
     binary = ensure_binary()
     DATA_DIR.mkdir(parents=True, exist_ok=True)
     cmd = [

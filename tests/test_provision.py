@@ -8,7 +8,9 @@ specific in a way unit tests can't usefully verify.
 
 from __future__ import annotations
 
+import hashlib
 import os
+import re
 import tarfile
 from pathlib import Path
 from typing import Any
@@ -16,6 +18,11 @@ from typing import Any
 import pytest
 
 from aisland import manager
+
+
+def _current_arch() -> str:
+    """The arch token the installer resolves to (matches _install_userspace_tool)."""
+    return manager._LINUX_ARCH_ALIASES.get(manager.platform.machine().lower(), "amd64")
 
 
 def test_shell_switch_skipped_on_non_darwin(monkeypatch: pytest.MonkeyPatch, capsys: Any) -> None:
@@ -239,6 +246,11 @@ def test_userspace_install_extracts_and_symlinks(monkeypatch: pytest.MonkeyPatch
     staging.mkdir()
     fake_tarball = _build_fake_node_tarball(staging, extract_subdir)
 
+    # Pin the fake tarball's real digest so the integrity gate passes (and this
+    # test also exercises the happy path of verification).
+    digest = hashlib.sha256(fake_tarball.read_bytes()).hexdigest()
+    monkeypatch.setitem(manager.USERSPACE_TOOLS["node"], "sha256", {_current_arch(): digest})
+
     # Patch urlretrieve to copy the local tarball instead of hitting the network.
     def fake_urlretrieve(url: str, dst: str) -> tuple[str, Any]:
         Path(dst).write_bytes(fake_tarball.read_bytes())
@@ -248,6 +260,7 @@ def test_userspace_install_extracts_and_symlinks(monkeypatch: pytest.MonkeyPatch
 
     manager._install_userspace_tool("node")
 
+    assert "sha256 OK" in capsys.readouterr().out
     for binary in ("node", "npm", "npx"):
         link = bin_dir / binary
         assert link.is_symlink(), f"{binary} should be a symlink in {bin_dir}"
@@ -275,6 +288,9 @@ def test_userspace_install_refuses_to_clobber_real_file(
     staging.mkdir()
     fake_tarball = _build_fake_node_tarball(staging, extract_subdir)
 
+    digest = hashlib.sha256(fake_tarball.read_bytes()).hexdigest()
+    monkeypatch.setitem(manager.USERSPACE_TOOLS["node"], "sha256", {_current_arch(): digest})
+
     def fake_urlretrieve(url: str, dst: str) -> tuple[str, Any]:
         Path(dst).write_bytes(fake_tarball.read_bytes())
         return (dst, None)
@@ -289,6 +305,120 @@ def test_userspace_install_refuses_to_clobber_real_file(
     assert (bin_dir / "npm").is_symlink()
     assert (bin_dir / "npx").is_symlink()
     assert "refusing to overwrite" in capsys.readouterr().out
+
+
+# ---------------------------------------------------------------------------
+# Checksum verification of userspace downloads.
+# ---------------------------------------------------------------------------
+
+
+def test_userspace_install_rejects_checksum_mismatch(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, capsys: Any
+) -> None:
+    """A tarball whose sha256 != the pinned digest must NOT be extracted/installed,
+    and the bad tarball is deleted so a re-run re-downloads."""
+    bin_dir = tmp_path / "bin"
+    tools_dir = tmp_path / "tools"
+    monkeypatch.setattr(manager, "BIN_DIR", bin_dir)
+    monkeypatch.setattr(manager, "TOOLS_DIR", tools_dir)
+
+    spec = manager.USERSPACE_TOOLS["node"]
+    extract_subdir = spec["extract_subdir"].format(version=spec["version"])
+    staging = tmp_path / "upstream"
+    staging.mkdir()
+    fake_tarball = _build_fake_node_tarball(staging, extract_subdir)
+
+    # Pin a digest the fake tarball cannot match.
+    monkeypatch.setitem(manager.USERSPACE_TOOLS["node"], "sha256", {_current_arch(): "0" * 64})
+
+    def fake_urlretrieve(url: str, dst: str) -> tuple[str, Any]:
+        Path(dst).write_bytes(fake_tarball.read_bytes())
+        return (dst, None)
+
+    monkeypatch.setattr(manager.urllib.request, "urlretrieve", fake_urlretrieve)
+
+    manager._install_userspace_tool("node")
+
+    out = capsys.readouterr().out
+    assert "checksum mismatch" in out
+    # Nothing was symlinked...
+    for binary in ("node", "npm", "npx"):
+        assert not (bin_dir / binary).exists()
+    # ...and the corrupt tarball was removed.
+    cache = tools_dir / "cache"
+    assert not list(cache.glob("*.tar.xz")) if cache.exists() else True
+
+
+def test_userspace_install_rejects_tampered_cached_tarball(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, capsys: Any
+) -> None:
+    """A pre-existing (cached) tarball is NOT trusted just because it is on disk —
+    it is verified too, so a poisoned cache is rejected without re-downloading."""
+    bin_dir = tmp_path / "bin"
+    tools_dir = tmp_path / "tools"
+    monkeypatch.setattr(manager, "BIN_DIR", bin_dir)
+    monkeypatch.setattr(manager, "TOOLS_DIR", tools_dir)
+
+    spec = manager.USERSPACE_TOOLS["node"]
+    tarball_name = Path(spec["url"].format(version=spec["version"])).name
+    cache = tools_dir / "cache"
+    cache.mkdir(parents=True)
+    (cache / tarball_name).write_bytes(b"TAMPERED-NOT-A-REAL-TARBALL")
+
+    # Pin a real-looking digest that the tampered bytes cannot match.
+    monkeypatch.setitem(manager.USERSPACE_TOOLS["node"], "sha256", {_current_arch(): "a" * 64})
+
+    def fail_urlretrieve(url: str, dst: str) -> tuple[str, Any]:
+        raise AssertionError("must not re-download a cached tarball before verifying it")
+
+    monkeypatch.setattr(manager.urllib.request, "urlretrieve", fail_urlretrieve)
+
+    manager._install_userspace_tool("node")
+
+    out = capsys.readouterr().out
+    assert "Using cached tarball" in out
+    assert "checksum mismatch" in out
+    assert not (cache / tarball_name).exists()
+
+
+def test_userspace_install_warns_when_no_digest_pinned(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, capsys: Any
+) -> None:
+    """An unpinned tool still installs (backward-compatible) but loudly warns."""
+    bin_dir = tmp_path / "bin"
+    tools_dir = tmp_path / "tools"
+    monkeypatch.setattr(manager, "BIN_DIR", bin_dir)
+    monkeypatch.setattr(manager, "TOOLS_DIR", tools_dir)
+
+    spec = manager.USERSPACE_TOOLS["node"]
+    extract_subdir = spec["extract_subdir"].format(version=spec["version"])
+    staging = tmp_path / "upstream"
+    staging.mkdir()
+    fake_tarball = _build_fake_node_tarball(staging, extract_subdir)
+
+    # No digest for this arch → verification skipped with a warning.
+    monkeypatch.setitem(manager.USERSPACE_TOOLS["node"], "sha256", {})
+
+    def fake_urlretrieve(url: str, dst: str) -> tuple[str, Any]:
+        Path(dst).write_bytes(fake_tarball.read_bytes())
+        return (dst, None)
+
+    monkeypatch.setattr(manager.urllib.request, "urlretrieve", fake_urlretrieve)
+
+    manager._install_userspace_tool("node")
+
+    assert "UNVERIFIED" in capsys.readouterr().out
+    assert (bin_dir / "node").is_symlink()
+
+
+def test_registry_pins_wellformed_sha256_for_every_tool() -> None:
+    """Every shipped USERSPACE_TOOLS entry pins at least one 64-hex-char digest,
+    guarding against a bad paste or a version bump that forgot to refresh them."""
+    for name, spec in manager.USERSPACE_TOOLS.items():
+        digests = spec.get("sha256", {})
+        assert digests, f"{name} has no pinned sha256 digests"
+        for arch, digest in digests.items():
+            assert re.fullmatch(r"[0-9a-f]{64}", digest), f"{name}/{arch} malformed digest {digest!r}"
 
 
 # ---------------------------------------------------------------------------

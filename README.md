@@ -120,13 +120,47 @@ aisland supervisor down     # stop ALL supervised services + the supervisor
 **Installation**: macOS via Homebrew (`f1bonacc1/tap/process-compose`,
 declared in aisland's `[tool.aisland.sys-dependencies]` and installed by
 `aisland setup` / `setup.sh`); Linux via the userspace registry into
-`aisland/bin/` (no sudo). If missing at `start` time, aisland installs it on
-demand.
+`aisland/bin/` (no sudo). Userspace downloads are verified against a pinned
+per-architecture SHA-256 before extraction — a mismatch aborts the install
+rather than running an unverified binary. If missing at `start` time, aisland
+installs it on demand.
 
 **Migrating from the PID-file implementation**: services started by a
 pre-supervisor aisland are invisible to the supervisor. Stop them before
 upgrading (or kill the process manually); the port pre-flight check will
 otherwise point you at the offending PID on the next `start`.
+
+### macOS: Full Disk Access for the supervisor (external data volumes)
+
+macOS TCC attributes a daemon tree's file access to the tree's **root**
+process — for every supervised service that root is the `process-compose`
+server itself. When workspace data lives on an external volume
+(`DATA_ROOT=/Volumes/...` in the workspace `.env`), the **supervisor binary**
+must therefore hold a Full Disk Access grant. Grants held by processes further
+down the tree (Jenkins' `java`, a notebook's `python`) are ignored, and the
+denial surfaces as a misleading `PermissionError: [Errno 1] Operation not
+permitted` deep inside the failing service — canonically `huggingface_hub`
+cache reads during a Jenkins notebook build — while the *same command works
+from an interactive shell* (whose TCC root is the already-granted terminal).
+The kernel-log signature is
+`kernel (Sandbox) System Policy: Python(NNN) deny(1) file-read-data /Volumes/...`.
+
+1. Resolve the binary: `readlink -f "$(which process-compose)"`
+2. System Settings → Privacy & Security → Full Disk Access → **+** → paste the
+   resolved path (Cmd+Shift+G in the file picker) and enable it.
+3. Restart the **whole supervisor** so the grant applies to a fresh root
+   process: `aisland supervisor down && aisland start --background`.
+   Restarting only a service (or only Jenkins) is NOT enough.
+
+The grant is recorded against the **versioned Cellar path**
+(`/opt/homebrew/Cellar/process-compose/<version>/...`), so `brew upgrade
+process-compose` silently orphans it and the failures return — the formula is
+kept `brew pin`ned so upgrades are deliberate; after upgrading, re-add the new
+path and restart. `aisland` pre-flights this at supervisor start
+(`supervisor._preflight_full_disk_access`) and prints the exact path to grant
+when the grant is missing. The check is best-effort: reading the TCC database
+itself requires Full Disk Access on the invoking shell, so an unreadable
+database skips the check silently rather than crying wolf.
 
 ### 2. Manage Jenkins
 For a complete guide on setting up project pipelines and credentials, see the [Jenkins Setup Workflow](JENKINS_WORKFLOW.md).

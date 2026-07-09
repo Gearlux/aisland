@@ -14,7 +14,9 @@ The supervisor's contract has two halves:
 
 from __future__ import annotations
 
+import sqlite3
 import subprocess
+from contextlib import closing
 from pathlib import Path
 from typing import Any, Dict
 from unittest.mock import patch
@@ -200,9 +202,11 @@ def test_start_server_command_shape(isolated_config: Path) -> None:
     """The server must run detached, keep-project, against our config/socket."""
     with (
         patch("aisland.supervisor.ensure_binary", return_value="/usr/bin/process-compose"),
+        patch("aisland.supervisor._preflight_full_disk_access") as preflight_mock,
         patch("aisland.supervisor.subprocess.run", return_value=_completed()) as run_mock,
     ):
         supervisor._start_server()
+    preflight_mock.assert_called_once()
     cmd = run_mock.call_args.args[0]
     assert cmd[0] == "/usr/bin/process-compose"
     assert cmd[1] == "up"
@@ -366,3 +370,143 @@ def test_connection_args_use_unix_socket_on_posix(isolated_config: Path) -> None
     args = supervisor._connection_args()
     assert args[0] == "--use-uds"
     assert args[2].endswith("process-compose.sock")
+
+
+# ---------------------------------------------------------------------------
+# macOS Full Disk Access pre-flight
+# ---------------------------------------------------------------------------
+#
+# TCC attributes supervised services' file access to the process-compose
+# binary (the daemon-tree root), so external-volume data requires an FDA
+# grant on THAT binary. These tests pin the probe (fake TCC db) and the
+# fire/skip decision tree; the message content is asserted loosely (the
+# resolved path must appear — it is the actionable part).
+
+
+def _fake_tcc_db(tmp_path: Path, rows: list) -> Path:
+    """A minimal stand-in for the system TCC database (access table subset)."""
+    db_path = tmp_path / "TCC.db"
+    with closing(sqlite3.connect(db_path)) as db:
+        db.execute("CREATE TABLE access (service TEXT, client TEXT, auth_value INTEGER)")
+        db.executemany("INSERT INTO access VALUES (?, ?, ?)", rows)
+        db.commit()
+    return db_path
+
+
+def test_tcc_probe_grant_present(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    binary = tmp_path / "process-compose"
+    binary.touch()
+    db = _fake_tcc_db(tmp_path, [("kTCCServiceSystemPolicyAllFiles", str(binary), 2)])
+    monkeypatch.setattr(supervisor, "_TCC_SYSTEM_DB", db)
+    assert supervisor._tcc_full_disk_access_granted(binary) is True
+
+
+def test_tcc_probe_grant_matches_resolved_symlink_target(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """System Settings records the resolved Cellar path; PATH holds a symlink."""
+    real = tmp_path / "cellar" / "process-compose"
+    real.parent.mkdir()
+    real.touch()
+    link = tmp_path / "process-compose"
+    link.symlink_to(real)
+    db = _fake_tcc_db(tmp_path, [("kTCCServiceSystemPolicyAllFiles", str(real), 2)])
+    monkeypatch.setattr(supervisor, "_TCC_SYSTEM_DB", db)
+    assert supervisor._tcc_full_disk_access_granted(link) is True
+
+
+def test_tcc_probe_grant_absent(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    binary = tmp_path / "process-compose"
+    binary.touch()
+    db = _fake_tcc_db(tmp_path, [("kTCCServiceSystemPolicyAllFiles", "/some/other/binary", 2)])
+    monkeypatch.setattr(supervisor, "_TCC_SYSTEM_DB", db)
+    assert supervisor._tcc_full_disk_access_granted(binary) is False
+
+
+def test_tcc_probe_denied_grant_is_not_granted(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    binary = tmp_path / "process-compose"
+    binary.touch()
+    db = _fake_tcc_db(tmp_path, [("kTCCServiceSystemPolicyAllFiles", str(binary), 0)])
+    monkeypatch.setattr(supervisor, "_TCC_SYSTEM_DB", db)
+    assert supervisor._tcc_full_disk_access_granted(binary) is False
+
+
+def test_tcc_probe_unreadable_db_is_inconclusive(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(supervisor, "_TCC_SYSTEM_DB", tmp_path / "missing" / "TCC.db")
+    assert supervisor._tcc_full_disk_access_granted(tmp_path / "process-compose") is None
+
+
+def _clear_protected_env(monkeypatch: pytest.MonkeyPatch) -> None:
+    for key in supervisor._TCC_PROTECTED_ENV_KEYS:
+        monkeypatch.delenv(key, raising=False)
+
+
+def test_preflight_skips_on_non_darwin(monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture) -> None:
+    with (
+        patch("aisland.supervisor.platform.system", return_value="Linux"),
+        patch("aisland.supervisor.ensure_binary") as binary_mock,
+    ):
+        supervisor._preflight_full_disk_access()
+    binary_mock.assert_not_called()
+    assert capsys.readouterr().err == ""
+
+
+def test_preflight_skips_without_external_volume_paths(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture
+) -> None:
+    _clear_protected_env(monkeypatch)
+    monkeypatch.setenv("DATA_ROOT", "/data/local")  # not under /Volumes/
+    with (
+        patch("aisland.supervisor.platform.system", return_value="Darwin"),
+        patch("aisland.supervisor.read_workspace_env", return_value={}),
+        patch("aisland.supervisor.ensure_binary") as binary_mock,
+    ):
+        supervisor._preflight_full_disk_access()
+    binary_mock.assert_not_called()
+    assert capsys.readouterr().err == ""
+
+
+def test_preflight_warns_with_grant_path_when_absent(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture
+) -> None:
+    _clear_protected_env(monkeypatch)
+    binary = tmp_path / "process-compose"
+    binary.touch()
+    with (
+        patch("aisland.supervisor.platform.system", return_value="Darwin"),
+        patch("aisland.supervisor.read_workspace_env", return_value={"DATA_ROOT": "/Volumes/Store"}),
+        patch("aisland.supervisor.ensure_binary", return_value=str(binary)),
+        patch("aisland.supervisor._tcc_full_disk_access_granted", return_value=False),
+    ):
+        supervisor._preflight_full_disk_access()
+    err = capsys.readouterr().err
+    assert "Full Disk Access" in err
+    assert str(binary.resolve()) in err
+    assert "DATA_ROOT=/Volumes/Store" in err
+    assert "aisland supervisor down" in err
+
+
+def test_preflight_silent_when_granted(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture
+) -> None:
+    _clear_protected_env(monkeypatch)
+    with (
+        patch("aisland.supervisor.platform.system", return_value="Darwin"),
+        patch("aisland.supervisor.read_workspace_env", return_value={"HF_HOME": "/Volumes/Store/huggingface"}),
+        patch("aisland.supervisor.ensure_binary", return_value=str(tmp_path / "process-compose")),
+        patch("aisland.supervisor._tcc_full_disk_access_granted", return_value=True),
+    ):
+        supervisor._preflight_full_disk_access()
+    assert capsys.readouterr().err == ""
+
+
+def test_preflight_silent_when_probe_inconclusive(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture
+) -> None:
+    _clear_protected_env(monkeypatch)
+    with (
+        patch("aisland.supervisor.platform.system", return_value="Darwin"),
+        patch("aisland.supervisor.read_workspace_env", return_value={"DATA_ROOT": "/Volumes/Store"}),
+        patch("aisland.supervisor.ensure_binary", return_value=str(tmp_path / "process-compose")),
+        patch("aisland.supervisor._tcc_full_disk_access_granted", return_value=None),
+    ):
+        supervisor._preflight_full_disk_access()
+    assert capsys.readouterr().err == ""
