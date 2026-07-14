@@ -757,20 +757,66 @@ def _link_project_bashrc(workspace_root: Path) -> None:
     click.echo(f"==> Linked {link} -> {rel}")
 
 
+# Shared pyright exclude globs for the root and per-project configs below.
+_PYRIGHT_EXCLUDE = [
+    "**/__pycache__",
+    "**/.venv",
+    "**/.*_cache",
+    "**/node_modules",
+]
+
+
+def _ensure_gitignore_line(project_dir: Path, line: str) -> None:
+    """Append ``line`` to the project's ``.gitignore`` unless already covered (append-only, idempotent).
+
+    A generator that drops an artifact into a COMMITTED repo must also keep that
+    artifact out of git — otherwise every setup dirties the tree (the same
+    reasoning as the root ``.gitignore`` entries for ``pyrightconfig.json`` /
+    ``uv.toml``). Append-only like ``_sync_mypy_path``: existing entries are
+    never touched, and an entry with or without the leading ``/`` counts as
+    already covering the artifact.
+    """
+    gitignore = project_dir / ".gitignore"
+    covered = {line, line.lstrip("/")}
+    if gitignore.exists():
+        content = gitignore.read_text()
+        if any(entry.strip() in covered for entry in content.splitlines()):
+            return
+        sep = "" if (not content or content.endswith("\n")) else "\n"
+        gitignore.write_text(content + sep + line + "\n")
+    else:
+        gitignore.write_text(line + "\n")
+
+
 def _write_pyrightconfig(workspace_root: Path, projects: List[dict]) -> None:
-    """Generate ``<workspace>/pyrightconfig.json`` so editors resolve every workspace package.
+    """Generate ``pyrightconfig.json`` at the workspace root AND inside every project.
 
     The mono-repo lays each project out as ``<proj>/<pkg>/`` and installs them
     editable into the shared ``.venv``. Pyright / Pylance need each project root
     on ``extraPaths`` to resolve cross-project imports the same way the venv does
-    (e.g. ``import confluid`` finds ``confluid/confluid``).
+    (e.g. ``import confluid`` finds ``confluid/confluid``) — the editable-install
+    ``__editable__`` finder hooks are not statically resolvable.
 
-    Portability: every path is RELATIVE to the workspace root (where this file
-    lives) — ``venvPath: "."`` + ``venv: ".venv"`` point at ``./.venv`` without a
-    hardcoded absolute path, satisfying the workspace No-Hardcoded-Paths mandate.
-    The file is a generated artifact (gitignored, like
-    ``.project.bashrc.completion``) and is rewritten on every ``aisland setup`` so
-    it always tracks the live project set.
+    Two audiences, one generator:
+    - **Workspace root** — for editors opened on the whole mono-repo:
+      ``venvPath: "."`` + each project dir on ``extraPaths``.
+    - **Each project dir** — for editors opened on a single project as its own
+      workspace folder (pyright only reads the config at the opened root):
+      ``venvPath`` walks back to the shared workspace ``.venv`` and
+      ``extraPaths`` lists the sibling projects. This replaces the previously
+      COMMITTED per-project ``.vscode/settings.json`` ``extraPaths``, which
+      drifted (they still named pre-rename projects) and leaked
+      workspace-specific sibling paths to external consumers of a standalone
+      project. Note pyright IGNORES ``python.analysis.extraPaths`` from
+      ``settings.json`` whenever a ``pyrightconfig.json`` is present, so a
+      stale local ``settings.json`` is neutralized, not merged.
+
+    Portability: every path is RELATIVE to the file that carries it — no
+    hardcoded absolute path, satisfying the workspace No-Hardcoded-Paths
+    mandate. All copies are generated artifacts (gitignored — the root via the
+    root ``.gitignore``, each project via ``_ensure_gitignore_line``) and are
+    rewritten on every ``aisland setup`` so they always track the live project
+    set.
 
     Plain JSON (no comments): ``pyrightconfig.json`` is consumed by an external
     tool whose comment tolerance we don't control, so provenance is carried by
@@ -781,16 +827,24 @@ def _write_pyrightconfig(workspace_root: Path, projects: List[dict]) -> None:
         "venvPath": ".",
         "venv": ".venv",
         "extraPaths": extra_paths,
-        "exclude": [
-            "**/__pycache__",
-            "**/.venv",
-            "**/.*_cache",
-            "**/node_modules",
-        ],
+        "exclude": list(_PYRIGHT_EXCLUDE),
     }
     out = workspace_root / "pyrightconfig.json"
     out.write_text(json.dumps(config, indent=4) + "\n")
     click.echo(f"==> Wrote {out} ({len(extra_paths)} project paths)")
+
+    for project in projects:
+        project_dir = Path(project["path"])
+        siblings = sorted(os.path.relpath(p["path"], project_dir) for p in projects if Path(p["path"]) != project_dir)
+        project_config = {
+            "venvPath": os.path.relpath(workspace_root, project_dir),
+            "venv": ".venv",
+            "extraPaths": siblings,
+            "exclude": list(_PYRIGHT_EXCLUDE),
+        }
+        (project_dir / "pyrightconfig.json").write_text(json.dumps(project_config, indent=4) + "\n")
+        _ensure_gitignore_line(project_dir, "/pyrightconfig.json")
+    click.echo(f"==> Wrote per-project pyrightconfig.json into {len(projects)} project dir(s)")
 
 
 def _sync_mypy_path(workspace_root: Path, projects: List[dict]) -> None:

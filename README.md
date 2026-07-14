@@ -29,14 +29,21 @@ file (sourced by `project.bashrc`, gitignored — so the user's global
 `~/.bashrc` stays clean and re-running setup never dirties the tree),
 and finally runs `setup_git.sh` to configure submodule + git aliases.
 
-`aisland setup` also writes a workspace-root **`pyrightconfig.json`** so
-Pyright / Pylance resolve cross-project imports against the same project
-set installed editable into the `.venv`. It uses relative paths only
-(`venvPath: "."`, plus each project dir on `extraPaths`), so the file is
-portable across machines — and it is gitignored + regenerated on every
-setup, so it always tracks the live project list and never dirties the
-tree. Don't hand-edit it; add a project's `pyproject.toml` and re-run
-`aisland setup`.
+`aisland setup` also writes **`pyrightconfig.json`** files so Pyright /
+Pylance resolve cross-project imports against the same project set
+installed editable into the `.venv` — one at the workspace root
+(`venvPath: "."`, plus each project dir on `extraPaths`) and one inside
+**every project dir** (`venvPath: ".."` back to the shared `.venv`,
+sibling projects on `extraPaths`) for when you open a single project as
+its own editor window. All copies use relative paths only, so they are
+portable across machines — and they are gitignored + regenerated on
+every setup (setup appends the `/pyrightconfig.json` ignore entry to a
+project's `.gitignore` if missing), so they always track the live
+project list and never dirty a tree. Don't hand-edit them; add a
+project's `pyproject.toml` and re-run `aisland setup`. Don't commit
+editor `extraPaths` in `.vscode/settings.json` either — pyright ignores
+those whenever a `pyrightconfig.json` is present, and the committed
+copies this mechanism replaced had silently drifted.
 
 The root **`mypy.ini`** is the opposite: committed, hand-maintained policy
 (the per-module `[mypy-*]` sections). Setup only keeps its `mypy_path`

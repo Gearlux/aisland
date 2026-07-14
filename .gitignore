@@ -39,3 +39,4 @@ coverage/
 
 # Coverage artifacts
 .coverage
+/pyrightconfig.json
