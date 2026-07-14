@@ -1671,7 +1671,7 @@ name: {project_name.capitalize()} CI
 
 on:
   push:
-    branches: [ main, dev/main ]
+    branches: [ main ]
   pull_request:
     branches: [ main ]
 
