@@ -1300,6 +1300,15 @@ with open('isort-checkstyle.xml', 'w') as f:
                             ${{VENV_BIN}}/python3 "$f"
                         fi
                     done
+                    # Directory examples opt in by shipping a run.py entry point;
+                    # network-dependent / install-only example apps ship no run.py
+                    # and are skipped by construction.
+                    for f in examples/*/run.py; do
+                        if [ -f "$f" ]; then
+                            echo "Verifying $f..."
+                            ${{VENV_BIN}}/python3 "$f"
+                        fi
+                    done
                 '''
             }}
         }}
@@ -1600,6 +1609,15 @@ with open('isort-checkstyle.xml', 'w') as f:
                             ${{VENV_BIN}}/python3 "$f"
                         fi
                     done
+                    # Directory examples opt in by shipping a run.py entry point;
+                    # network-dependent / install-only example apps ship no run.py
+                    # and are skipped by construction.
+                    for f in examples/*/run.py; do
+                        if [ -f "$f" ]; then
+                            echo "Verifying $f..."
+                            ${{VENV_BIN}}/python3 "$f"
+                        fi
+                    done
                 '''
             }}
         }}
@@ -1749,6 +1767,15 @@ jobs:
     - name: Run Examples
       run: |
         for f in examples/*.py; do
+          if [ -f "$f" ]; then
+            echo "Verifying $f..."
+            python3 "$f"
+          fi
+        done
+        # Directory examples opt in by shipping a run.py entry point;
+        # network-dependent / install-only example apps ship no run.py
+        # and are skipped by construction.
+        for f in examples/*/run.py; do
           if [ -f "$f" ]; then
             echo "Verifying $f..."
             python3 "$f"

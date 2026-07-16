@@ -58,3 +58,31 @@ def test_scaffold_all_projects_includes_aisland(monkeypatch: pytest.MonkeyPatch,
 
     assert "aisland" in visited, "aisland must not be filtered out of the all-projects loop"
     assert {"aisland", "marainer", "traidwind"} <= set(visited)
+
+
+def test_scaffold_emits_directory_example_runner(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    """The Verify-Examples step MUST also execute directory examples
+    (``examples/*/run.py``) in ALL THREE generated files — the opt-in glob that
+    runs e.g. confluid's ``examples/ml_experiments/run.py`` while skipping
+    installable apps that ship no run.py (network-dependent examples).
+    """
+    _make_pyproject(tmp_path / "proj", "proj")
+
+    from aisland import manager
+
+    monkeypatch.setattr(manager, "get_workspace_root", lambda: tmp_path)
+
+    svc = JenkinsService()
+    # The Jenkins linter is unreachable in tests -> warn-and-skip, files still written.
+    svc.scaffold_pipelines(project_name="proj", force=True)
+
+    generated = {
+        "Jenkinsfile": tmp_path / "proj" / "Jenkinsfile",
+        "Jenkinsfile.local": tmp_path / "proj" / "Jenkinsfile.local",
+        "ci.yml": tmp_path / "proj" / ".github" / "workflows" / "ci.yml",
+    }
+    for desc, path in generated.items():
+        assert path.exists(), f"{desc} was not generated"
+        content = path.read_text()
+        assert "examples/*.py" in content, f"{desc} lost the flat-example loop"
+        assert "examples/*/run.py" in content, f"{desc} must run directory examples via examples/*/run.py"
