@@ -86,10 +86,10 @@ class TestWritePerProjectPyrightConfig:
     """Per-project pyrightconfig.json — for a project opened as its own editor root."""
 
     def test_writes_config_into_every_project(self, tmp_path: Path) -> None:
-        projects = _fake_projects(tmp_path, ["confluid", "marainer", "dataflux"])
+        projects = _fake_projects(tmp_path, ["confluid", "marainer", "sampleflux"])
         _write_pyrightconfig(tmp_path, projects)
 
-        for name in ["confluid", "marainer", "dataflux"]:
+        for name in ["confluid", "marainer", "sampleflux"]:
             assert (tmp_path / name / "pyrightconfig.json").is_file()
 
     def test_venv_resolves_to_shared_workspace_venv(self, tmp_path: Path) -> None:
@@ -101,10 +101,10 @@ class TestWritePerProjectPyrightConfig:
         assert (tmp_path / "confluid" / data["venvPath"]).resolve() == tmp_path
 
     def test_extra_paths_are_sorted_siblings_excluding_self(self, tmp_path: Path) -> None:
-        _write_pyrightconfig(tmp_path, _fake_projects(tmp_path, ["marainer", "confluid", "dataflux"]))
+        _write_pyrightconfig(tmp_path, _fake_projects(tmp_path, ["marainer", "confluid", "sampleflux"]))
 
         data = json.loads((tmp_path / "confluid" / "pyrightconfig.json").read_text())
-        assert data["extraPaths"] == ["../dataflux", "../marainer"]
+        assert data["extraPaths"] == ["../marainer", "../sampleflux"]
 
     def test_no_absolute_paths_anywhere(self, tmp_path: Path) -> None:
         _write_pyrightconfig(tmp_path, _fake_projects(tmp_path, ["confluid", "marainer"]))

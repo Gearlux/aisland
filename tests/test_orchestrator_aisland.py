@@ -21,10 +21,10 @@ def test_pyproject_to_workspace_dir_identity() -> None:
 
 
 def test_pyproject_to_workspace_dir_dashed_pypi_name() -> None:
-    """Dashed PyPI name -> dashless dir (the loggair / data-flux convention)."""
-    initialized = {"loggair", "dataflux"}
+    """Dashed PyPI name -> dashless dir (the loggair / sampleflux convention)."""
+    initialized = {"loggair", "sampleflux"}
     assert pyproject_to_workspace_dir("loggair", initialized) == "loggair"
-    assert pyproject_to_workspace_dir("data-flux", initialized) == "dataflux"
+    assert pyproject_to_workspace_dir("sampleflux", initialized) == "sampleflux"
 
 
 def test_pyproject_to_workspace_dir_handles_aisland_manager_suffix() -> None:
