@@ -49,7 +49,7 @@ def test_pyproject_to_workspace_dir_unknown_passes_through() -> None:
         # Pre-trim takes priority over dashless rewrite.
         ("aisland-manager", {"aisland", "aisland-manager"}, "aisland-manager"),
         # Dashless only kicks in when the identity check fails.
-        ("signals-rfuav", {"signals-rfuav"}, "signals-rfuav"),
+        ("raidar-ultralytics", {"raidar-ultralytics"}, "raidar-ultralytics"),
     ],
 )
 def test_pyproject_to_workspace_dir_priority(pyproject_name: str, initialized: set, expected: str) -> None:

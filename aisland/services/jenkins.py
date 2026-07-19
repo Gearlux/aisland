@@ -819,7 +819,7 @@ class JenkinsService(BaseService):
             Walks both `project.dependencies` (runtime) and every extras group in
             `project.optional-dependencies` (dev, test, notebook, ...). Reason:
             extras like dev can list sibling workspace packages (e.g. navigaitor's
-            dev extra depends on signals-rfuav for tests). CI runs `.[dev]`, so
+            dev extra can depend on sibling workspace packages for tests). CI runs `.[dev]`, so
             those extras ARE installed and must be pre-satisfied by the
             --no-deps Gearlux install loop — otherwise `.[dev]` can't resolve
             them from PyPI.
