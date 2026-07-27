@@ -308,23 +308,44 @@ def get_git_email() -> str:
 
 
 def get_workspace_root() -> Path:
-    """Resolve the absolute path to the workspace root by searching upwards for a marker."""
-    curr = Path(__file__).resolve()
-    # Search up to 6 levels up for the workspace root marker TASKS.md
-    for _ in range(6):
-        if (curr / "TASKS.md").exists():
-            return curr
-        curr = curr.parent
+    """Resolve the absolute path to the workspace root by searching upwards for a marker.
 
-    # Fallback to .git if TASKS.md not found
-    curr = Path(__file__).resolve()
-    for _ in range(6):
-        if (curr / ".git").exists():
-            return curr
-        curr = curr.parent
+    Marker choice is load-bearing. `TASKS.md` alone is NOT a workspace marker: the
+    2026-07-26 backlog restructuring made backlogs PROJECT-OWNED, so every project
+    dir carries one and an innermost-match walk stops at a PROJECT. Concretely,
+    `aisland/TASKS.md` made this return ``<root>/aisland``, which then named the
+    Jenkins orchestrator job "aisland" instead of "acme", set the global
+    ``WORKSPACE_ROOT`` env to the aisland dir (so every job's `customWorkspace`
+    pointed at ``<root>/aisland/<project>``), and looked for the workspace `.env`
+    one level too deep ("No workspace .env found; skipping injection").
 
-    # Absolute fallback
-    return Path(__file__).resolve().parents[3]
+    The workspace root is the SUPERPROJECT — the single directory carrying
+    ``.gitmodules`` (a submodule has a `.git` *file* and no `.gitmodules`). Prefer
+    that; when a checkout genuinely has no submodules, fall back to the OUTERMOST
+    `TASKS.md` — never the innermost — so a nested project can't win.
+    """
+    start = Path(__file__).resolve()
+    # start itself is a file; its parents are the candidate directories.
+    chain: List[Path] = list(start.parents)[:6]
+
+    # 1. The superproject: the one directory with .gitmodules (+ a TASKS.md, so a
+    #    stray .gitmodules elsewhere in the tree can't hijack the result).
+    for cand in chain:
+        if (cand / ".gitmodules").is_file() and (cand / "TASKS.md").exists():
+            return cand
+
+    # 2. No submodules in this checkout: OUTERMOST TASKS.md wins over a project's.
+    with_tasks = [cand for cand in chain if (cand / "TASKS.md").exists()]
+    if with_tasks:
+        return with_tasks[-1]
+
+    # 3. Outermost .git (the superproject's directory, not a submodule's file).
+    with_git = [cand for cand in chain if (cand / ".git").exists()]
+    if with_git:
+        return with_git[-1]
+
+    # 4. Absolute fallback: <root>/aisland/aisland/manager.py -> <root>.
+    return start.parents[2]
 
 
 def get_workspace_name() -> str:
