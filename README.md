@@ -104,8 +104,10 @@ aisland setup --deactivate vendorcli      # opt out (deinits its working tree)
 ```
 
 From the activated set, setup **generates the workspace-root `uv.toml`** =
-a workspace base (e.g. `override-dependencies`) merged with each *activated*
-project's own `uv.toml` (union of `extra-index-url`, etc.). Like
+a workspace base (`override-dependencies` — the unified `lightning` and the GUI
+`opencv-python` are dropped workspace-wide via uv's never-true-marker idiom, and
+headless opencv is pinned to the one range every consumer shares) merged with each
+*activated* project's own `uv.toml` (union of `extra-index-url`, etc.). Like
 `pyrightconfig.json`, it is **gitignored and regenerated** on every setup, so
 a private index (the Company Artifactory in `vendorcli/uv.toml`) lands in the
 root file **only on a machine that activates that project** — a non-corporate
@@ -116,6 +118,34 @@ Retrieve service information for all infrastructure components:
 ```bash
 aisland status
 ```
+
+### Environment doctor
+
+The shared `.venv` is built incrementally by every project, so one install can leave a
+package pair inconsistent — and those failures surface far from their cause (a `dlopen`
+error inside a *pytest collection* step, an `ImportError` three libraries deep in an
+unrelated chain). `aisland doctor` checks for the skews that have actually recurred here and
+prints the exact command that fixes each one:
+
+```bash
+aisland doctor
+# Environment doctor — /path/to/.venv/bin/python3
+#   ✓ opencv           cv2 4.13.0 imports; only opencv-python-headless=4.13.0.92 installed
+#   ✓ huggingface_hub  huggingface_hub 1.12.2 satisfies transformers' import surface
+#
+# All 2 checks passed.
+```
+
+It exits non-zero when a check fails, so it works as a CI preflight step. Current checks:
+
+| Check | Invariant | Symptom when violated |
+|---|---|---|
+| `opencv` | Only `opencv-python-headless` is installed (the root `uv.toml` override drops the GUI wheel — both distributions own `cv2/`) | `Library not loaded: @loader_path/libsrt.1.5.3.dylib` during pytest **collection** |
+| `huggingface_hub` | `transformers`' import surface (`is_offline_mode`) resolves | `ImportError` while importing `pytorch_lightning` via `torchmetrics` |
+
+Add a check by writing a `check_*` function in `aisland/doctor.py` and listing it in
+`CHECKS`. A check must be cheap, read-only, and specific: it reports a known-recurring skew
+with the command that fixes it, never a vague "something looks off".
 
 ## Service Supervision (process-compose)
 

@@ -75,6 +75,14 @@ def reconcile() -> None:
     reconcile_submodules(get_workspace_root())
 
 
+@main.command()
+def doctor() -> None:
+    """Check the shared .venv for known recurring dependency skew (exit 1 if any check fails)."""
+    from aisland.doctor import run_doctor
+
+    raise SystemExit(run_doctor())
+
+
 # --- Docker Commands ---
 
 

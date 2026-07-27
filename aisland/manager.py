@@ -1138,12 +1138,28 @@ def _resolve_submodule_activation(
         _set_local_submodule_active(workspace_root, name, active)
 
 
-# Workspace-wide uv settings that are no single project's concern (the unified ``lightning``
-# package conflicts with ``pytorch-lightning`` across the workspace, so it's pinned to
-# never-install). Merged into the generated root uv.toml beneath every activated project's
-# own uv.toml.
+# Workspace-wide uv settings that are no single project's concern. Merged into the generated
+# root uv.toml beneath every activated project's own uv.toml. The never-true marker
+# (`sys_platform == 'never'`) is uv's idiom for "drop this requirement everywhere".
+#
+# * ``lightning`` — the unified package conflicts with ``pytorch-lightning`` workspace-wide.
+# * ``opencv-python`` — it and ``opencv-python-headless`` install the SAME files (both RECORDs
+#   claim ``cv2/cv2.abi3.so`` and ``cv2/.dylibs/*``) with DIFFERENT bundled native libraries, so
+#   having both installed lets any install that moves one variant leave ``cv2/.dylibs/`` mixed
+#   between two bundles — a dlopen failure at ``import cv2`` (seen: a leftover ffmpeg-6
+#   ``libavformat.60`` beside the other wheel's ``libsrt.1.5.4``). The workspace keeps HEADLESS
+#   only: nothing here needs the GUI build (ultralytics' cv2.imshow paths are all gated behind
+#   ``check_imshow``, which try/excepts; first-party code uses cv2.resize and friends).
+# * ``opencv-python-headless`` — pinned to the label-studio-sdk-compatible range because
+#   ``roboflow`` pins ``==4.10.0.84`` while ``label-studio-sdk`` needs ``>=4.12,<5``: the two are
+#   mutually unsatisfiable, so the choice is made explicitly here rather than left to install
+#   order (verified: roboflow + rfdetr import fine on 4.13).
 _ROOT_UV_BASE: Dict[str, Any] = {
-    "override-dependencies": ["lightning ; sys_platform == 'never'"],
+    "override-dependencies": [
+        "lightning ; sys_platform == 'never'",
+        "opencv-python ; sys_platform == 'never'",
+        "opencv-python-headless>=4.12,<5",
+    ],
 }
 
 
