@@ -23,11 +23,42 @@ All ports are configurable via `--port` flag.
 
 `bash aisland/setup.sh` (run from the workspace root) provisions the
 `.venv`, installs aisland in editable mode, hands off to `aisland setup`
-for project provisioning, installs liquifai shell completion for every
-Liquifai CLI in the venv into a workspace-local `.project.bashrc.completion`
+for project provisioning, installs shell completion for every workspace
+CLI into a workspace-local `.project.bashrc.completion`
 file (sourced by `project.bashrc`, gitignored — so the user's global
 `~/.bashrc` stays clean and re-running setup never dirties the tree),
 and finally runs `setup_git.sh` to configure submodule + git aliases.
+
+### Shell completion
+
+Enable it by starting a shell that sources `project.bashrc`:
+
+```bash
+source project.bashrc      # activates .venv AND exports .env AND loads completion
+aisland <TAB>              # check docker fiftyone info jenkins labelstudio mcp mlflow ...
+streamstudio exp<TAB>      # export export-workflow
+recordstream <TAB>         # run
+```
+
+The workspace has **three kinds of CLI**, so `setup.sh` installs three
+completion families into the one generated file:
+
+| family | apps | mechanism |
+| --- | --- | --- |
+| liquifai apps | `recordstream`, `sonair`, `annotaide`, `raidar`, … (the `liquifai.apps` entry-point group) | `liquifai-install-completions` |
+| click apps | `aisland` | click's own `_AISLAND_COMPLETE=bash_source` protocol |
+| argparse apps | `streamstudio` | [argcomplete](https://kislyuk.github.io/argcomplete/) (`register-python-argcomplete`) |
+
+Click refuses to emit a bash script for **bash < 4.4**, and macOS ships bash
+3.2 as `/bin/bash` — the generated block guards on `BASH_VERSINFO`, so on a
+stock-bash machine `aisland` completion is skipped rather than erroring. Install
+a modern bash (`brew install bash`) to get it.
+
+Completion blocks are keyed by marker comments and merged in place, so a
+renamed or uninstalled CLI would otherwise leave a dead block behind forever.
+`setup.sh` therefore **prunes any block whose program is no longer on `PATH`**
+before regenerating — that is what clears e.g. a pre-rename `fluxstudio` block.
+Re-run `bash aisland/setup.sh` after adding, renaming, or removing a CLI.
 
 `aisland setup` also writes **`pyrightconfig.json`** files so Pyright /
 Pylance resolve cross-project imports against the same project set
