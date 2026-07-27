@@ -155,7 +155,7 @@ def pyproject_to_workspace_dir(pyproject_name: str, initialized_set: set) -> str
     Handles three conventions in use across acme:
       1. Identity (most projects): ``confluid`` -> ``confluid``.
       2. Dashed PyPI name -> dashless dir: ``loggair`` -> ``loggair``,
-         ``sampleflux`` -> ``sampleflux``.
+         ``recordstream`` -> ``recordstream``.
       3. ``-manager`` suffix dropped: ``aisland-manager`` -> ``aisland``.
 
     Returns the input unchanged if no rule matches (caller decides whether
@@ -628,8 +628,8 @@ class JenkinsService(BaseService):
         base_name = get_workspace_name()
 
         # `initialized_projects` is a list of Jenkins job dir names, which follow the
-        # workspace directory names (e.g. "loggair", "sampleflux") — NOT the pyproject
-        # distribution names (which may differ: "loggair", "sampleflux"). Build a
+        # workspace directory names (e.g. "loggair", "recordstream") — NOT the pyproject
+        # distribution names (which may differ: "loggair", "recordstream"). Build a
         # lookup that maps both forms to the canonical workspace-dir form so we can
         # match either a pyproject name or a dir name against initialized_projects.
         initialized_set = set(initialized_projects)
@@ -776,7 +776,7 @@ class JenkinsService(BaseService):
         # Detect actual package directory.
         #   Step 1: try the literal distribution name (e.g. "confluid").
         #   Step 2: try the PEP 503 module form — distribution names allow dashes
-        #           but Python import names don't, so "sampleflux" -> "sampleflux",
+        #           but Python import names don't, so "recordstream" -> "recordstream",
         #           "loggair" -> "loggair", etc. Try that before the heuristic
         #           fallback so we don't accidentally pick up "examples/".
         #   Step 3: scan for any inner dir with __init__.py, skipping known
@@ -890,7 +890,7 @@ class JenkinsService(BaseService):
         # GH Actions — raw uv commands (valid inside `run: |` blocks).
         #
         # Install order: git-URL Gearlux deps FIRST (--no-deps), then `-e .[dev]`.
-        # Rationale: all Gearlux distribution names (loggair, sampleflux, liquifai,
+        # Rationale: all Gearlux distribution names (loggair, recordstream, liquifai,
         # torpaido, confluid, ...) are intentionally NOT published on PyPI. If
         # `.[dev]` ran first, uv would try to resolve `loggair>=0.1.0` from PyPI,
         # fail ("not found in the package registry"), and abort the whole install.
@@ -957,9 +957,9 @@ class JenkinsService(BaseService):
         # pre-satisfies the constraint; `.[dev]` then resolves its remaining
         # third-party deps from PyPI without touching the Gearlux ones.
         #
-        # PyPI distribution names CAN have dashes ("loggair", "sampleflux") but
+        # PyPI distribution names CAN have dashes ("loggair", "recordstream") but
         # filesystem / workspace directory names are conventionally dashless
-        # ("loggair/", "sampleflux/"). For each dep, resolve the workspace path:
+        # ("loggair/", "recordstream/"). For each dep, resolve the workspace path:
         # prefer a dir matching the pyproject name exactly, otherwise try the
         # dash-stripped form. This lets a project carry a dashed PyPI name while
         # keeping its Python import and workspace dir as one unbroken word.

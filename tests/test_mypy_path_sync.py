@@ -32,12 +32,12 @@ def test_appends_missing_projects(tmp_path: Path) -> None:
     ini = tmp_path / "mypy.ini"
     ini.write_text(_INI_TEMPLATE)
 
-    _sync_mypy_path(tmp_path, _projects(tmp_path, "loggair", "sampleflux", "chainwind"))
+    _sync_mypy_path(tmp_path, _projects(tmp_path, "loggair", "recordstream", "chainwind"))
 
     line = next(ln for ln in ini.read_text().splitlines() if ln.startswith("mypy_path"))
     # Existing entries keep their order (incl. nested hand-added ones); the
     # missing projects append at the end, sorted.
-    assert line == "mypy_path = loggair:confluid:confluid/confluid:aisland:aisland/aisland:chainwind:sampleflux"
+    assert line == "mypy_path = loggair:confluid:confluid/confluid:aisland:aisland/aisland:chainwind:recordstream"
 
 
 def test_never_removes_entries(tmp_path: Path) -> None:
@@ -77,10 +77,10 @@ def test_preserves_comma_separator(tmp_path: Path) -> None:
     ini = tmp_path / "mypy.ini"
     ini.write_text("[mypy]\nmypy_path = loggair, confluid\n")
 
-    _sync_mypy_path(tmp_path, _projects(tmp_path, "sampleflux"))
+    _sync_mypy_path(tmp_path, _projects(tmp_path, "recordstream"))
 
     line = next(ln for ln in ini.read_text().splitlines() if ln.startswith("mypy_path"))
-    assert line == "mypy_path = loggair,confluid,sampleflux"
+    assert line == "mypy_path = loggair,confluid,recordstream"
 
 
 def test_missing_ini_is_skipped(tmp_path: Path) -> None:
