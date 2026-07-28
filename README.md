@@ -344,33 +344,82 @@ editable) or as a **published wheel** (not checked out at all). `aisland source`
 and drives every artifact that has to agree with it — the checkout, the shared `.venv`, the
 `*.code-workspace` folder list, and every dependent project's generated CI files.
 
-There are **two kinds**, and the `git` kind is parameterised by a ref — so "GitHub `main`" and
-"GitHub `dev/main`" are the same kind at different branches, and both are local checkouts:
+There are **three kinds**. `local` and `github` both take a `--ref` (branch or tag) and differ
+only in whether a working tree survives; `pypi` takes a `--version` instead:
 
 | source | directory | `.venv` | `*.code-workspace` | consumer CI install line |
 |---|---|---|---|---|
-| `git` (ref `main`) | checked out, `git switch main` | `uv pip install -e loggair` | listed | `git+…/loggair.git@main` |
-| `git` (ref `dev/main`) | checked out, `git switch dev/main` | `uv pip install -e loggair` | listed | `git+…/loggair.git@dev/main` |
+| `local` | checked out, `git switch <ref>` | `uv pip install -e loggair` | listed | `git+…/loggair.git@main` |
+| `github` | **deinit'd — empty** | `uv pip install git+…@<ref>` | **commented out** | `git+…/loggair.git@main` |
 | `pypi` | **deinit'd — empty** | `uv pip install -U loggair` | **commented out** | *(none — `.[dev]` resolves it from PyPI)* |
+
+Note the last column: **CI never sees your `--ref`.** It is a development pin, and these files are
+tracked and shared — see [What CI does with all this](#what-ci-does-with-all-this).
+
+Pick `local` when you edit the project here, `github` when you want a specific branch or tag but
+no working tree, `pypi` when a released wheel will do. The names are deliberately far apart:
+these commands are one word apart and two of them run `git submodule deinit`.
 
 A project with **no entry** is *unmanaged*: nothing is switched, nothing is installed
 differently, and CI keeps the historical `@main`. Setting the first source is the only thing that
 changes behaviour.
 
 ```bash
-aisland source list                              # what is configured, and what is on disk
-aisland source set loggair pypi                  # consume the published wheel; empty the directory
-aisland source set loggair git --ref dev/main    # develop against the dev/main branch
-aisland source set loggair pypi --machine-only   # this machine only; nothing committed
-aisland source unset loggair                     # back to unmanaged
-aisland source apply                             # re-apply the configuration (what `aisland setup` runs)
+aisland source list                                # what is configured, and what is on disk
+aisland source set loggair local  --ref dev/main   # develop it here, on dev/main
+aisland source set loggair github --ref dev/main   # pin to that branch, no checkout
+aisland source set loggair pypi                    # consume the published wheel
+aisland source set loggair pypi --machine-only     # this machine only; nothing committed
+aisland source unset loggair                       # back to unmanaged
+aisland source apply                               # re-apply the config (what `aisland setup` runs)
 ```
 
 ```text
 $ aisland source list
   PROJECT                COMMITTED        OVERRIDE         EFFECTIVE        STATE
-  loggair                git:dev/main     -                git:dev/main     on dev/main
+  confluid               pypi             -                pypi             empty
+  loggair                github:dev/main  -                github:dev/main  empty
+  recordstream           local:dev/main   -                local:dev/main   on dev/main
 ```
+
+The `github` remote URL is read from `.gitmodules`, not assumed to be `github.com/Gearlux/…`, so
+it also works for the submodules hosted elsewhere; an `scp`-style `git@host:org/repo` remote is
+rewritten to `git+ssh://git@host/org/repo` because pip cannot parse the scp form.
+
+### What CI does with all this
+
+Generated CI files are **tracked and shared**, so they read as little of your configuration as
+possible — exactly one bit, and never your `--ref`:
+
+| file | runs where | how it installs an internal dep |
+|---|---|---|
+| `Jenkinsfile.local` | your machine, against the workspace | **identical for every config** — a `[ -d ]` guard: editable if the directory exists, else `git@main` |
+| `Jenkinsfile`, `ci.yml` | a runner, no workspace | `git@main` — unless the dep is `pypi`-sourced, in which case it is omitted and `.[dev]` resolves it from PyPI |
+
+Two consequences worth knowing:
+
+- **`aisland source set --ref` regenerates nothing.** A ref is a development pin ("I'm working
+  against `dev/main` today"); letting it decide what a runner builds would publish a personal
+  choice to every consumer's CI *and* rewrite 17 projects' committed files on every switch. Only
+  crossing the `pypi` boundary changes a CI file — because that is the one bit CI reads.
+- **`Jenkinsfile.local` is config-independent entirely.** The `[ -d ]` guard asks at *build* time
+  the same question the config answers — "does this machine have a checkout?" — so the file is a
+  function of the dependency list alone. That also makes a `--machine-only` override work
+  correctly instead of failing on an empty directory.
+
+  ```groovy
+  sh "if [ -d '${env.WORKSPACE_ROOT}/loggair' ]; then ${VENV_BIN}/uv pip install --no-deps -e '${env.WORKSPACE_ROOT}/loggair'; else ${VENV_BIN}/uv pip install --no-deps git+https://github.com/Gearlux/loggair.git@main; fi"
+  ```
+
+  The one cost: a `pypi`-sourced dep is built from `main` here rather than from the released
+  wheel, so this file alone diverges from your `.venv` and from `ci.yml`. That is deliberate —
+  the local pipeline's job is "does my workspace code build", and testing against `main` catches
+  breakage *before* it is released.
+
+"Available on PyPI" is decided once, when you run `aisland source set <p> pypi` — that command
+verifies the name and its provenance against PyPI before touching anything. Scaffolding does not
+re-probe the index: if it did, the content of committed files would depend on network
+reachability, and an offline scaffold would flip every project to git URLs.
 
 ### The two configuration layers
 
@@ -385,17 +434,11 @@ submodules:
 **Which layer drives what is load-bearing.** Every downstream artifact except the venv and the
 checkout is itself a committed file, so a machine-local choice must never reach one:
 
-- **committed source only** → `Jenkinsfile`, `Jenkinsfile.local`, `.github/workflows/ci.yml`, and
-  the `*.code-workspace` `folders` list. A `--machine-only` change touches none of them.
+- **committed source only** → the `*.code-workspace` `folders` list, and the published/not bit
+  that `Jenkinsfile` and `ci.yml` read. A `--machine-only` change touches neither.
 - **effective source** (override, else committed) → submodule init/deinit + branch switch, and the
-  editable/PyPI install into the shared `.venv`.
-
-Because an override can empty a directory the *committed* `Jenkinsfile.local` still names, the
-generated editable-install line is guarded and falls back to the committed git ref:
-
-```groovy
-sh "if [ -d '${env.WORKSPACE_ROOT}/loggair' ]; then ${VENV_BIN}/uv pip install --no-deps -e '${env.WORKSPACE_ROOT}/loggair'; else ${VENV_BIN}/uv pip install --no-deps git+https://github.com/Gearlux/loggair.git@main; fi"
-```
+  editable/git/PyPI install into the shared `.venv`.
+- **neither** → `Jenkinsfile.local`, which resolves the question at build time instead.
 
 ### `project-sources.toml`
 
@@ -403,25 +446,31 @@ Written by `aisland source set`; hand edits are honoured but the header asks you
 
 ```toml
 [loggair]
-source = "pypi"           # "git" | "pypi"
+source = "github"         # "local" | "github" | "pypi"
 distribution = "loggair"  # PyPI/dist name — recorded because a deinit'd dir has no pyproject.toml
-# ref = "dev/main"        # git only; omitted => "main"
+ref = "dev/main"          # local/github only; omitted => "main"
 # version = ">=0.1.0"     # pypi only; omitted => latest
 ```
 
 ### Notes
 
-- A `pypi` source is verified before anything is touched: the name must exist on PyPI **and** its
-  published metadata must point at `github.com/Gearlux/…`. PyPI names are global, so a bare
-  existence check would let a workspace project whose name is taken by someone else install that
-  stranger's package into the shared venv. An unreachable index warns and continues rather than
-  blocking an offline machine.
+- Both detaching kinds are verified **before** anything is emptied, because otherwise the failure
+  would land after the directory was already gone:
+  - `pypi` — the name must exist on PyPI **and** its published metadata must point at
+    `github.com/Gearlux/…`. PyPI names are global, so a bare existence check would let a workspace
+    project whose name is taken by someone else install that stranger's package into the shared
+    venv.
+  - `github` — the `--ref` must resolve on the project's remote (`git ls-remote`).
+
+  An unreachable index or remote warns and continues rather than blocking an offline machine.
 - `git switch` and `git submodule deinit` are never forced: a submodule with uncommitted work
   refuses, is reported, and neither the venv nor the registry is changed — a failed apply rolls
   the configuration back so `project-sources.toml` never claims a state the tree does not have.
-- `aisland source set` re-scaffolds every **dependent** project's CI files. Since that runs with
-  `--force`, it also picks up any unrelated template drift those files had accumulated — pass
-  `--no-scaffold` if you want the source change alone.
+- `aisland source set` re-scaffolds every **dependent** project's CI files **only when the
+  published/not bit flips** — i.e. crossing the `pypi` boundary. A `--ref` change, or a switch
+  between `local` and `github`, regenerates nothing. When it does run it uses `--force`, so it
+  also absorbs any unrelated template drift those files had accumulated; pass `--no-scaffold` to
+  skip it.
 - `aisland setup` applies the configuration on every run, so a fresh clone converges without any
   manual step.
 

@@ -27,10 +27,22 @@ other consumes.
 
 ### Decision
 
-A source is `git` (checked out at a `ref`, installed editable) or `pypi` (submodule deinit'd,
-directory empty, published wheel installed) — a closed `Literal`, so "GitHub main" and "GitHub
-dev/main" are one kind at two refs rather than two modes. Configuration is **two layers**,
-mirroring the existing `.gitmodules active` + `.git/config submodule.<name>.active` split:
+A source is one of three kinds — a closed `Literal` — along two independent axes:
+
+| kind | working tree | pinned by |
+|---|---|---|
+| `local` | checked out at `ref` | a branch/tag you can edit |
+| `github` | none (deinit'd) | a branch/tag on the remote |
+| `pypi` | none (deinit'd) | a release version |
+
+`local` and `github` are the same pin at different levels of commitment: "I develop this here"
+vs "I depend on that branch". Naming them `git` and `github` was rejected — the two commands
+would sit three characters apart while one keeps a checkout and the other deletes it. The
+derived predicates (`REF_KINDS`, `DETACHED_KINDS`, `ProjectSource.detached`) exist so no call
+site re-tests kinds by hand and a fourth kind cannot silently miss a branch.
+
+Configuration is **two layers**, mirroring the existing `.gitmodules active` +
+`.git/config submodule.<name>.active` split:
 
 | layer | storage | committed |
 |---|---|---|
@@ -41,20 +53,32 @@ The layers are **not** interchangeable. Each artifact reads exactly one:
 
 | artifact | reads | why |
 |---|---|---|
-| `Jenkinsfile`, `Jenkinsfile.local`, `ci.yml` | committed only | tracked — an override would churn them per machine |
+| `Jenkinsfile`, `ci.yml` | committed, **published bit only** | tracked *and shared* — a dev's `ref` must not reach another consumer's CI |
+| `Jenkinsfile.local` | **nothing** | resolves it at build time instead (see the guard below) |
 | `*.code-workspace` `folders` | committed only | tracked, hand-maintained |
 | submodule checkout, shared `.venv` | effective (override ?? committed) | untracked machine state — the whole point of an override |
 
+The middle two rows are the 2026-07-28 revision. Reading the `ref` into a tracked file conflated
+two different questions — *which commit do I depend on* (a shared fact) and *which commit am I
+editing today* (a personal one) — so a routine `--ref` switch rewrote seventeen projects' CI. CI
+now always clones `DEFAULT_REF` and reads exactly one bit: is this dep published? That is also
+why `local` and `github` are indistinguishable to a runner — it never has a workspace checkout,
+so the axis they differ on does not exist there.
+
 A project with no entry in either layer is *unmanaged*, and `DEFAULT_REF = "main"` makes an
-unmanaged project and an explicit `git:main` produce byte-identical build files — so introducing
-the mechanism changed no behaviour anywhere until a source was actually set.
+unmanaged project and an explicit `local:main` produce byte-identical build files — so
+introducing the mechanism changed no behaviour anywhere until a source was actually set.
 
 ### Consequences
 
-- **The `[ -d ]` guard is load-bearing, not defensive polish.** An override can empty a directory
-  that the *committed* `Jenkinsfile.local` still names, so the generated editable-install line
-  must probe for the directory and fall back to the committed git ref. Without it, a per-machine
-  `pypi` override silently breaks the local Jenkins pipeline.
+- **The `[ -d ]` guard is the mechanism, not defensive polish.** It asks at *build* time exactly
+  the question the configuration answers — "does this machine have a checkout?" — so
+  `Jenkinsfile.local` needs no configuration at all: one identical line per dep, editable if the
+  directory exists, `git@main` otherwise. Deciding it at build time rather than scaffold time is
+  also what lets a per-machine override work, since by construction it never reaches this tracked
+  file. Its accepted cost is that a `pypi`-sourced dep is built from `main` here rather than from
+  the released wheel — the local pipeline exists to catch breakage *before* a release, so that is
+  the useful direction to err in.
 - **Order of operations in a `pypi` switch is fixed by information loss.** The distribution name
   (`aisland` → `aisland-manager`) can only be read from `pyproject.toml`, which the deinit
   removes — so it is resolved first and then *persisted* into the committed registry.
@@ -62,8 +86,17 @@ the mechanism changed no behaviour anywhere until a source was actually set.
   project can share a name with an unrelated package; checking only that the name resolves would
   install a stranger's code into the shared venv. The workspace convention that every pyproject
   declares a `github.com/Gearlux/…` repository URL makes the published metadata a usable marker,
-  so `_pypi_provenance` requires it. An unreachable index is *inconclusive*, not a rejection —
-  an offline machine must not be blocked by a check it cannot perform.
+  so `_pypi_provenance` requires it. `github` gets the same treatment one level down:
+  `_remote_ref_exists` refuses a ref the remote does not have. Both probes are *inconclusive*
+  rather than rejecting when they cannot reach the network — an offline machine must not be
+  blocked by a check it cannot perform.
+- **Detaching a project hides it from discovery, which the scaffolder had to be taught.**
+  `discover_gearlux_projects` learns each project's distribution name by reading its
+  `pyproject.toml`; an emptied directory has none. For `pypi` the resulting drop was accidentally
+  correct (the dep is meant to leave the git-URL loop), which is exactly why the gap survived
+  until `github` existed — there it erases the pin the kind exists to express, and CI silently
+  installs the PyPI release instead of the requested ref. The registry's `distribution` field,
+  recorded for the deinit case anyway, is the fallback.
 - **Nothing is ever forced, and a failed apply rolls back.** `git switch` and `git submodule
   deinit` run without `-f`; a dirty submodule refuses, is reported, and the venv is left
   untouched — matching `reconcile_submodules`' protective deinit rather than inventing a second
@@ -71,29 +104,41 @@ the mechanism changed no behaviour anywhere until a source was actually set.
   registry claiming a state the working tree does not have would be re-attempted by every
   subsequent `aisland setup`.
 - **Two mechanisms could fight over one submodule**, so they don't: `reconcile_submodules` folds
-  `sources.pypi_sourced_projects()` into its active set, otherwise the next `aisland setup` would
-  re-init a directory the source says is empty.
-- **A source change re-scaffolds dependents with `--force`**, which also absorbs any unrelated
-  template drift those tracked files had accumulated. That is a real, visible side effect;
-  `--no-scaffold` exists for when it is unwanted.
+  `sources.detached_projects()` — BOTH detaching kinds, not just `pypi` — into its active set,
+  otherwise the next `aisland setup` would re-init a directory the source says is empty.
+- **Almost no source change re-scaffolds anything.** Since CI reads one bit,
+  `_publishedness_changed` gates the regeneration on that bit flipping: a `--ref` switch or a
+  `local` <-> `github` move rewrites nothing. Crossing the `pypi` boundary still re-scaffolds
+  dependents with `--force`, which also absorbs any unrelated template drift those files had
+  accumulated — a real, visible side effect; `--no-scaffold` exists for when it is unwanted.
+- **PyPI availability is decided once, not on every scaffold.** `aisland source set … pypi`
+  probes the index; the scaffolder never does. A scaffold-time probe would make the content of
+  *committed* files depend on network reachability, so an offline run would flip every project to
+  git URLs and churn the tree.
 - Discovery still does the heavy lifting: a `pypi`-sourced project's directory is empty, so
   `discover_projects()` drops it from the editable-install loop with no special-casing.
 
 ### Example
 
 ```bash
-$ aisland source set loggair pypi
+$ aisland source set loggair github --ref dev/main   # from local:main — no CI touched
+==> loggair: committed source set to github:dev/main in project-sources.toml
+==> loggair: github @ dev/main (git+https://github.com/Gearlux/loggair.git@dev/main)
+==> Updated acme.code-workspace folders (20 enabled)
+
+$ aisland source set loggair pypi                    # crosses the boundary — CI regenerates
 ==> loggair: committed source set to pypi in project-sources.toml
-==> loggair: pypi (loggair)
-==> Updated acme.code-workspace folders (22 enabled)
 ==> Regenerating CI files for 17 dependent project(s): annotaide, chainwind, confluid, …
 ```
 
 ```python
-# The scaffolder reads the COMMITTED layer only — never `effective_source`.
+# The scaffolder reads the COMMITTED layer only — never `effective_source` — and only one bit
+# of it. `Jenkinsfile.local`'s loop calls none of this: it emits the same guarded line for every
+# dep, so the file cannot depend on configuration at all.
 committed_sources = read_committed_sources(workspace_root)
 
 def _dep_is_pypi(dep: str) -> bool:
+    """Published -> drop it from the pre-install loop; `.[dev]` resolves it from the index."""
     source = source_for_dependency(committed_sources, dep)
     return source is not None and source.kind == "pypi"
 ```
@@ -105,8 +150,12 @@ def _dep_is_pypi(dep: str) -> bool:
   set anywhere.
 - The registry schema is additive: a new per-project key is fine, but keep it a flat table of
   string scalars so `write_committed_sources` needs no TOML-writer dependency.
-- What must not change: the layer→artifact mapping above, and the `[ -d ]` guard that makes it
-  safe.
+- A new kind must decide two things before anything else: does it carry a `ref` (`REF_KINDS`) and
+  does it leave a working tree (`DETACHED_KINDS`). Every call site branches on those, not on the
+  kind name.
+- What must not change: the layer→artifact mapping above; that CI reads the published bit and
+  never the `ref`; and that `Jenkinsfile.local` reads nothing at all. Reintroducing per-kind
+  branching in that file would quietly restore the churn this record exists to remove.
 
 ---
 
@@ -150,7 +199,7 @@ already satisfies the invariant, so a no-op sync writes nothing.
 ```jsonc
     "folders": [
         { "name": "aisland", "path": "aisland" },
-        // aisland source: 'loggair' is consumed from PyPI; restore it with `aisland source set loggair git`.
+        // aisland source: 'loggair' is consumed as a package (no checkout); restore it with `aisland source set loggair local`.
         // {
         //     "name": "loggair",
         //     "path": "loggair"

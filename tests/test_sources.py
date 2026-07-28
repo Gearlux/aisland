@@ -1,15 +1,18 @@
 """Tests for per-project dependency sources (`aisland source`, aisland/sources.py).
 
 Covers the four things a source change has to keep consistent:
-- the source model + its two configuration layers (committed file, per-machine .git/config);
+- the source model (local / github / pypi) + its two configuration layers (committed file,
+  per-machine .git/config);
 - the `*.code-workspace` `folders` sync (comment-out in place, byte-lossless round trip);
-- `apply_source`'s git/uv command sequence for both kinds;
-- the CI scaffolder's emission (pypi deps dropped, git refs honoured, the `[ -d ]` guard).
+- `apply_source`'s git/uv command sequence for each of the three kinds;
+- the CI scaffolder's emission (pypi deps dropped, refs honoured, the `[ -d ]` guard on `local`
+  deps only, and a detached dep surviving its own empty directory).
 """
 
 from __future__ import annotations
 
 import json
+import shutil
 import subprocess
 import tomllib
 from pathlib import Path
@@ -64,16 +67,16 @@ def workspace(tmp_path: Path) -> Path:
 
 
 class TestProjectSource:
-    @pytest.mark.parametrize("raw", ["pypi", "pypi:>=0.1.0", "git:main", "git:dev/main"])
+    @pytest.mark.parametrize("raw", ["pypi", "pypi:>=0.1.0", "local:main", "local:dev/main"])
     def test_spec_parse_round_trip(self, raw: str) -> None:
         assert s.ProjectSource.parse(raw).spec() == raw
 
-    def test_bare_git_defaults_to_main(self) -> None:
-        parsed = s.ProjectSource.parse("git")
-        assert parsed.kind == "git" and parsed.ref == s.DEFAULT_REF
+    def test_bare_local_defaults_to_main(self) -> None:
+        parsed = s.ProjectSource.parse("local")
+        assert parsed.kind == "local" and parsed.ref == s.DEFAULT_REF
 
     def test_ref_may_contain_a_slash(self) -> None:
-        assert s.ProjectSource.parse("git:dev/main").ref == "dev/main"
+        assert s.ProjectSource.parse("local:dev/main").ref == "dev/main"
 
     def test_unknown_kind_rejected(self) -> None:
         with pytest.raises(ValueError, match="unknown source kind"):
@@ -88,7 +91,44 @@ class TestProjectSource:
 
     def test_source_kinds_derive_from_the_literal(self) -> None:
         """No parallel list: the click Choice and the docs read this tuple."""
-        assert s.SOURCE_KINDS == ("git", "pypi")
+        assert s.SOURCE_KINDS == ("local", "github", "pypi")
+
+    @pytest.mark.parametrize("raw", ["github", "github:main", "github:dev/main"])
+    def test_github_carries_a_ref_like_local(self, raw: str) -> None:
+        parsed = s.ProjectSource.parse(raw)
+        assert parsed.kind == "github" and parsed.ref == (raw.partition(":")[2] or s.DEFAULT_REF)
+
+    def test_github_spec_round_trips(self) -> None:
+        assert s.ProjectSource.parse("github:dev/main").spec() == "github:dev/main"
+
+    @pytest.mark.parametrize(
+        "kind,expected",
+        [("local", False), ("github", True), ("pypi", True)],
+    )
+    def test_detached_is_the_no_checkout_predicate(self, kind: str, expected: bool) -> None:
+        """`github` and `pypi` empty the directory; only `local` keeps a working tree."""
+        assert s.ProjectSource(kind=kind).detached is expected  # type: ignore[arg-type]
+
+    def test_detached_kinds_and_ref_kinds_partition_the_literal(self) -> None:
+        """Every kind is exactly one of ref-carrying/pypi and detached/checked-out."""
+        assert set(s.REF_KINDS) | {"pypi"} == set(s.SOURCE_KINDS)
+        assert set(s.DETACHED_KINDS) | {"local"} == set(s.SOURCE_KINDS)
+
+
+class TestPipVcsUrl:
+    def test_https_remote_gains_the_git_prefix(self) -> None:
+        url = s.pip_vcs_url("https://github.com/Gearlux/loggair.git", "dev/main")
+        assert url == "git+https://github.com/Gearlux/loggair.git@dev/main"
+
+    def test_scp_style_ssh_remote_is_rewritten_to_a_url(self) -> None:
+        """`git@host:org/repo` is scp syntax — pip cannot parse it; the colon must become a `/`."""
+        url = s.pip_vcs_url("git@github.com:Gearlux/confluid.git", "main")
+        assert url == "git+ssh://git@github.com/Gearlux/confluid.git@main"
+
+    def test_non_github_remote_is_supported(self) -> None:
+        """The URL comes from .gitmodules, so a Bitbucket-hosted submodule works too."""
+        url = s.pip_vcs_url("https://bitbucket.example.com/scm/~u/vendorcli.git", "main")
+        assert url == "git+https://bitbucket.example.com/scm/~u/vendorcli.git@main"
 
 
 # --- committed layer ----------------------------------------------------------------------
@@ -101,7 +141,7 @@ class TestCommittedSources:
     def test_write_then_read_round_trip(self, tmp_path: Path) -> None:
         written = {
             "loggair": s.ProjectSource(kind="pypi", version=">=0.1.0", distribution="loggair"),
-            "confluid": s.ProjectSource(kind="git", ref="dev/main", distribution="confluid"),
+            "confluid": s.ProjectSource(kind="local", ref="dev/main", distribution="confluid"),
         }
         s.write_committed_sources(tmp_path, written)
         assert s.read_committed_sources(tmp_path) == written
@@ -117,14 +157,14 @@ class TestCommittedSources:
             tmp_path,
             {
                 "a": s.ProjectSource(kind="pypi", ref="ignored", distribution="a"),
-                "b": s.ProjectSource(kind="git", ref="dev/main", version="ignored", distribution="b"),
+                "b": s.ProjectSource(kind="local", ref="dev/main", version="ignored", distribution="b"),
             },
         )
         data = tomllib.loads((tmp_path / s.SOURCES_FILE).read_text())
         assert "ref" not in data["a"] and "version" not in data["b"]
 
     def test_unknown_kind_is_skipped_not_raised(self, tmp_path: Path) -> None:
-        (tmp_path / s.SOURCES_FILE).write_text('[loggair]\nsource = "svn"\n[confluid]\nsource = "git"\n')
+        (tmp_path / s.SOURCES_FILE).write_text('[loggair]\nsource = "svn"\n[confluid]\nsource = "local"\n')
         assert set(s.read_committed_sources(tmp_path)) == {"confluid"}
 
     def test_malformed_toml_degrades_to_unmanaged(self, tmp_path: Path) -> None:
@@ -159,13 +199,13 @@ class TestEffectiveSource:
 
     def test_committed_only(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.setattr(s.subprocess, "run", self._fake_config({}))
-        s.write_committed_sources(tmp_path, {"loggair": s.ProjectSource(kind="git", ref="dev/main")})
-        assert s.effective_source(tmp_path, "loggair") == s.ProjectSource(kind="git", ref="dev/main")
+        s.write_committed_sources(tmp_path, {"loggair": s.ProjectSource(kind="local", ref="dev/main")})
+        assert s.effective_source(tmp_path, "loggair") == s.ProjectSource(kind="local", ref="dev/main")
 
     def test_override_wins_over_committed(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.setattr(s.subprocess, "run", self._fake_config({"aisland.source.loggair": "pypi"}))
         s.write_committed_sources(
-            tmp_path, {"loggair": s.ProjectSource(kind="git", ref="main", distribution="loggair")}
+            tmp_path, {"loggair": s.ProjectSource(kind="local", ref="main", distribution="loggair")}
         )
         effective = s.effective_source(tmp_path, "loggair")
         assert effective is not None and effective.kind == "pypi"
@@ -174,7 +214,7 @@ class TestEffectiveSource:
         """A compact override carries no dist name; without inheritance a pypi switch would
         install the DIRECTORY name (`aisland`) instead of `aisland-manager`."""
         monkeypatch.setattr(s.subprocess, "run", self._fake_config({"aisland.source.aisland": "pypi"}))
-        s.write_committed_sources(tmp_path, {"aisland": s.ProjectSource(kind="git", distribution="aisland-manager")})
+        s.write_committed_sources(tmp_path, {"aisland": s.ProjectSource(kind="local", distribution="aisland-manager")})
         effective = s.effective_source(tmp_path, "aisland")
         assert effective is not None and effective.requirement("aisland") == "aisland-manager"
 
@@ -197,7 +237,7 @@ class TestSourceForDependency:
         assert s.source_for_dependency(committed, "aisland-manager") is committed["aisland"]
 
     def test_matches_dash_stripped_form(self) -> None:
-        committed = {"recordstream": s.ProjectSource(kind="git")}
+        committed = {"recordstream": s.ProjectSource(kind="local")}
         assert s.source_for_dependency(committed, "record-stream") is committed["recordstream"]
 
     def test_unknown_dependency_is_none(self) -> None:
@@ -223,7 +263,7 @@ class TestSyncCodeWorkspace:
         original = path.read_text()
         s.sync_code_workspace(workspace, {"loggair": s.ProjectSource(kind="pypi", distribution="loggair")})
         assert path.read_text() != original
-        s.sync_code_workspace(workspace, {"loggair": s.ProjectSource(kind="git", ref="dev/main")})
+        s.sync_code_workspace(workspace, {"loggair": s.ProjectSource(kind="local", ref="dev/main")})
         assert path.read_text() == original
 
     def test_jsonc_outside_folders_is_preserved(self, workspace: Path) -> None:
@@ -247,7 +287,7 @@ class TestSyncCodeWorkspace:
         assert text[vendorcli_close:].lstrip().splitlines()[1].strip() == "}"
 
     def test_missing_entry_is_inserted_before_out_of_tree_paths(self, workspace: Path) -> None:
-        s.sync_code_workspace(workspace, {"brandnew": s.ProjectSource(kind="git")})
+        s.sync_code_workspace(workspace, {"brandnew": s.ProjectSource(kind="local")})
         text = (workspace / "acme.code-workspace").read_text()
         assert text.index('"brandnew"') < text.index('"../logs"')
 
@@ -259,7 +299,7 @@ class TestSyncCodeWorkspace:
         assert s.sync_code_workspace(tmp_path, {"loggair": s.ProjectSource(kind="pypi")}) is None
 
     def test_unchanged_file_is_not_rewritten(self, workspace: Path) -> None:
-        assert s.sync_code_workspace(workspace, {"loggair": s.ProjectSource(kind="git")}) is None
+        assert s.sync_code_workspace(workspace, {"loggair": s.ProjectSource(kind="local")}) is None
 
 
 # --- applying -----------------------------------------------------------------------------
@@ -305,12 +345,13 @@ def recorder(monkeypatch: pytest.MonkeyPatch) -> _Recorder:
     monkeypatch.setattr(s.subprocess, "check_call", rec.check_call)
     monkeypatch.setattr(s, "_set_local_submodule_active", lambda *a, **k: None)
     monkeypatch.setattr(s, "submodule_active_map", lambda root: [("loggair", "loggair", True)])
+    monkeypatch.setattr(s, "remote_url", lambda root, project: "https://github.com/Gearlux/loggair.git")
     return rec
 
 
 class TestApplySource:
     def test_git_initializes_switches_and_installs_editable(self, tmp_path: Path, recorder: _Recorder) -> None:
-        source = s.ProjectSource(kind="git", ref="dev/main")
+        source = s.ProjectSource(kind="local", ref="dev/main")
         assert s.apply_source(tmp_path, "loggair", source, "/venv/bin/uv") is True
         flat = recorder.flat()
         assert flat[0] == "git submodule update --init loggair"
@@ -320,7 +361,7 @@ class TestApplySource:
     def test_git_skips_init_when_already_checked_out(self, tmp_path: Path, recorder: _Recorder) -> None:
         (tmp_path / "loggair").mkdir()
         (tmp_path / "loggair" / ".git").write_text("gitdir: ../.git/modules/loggair\n")
-        s.apply_source(tmp_path, "loggair", s.ProjectSource(kind="git"), "/venv/bin/uv")
+        s.apply_source(tmp_path, "loggair", s.ProjectSource(kind="local"), "/venv/bin/uv")
         assert not any("submodule update" in c for c in recorder.flat())
 
     def test_failed_switch_reports_and_leaves_venv_alone(
@@ -329,7 +370,7 @@ class TestApplySource:
         """A dirty submodule must NOT be force-switched, and the editable install must not run
         against a checkout that is on the wrong branch."""
         recorder.fail_on = "git switch"
-        assert s.apply_source(tmp_path, "loggair", s.ProjectSource(kind="git", ref="dev/main"), "uv") is False
+        assert s.apply_source(tmp_path, "loggair", s.ProjectSource(kind="local", ref="dev/main"), "uv") is False
         assert not any("pip install" in c for c in recorder.flat())
 
     def test_pypi_deinits_then_uninstalls_then_installs(self, tmp_path: Path, recorder: _Recorder) -> None:
@@ -426,6 +467,49 @@ class TestApplySource:
         assert "uv pip install -U loggair-dist" in recorder.flat()
 
 
+class TestApplyGithubSource:
+    def test_deinits_then_installs_from_the_remote_at_ref(self, tmp_path: Path, recorder: _Recorder) -> None:
+        (tmp_path / "loggair").mkdir()
+        (tmp_path / "loggair" / ".git").write_text("gitdir: x\n")
+        source = s.ProjectSource(kind="github", ref="dev/main", distribution="loggair")
+        assert s.apply_source(tmp_path, "loggair", source, "/venv/bin/uv") is True
+        assert recorder.flat() == [
+            "git submodule deinit loggair",
+            "/venv/bin/uv pip uninstall loggair",
+            "/venv/bin/uv pip install -U git+https://github.com/Gearlux/loggair.git@dev/main",
+        ]
+
+    def test_never_installs_editable(self, tmp_path: Path, recorder: _Recorder) -> None:
+        """A github source has no working tree — an `-e <dir>` would point at an empty path."""
+        s.apply_source(tmp_path, "loggair", s.ProjectSource(kind="github"), "uv")
+        assert not any(" -e " in c for c in recorder.flat())
+
+    def test_uninstalls_first_so_a_ref_change_is_not_skipped(self, tmp_path: Path, recorder: _Recorder) -> None:
+        """github:main -> github:dev/main reports the SAME version; without the uninstall uv
+        would treat the requirement as already satisfied and leave the old ref installed."""
+        s.apply_source(tmp_path, "loggair", s.ProjectSource(kind="github", ref="dev/main"), "uv")
+        flat = recorder.flat()
+        assert flat.index("uv pip uninstall loggair") < flat.index(
+            "uv pip install -U git+https://github.com/Gearlux/loggair.git@dev/main"
+        )
+
+    def test_refused_deinit_aborts_before_touching_the_venv(self, tmp_path: Path, recorder: _Recorder) -> None:
+        (tmp_path / "loggair").mkdir()
+        (tmp_path / "loggair" / ".git").write_text("gitdir: x\n")
+        recorder.fail_on = "submodule deinit"
+        assert s.apply_source(tmp_path, "loggair", s.ProjectSource(kind="github"), "uv") is False
+        assert not any("pip" in c for c in recorder.flat())
+
+    def test_missing_remote_url_is_refused_not_guessed(
+        self, tmp_path: Path, recorder: _Recorder, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Without a .gitmodules URL there is nothing to install from — refuse rather than
+        fabricate a github.com/Gearlux/<name> that may not exist."""
+        monkeypatch.setattr(s, "remote_url", lambda root, project: None)
+        assert s.apply_source(tmp_path, "loggair", s.ProjectSource(kind="github"), "uv") is False
+        assert recorder.flat() == []
+
+
 # --- CI scaffolding -----------------------------------------------------------------------
 
 
@@ -474,21 +558,35 @@ class TestScaffoldHonoursSources:
         assert "git+https://github.com/Gearlux/loggair.git@main" in files["Jenkinsfile"]
         assert "git+https://github.com/Gearlux/loggair.git@main" in files["ci.yml"]
 
-    def test_git_ref_replaces_the_hardcoded_main(self, ci_workspace: Path) -> None:
-        s.write_committed_sources(ci_workspace, {"loggair": s.ProjectSource(kind="git", ref="dev/main")})
+    def test_ci_ignores_the_configured_ref(self, ci_workspace: Path) -> None:
+        """`--ref` is a DEVELOPMENT pin. Letting it decide what a runner clones would publish a
+        personal choice to every consumer's CI and churn tracked files on every ref switch."""
+        s.write_committed_sources(ci_workspace, {"loggair": s.ProjectSource(kind="local", ref="dev/main")})
         JenkinsService().scaffold_pipelines(project_name="confluid", force=True)
         files = _generated(ci_workspace, "confluid")
-        assert "git+https://github.com/Gearlux/loggair.git@dev/main" in files["Jenkinsfile"]
-        assert "git+https://github.com/Gearlux/loggair.git@dev/main" in files["ci.yml"]
-        assert "loggair.git@main" not in files["Jenkinsfile"]
+        assert "git+https://github.com/Gearlux/loggair.git@main" in files["Jenkinsfile"]
+        assert "git+https://github.com/Gearlux/loggair.git@main" in files["ci.yml"]
+        assert "dev/main" not in files["Jenkinsfile"] and "dev/main" not in files["ci.yml"]
 
-    def test_pypi_dep_is_dropped_from_all_three_files(self, ci_workspace: Path) -> None:
-        """A published dep resolves via `.[dev]` from PyPI; a git URL would pin it instead."""
+    def test_a_ref_change_rewrites_no_ci_file_at_all(self, ci_workspace: Path) -> None:
+        """The payoff: `aisland source set --ref` regenerates nothing, so it can no longer drag
+        17 projects' committed files (and their unrelated template drift) along with it."""
+        generated = []
+        for ref in ("main", "dev/main", "some/feature"):
+            s.write_committed_sources(ci_workspace, {"loggair": s.ProjectSource(kind="local", ref=ref)})
+            JenkinsService().scaffold_pipelines(project_name="confluid", force=True)
+            generated.append(_generated(ci_workspace, "confluid"))
+        assert generated[0] == generated[1] == generated[2]
+
+    def test_pypi_dep_is_dropped_from_the_runner_files(self, ci_workspace: Path) -> None:
+        """A published dep resolves via `.[dev]` from PyPI; a git URL would pin it instead.
+        Jenkinsfile.local is deliberately NOT included — see the identical-line test below."""
         s.write_committed_sources(ci_workspace, {"loggair": s.ProjectSource(kind="pypi", distribution="loggair")})
         JenkinsService().scaffold_pipelines(project_name="confluid", force=True)
-        for name, content in _generated(ci_workspace, "confluid").items():
-            assert "Gearlux/loggair.git" not in content, f"{name} still installs loggair from git"
-            assert "WORKSPACE_ROOT}/loggair" not in content, f"{name} still installs loggair from the workspace"
+        files = _generated(ci_workspace, "confluid")
+        for name in ("Jenkinsfile", "ci.yml"):
+            assert "Gearlux/loggair.git" not in files[name], f"{name} still installs loggair from git"
+            assert "WORKSPACE_ROOT}/loggair" not in files[name], f"{name} still installs from the workspace"
 
     def test_pypi_dep_still_installed_via_dev_extra(self, ci_workspace: Path) -> None:
         s.write_committed_sources(ci_workspace, {"loggair": s.ProjectSource(kind="pypi")})
@@ -511,10 +609,125 @@ class TestScaffoldHonoursSources:
         assert "if [ -d '${env.WORKSPACE_ROOT}/loggair' ]; then" in local
         assert "else ${VENV_BIN}/uv pip install --no-deps git+https://github.com/Gearlux/loggair.git@main; fi" in local
 
-    def test_guard_falls_back_to_the_committed_ref(self, ci_workspace: Path) -> None:
-        s.write_committed_sources(ci_workspace, {"loggair": s.ProjectSource(kind="git", ref="dev/main")})
+    def test_guard_always_falls_back_to_the_default_ref(self, ci_workspace: Path) -> None:
+        s.write_committed_sources(ci_workspace, {"loggair": s.ProjectSource(kind="local", ref="dev/main")})
         JenkinsService().scaffold_pipelines(project_name="confluid", force=True)
-        assert "loggair.git@dev/main; fi" in _generated(ci_workspace, "confluid")["Jenkinsfile.local"]
+        assert "loggair.git@main; fi" in _generated(ci_workspace, "confluid")["Jenkinsfile.local"]
+
+    def test_jenkinsfile_local_is_identical_for_every_source_kind(self, ci_workspace: Path) -> None:
+        """The whole point of the `[ -d ]` guard: it asks at BUILD time the question the config
+        answers, so this file is a function of the dependency LIST alone. No `aisland source`
+        change of any kind can rewrite it — including flipping to/from pypi."""
+        rendered = []
+        for source in (
+            s.ProjectSource(kind="local", ref="dev/main"),
+            s.ProjectSource(kind="github", ref="some/branch"),
+            s.ProjectSource(kind="pypi", distribution="loggair"),
+        ):
+            s.write_committed_sources(ci_workspace, {"loggair": source})
+            JenkinsService().scaffold_pipelines(project_name="confluid", force=True)
+            rendered.append(_generated(ci_workspace, "confluid")["Jenkinsfile.local"])
+        assert rendered[0] == rendered[1] == rendered[2]
+
+    def test_github_dep_keeps_the_guard_in_jenkinsfile_local(self, ci_workspace: Path) -> None:
+        """Uniformity is the point — the guard simply takes its else-branch on a machine where
+        the directory is empty, which is exactly what a detached source leaves behind."""
+        s.write_committed_sources(ci_workspace, {"loggair": s.ProjectSource(kind="github", ref="dev/main")})
+        JenkinsService().scaffold_pipelines(project_name="confluid", force=True)
+        local = _generated(ci_workspace, "confluid")["Jenkinsfile.local"]
+        assert "if [ -d '${env.WORKSPACE_ROOT}/loggair' ]; then" in local
+        assert "else ${VENV_BIN}/uv pip install --no-deps git+https://github.com/Gearlux/loggair.git@main; fi" in local
+
+    def test_pypi_dep_keeps_the_guard_in_jenkinsfile_local(self, ci_workspace: Path) -> None:
+        """A pypi dep is dropped from the runner files but NOT here: the local pipeline builds
+        against `main` so it catches breakage before a release, and keeping the line uniform is
+        what makes this file config-independent."""
+        s.write_committed_sources(ci_workspace, {"loggair": s.ProjectSource(kind="pypi", distribution="loggair")})
+        JenkinsService().scaffold_pipelines(project_name="confluid", force=True)
+        local = _generated(ci_workspace, "confluid")["Jenkinsfile.local"]
+        assert "if [ -d '${env.WORKSPACE_ROOT}/loggair' ]; then" in local
+        assert "loggair.git@main; fi" in local
+
+    def test_github_dep_survives_its_own_empty_directory(self, ci_workspace: Path) -> None:
+        """The regression this class exists for. A detached project has NO pyproject.toml, so
+        `discover_gearlux_projects` cannot read its name from disk — without the registry
+        fallback the dep vanished from the internal set entirely and CI silently resolved the
+        PyPI release instead of the pinned ref (or failed, for an unpublished project)."""
+        s.write_committed_sources(
+            ci_workspace, {"loggair": s.ProjectSource(kind="github", ref="dev/main", distribution="loggair")}
+        )
+        # Detached == the directory is gone, exactly as `apply_source` leaves it.
+        shutil.rmtree(ci_workspace / "loggair")
+
+        from aisland.services.jenkins import discover_gearlux_projects
+
+        assert "loggair" in discover_gearlux_projects(ci_workspace)
+        JenkinsService().scaffold_pipelines(project_name="confluid", force=True)
+        assert "git+https://github.com/Gearlux/loggair.git@main" in _generated(ci_workspace, "confluid")["ci.yml"]
+
+    def test_pypi_dep_still_dropped_when_its_directory_is_gone(self, ci_workspace: Path) -> None:
+        """The registry fallback must not resurrect a pypi dep into the git-URL loop."""
+        s.write_committed_sources(ci_workspace, {"loggair": s.ProjectSource(kind="pypi", distribution="loggair")})
+        shutil.rmtree(ci_workspace / "loggair")
+        JenkinsService().scaffold_pipelines(project_name="confluid", force=True)
+        assert "Gearlux/loggair.git" not in _generated(ci_workspace, "confluid")["ci.yml"]
+
+
+class TestPublishednessChanged:
+    """CI reads exactly one bit of the registry, so only that bit may trigger a regeneration."""
+
+    def test_ref_switch_is_not_a_change(self) -> None:
+        before = s.ProjectSource(kind="local", ref="main")
+        after = s.ProjectSource(kind="local", ref="dev/main")
+        assert s._publishedness_changed(before, after) is False
+
+    def test_local_to_github_is_not_a_change(self) -> None:
+        """Both are git-backed; a runner clones either identically."""
+        before = s.ProjectSource(kind="local", ref="dev/main")
+        after = s.ProjectSource(kind="github", ref="dev/main")
+        assert s._publishedness_changed(before, after) is False
+
+    @pytest.mark.parametrize("other", ["local", "github"])
+    def test_crossing_the_pypi_boundary_is_a_change(self, other: str) -> None:
+        git_backed = s.ProjectSource(kind=other)  # type: ignore[arg-type]
+        published = s.ProjectSource(kind="pypi")
+        assert s._publishedness_changed(git_backed, published) is True
+        assert s._publishedness_changed(published, git_backed) is True
+
+    def test_unmanaged_reads_as_not_published(self) -> None:
+        assert s._publishedness_changed(None, s.ProjectSource(kind="local")) is False
+        assert s._publishedness_changed(None, s.ProjectSource(kind="pypi")) is True
+
+
+class TestRemoteRefExists:
+    @staticmethod
+    def _probe(monkeypatch: pytest.MonkeyPatch, returncode: int, stdout: str) -> None:
+        monkeypatch.setattr(s, "remote_url", lambda root, project: "https://example.com/x.git")
+        monkeypatch.setattr(
+            s.subprocess,
+            "run",
+            lambda cmd, **kw: subprocess.CompletedProcess(cmd, returncode, stdout, ""),
+        )
+
+    def test_existing_ref_accepted(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+        self._probe(monkeypatch, 0, "abc123\trefs/heads/dev/main\n")
+        assert s._remote_ref_exists(tmp_path, "loggair", "dev/main") is True
+
+    def test_missing_ref_rejected(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+        """Exit 0 with no output means the remote answered and has no such ref."""
+        self._probe(monkeypatch, 0, "")
+        assert s._remote_ref_exists(tmp_path, "loggair", "nope") is False
+
+    def test_unreachable_remote_is_inconclusive_not_a_rejection(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Same rule as the PyPI probe: never block a machine on a check it cannot perform."""
+        self._probe(monkeypatch, 128, "")
+        assert s._remote_ref_exists(tmp_path, "loggair", "dev/main") is True
+
+    def test_no_declared_url_skips_the_check(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setattr(s, "remote_url", lambda root, project: None)
+        assert s._remote_ref_exists(tmp_path, "loggair", "dev/main") is True
 
 
 class TestPypiProvenance:
@@ -597,7 +810,7 @@ class TestSetProjectSourceRollback:
         monkeypatch.setattr(s, "set_local_override", lambda *a, **k: None)
         monkeypatch.setattr(s, "apply_source", lambda *a, **k: False)
         monkeypatch.setattr(s, "_pypi_provenance", lambda dist: (True, "0.1.0"))
-        before = {"loggair": s.ProjectSource(kind="git", ref="dev/main", distribution="loggair")}
+        before = {"loggair": s.ProjectSource(kind="local", ref="dev/main", distribution="loggair")}
         s.write_committed_sources(ci_workspace, before)
 
         assert s.set_project_source("loggair", "pypi", workspace_root=ci_workspace) == 1
@@ -648,7 +861,7 @@ class TestUnsetProjectSource:
         cleared: List[Any] = []
         monkeypatch.setattr(s, "local_override", lambda root, name: s.ProjectSource(kind="pypi"))
         monkeypatch.setattr(s, "set_local_override", lambda root, name, src: cleared.append((name, src)))
-        s.write_committed_sources(tmp_path, {"loggair": s.ProjectSource(kind="git", ref="dev/main")})
+        s.write_committed_sources(tmp_path, {"loggair": s.ProjectSource(kind="local", ref="dev/main")})
         s.unset_project_source("loggair", machine_only=True, workspace_root=tmp_path)
         assert cleared == [("loggair", None)]
         assert set(s.read_committed_sources(tmp_path)) == {"loggair"}

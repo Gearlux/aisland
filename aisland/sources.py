@@ -1,19 +1,25 @@
 """Per-project dependency-source management (``aisland source``).
 
-A workspace project can be consumed in exactly two ways, and this module owns the
+A workspace project can be consumed in exactly three ways, and this module owns the
 choice plus every artifact that has to agree with it:
 
-============ ================================ ============================ ==========================
-source       directory                        ``.venv``                    consumer CI install line
-============ ================================ ============================ ==========================
-``git``      checked out, ``git switch <ref>`` ``uv pip install -e <dir>``  ``git+…/<name>.git@<ref>``
-``pypi``     deinit'd (empty)                 ``uv pip install -U <dist>`` *(none — ``.[dev]`` resolves it from PyPI)*
-============ ================================ ============================ ==========================
+========== ================================= ============================== ==============================
+source     directory                         ``.venv``                      consumer CI install line
+========== ================================= ============================== ==============================
+``local``  checked out, ``git switch <ref>`` ``uv pip install -e <dir>``    ``git+…/<name>.git@<ref>``
+``github`` deinit'd (empty)                  ``uv pip install git+…@<ref>`` ``git+…/<name>.git@<ref>``
+``pypi``   deinit'd (empty)                  ``uv pip install -U <dist>``   *(none — ``.[dev]`` resolves it from PyPI)*
+========== ================================= ============================== ==============================
 
-"github main" and "github dev/main" are therefore the SAME kind at different refs — both are
-local checkouts. ``pypi`` is the only mode that empties a directory. A project with no entry
-anywhere is *unmanaged*: nothing is switched, nothing is installed differently, and CI keeps
-the historical ``@main`` — so adding this module changes no behaviour until a source is set.
+``local`` and ``github`` both carry a ``ref`` (branch or tag) and differ ONLY in whether the
+working tree survives: ``local`` is "I develop this here", ``github`` is "pin it to a remote
+commit, I am not editing it". The names are deliberately far apart because the commands are one
+word apart and one of them runs ``git submodule deinit`` — ``git``/``github`` would have been a
+three-character difference between keeping and deleting a checkout.
+
+A project with no entry anywhere is *unmanaged*: nothing is switched, nothing is installed
+differently, and CI keeps the historical ``@main`` — so this module changes no behaviour until
+a source is set.
 
 Two configuration layers, mirroring the existing ``.gitmodules active`` +
 ``.git/config submodule.<name>.active`` split (:func:`aisland.manager._local_submodule_active`):
@@ -31,8 +37,10 @@ the checkout is itself committed — a machine-local choice must never reach one
   editable/PyPI install into the shared ``.venv`` (via :func:`apply_source`).
 
 Because a per-machine override can empty a directory the COMMITTED ``Jenkinsfile.local`` still
-names, the generated editable-install line carries a ``[ -d … ]`` guard that falls back to the
-committed source's git URL — see ``jenkins.py``'s ``local_pip_cmds`` loop.
+names, a ``local`` dep's generated editable-install line carries a ``[ -d … ]`` guard that falls
+back to the committed source's git URL. A ``github`` dep needs no guard — it has no checkout by
+design, so that file installs it from the remote directly. See ``jenkins.py``'s
+``local_pip_cmds`` loop.
 """
 
 from __future__ import annotations
@@ -52,21 +60,28 @@ from aisland.manager import _set_local_submodule_active, get_workspace_root, sub
 # The closed set of source kinds. Everything that needs to enumerate them (click's
 # ``Choice``, docs, future MCP/JSON schemas) derives from THIS annotation via
 # ``get_args`` — never a restated parallel list.
-SourceKind = Literal["git", "pypi"]
+SourceKind = Literal["local", "github", "pypi"]
 SOURCE_KINDS: Tuple[str, ...] = get_args(SourceKind)
+
+#: The kinds that carry a git ``ref``. ``pypi`` carries a ``version`` instead.
+REF_KINDS: Tuple[str, ...] = ("local", "github")
+
+#: The kinds that leave the project directory EMPTY (submodule deinit'd). Consumed by
+#: :func:`detached_projects` -> :func:`aisland.manager.reconcile_submodules`.
+DETACHED_KINDS: Tuple[str, ...] = ("github", "pypi")
 
 #: Committed, workspace-root source registry.
 SOURCES_FILE = "project-sources.toml"
 
-#: Ref used by a ``git`` source that does not name one — matches the ``@main`` that the CI
-#: scaffolder emitted unconditionally before this module existed, so an unmanaged project and
-#: an explicit ``git:main`` project produce byte-identical build files.
+#: Ref used by a ``local`` / ``github`` source that does not name one — matches the ``@main``
+#: that the CI scaffolder emitted unconditionally before this module existed, so an unmanaged
+#: project and an explicit ``local:main`` produce byte-identical build files.
 DEFAULT_REF = "main"
 
 _SOURCES_HEADER = """\
 # =========================================================================
 # AUTO-GENERATED / MANAGED FILE — prefer `aisland source set` over hand edits.
-# Generated by: aisland source set <project> <git|pypi> [--ref …] [--version …]
+# Generated by: aisland source set <project> <local|github|pypi> [--ref …] [--version …]
 # Source module: aisland/aisland/sources.py (write_committed_sources)
 # To inspect:    aisland source list
 # =========================================================================
@@ -74,11 +89,13 @@ _SOURCES_HEADER = """\
 # generated Jenkinsfile / Jenkinsfile.local / .github/workflows/ci.yml of every dependent
 # project, and the `folders` list of the *.code-workspace file.
 #
-#   source       = "git"   -> submodule is checked out on `ref` and installed editable.
-#   source       = "pypi"  -> submodule is deinit'd (empty dir) and installed from PyPI.
+#   source       = "local"  -> submodule is checked out on `ref` and installed editable.
+#   source       = "github" -> submodule is deinit'd (empty dir); installed from the remote
+#                              at `ref`. Same pin as local, without a working tree.
+#   source       = "pypi"   -> submodule is deinit'd (empty dir) and installed from PyPI.
 #   distribution = the PyPI/dist name; recorded because a deinit'd directory no longer has a
 #                  pyproject.toml to read it from (e.g. aisland -> "aisland-manager").
-#   ref          = git only; branch or tag. Omitted => "main".
+#   ref          = local/github only; branch or tag. Omitted => "main".
 #   version      = pypi only; a PEP 440 specifier such as ">=0.1.0". Omitted => latest.
 #
 # A project with NO entry here is unmanaged: its checkout, its install and its CI lines keep
@@ -92,13 +109,13 @@ class ProjectSource:
     """Where one workspace project's package is consumed from.
 
     Args:
-        kind: ``"git"`` (local checkout, editable install) or ``"pypi"`` (deinit'd, wheel).
-        ref: Branch or tag for the ``git`` kind. Ignored by ``pypi``.
+        kind: ``"local"`` (checkout on ``ref``, editable install), ``"github"`` (no checkout;
+            installed from the remote at ``ref``) or ``"pypi"`` (no checkout; published wheel).
+        ref: Branch or tag for the ``local`` / ``github`` kinds. Ignored by ``pypi``.
         version: PEP 440 specifier for the ``pypi`` kind (``">=0.1.0"``). ``None`` => latest.
         distribution: The PyPI / distribution name, which differs from the directory name for
             at least one project (``aisland`` -> ``aisland-manager``). Recorded in the committed
-            file because a ``pypi``-sourced project's directory is empty and can no longer be
-            read for it.
+            file because a detached project's directory is empty and can no longer be read for it.
     """
 
     kind: SourceKind
@@ -106,11 +123,16 @@ class ProjectSource:
     version: Optional[str] = None
     distribution: Optional[str] = None
 
+    @property
+    def detached(self) -> bool:
+        """Whether this source leaves the project directory EMPTY (no checkout)."""
+        return self.kind in DETACHED_KINDS
+
     def spec(self) -> str:
-        """Compact round-trippable form: ``"git:dev/main"`` / ``"pypi"`` / ``"pypi:>=0.1.0"``."""
+        """Compact round-trippable form: ``"local:dev/main"`` / ``"github:main"`` / ``"pypi:>=0.1.0"``."""
         if self.kind == "pypi":
             return f"pypi:{self.version}" if self.version else "pypi"
-        return f"git:{self.ref}"
+        return f"{self.kind}:{self.ref}"
 
     @classmethod
     def parse(cls, raw: str, *, distribution: Optional[str] = None) -> "ProjectSource":
@@ -122,7 +144,7 @@ class ProjectSource:
             raise ValueError(f"unknown source kind {kind_raw!r}; expected one of {', '.join(SOURCE_KINDS)}")
         if kind_raw == "pypi":
             return cls(kind="pypi", version=rest or None, distribution=distribution)
-        return cls(kind="git", ref=rest or DEFAULT_REF, distribution=distribution)
+        return cls(kind=cast(SourceKind, kind_raw), ref=rest or DEFAULT_REF, distribution=distribution)
 
     def requirement(self, project: str) -> str:
         """The ``uv pip install`` argument for a ``pypi`` source (``"loggair>=0.1.0"``)."""
@@ -180,7 +202,7 @@ def write_committed_sources(workspace_root: Path, sources: Dict[str, ProjectSour
         lines.append(f'source = "{src.kind}"')
         if src.distribution:
             lines.append(f'distribution = "{src.distribution}"')
-        if src.kind == "git":
+        if src.kind in REF_KINDS:
             lines.append(f'ref = "{src.ref}"')
         elif src.version:
             lines.append(f'version = "{src.version}"')
@@ -309,6 +331,39 @@ def discover_distribution(project_dir: Path) -> Optional[str]:
     return name if isinstance(name, str) and name else None
 
 
+def remote_url(workspace_root: Path, project: str) -> Optional[str]:
+    """The submodule's configured remote from ``.gitmodules``, or ``None`` when undeclared.
+
+    Read rather than hardcoded to ``github.com/Gearlux/<name>`` so a ``github`` source also
+    works for the submodules that are NOT on GitHub (``vendorcli`` / ``signals-bridge`` live on
+    an internal Bitbucket), and so it always matches the remote the operator's git auth is
+    already set up for.
+    """
+    gitmodules = workspace_root / ".gitmodules"
+    if not gitmodules.exists():
+        return None
+    url = _capture(
+        ["git", "config", "-f", str(gitmodules), "--get", f"submodule.{project}.url"],
+        workspace_root,
+    )
+    return url or None
+
+
+def pip_vcs_url(url: str, ref: str) -> str:
+    """Turn a git remote into a ``uv pip install`` VCS requirement pinned at ``ref``.
+
+    ``git@host:org/repo.git`` is scp-style syntax that pip cannot parse — the colon must become
+    a ``/`` under an explicit ``ssh://`` scheme. An https remote just gains the ``git+`` prefix.
+    A ref containing a slash (``dev/main``) is fine after the ``@``; pip splits on the LAST one.
+    """
+    if url.startswith("git@"):
+        host, _, path = url.partition(":")
+        url = f"ssh://{host}/{path}"
+    if not url.startswith("git+"):
+        url = f"git+{url}"
+    return f"{url}@{ref}"
+
+
 def _run(cmd: List[str], cwd: Path, *, quiet: bool = False) -> bool:
     """Run ``cmd``; return True on success. A failure is reported, never raised.
 
@@ -377,16 +432,16 @@ def _deinit_remedy(workspace_root: Path, path: Path, rel: str) -> str:
 def apply_source(workspace_root: Path, project: str, source: ProjectSource, uv_cmd: str) -> bool:
     """Bring the checkout and the shared ``.venv`` in line with ``source``. Returns success.
 
-    ``git``: activate the submodule, initialize it if needed, fetch, switch to ``ref``, install
-    editable. ``pypi``: resolve the distribution name while the directory is still readable,
-    deinit (protectively — no ``-f``, so uncommitted work refuses and aborts BEFORE the venv is
-    touched), then install the wheel.
+    ``local``: activate the submodule, initialize it if needed, fetch, switch to ``ref``, install
+    editable. ``github`` / ``pypi``: resolve the distribution name while the directory is still
+    readable, deinit (protectively — no ``-f``, so uncommitted work refuses and aborts BEFORE the
+    venv is touched), then install from the remote at ``ref`` / from PyPI.
     """
     path = project_path(workspace_root, project)
     rel = str(path.relative_to(workspace_root))
 
-    if source.kind == "git":
-        click.echo(f"==> {project}: git @ {source.ref}")
+    if source.kind == "local":
+        click.echo(f"==> {project}: local checkout @ {source.ref}")
         _set_local_submodule_active(workspace_root, project, True)
         if not (path / ".git").exists():
             if not _run(["git", "submodule", "update", "--init", rel], workspace_root):
@@ -400,9 +455,24 @@ def apply_source(workspace_root: Path, project: str, source: ProjectSource, uv_c
             return False
         return _run([uv_cmd, "pip", "install", "-e", str(path)], workspace_root)
 
-    # pypi — read the distribution name while the directory still exists, then empty it.
+    # github / pypi — both detach. Read the distribution name while the directory still exists
+    # (afterwards there is no pyproject.toml left to ask), then empty it.
     distribution = source.distribution or discover_distribution(path) or project
-    click.echo(f"==> {project}: pypi ({distribution}{source.version or ''})")
+    if source.kind == "github":
+        url = remote_url(workspace_root, project)
+        if url is None:
+            click.echo(
+                f"Error: {project} has no submodule URL in .gitmodules, so a github source has "
+                f"nothing to install from. Use: aisland source set {project} local",
+                err=True,
+            )
+            return False
+        target = pip_vcs_url(url, source.ref)
+        click.echo(f"==> {project}: github @ {source.ref} ({target})")
+    else:
+        target = ProjectSource(kind="pypi", version=source.version, distribution=distribution).requirement(project)
+        click.echo(f"==> {project}: pypi ({target})")
+
     if (path / ".git").exists():
         if not _run(["git", "submodule", "deinit", rel], workspace_root):
             click.echo(
@@ -412,10 +482,11 @@ def apply_source(workspace_root: Path, project: str, source: ProjectSource, uv_c
             )
             return False
     _set_local_submodule_active(workspace_root, project, False)
-    # The editable install must go before the wheel: uv would otherwise keep the .pth entry.
+    # Uninstall first, unconditionally: an editable install would otherwise keep its .pth entry,
+    # and re-pinning github:main -> github:dev/main reports the SAME version, which uv would
+    # treat as already satisfied and skip.
     _run([uv_cmd, "pip", "uninstall", distribution], workspace_root, quiet=True)
-    resolved = ProjectSource(kind="pypi", version=source.version, distribution=distribution)
-    return _run([uv_cmd, "pip", "install", "-U", resolved.requirement(project)], workspace_root)
+    return _run([uv_cmd, "pip", "install", "-U", target], workspace_root)
 
 
 def apply_all(workspace_root: Path, uv_cmd: str) -> None:
@@ -446,8 +517,8 @@ def _overridden_projects(workspace_root: Path) -> List[str]:
     return names
 
 
-def pypi_sourced_projects(workspace_root: Path) -> set[str]:
-    """Projects whose EFFECTIVE source empties their directory.
+def detached_projects(workspace_root: Path) -> set[str]:
+    """Projects whose EFFECTIVE source empties their directory (``github`` or ``pypi``).
 
     Consumed by :func:`aisland.manager.reconcile_submodules` so the activation machinery and the
     source machinery cannot fight over the same submodule.
@@ -457,7 +528,7 @@ def pypi_sourced_projects(workspace_root: Path) -> set[str]:
     result: set[str] = set()
     for project in managed:
         source = effective_source(workspace_root, project, committed)
-        if source is not None and source.kind == "pypi":
+        if source is not None and source.detached:
             result.add(project)
     return result
 
@@ -600,8 +671,8 @@ def _render_entries(entries: List[_FolderEntry]) -> str:
         base = _leading_indent(entry.lines[0])
         if entry.commented and entry.name:
             out.append(
-                f"{base}{_MARKER} '{entry.name}' is consumed from PyPI; "
-                f"restore it with `aisland source set {entry.name} git`."
+                f"{base}{_MARKER} '{entry.name}' is consumed as a package (no checkout); "
+                f"restore it with `aisland source set {entry.name} local`."
             )
         lines = list(entry.lines)
         # The closing brace carries the separator: every enabled entry but the last needs one.
@@ -662,7 +733,7 @@ def sync_code_workspace(workspace_root: Path, committed: Dict[str, ProjectSource
     by_name = {e.name: e for e in entries if e.name}
 
     for project, source in committed.items():
-        want_enabled = source.kind == "git"
+        want_enabled = not source.detached
         entry = by_name.get(project)
         if entry is None:
             if want_enabled:
@@ -761,6 +832,31 @@ def _pypi_provenance(distribution: str) -> Tuple[Optional[bool], str]:
     return True, str(info.get("version") or "unknown")
 
 
+def _remote_ref_exists(workspace_root: Path, project: str, ref: str) -> bool:
+    """Whether ``ref`` resolves on ``project``'s remote. Unreachable remote => ``True``.
+
+    The counterpart of :func:`_pypi_provenance` for the ``github`` kind: a ref that does not
+    exist would fail INSIDE ``uv pip install``, i.e. after the deinit had already emptied the
+    directory. An unreachable remote (offline, auth prompt) is inconclusive, not a rejection —
+    same rule as the PyPI probe: never block a machine on a check it cannot perform.
+    """
+    url = remote_url(workspace_root, project)
+    if url is None:
+        return True
+    # One call answers both questions: a non-zero exit means the remote could not be reached,
+    # while exit 0 with empty output means it answered and has no such ref.
+    probe = subprocess.run(
+        ["git", "ls-remote", "--heads", "--tags", url, ref],
+        cwd=str(workspace_root),
+        capture_output=True,
+        text=True,
+    )
+    if probe.returncode != 0:
+        click.echo(f"  - Warning: could not reach {project}'s remote to verify '{ref}'; continuing.")
+        return True
+    return bool(probe.stdout.strip())
+
+
 def dependent_projects(workspace_root: Path, project: str, distribution: str) -> List[str]:
     """Workspace directory names whose dependency closure reaches ``project``.
 
@@ -841,7 +937,7 @@ def set_project_source(
         published, detail = _pypi_provenance(distribution)
         if published is False:
             click.echo(
-                f"Error: '{distribution}' {detail}. Publish it first, or use: " f"aisland source set {project} git",
+                f"Error: '{distribution}' {detail}. Publish it first, or use: " f"aisland source set {project} github",
                 err=True,
             )
             return 1
@@ -851,7 +947,16 @@ def set_project_source(
             click.echo(f"  - Verified {distribution} {detail} on PyPI (Gearlux provenance).")
         source = ProjectSource(kind="pypi", version=version, distribution=distribution)
     else:
-        source = ProjectSource(kind="git", ref=ref or DEFAULT_REF, distribution=distribution)
+        source = ProjectSource(kind=cast(SourceKind, kind), ref=ref or DEFAULT_REF, distribution=distribution)
+        # A github source DETACHES, so a bad ref would only surface after the directory was
+        # already emptied — the same asymmetry the PyPI provenance check guards against.
+        if kind == "github" and not _remote_ref_exists(root, project, source.ref):
+            click.echo(
+                f"Error: '{source.ref}' does not exist on {project}'s remote, so a github source "
+                f"could never install. Push the branch first, or pick an existing ref.",
+                err=True,
+            )
+            return 1
 
     committed = dict(original)
     if machine_only:
@@ -882,9 +987,20 @@ def set_project_source(
         return 0
 
     sync_code_workspace(root, committed)
-    if scaffold:
+    # CI reads ONE bit of this registry — is the dep published? — and ignores the ref entirely
+    # (see jenkins.scaffold_pipelines). So a ref change, or any switch between the two git-backed
+    # kinds, cannot alter a tracked CI file; only crossing the pypi boundary can. Skipping the
+    # regeneration when nothing would change avoids rewriting every dependent's three files (and
+    # absorbing their unrelated template drift) on a routine `--ref` switch.
+    if scaffold and _publishedness_changed(previous, source):
         _rescaffold_dependents(root, project, distribution)
     return 0
+
+
+def _publishedness_changed(previous: Optional[ProjectSource], new: ProjectSource) -> bool:
+    """Whether the pypi/not-pypi bit — the only thing CI reads — differs between two sources."""
+    was_pypi = previous is not None and previous.kind == "pypi"
+    return was_pypi != (new.kind == "pypi")
 
 
 def unset_project_source(
@@ -924,8 +1040,10 @@ def unset_project_source(
     # Re-enable the editor folder entry: "unmanaged" means the historical default, and a
     # lingering `// aisland source:` block would point at configuration that no longer exists.
     # Nothing is recorded — the synthetic entry only tells the sync which state to restore.
-    sync_code_workspace(root, {**committed, project: ProjectSource(kind="git")})
-    if scaffold:
+    sync_code_workspace(root, {**committed, project: ProjectSource(kind="local")})
+    # Unmanaged reads as not-published to CI, so only dropping a `pypi` entry changes anything
+    # there (see `_publishedness_changed`).
+    if scaffold and _publishedness_changed(previous, ProjectSource(kind="local")):
         distribution = (previous.distribution if previous else None) or project
         _rescaffold_dependents(root, project, distribution)
     return 0

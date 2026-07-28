@@ -14,7 +14,7 @@ from typing import Any, List, Optional, cast
 import click
 
 from aisland.manager import BIN_DIR, BaseService
-from aisland.sources import DEFAULT_REF, ProjectSource, read_committed_sources, source_for_dependency
+from aisland.sources import DEFAULT_REF, read_committed_sources, source_for_dependency
 
 # Match the Gearlux GitHub URL forms (SSH and HTTPS), capturing the repo name.
 # Trailing ``.git`` is optional. Anchored so a repo path like "Gearlux/x/y" can't
@@ -37,13 +37,28 @@ def discover_gearlux_projects(workspace_root: Path) -> list[str]:
     project is added (a new submodule + pyproject), CI scaffolding picks it up
     on the next ``aisland jenkins scaffold`` run with no aisland-side edit.
 
+    A DETACHED project (``github`` / ``pypi`` source, ``aisland/sources.py``) has an EMPTY
+    directory and therefore no ``pyproject.toml`` to read — so its name is taken from the
+    committed registry's ``distribution`` field instead, which exists precisely because a
+    deinit'd directory can no longer be asked. Omitting it would silently drop the dep from the
+    scaffolder's internal set: harmless for ``pypi`` (which is dropped anyway), but for
+    ``github`` it would erase the very git-URL pin the source exists to express, leaving CI to
+    resolve the PyPI release instead of the requested ref — or to fail outright when the project
+    is not published at all.
+
     Returns:
         Alphabetically sorted list. Topological ordering is computed by the
         caller from each project's own deps, not here.
     """
+    from aisland.sources import read_committed_sources
+
+    detached_names = [
+        source.distribution or project for project, source in read_committed_sources(workspace_root).items()
+    ]
+
     gitmodules = workspace_root / ".gitmodules"
     if not gitmodules.exists():
-        return []
+        return sorted(set(detached_names))
 
     try:
         cp = subprocess.run(
@@ -60,9 +75,9 @@ def discover_gearlux_projects(workspace_root: Path) -> list[str]:
             check=True,
         )
     except (FileNotFoundError, subprocess.CalledProcessError):
-        return []
+        return sorted(set(detached_names))
 
-    names: list[str] = []
+    names: list[str] = list(detached_names)
     for line in cp.stdout.splitlines():
         parts = line.strip().split(maxsplit=1)
         if len(parts) != 2:
@@ -88,7 +103,9 @@ def discover_gearlux_projects(workspace_root: Path) -> list[str]:
             # pyproject distribution is ``aisland-manager`` but the repo, and what
             # consumers actually list as a dep, is ``aisland``.
             names.append(dist_name.removesuffix("-manager"))
-    return sorted(names)
+    # Dedup: a detached project may ALSO still have a checkout on the machine running the
+    # scaffold (a `local` per-machine override), in which case both passes contribute its name.
+    return sorted(set(names))
 
 
 @functools.lru_cache(maxsize=None)
@@ -802,28 +819,29 @@ class JenkinsService(BaseService):
         # workspace project is now a zero-aisland-edit operation.
         gearlux_projects = discover_gearlux_projects(workspace_root)
 
-        # Per-project sources (aisland/sources.py). The COMMITTED registry only — these three
-        # files are tracked, so a per-machine override must never reach them.
+        # Per-project sources (aisland/sources.py). CI reads ONE bit — is this dep published? —
+        # and nothing else. In particular it deliberately IGNORES the configured `ref`.
         #
-        # * pypi-sourced dep -> dropped from the pre-install loops entirely. That loop exists
-        #   ONLY because Gearlux distribution names are unpublished (see the comment block
-        #   below); for a published dep the premise is gone and `.[dev]` resolves it from PyPI,
-        #   which IS "pypi latest". The explicit drop matters because the dep may still be
-        #   checked out on the machine running the scaffold (a `git` override), in which case
-        #   discovery would otherwise classify it as internal and emit a git URL.
-        # * git-sourced dep -> its `ref` replaces the historical hardcoded `@main`.
+        # Rationale: `--ref` is a DEVELOPMENT pin ("I'm working against dev/main today"). These
+        # three files are tracked and shared, so letting a dev pin decide what a runner builds
+        # would (a) publish a personal choice to every consumer's CI and (b) churn 17 projects'
+        # committed files on every ref change. A runner therefore always clones `DEFAULT_REF`,
+        # which is also what makes `local` and `github` indistinguishable here — the kinds differ
+        # only in whether a WORKSPACE checkout exists, and a runner never has one.
+        #
+        # A pypi-sourced dep drops out of the pre-install loop entirely: that loop exists ONLY
+        # because Gearlux distribution names are unpublished (see the block below), and for a
+        # published dep the premise is gone — `.[dev]` resolves it from PyPI. The explicit drop
+        # matters because the dep may still be checked out on the machine running the scaffold
+        # (a `local` override), which would otherwise classify it as internal and emit a git URL.
+        #
+        # Net effect: the only source change that rewrites a tracked CI file is flipping a dep
+        # to or from `pypi`. `aisland source set --ref` regenerates nothing.
         committed_sources = read_committed_sources(workspace_root)
 
-        def _dep_source(dep: str) -> Optional[ProjectSource]:
-            return source_for_dependency(committed_sources, dep)
-
         def _dep_is_pypi(dep: str) -> bool:
-            source = _dep_source(dep)
+            source = source_for_dependency(committed_sources, dep)
             return source is not None and source.kind == "pypi"
-
-        def _dep_ref(dep: str) -> str:
-            source = _dep_source(dep)
-            return source.ref if source is not None and source.kind == "git" else DEFAULT_REF
 
         # Collect the FULL TRANSITIVE closure of internal Gearlux deps, not just
         # the direct ones. When CI installs a direct dep like `confluid` with
@@ -928,7 +946,7 @@ class JenkinsService(BaseService):
             if _dep_is_pypi(dep):
                 continue  # published — `.[dev]` resolves it from PyPI, which is the point.
             pip_install_cmds.append(
-                f"uv pip install --system --no-deps " f"git+https://github.com/Gearlux/{dep}.git@{_dep_ref(dep)}"
+                f"uv pip install --system --no-deps " f"git+https://github.com/Gearlux/{dep}.git@{DEFAULT_REF}"
             )
 
         pip_install_str = "\n        ".join(pip_install_cmds)
@@ -971,7 +989,7 @@ class JenkinsService(BaseService):
                 continue  # published — `.[dev]` resolves it from PyPI.
             jenkins_pip_cmds.append(
                 f'sh "${{VENV_BIN}}/uv pip install --no-deps '
-                f'git+https://github.com/Gearlux/{dep}.git@{_dep_ref(dep)}"'
+                f'git+https://github.com/Gearlux/{dep}.git@{DEFAULT_REF}"'
             )
         jenkins_pip_str = "\n                ".join(jenkins_pip_cmds)
         if jenkins_pip_str:
@@ -1004,24 +1022,30 @@ class JenkinsService(BaseService):
                 return stripped
             return dep_name  # fall through; scaffold error visible later
 
+        # This loop reads NO source configuration at all — every internal dep gets the identical
+        # guarded line, so Jenkinsfile.local is a function of the dependency LIST alone and is
+        # never regenerated by any `aisland source` change.
+        #
+        # That works because the `[ -d ]` guard IS the runtime form of the question the config
+        # answers: "does this machine have a checkout?" A `local` dep does, and is installed
+        # editable; a `github` or `pypi` dep does not (its submodule is deinit'd), and falls back
+        # to the remote. Deciding it at build time rather than at scaffold time also means a
+        # PER-MACHINE override — which by design never reaches a tracked file — is handled
+        # correctly instead of breaking the build on an empty directory.
+        #
+        # The fallback is `DEFAULT_REF` for every dep, including a pypi-sourced one: the local
+        # pipeline's job is "does my workspace code build", and testing a published dep at `main`
+        # catches breakage BEFORE it is released. The cost is that this one file builds a
+        # pypi-sourced dep from git rather than from the released wheel, unlike ci.yml.
+        #
+        # --no-deps is CRITICAL. Without it, uv would re-resolve this target's transitive Gearlux
+        # deps (e.g. confluid -> loggair), and since loggair isn't on PyPI the resolution would
+        # fail. The outer dep loop is already topologically ordered (loggair before confluid
+        # before liquifai, etc.) so each dep's own deps are installed by the time we get to it.
         local_pip_cmds = []
         for dep in internal_deps:
-            if _dep_is_pypi(dep):
-                continue  # published — `.[dev]` resolves it from PyPI.
             ws_dir = _dep_to_workspace_dir(dep)
-            git_url = f"git+https://github.com/Gearlux/{dep}.git@{_dep_ref(dep)}"
-            # --no-deps is CRITICAL. Without it, uv would re-resolve this target's
-            # transitive Gearlux deps (e.g. confluid -> loggair), and since
-            # loggair isn't on PyPI the resolution would fail. The outer dep loop
-            # is already topologically ordered (loggair before confluid before
-            # liquifai, etc.) so each dep's own deps are guaranteed installed by
-            # the time we get to it.
-            #
-            # The [ -d ] guard exists because this file is COMMITTED while a source can be
-            # overridden PER MACHINE (aisland/sources.py): a machine that overrides this dep to
-            # `pypi` has an EMPTY directory here, and an unguarded `-e <dir>` would fail the
-            # build. The fallback installs the COMMITTED source's git ref, which is the truth
-            # this tracked file is supposed to encode.
+            git_url = f"git+https://github.com/Gearlux/{dep}.git@{DEFAULT_REF}"
             local_pip_cmds.append(
                 f"sh \"if [ -d '${{env.WORKSPACE_ROOT}}/{ws_dir}' ]; then "
                 f"${{VENV_BIN}}/uv pip install --no-deps -e '${{env.WORKSPACE_ROOT}}/{ws_dir}'; else "

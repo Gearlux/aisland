@@ -1030,17 +1030,17 @@ def reconcile_submodules(workspace_root: Path) -> None:
     so one inaccessible/dirty submodule never aborts ``aisland setup``. Keeps ``git submodule
     foreach`` (and tools like push-all) seeing exactly the submodules this workspace declares.
     """
-    from aisland.sources import pypi_sourced_projects
+    from aisland.sources import detached_projects
 
     entries = submodule_active_map(workspace_root)
     if not entries:
         return
-    # A ``pypi`` source (see aisland/sources.py) means "consume the published wheel; the
-    # directory stays empty" — the same working-tree state as ``active = false``. Folding it in
-    # here keeps the two mechanisms from fighting: without this, a source-driven deinit would be
-    # undone by the very next ``aisland setup``, which would re-init a submodule whose
+    # A ``github`` or ``pypi`` source (see aisland/sources.py) means "consume it as a package;
+    # the directory stays empty" — the same working-tree state as ``active = false``. Folding it
+    # in here keeps the two mechanisms from fighting: without this, a source-driven deinit would
+    # be undone by the very next ``aisland setup``, which would re-init a submodule whose
     # ``.gitmodules`` entry still says active.
-    from_pypi = pypi_sourced_projects(workspace_root)
+    detached = detached_projects(workspace_root)
     click.echo("==> Reconciling submodule checkouts with active flags...")
     for name, path, committed_active in entries:
         # Effective state = the per-machine ``.git/config`` override (set by the
@@ -1049,7 +1049,7 @@ def reconcile_submodules(workspace_root: Path) -> None:
         # without committing the choice.
         local = _local_submodule_active(workspace_root, name)
         active = committed_active if local is None else local
-        if name in from_pypi:
+        if name in detached:
             active = False
         # A submodule's ``.git`` is a gitlink file (or dir) only when it is checked out.
         initialized = (workspace_root / path / ".git").exists()

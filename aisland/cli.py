@@ -89,12 +89,16 @@ def doctor() -> None:
 
 @main.group()
 def source() -> None:
-    """Choose where each workspace project's package comes from (local checkout vs PyPI).
+    """Choose where each workspace project's package comes from.
 
-    A `git` source keeps the project checked out on a branch and installed editable; a `pypi`
-    source deinits the submodule (empty directory), drops it from the *.code-workspace folder
-    list, and installs the published wheel instead. Both layers of configuration — the
-    committed `project-sources.toml` and the per-machine `.git/config` override — are honoured.
+    \b
+    local   checked out on --ref, installed editable  (you develop it here)
+    github  no checkout, installed from the remote at --ref
+    pypi    no checkout, installed from the published wheel
+
+    `github` and `pypi` both deinit the submodule (empty directory) and drop it from the
+    *.code-workspace folder list. Both layers of configuration — the committed
+    `project-sources.toml` and the per-machine `.git/config` override — are honoured.
     """
     pass
 
@@ -121,7 +125,7 @@ def source_list() -> None:
 @source.command(name="set")
 @click.argument("project")
 @click.argument("kind", type=click.Choice(SOURCE_KINDS))
-@click.option("--ref", default=None, help="Branch or tag for a `git` source (default: main).")
+@click.option("--ref", default=None, help="Branch or tag for a `local` / `github` source (default: main).")
 @click.option("--version", default=None, help="PEP 440 specifier for a `pypi` source (default: latest).")
 @click.option(
     "--machine-only",
@@ -141,9 +145,10 @@ def source_set(
     """Set PROJECT's source to KIND and apply it (checkout, venv, editor, CI).
 
     \b
-    aisland source set loggair pypi                 # consume the published wheel
-    aisland source set loggair git --ref dev/main   # develop against the dev/main branch
-    aisland source set loggair pypi --machine-only  # this machine only; nothing committed
+    aisland source set loggair local  --ref dev/main  # develop it here, on dev/main
+    aisland source set loggair github --ref dev/main  # pin to that branch, no checkout
+    aisland source set loggair pypi                   # consume the published wheel
+    aisland source set loggair pypi --machine-only    # this machine only; nothing committed
     """
     from aisland.sources import set_project_source
 
@@ -167,7 +172,7 @@ def source_unset(project: str, machine_only: bool, no_scaffold: bool) -> None:
     """Return PROJECT to unmanaged (historical behaviour: checkout + editable, `@main` in CI).
 
     The checkout and the venv are left as they are — unmanaged means aisland holds no opinion,
-    not that the current state is wrong. Use `aisland source set <project> git` to actively
+    not that the current state is wrong. Use `aisland source set <project> local` to actively
     restore a checkout.
     """
     from aisland.sources import unset_project_source
