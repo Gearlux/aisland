@@ -337,6 +337,94 @@ act -j unit-tests
 ```
 *Note: Running `act` requires Docker to be installed and running on your machine.*
 
+## Project Sources (`aisland source`)
+
+Each workspace project can be consumed either as a **local checkout** (developed here, installed
+editable) or as a **published wheel** (not checked out at all). `aisland source` owns that choice
+and drives every artifact that has to agree with it — the checkout, the shared `.venv`, the
+`*.code-workspace` folder list, and every dependent project's generated CI files.
+
+There are **two kinds**, and the `git` kind is parameterised by a ref — so "GitHub `main`" and
+"GitHub `dev/main`" are the same kind at different branches, and both are local checkouts:
+
+| source | directory | `.venv` | `*.code-workspace` | consumer CI install line |
+|---|---|---|---|---|
+| `git` (ref `main`) | checked out, `git switch main` | `uv pip install -e loggair` | listed | `git+…/loggair.git@main` |
+| `git` (ref `dev/main`) | checked out, `git switch dev/main` | `uv pip install -e loggair` | listed | `git+…/loggair.git@dev/main` |
+| `pypi` | **deinit'd — empty** | `uv pip install -U loggair` | **commented out** | *(none — `.[dev]` resolves it from PyPI)* |
+
+A project with **no entry** is *unmanaged*: nothing is switched, nothing is installed
+differently, and CI keeps the historical `@main`. Setting the first source is the only thing that
+changes behaviour.
+
+```bash
+aisland source list                              # what is configured, and what is on disk
+aisland source set loggair pypi                  # consume the published wheel; empty the directory
+aisland source set loggair git --ref dev/main    # develop against the dev/main branch
+aisland source set loggair pypi --machine-only   # this machine only; nothing committed
+aisland source unset loggair                     # back to unmanaged
+aisland source apply                             # re-apply the configuration (what `aisland setup` runs)
+```
+
+```text
+$ aisland source list
+  PROJECT                COMMITTED        OVERRIDE         EFFECTIVE        STATE
+  loggair                git:dev/main     -                git:dev/main     on dev/main
+```
+
+### The two configuration layers
+
+Mirrors the `.gitmodules active` + `.git/config submodule.<name>.active` split used for optional
+submodules:
+
+| layer | where | committed? |
+|---|---|---|
+| default | `<workspace>/project-sources.toml` | **yes** — shared between machines |
+| override | `git config --local aisland.source.<project>` | no — per machine |
+
+**Which layer drives what is load-bearing.** Every downstream artifact except the venv and the
+checkout is itself a committed file, so a machine-local choice must never reach one:
+
+- **committed source only** → `Jenkinsfile`, `Jenkinsfile.local`, `.github/workflows/ci.yml`, and
+  the `*.code-workspace` `folders` list. A `--machine-only` change touches none of them.
+- **effective source** (override, else committed) → submodule init/deinit + branch switch, and the
+  editable/PyPI install into the shared `.venv`.
+
+Because an override can empty a directory the *committed* `Jenkinsfile.local` still names, the
+generated editable-install line is guarded and falls back to the committed git ref:
+
+```groovy
+sh "if [ -d '${env.WORKSPACE_ROOT}/loggair' ]; then ${VENV_BIN}/uv pip install --no-deps -e '${env.WORKSPACE_ROOT}/loggair'; else ${VENV_BIN}/uv pip install --no-deps git+https://github.com/Gearlux/loggair.git@main; fi"
+```
+
+### `project-sources.toml`
+
+Written by `aisland source set`; hand edits are honoured but the header asks you not to.
+
+```toml
+[loggair]
+source = "pypi"           # "git" | "pypi"
+distribution = "loggair"  # PyPI/dist name — recorded because a deinit'd dir has no pyproject.toml
+# ref = "dev/main"        # git only; omitted => "main"
+# version = ">=0.1.0"     # pypi only; omitted => latest
+```
+
+### Notes
+
+- A `pypi` source is verified before anything is touched: the name must exist on PyPI **and** its
+  published metadata must point at `github.com/Gearlux/…`. PyPI names are global, so a bare
+  existence check would let a workspace project whose name is taken by someone else install that
+  stranger's package into the shared venv. An unreachable index warns and continues rather than
+  blocking an offline machine.
+- `git switch` and `git submodule deinit` are never forced: a submodule with uncommitted work
+  refuses, is reported, and neither the venv nor the registry is changed — a failed apply rolls
+  the configuration back so `project-sources.toml` never claims a state the tree does not have.
+- `aisland source set` re-scaffolds every **dependent** project's CI files. Since that runs with
+  `--force`, it also picks up any unrelated template drift those files had accumulated — pass
+  `--no-scaffold` if you want the source change alone.
+- `aisland setup` applies the configuration on every run, so a fresh clone converges without any
+  manual step.
+
 ## Submodule Management
 
 This repository uses Git submodules to manage its constituent projects.

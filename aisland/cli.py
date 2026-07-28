@@ -17,6 +17,7 @@ from aisland.services.jenkins import JenkinsService
 from aisland.services.labelstudio import LabelStudioService
 from aisland.services.mlflow import MLflowService
 from aisland.services.swiftbar import SwiftBarService
+from aisland.sources import SOURCE_KINDS
 
 
 @click.group()
@@ -81,6 +82,106 @@ def doctor() -> None:
     from aisland.doctor import run_doctor
 
     raise SystemExit(run_doctor())
+
+
+# --- Project Source Commands ---
+
+
+@main.group()
+def source() -> None:
+    """Choose where each workspace project's package comes from (local checkout vs PyPI).
+
+    A `git` source keeps the project checked out on a branch and installed editable; a `pypi`
+    source deinits the submodule (empty directory), drops it from the *.code-workspace folder
+    list, and installs the published wheel instead. Both layers of configuration — the
+    committed `project-sources.toml` and the per-machine `.git/config` override — are honoured.
+    """
+    pass
+
+
+@source.command(name="list")
+def source_list() -> None:
+    """Show the committed source, the per-machine override, and the on-disk state per project."""
+    from aisland.sources import describe
+
+    rows = describe()
+    if not rows:
+        click.echo("No project sources configured — every project is unmanaged (checkout + editable install).")
+        click.echo("Set one with: aisland source set <project> pypi")
+        return
+    header = f"  {'PROJECT':<22} {'COMMITTED':<16} {'OVERRIDE':<16} {'EFFECTIVE':<16} STATE"
+    click.echo(click.style(header, bold=True))
+    for row in rows:
+        click.echo(
+            f"  {row['project']:<22} {row['committed']:<16} {row['override']:<16} "
+            f"{row['effective']:<16} {row['state']}"
+        )
+
+
+@source.command(name="set")
+@click.argument("project")
+@click.argument("kind", type=click.Choice(SOURCE_KINDS))
+@click.option("--ref", default=None, help="Branch or tag for a `git` source (default: main).")
+@click.option("--version", default=None, help="PEP 440 specifier for a `pypi` source (default: latest).")
+@click.option(
+    "--machine-only",
+    is_flag=True,
+    help="Record only the per-machine .git/config override; leave project-sources.toml (and the "
+    "committed build files it drives) untouched.",
+)
+@click.option("--no-scaffold", is_flag=True, help="Skip regenerating dependent projects' CI files.")
+def source_set(
+    project: str,
+    kind: str,
+    ref: Optional[str],
+    version: Optional[str],
+    machine_only: bool,
+    no_scaffold: bool,
+) -> None:
+    """Set PROJECT's source to KIND and apply it (checkout, venv, editor, CI).
+
+    \b
+    aisland source set loggair pypi                 # consume the published wheel
+    aisland source set loggair git --ref dev/main   # develop against the dev/main branch
+    aisland source set loggair pypi --machine-only  # this machine only; nothing committed
+    """
+    from aisland.sources import set_project_source
+
+    raise SystemExit(
+        set_project_source(
+            project=project,
+            kind=kind,
+            ref=ref,
+            version=version,
+            machine_only=machine_only,
+            scaffold=not no_scaffold,
+        )
+    )
+
+
+@source.command(name="unset")
+@click.argument("project")
+@click.option("--machine-only", is_flag=True, help="Clear only this machine's override; keep the committed source.")
+@click.option("--no-scaffold", is_flag=True, help="Skip regenerating dependent projects' CI files.")
+def source_unset(project: str, machine_only: bool, no_scaffold: bool) -> None:
+    """Return PROJECT to unmanaged (historical behaviour: checkout + editable, `@main` in CI).
+
+    The checkout and the venv are left as they are — unmanaged means aisland holds no opinion,
+    not that the current state is wrong. Use `aisland source set <project> git` to actively
+    restore a checkout.
+    """
+    from aisland.sources import unset_project_source
+
+    raise SystemExit(unset_project_source(project=project, machine_only=machine_only, scaffold=not no_scaffold))
+
+
+@source.command(name="apply")
+@click.argument("project", required=False)
+def source_apply(project: Optional[str]) -> None:
+    """Re-apply the configured source(s) without changing the configuration (idempotent)."""
+    from aisland.sources import apply_configured
+
+    raise SystemExit(apply_configured(project))
 
 
 # --- Docker Commands ---

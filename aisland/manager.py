@@ -1030,9 +1030,17 @@ def reconcile_submodules(workspace_root: Path) -> None:
     so one inaccessible/dirty submodule never aborts ``aisland setup``. Keeps ``git submodule
     foreach`` (and tools like push-all) seeing exactly the submodules this workspace declares.
     """
+    from aisland.sources import pypi_sourced_projects
+
     entries = submodule_active_map(workspace_root)
     if not entries:
         return
+    # A ``pypi`` source (see aisland/sources.py) means "consume the published wheel; the
+    # directory stays empty" — the same working-tree state as ``active = false``. Folding it in
+    # here keeps the two mechanisms from fighting: without this, a source-driven deinit would be
+    # undone by the very next ``aisland setup``, which would re-init a submodule whose
+    # ``.gitmodules`` entry still says active.
+    from_pypi = pypi_sourced_projects(workspace_root)
     click.echo("==> Reconciling submodule checkouts with active flags...")
     for name, path, committed_active in entries:
         # Effective state = the per-machine ``.git/config`` override (set by the
@@ -1041,6 +1049,8 @@ def reconcile_submodules(workspace_root: Path) -> None:
         # without committing the choice.
         local = _local_submodule_active(workspace_root, name)
         active = committed_active if local is None else local
+        if name in from_pypi:
+            active = False
         # A submodule's ``.git`` is a gitlink file (or dir) only when it is checked out.
         initialized = (workspace_root / path / ".git").exists()
         if active and not initialized:
@@ -1262,6 +1272,15 @@ def setup_workspace(
     #     `git submodule foreach`) matches. Runs before discovery so inactive checkouts drop out.
     _resolve_submodule_activation(workspace_root, non_interactive, activate, deactivate)
     reconcile_submodules(workspace_root)
+
+    # 1c. Per-project sources — put each managed project on its configured branch (git) or
+    #     replace it with the published wheel (pypi, which empties its directory). Runs BEFORE
+    #     discovery so a pypi-sourced project drops out of the editable-install loop below on
+    #     its own, and its wheel is already installed when a consumer's `.[dev]` resolves it.
+    from aisland.sources import apply_all, read_committed_sources, sync_code_workspace
+
+    apply_all(workspace_root, uv_cmd)
+    sync_code_workspace(workspace_root, read_committed_sources(workspace_root))
 
     # 2. Dependency Discovery (now reflects the active checkouts)
     click.echo(f"==> Resolving workspace dependency graph in {workspace_root}...")

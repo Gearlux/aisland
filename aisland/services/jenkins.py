@@ -14,6 +14,7 @@ from typing import Any, List, Optional, cast
 import click
 
 from aisland.manager import BIN_DIR, BaseService
+from aisland.sources import DEFAULT_REF, ProjectSource, read_committed_sources, source_for_dependency
 
 # Match the Gearlux GitHub URL forms (SSH and HTTPS), capturing the repo name.
 # Trailing ``.git`` is optional. Anchored so a repo path like "Gearlux/x/y" can't
@@ -801,6 +802,29 @@ class JenkinsService(BaseService):
         # workspace project is now a zero-aisland-edit operation.
         gearlux_projects = discover_gearlux_projects(workspace_root)
 
+        # Per-project sources (aisland/sources.py). The COMMITTED registry only — these three
+        # files are tracked, so a per-machine override must never reach them.
+        #
+        # * pypi-sourced dep -> dropped from the pre-install loops entirely. That loop exists
+        #   ONLY because Gearlux distribution names are unpublished (see the comment block
+        #   below); for a published dep the premise is gone and `.[dev]` resolves it from PyPI,
+        #   which IS "pypi latest". The explicit drop matters because the dep may still be
+        #   checked out on the machine running the scaffold (a `git` override), in which case
+        #   discovery would otherwise classify it as internal and emit a git URL.
+        # * git-sourced dep -> its `ref` replaces the historical hardcoded `@main`.
+        committed_sources = read_committed_sources(workspace_root)
+
+        def _dep_source(dep: str) -> Optional[ProjectSource]:
+            return source_for_dependency(committed_sources, dep)
+
+        def _dep_is_pypi(dep: str) -> bool:
+            source = _dep_source(dep)
+            return source is not None and source.kind == "pypi"
+
+        def _dep_ref(dep: str) -> str:
+            source = _dep_source(dep)
+            return source.ref if source is not None and source.kind == "git" else DEFAULT_REF
+
         # Collect the FULL TRANSITIVE closure of internal Gearlux deps, not just
         # the direct ones. When CI installs a direct dep like `confluid` with
         # --no-deps, `.[dev]` below still needs to resolve confluid's own deps
@@ -901,7 +925,11 @@ class JenkinsService(BaseService):
         # --system installs into the runner's Python rather than requiring a venv.
         pip_install_cmds = []
         for dep in internal_deps:
-            pip_install_cmds.append(f"uv pip install --system --no-deps git+https://github.com/Gearlux/{dep}.git@main")
+            if _dep_is_pypi(dep):
+                continue  # published — `.[dev]` resolves it from PyPI, which is the point.
+            pip_install_cmds.append(
+                f"uv pip install --system --no-deps " f"git+https://github.com/Gearlux/{dep}.git@{_dep_ref(dep)}"
+            )
 
         pip_install_str = "\n        ".join(pip_install_cmds)
         if pip_install_str:
@@ -916,7 +944,9 @@ class JenkinsService(BaseService):
         # is_private_gearlux_repo() queries `gh api` with a per-process cache; it
         # falls back to False (assume public) on any error, so this is safe to call
         # in environments without gh CLI configured.
-        needs_app_token = any(is_private_gearlux_repo(dep) for dep in internal_deps)
+        # Only deps CI actually clones from GitHub need the token — a pypi-sourced dep is fetched
+        # from the public index, so it must not keep the step alive on its own.
+        needs_app_token = any(is_private_gearlux_repo(dep) for dep in internal_deps if not _dep_is_pypi(dep))
 
         if needs_app_token:
             app_token_step = """    - name: Mint GitHub App token for private Gearlux deps
@@ -937,8 +967,11 @@ class JenkinsService(BaseService):
         # deps LAST with --reinstall so PyPI name collisions get overwritten.
         jenkins_pip_cmds = []
         for dep in internal_deps:
+            if _dep_is_pypi(dep):
+                continue  # published — `.[dev]` resolves it from PyPI.
             jenkins_pip_cmds.append(
-                f'sh "${{VENV_BIN}}/uv pip install --no-deps ' f'git+https://github.com/Gearlux/{dep}.git@main"'
+                f'sh "${{VENV_BIN}}/uv pip install --no-deps '
+                f'git+https://github.com/Gearlux/{dep}.git@{_dep_ref(dep)}"'
             )
         jenkins_pip_str = "\n                ".join(jenkins_pip_cmds)
         if jenkins_pip_str:
@@ -973,14 +1006,27 @@ class JenkinsService(BaseService):
 
         local_pip_cmds = []
         for dep in internal_deps:
+            if _dep_is_pypi(dep):
+                continue  # published — `.[dev]` resolves it from PyPI.
             ws_dir = _dep_to_workspace_dir(dep)
+            git_url = f"git+https://github.com/Gearlux/{dep}.git@{_dep_ref(dep)}"
             # --no-deps is CRITICAL. Without it, uv would re-resolve this target's
             # transitive Gearlux deps (e.g. confluid -> loggair), and since
             # loggair isn't on PyPI the resolution would fail. The outer dep loop
             # is already topologically ordered (loggair before confluid before
             # liquifai, etc.) so each dep's own deps are guaranteed installed by
             # the time we get to it.
-            local_pip_cmds.append(f'sh "${{VENV_BIN}}/uv pip install --no-deps -e ${{env.WORKSPACE_ROOT}}/{ws_dir}"')
+            #
+            # The [ -d ] guard exists because this file is COMMITTED while a source can be
+            # overridden PER MACHINE (aisland/sources.py): a machine that overrides this dep to
+            # `pypi` has an EMPTY directory here, and an unguarded `-e <dir>` would fail the
+            # build. The fallback installs the COMMITTED source's git ref, which is the truth
+            # this tracked file is supposed to encode.
+            local_pip_cmds.append(
+                f"sh \"if [ -d '${{env.WORKSPACE_ROOT}}/{ws_dir}' ]; then "
+                f"${{VENV_BIN}}/uv pip install --no-deps -e '${{env.WORKSPACE_ROOT}}/{ws_dir}'; else "
+                f'${{VENV_BIN}}/uv pip install --no-deps {git_url}; fi"'
+            )
         local_pip_str = "\n                ".join(local_pip_cmds)
         if local_pip_str:
             local_pip_str = (
