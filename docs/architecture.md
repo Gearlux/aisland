@@ -71,14 +71,23 @@ introducing the mechanism changed no behaviour anywhere until a source was actua
 
 ### Consequences
 
-- **The `[ -d ]` guard is the mechanism, not defensive polish.** It asks at *build* time exactly
+- **The build-time guard is the mechanism, not defensive polish.** It asks at *build* time exactly
   the question the configuration answers — "does this machine have a checkout?" — so
   `Jenkinsfile.local` needs no configuration at all: one identical line per dep, editable if the
-  directory exists, `git@main` otherwise. Deciding it at build time rather than scaffold time is
+  checkout is there, `git@main` otherwise. Deciding it at build time rather than scaffold time is
   also what lets a per-machine override work, since by construction it never reaches this tracked
   file. Its accepted cost is that a `pypi`-sourced dep is built from `main` here rather than from
   the released wheel — the local pipeline exists to catch breakage *before* a release, so that is
   the useful direction to err in.
+- **The guard tests `pyproject.toml`, not the directory.** `git submodule deinit` empties the
+  working tree but leaves the directory itself, so a `[ -d ]` predicate answers "yes, a checkout"
+  for every detached dep — the editable branch then runs against an empty directory, `uv` reports
+  *"does not appear to be a Python project"*, and the git fallback that exists for exactly this
+  case is unreachable. Testing the file the editable install actually consumes is what makes the
+  predicate agree with the question. The wider lesson: when a guard stands in for a configuration
+  value, its predicate has to be *equivalent* to that value, not merely correlated with it — and
+  the way to establish that is to execute the emitted shell against the real on-disk state, which
+  an assertion on the emitted string can never do.
 - **Order of operations in a `pypi` switch is fixed by information loss.** The distribution name
   (`aisland` → `aisland-manager`) can only be read from `pyproject.toml`, which the deinit
   removes — so it is resolved first and then *persisted* into the committed registry.

@@ -5,8 +5,9 @@ Covers the four things a source change has to keep consistent:
   per-machine .git/config);
 - the `*.code-workspace` `folders` sync (comment-out in place, byte-lossless round trip);
 - `apply_source`'s git/uv command sequence for each of the three kinds;
-- the CI scaffolder's emission (pypi deps dropped, refs honoured, the `[ -d ]` guard on `local`
-  deps only, and a detached dep surviving its own empty directory).
+- the CI scaffolder's emission (pypi deps dropped, refs honoured, the uniform
+  `[ -f <dep>/pyproject.toml ]` guard — both its text and its BEHAVIOUR against a real deinit'd
+  directory — and a detached dep surviving its own empty directory).
 """
 
 from __future__ import annotations
@@ -606,8 +607,46 @@ class TestScaffoldHonoursSources:
         editable install must fall back to the committed git ref instead of failing."""
         JenkinsService().scaffold_pipelines(project_name="confluid", force=True)
         local = _generated(ci_workspace, "confluid")["Jenkinsfile.local"]
-        assert "if [ -d '${env.WORKSPACE_ROOT}/loggair' ]; then" in local
+        assert "if [ -f '${env.WORKSPACE_ROOT}/loggair/pyproject.toml' ]; then" in local
         assert "else ${VENV_BIN}/uv pip install --no-deps git+https://github.com/Gearlux/loggair.git@main; fi" in local
+
+    def test_guard_takes_the_git_branch_on_a_deinitd_directory(self, ci_workspace: Path) -> None:
+        """The regression the string assertions could not catch. `git submodule deinit` empties the
+        working tree but LEAVES THE DIRECTORY, so the earlier `[ -d ]` predicate answered "yes, a
+        checkout" for every detached dep: the editable branch fired against an empty directory and
+        `uv pip install -e` aborted with "does not appear to be a Python project", making the git
+        fallback unreachable. Assert on BEHAVIOUR — run the emitted shell against a real empty dir
+        — because a predicate that merely correlates with the config passes any string check."""
+        s.write_committed_sources(ci_workspace, {"loggair": s.ProjectSource(kind="pypi", distribution="loggair")})
+        JenkinsService().scaffold_pipelines(project_name="confluid", force=True)
+        local = _generated(ci_workspace, "confluid")["Jenkinsfile.local"]
+
+        line = next(ln for ln in local.splitlines() if "loggair" in ln and "uv pip install" in ln)
+        # Unwrap the Groovy `sh "…"` and substitute what Jenkins would at run time.
+        script = line.strip()[len('sh "') : -1]
+        script = script.replace("${env.WORKSPACE_ROOT}", str(ci_workspace)).replace("${VENV_BIN}", "echo VENV")
+
+        # Deinit leaves the directory in place, empty — reproduce exactly that on-disk state.
+        shutil.rmtree(ci_workspace / "loggair")
+        (ci_workspace / "loggair").mkdir()
+
+        chosen = subprocess.run(["sh", "-c", script], capture_output=True, text=True, check=True).stdout
+        assert "git+https://github.com/Gearlux/loggair.git@main" in chosen
+        assert " -e " not in chosen, f"editable install chosen for an empty directory: {chosen!r}"
+
+    def test_guard_takes_the_editable_branch_on_a_real_checkout(self, ci_workspace: Path) -> None:
+        """The other half of the equivalence: with a checkout present the same line installs
+        editable, so the fix cannot have simply disabled the local path."""
+        JenkinsService().scaffold_pipelines(project_name="confluid", force=True)
+        local = _generated(ci_workspace, "confluid")["Jenkinsfile.local"]
+
+        line = next(ln for ln in local.splitlines() if "loggair" in ln and "uv pip install" in ln)
+        script = line.strip()[len('sh "') : -1]
+        script = script.replace("${env.WORKSPACE_ROOT}", str(ci_workspace)).replace("${VENV_BIN}", "echo VENV")
+
+        chosen = subprocess.run(["sh", "-c", script], capture_output=True, text=True, check=True).stdout
+        assert f"-e {ci_workspace}/loggair" in chosen
+        assert "git+" not in chosen
 
     def test_guard_always_falls_back_to_the_default_ref(self, ci_workspace: Path) -> None:
         s.write_committed_sources(ci_workspace, {"loggair": s.ProjectSource(kind="local", ref="dev/main")})
@@ -635,7 +674,7 @@ class TestScaffoldHonoursSources:
         s.write_committed_sources(ci_workspace, {"loggair": s.ProjectSource(kind="github", ref="dev/main")})
         JenkinsService().scaffold_pipelines(project_name="confluid", force=True)
         local = _generated(ci_workspace, "confluid")["Jenkinsfile.local"]
-        assert "if [ -d '${env.WORKSPACE_ROOT}/loggair' ]; then" in local
+        assert "if [ -f '${env.WORKSPACE_ROOT}/loggair/pyproject.toml' ]; then" in local
         assert "else ${VENV_BIN}/uv pip install --no-deps git+https://github.com/Gearlux/loggair.git@main; fi" in local
 
     def test_pypi_dep_keeps_the_guard_in_jenkinsfile_local(self, ci_workspace: Path) -> None:
@@ -645,7 +684,7 @@ class TestScaffoldHonoursSources:
         s.write_committed_sources(ci_workspace, {"loggair": s.ProjectSource(kind="pypi", distribution="loggair")})
         JenkinsService().scaffold_pipelines(project_name="confluid", force=True)
         local = _generated(ci_workspace, "confluid")["Jenkinsfile.local"]
-        assert "if [ -d '${env.WORKSPACE_ROOT}/loggair' ]; then" in local
+        assert "if [ -f '${env.WORKSPACE_ROOT}/loggair/pyproject.toml' ]; then" in local
         assert "loggair.git@main; fi" in local
 
     def test_github_dep_survives_its_own_empty_directory(self, ci_workspace: Path) -> None:

@@ -37,9 +37,10 @@ the checkout is itself committed — a machine-local choice must never reach one
   editable/PyPI install into the shared ``.venv`` (via :func:`apply_source`).
 
 Because a per-machine override can empty a directory the COMMITTED ``Jenkinsfile.local`` still
-names, a ``local`` dep's generated editable-install line carries a ``[ -d … ]`` guard that falls
-back to the committed source's git URL. A ``github`` dep needs no guard — it has no checkout by
-design, so that file installs it from the remote directly. See ``jenkins.py``'s
+names, every dep's generated editable-install line carries a ``[ -f <dir>/pyproject.toml ]``
+guard that falls back to the committed source's git URL. The predicate tests the FILE, not the
+directory: ``git submodule deinit`` leaves an empty directory behind, so a ``-d`` test would be
+true for a detached dep and run the editable install against nothing. See ``jenkins.py``'s
 ``local_pip_cmds`` loop.
 """
 

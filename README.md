@@ -393,7 +393,7 @@ possible — exactly one bit, and never your `--ref`:
 
 | file | runs where | how it installs an internal dep |
 |---|---|---|
-| `Jenkinsfile.local` | your machine, against the workspace | **identical for every config** — a `[ -d ]` guard: editable if the directory exists, else `git@main` |
+| `Jenkinsfile.local` | your machine, against the workspace | **identical for every config** — a `[ -f <dep>/pyproject.toml ]` guard: editable if the checkout is there, else `git@main` |
 | `Jenkinsfile`, `ci.yml` | a runner, no workspace | `git@main` — unless the dep is `pypi`-sourced, in which case it is omitted and `.[dev]` resolves it from PyPI |
 
 Two consequences worth knowing:
@@ -402,14 +402,18 @@ Two consequences worth knowing:
   against `dev/main` today"); letting it decide what a runner builds would publish a personal
   choice to every consumer's CI *and* rewrite 17 projects' committed files on every switch. Only
   crossing the `pypi` boundary changes a CI file — because that is the one bit CI reads.
-- **`Jenkinsfile.local` is config-independent entirely.** The `[ -d ]` guard asks at *build* time
-  the same question the config answers — "does this machine have a checkout?" — so the file is a
-  function of the dependency list alone. That also makes a `--machine-only` override work
-  correctly instead of failing on an empty directory.
+- **`Jenkinsfile.local` is config-independent entirely.** The guard asks at *build* time the same
+  question the config answers — "does this machine have a checkout?" — so the file is a function
+  of the dependency list alone. That also makes a `--machine-only` override work correctly instead
+  of failing on an empty directory.
 
   ```groovy
-  sh "if [ -d '${env.WORKSPACE_ROOT}/loggair' ]; then ${VENV_BIN}/uv pip install --no-deps -e '${env.WORKSPACE_ROOT}/loggair'; else ${VENV_BIN}/uv pip install --no-deps git+https://github.com/Gearlux/loggair.git@main; fi"
+  sh "if [ -f '${env.WORKSPACE_ROOT}/loggair/pyproject.toml' ]; then ${VENV_BIN}/uv pip install --no-deps -e '${env.WORKSPACE_ROOT}/loggair'; else ${VENV_BIN}/uv pip install --no-deps git+https://github.com/Gearlux/loggair.git@main; fi"
   ```
+
+  It tests `pyproject.toml` rather than the directory because `git submodule deinit` leaves an
+  **empty directory** behind — under a `[ -d ]` test every detached dep took the editable branch
+  and the build died with *"does not appear to be a Python project"*.
 
   The one cost: a `pypi`-sourced dep is built from `main` here rather than from the released
   wheel, so this file alone diverges from your `.venv` and from `ci.yml`. That is deliberate —
