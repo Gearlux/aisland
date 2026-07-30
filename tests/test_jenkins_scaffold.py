@@ -86,3 +86,34 @@ def test_scaffold_emits_directory_example_runner(monkeypatch: pytest.MonkeyPatch
         content = path.read_text()
         assert "examples/*.py" in content, f"{desc} lost the flat-example loop"
         assert "examples/*/run.py" in content, f"{desc} must run directory examples via examples/*/run.py"
+
+
+def test_the_regenerate_header_is_a_command_the_cli_accepts(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    """The header is the ONLY regeneration instruction an operator or agent has, so it must run.
+
+    It used to say `aisland jenkins scaffold --project <name> --force`, which fails with
+    `Error: No such option: --project` — the project is a positional argument. This parses the
+    emitted line with the REAL click command rather than string-matching, so the pin tracks the
+    CLI's signature instead of restating it.
+    """
+    _make_pyproject(tmp_path / "proj", "proj")
+
+    from aisland import manager
+    from aisland.cli import jenkins_scaffold
+
+    monkeypatch.setattr(manager, "get_workspace_root", lambda: tmp_path)
+    JenkinsService().scaffold_pipelines(project_name="proj", force=True)
+
+    generated = [
+        tmp_path / "proj" / "Jenkinsfile",
+        tmp_path / "proj" / "Jenkinsfile.local",
+        tmp_path / "proj" / ".github" / "workflows" / "ci.yml",
+    ]
+    for path in generated:
+        line = next(ln for ln in path.read_text().splitlines() if "To regenerate:" in ln)
+        argv = line.split("To regenerate:")[1].split()
+
+        assert argv[:3] == ["aisland", "jenkins", "scaffold"], f"{path.name}: unexpected command: {argv}"
+        # The command's own parser is the authority on what the rest means.
+        with jenkins_scaffold.make_context("scaffold", argv[3:], resilient_parsing=False) as ctx:
+            assert ctx.params == {"project": "proj", "force": True}, f"{path.name}: {ctx.params}"
