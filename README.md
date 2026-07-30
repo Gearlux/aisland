@@ -550,9 +550,14 @@ extra" — they are ordinary dependencies, possibly shared — so after switchin
 The selection controls what is *declared and installed*, not what is *removed*. For a genuinely
 clean environment, recreate the `.venv` and run `aisland setup --framework keras`.
 
-> Several projects (`signals`, `raidar`, `deltaid`, `raidar-ultralytics`, `torpaido`) still
-> list `torch` in their hard `dependencies`, so on a full workspace torch is installed whatever
-> you select. Tracked in the workspace `TASKS.md`.
+> **Some projects require a framework rather than offering a choice**, and they keep `torch` as a
+> plain hard dependency on purpose: `signals` (its record builder enforces `torch.complex64`
+> IQ), `deltaid` (a PyTorch-Lightning segmenter), `raidar` and `raidar-ultralytics` (torch
+> detection trainers). Selecting `keras` therefore still installs torch on a full workspace —
+> narrowing what a *multi-backend* project installs is what this command is for. Moving their
+> deps behind an extra was considered and rejected: it would make `pip install raidar` yield a
+> package whose `__init__` raises `ImportError`, which is dishonest packaging for a project that
+> genuinely needs torch.
 
 ### Choosing at setup time
 

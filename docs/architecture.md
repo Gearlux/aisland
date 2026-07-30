@@ -293,6 +293,25 @@ engine from a documentation extra.
   behind. Accepted: a stale wheel costs disk, not correctness.
 - **`--non-interactive` selects everything** when nothing is recorded. A headless setup must
   neither hang on the prompt nor hand back a workspace that cannot train.
+- **Scope is deliberately limited to projects that OFFER a choice** (decided 2026-07-30 after
+  reading each project, not counting its imports). `recordstream`, `marainer` and `sonair` declare
+  frameworks because a genuine alternative exists. Four others keep `torch` as a plain hard
+  dependency and are NOT declarable:
+
+  | project | why it requires torch |
+  | --- | --- |
+  | `signals` | `schema.py` — "THE builder for the record model" — enforces `torch.complex64` IQ. Torch is the canonical representation, not a peripheral op. |
+  | `deltaid` | its own docstring: "a standard PyTorch-Lightning semantic segmenter". |
+  | `raidar`, `raidar-ultralytics` | torch/ultralytics detection trainers; `__init__.py` imports them eagerly. |
+
+  Moving their deps behind a `[torch]` extra was considered and REJECTED: `pip install raidar`
+  would then yield a package whose `__init__` raises `ImportError`, which is dishonest packaging
+  for a project that genuinely needs torch. The consequence to accept is that selecting `keras` on
+  a FULL workspace still installs torch — the selection narrows multi-backend projects, and does
+  not promise a framework-free venv. (`torpaido` was a third case and is fixed rather than
+  excepted: it declared `torch` while referencing it *zero* times, so the dependency was simply
+  dropped.) A future mechanism for "skip this project unless its framework is selected" is the
+  path if a truly torch-free venv is ever wanted; it is not this one.
 
 ### Example
 
