@@ -65,9 +65,20 @@ def provision() -> None:
 @click.option(
     "--deactivate", multiple=True, help="Deactivate the named optional submodule(s) without prompting (repeatable)."
 )
-def setup(non_interactive: bool, activate: tuple[str, ...], deactivate: tuple[str, ...]) -> None:
+@click.option(
+    "--framework",
+    multiple=True,
+    help="ML framework(s) to install, e.g. --framework torch --framework keras (repeatable). "
+    "Recorded in project-frameworks.toml; omit to reuse the recorded selection.",
+)
+def setup(
+    non_interactive: bool,
+    activate: tuple[str, ...],
+    deactivate: tuple[str, ...],
+    framework: tuple[str, ...],
+) -> None:
     """Full workspace setup: provision tools, resolve optional-submodule activation, install activated projects."""
-    setup_workspace(non_interactive=non_interactive, activate=activate, deactivate=deactivate)
+    setup_workspace(non_interactive=non_interactive, activate=activate, deactivate=deactivate, framework=framework)
 
 
 @main.command()
@@ -187,6 +198,90 @@ def source_apply(project: Optional[str]) -> None:
     from aisland.sources import apply_configured
 
     raise SystemExit(apply_configured(project))
+
+
+# --- Framework Selection Commands ---
+
+
+@main.group()
+def framework() -> None:
+    """Choose which ML frameworks this workspace installs.
+
+    Workspace packages keep their core framework-free and put each framework behind an EXTRA
+    (`recordstream[torch]`, `sonair[lightning]`/`[keras]`). A project declares which of its
+    extras are frameworks in `[tool.aisland] frameworks`; this command selects among them, and
+    `aisland setup` installs the intersection.
+
+    Both layers are honoured: the committed `project-frameworks.toml` (shared, and the set
+    generated CI installs) and a per-machine `.git/config aisland.frameworks` override.
+    """
+    pass
+
+
+@framework.command(name="list")
+def framework_list() -> None:
+    """Show each declared framework, which projects offer it, and whether it is selected."""
+    from aisland.frameworks import FRAMEWORKS_FILE, describe
+
+    rows = describe()
+    if not rows:
+        click.echo("No project declares framework extras ([tool.aisland] frameworks).")
+        return
+    header = f"  {'FRAMEWORK':<14} {'COMMITTED':<11} {'OVERRIDE':<10} {'EFFECTIVE':<11} PROJECTS"
+    click.echo(click.style(header, bold=True))
+    for row in rows:
+        click.echo(
+            f"  {row['framework']:<14} {row['committed']:<11} {row['override']:<10} "
+            f"{row['effective']:<11} {row['projects']}"
+        )
+    click.echo(f"\n  '-' = that layer records no selection at all ({FRAMEWORKS_FILE} absent, or no override).")
+
+    # Print the commands that CHANGE this, using real framework names so they are copy-pasteable.
+    # `--machine-only` is a FLAG on set/unset, never a command of its own — showing it detached
+    # from its verb sent an operator hunting for a subcommand that does not exist.
+    example = " ".join(row["framework"] for row in rows[:2])
+    commands = [
+        (f"aisland framework set {example}", f"shared: writes {FRAMEWORKS_FILE}; CI installs it"),
+        (f"aisland framework set {example} --machine-only", "this machine only (.git/config)"),
+        ("aisland framework unset --machine-only", "drop this machine's override"),
+        (f"aisland framework set {example} --no-apply", "record it without reinstalling"),
+    ]
+    width = max(len(cmd) for cmd, _ in commands)
+    click.echo("\n  Change it (--machine-only / --no-apply are FLAGS on set/unset, not commands):")
+    for cmd, note in commands:
+        click.echo(f"    {cmd:<{width}}  # {note}")
+
+
+@framework.command(name="set")
+@click.argument("names", nargs=-1, required=True)
+@click.option(
+    "--machine-only",
+    is_flag=True,
+    help="Record only the per-machine .git/config override; leave project-frameworks.toml "
+    "(and the set generated CI installs) untouched.",
+)
+@click.option("--no-apply", is_flag=True, help="Record the selection without reinstalling anything.")
+def framework_set(names: tuple[str, ...], machine_only: bool, no_apply: bool) -> None:
+    """Select FRAMEWORKS and reinstall the projects that declare them.
+
+    \b
+    aisland framework set torch lightning        # a torch-only machine
+    aisland framework set lightning keras        # both backends
+    aisland framework set keras --machine-only   # this machine only; nothing committed
+    """
+    from aisland.frameworks import set_frameworks
+
+    raise SystemExit(set_frameworks(names=names, machine_only=machine_only, apply=not no_apply))
+
+
+@framework.command(name="unset")
+@click.option("--machine-only", is_flag=True, help="Clear only this machine's override; keep the committed selection.")
+@click.option("--no-apply", is_flag=True, help="Clear the selection without reinstalling anything.")
+def framework_unset(machine_only: bool, no_apply: bool) -> None:
+    """Clear the framework selection; the next `aisland setup` prompts again."""
+    from aisland.frameworks import unset_frameworks
+
+    raise SystemExit(unset_frameworks(machine_only=machine_only, apply=not no_apply))
 
 
 # --- Docker Commands ---

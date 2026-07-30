@@ -223,3 +223,106 @@ already satisfies the invariant, so a no-op sync writes nothing.
 - Insertion position policy (currently "before out-of-tree paths") is a judgement call and safe to revisit.
 - What must not change: never replace this with a JSON parse + re-serialise. It would strip every
   comment from a tracked, hand-maintained file and destroy the lossless round trip.
+
+---
+
+## Framework selection is a second two-layer registry, and CI reads only the committed layer (2026-07-30)
+
+### Context
+
+The workspace's packages were made framework-neutral: each keeps a numpy/config core and puts
+its ML framework behind an extra — `recordstream[torch]`, `sonair[lightning]` / `[keras]`,
+`marainer[torch,lightning,keras,tensorflow]`. That is what makes "install only what I work with"
+*expressible*, but nothing yet *decided* it. `aisland setup`'s install line was:
+
+```python
+target = f"{project_dir}[dev]" if project["has_dev"] else str(project_dir)
+```
+
+so immediately after the extras split, a fresh setup produced a sonair with no training backend
+at all. The decision had to live somewhere, and the obvious somewhere — "just install every
+extra" — is wrong twice over: sonair declares `jax` / `mlx` / `tensorflow` extras that exist only
+so its CLI templates can print a real install command, and `dev` / `http` / `viz` / `notebook` /
+`all` sit in the same table as `torch` and `keras`, so no name-based rule can tell a training
+engine from a documentation extra.
+
+### Decision
+
+**Split it in two: a project declares, the workspace selects.**
+
+1. **Declaration** lives in the project's own `pyproject.toml`, because only the project knows
+   which of its extras are frameworks and which are implemented:
+
+   ```toml
+   [tool.aisland]
+   frameworks = ["lightning", "keras"]
+   ```
+
+   A project with no declaration is *inert* — it installs exactly as it always did, which is what
+   keeps this change invisible for the fifteen-odd projects that ship no framework extra.
+
+2. **Selection** is a list of framework NAMES, and each project installs what it declares ∩ what
+   is selected. The names line up across projects deliberately (`keras` is `keras` everywhere),
+   so one selection drives everything with no per-project mapping table.
+
+3. **Two configuration layers, mirroring `aisland/sources.py`**: the committed
+   `project-frameworks.toml` and a per-machine `git config --local aisland.frameworks`. The
+   committed layer is the shared default AND the only layer the CI scaffolder reads.
+
+4. **`None` is not `[]`.** An absent selection means *nobody has chosen* and `aisland setup`
+   prompts, recording the answer; a recorded empty selection means *no frameworks, I mean it* and
+   is honoured silently.
+
+### Consequences
+
+- **A local narrowing can never reach a runner.** This is the invariant, not a nicety: if one
+  developer's "I only use torch" reached the generated `Jenkinsfile` / `ci.yml`, every runner
+  would stop installing Keras and sonair's Keras suite would pass by not running. The failure
+  presents as a green CI that no longer checks anything, so `scaffold_pipelines` computes
+  `ci_extras` from `read_committed_frameworks` and never from `effective_frameworks`.
+- **CI installs the union, and that is affordable.** Measured 2026-07-30: torch 2.13 +
+  tensorflow 2.20 + keras 3.15 + pytorch-lightning 2.6.5 co-resolve on one numpy. Committing
+  everything and letting each machine narrow is therefore a real option, not a hope.
+- **Reinstall order is load-bearing.** `apply_frameworks` iterates `get_install_order`, not
+  `discover_projects`: a consumer's extra can name a sibling's (`sonair[keras]` requires
+  `marainer[keras]>=0.1.0`), and installing the consumer first resolves against the sibling's
+  already-installed metadata — uv then warns `does not have an extra named 'keras'` and installs
+  without it. Found on the first real run of the function, not in review.
+- **Deselecting does not uninstall.** uv has no notion of "the packages that belonged to this
+  extra" — they are ordinary dependencies, possibly shared — so dropping `keras` leaves the wheel
+  behind. Accepted: a stale wheel costs disk, not correctness.
+- **`--non-interactive` selects everything** when nothing is recorded. A headless setup must
+  neither hang on the prompt nor hand back a workspace that cannot train.
+
+### Example
+
+```python
+# the whole rule, at the one place setup installs a project
+extras = extras_for(project["name"],
+                    declared_frameworks(project_dir / "pyproject.toml"),  # ["lightning","keras"]
+                    selected_frameworks)                                  # ["torch","keras"]
+target = install_target(project_dir, project["has_dev"], extras)          # /w/sonair[dev,keras]
+```
+
+```bash
+$ aisland framework set torch lightning keras
+==> Recorded in project-frameworks.toml: torch, lightning, keras
+==> Installing recordstream (/w/recordstream[dev,torch])...
+==> Installing marainer (/w/marainer[dev,torch,lightning,keras])...
+==> Installing sonair (/w/sonair[dev,lightning,keras])...
+```
+
+### What you may change (and where it's documented)
+
+- **A new framework**: add the extra to the project, name it in that project's
+  `[tool.aisland] frameworks`, and it appears in `aisland framework list` automatically. No
+  aisland edit — the vocabulary is derived from the declarations.
+- **Which frameworks CI installs**: `aisland framework set …` (committed layer), then re-scaffold.
+  Do NOT hand-edit a generated `Jenkinsfile` / `ci.yml` to change extras — the next scaffold
+  reverts it.
+- **A per-machine deviation**: `aisland framework set … --machine-only`. What must not change is
+  that this layer stays out of every tracked file.
+- **The prompt's default** (currently blank = all) is a judgement call and safe to revisit; the
+  unset-vs-empty distinction underneath it is not.
+- **Usage** lives in the README's "ML Frameworks" section; per-project declarations are commented
+  in each `pyproject.toml`.

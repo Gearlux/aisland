@@ -1245,9 +1245,18 @@ def _write_root_uv_toml(workspace_root: Path, activated: List[dict]) -> None:
 
 
 def setup_workspace(
-    non_interactive: bool = False, activate: Tuple[str, ...] = (), deactivate: Tuple[str, ...] = ()
+    non_interactive: bool = False,
+    activate: Tuple[str, ...] = (),
+    deactivate: Tuple[str, ...] = (),
+    framework: Tuple[str, ...] = (),
 ) -> None:
-    """Perform a full workspace setup: system provisioning followed by editable pip installs."""
+    """Perform a full workspace setup: system provisioning followed by editable pip installs.
+
+    ``framework`` names the ML frameworks to install (``--framework torch --framework keras``).
+    Passing any RECORDS the selection in ``project-frameworks.toml``, so it is a one-time flag
+    rather than something to repeat on every run; omitting it uses the recorded selection, and
+    prompts when there is none. See :mod:`aisland.frameworks`.
+    """
     workspace_root = get_workspace_root()
     venv_bin = workspace_root / ".venv" / "bin"
 
@@ -1294,6 +1303,16 @@ def setup_workspace(
     #      project (append-only — see _sync_mypy_path for why nothing is removed).
     _sync_mypy_path(workspace_root, install_order)
 
+    # 2b''. Framework selection — which ML frameworks this machine installs. Resolved AFTER
+    #       discovery (the vocabulary comes from the discovered projects' declarations) and
+    #       BEFORE the install loop, which reads it per project. Prompts once when nothing has
+    #       been chosen yet; a recorded choice is used silently.
+    from aisland.frameworks import declared_frameworks, extras_for, install_target, resolve_for_setup
+
+    selected_frameworks, _just_chosen = resolve_for_setup(workspace_root, framework, non_interactive)
+    if selected_frameworks:
+        click.echo(f"==> Frameworks: {', '.join(selected_frameworks)}")
+
     # 2c. Generated root uv.toml — workspace base merged with each activated project's uv.toml,
     #     so a private index (e.g. vendorcli's Company Artifactory URLs) is present ONLY when that
     #     project is active. Written BEFORE the install loop so `uv pip install` sees the index.
@@ -1310,7 +1329,14 @@ def setup_workspace(
             pass
 
         # Python Provisioning (Editable Installs)
-        target = f"{project_dir}[dev]" if project["has_dev"] else str(project_dir)
+        # The framework extras this project DECLARES, narrowed to what the machine SELECTED —
+        # so a project declaring none installs exactly as it always did.
+        extras = extras_for(
+            project["name"],
+            declared_frameworks(project_dir / "pyproject.toml"),
+            selected_frameworks,
+        )
+        target = install_target(project_dir, project["has_dev"], extras)
         click.echo(f"==> Installing {project['name']} ({target})...")
         try:
             # Run from the workspace root so uv reads the generated root uv.toml (the merged

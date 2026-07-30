@@ -13,6 +13,9 @@ from typing import Any, List, Optional, cast
 
 import click
 
+from aisland.frameworks import declared_frameworks as fw_declared
+from aisland.frameworks import extras_for as fw_extras_for
+from aisland.frameworks import read_committed_frameworks as fw_committed
 from aisland.manager import BIN_DIR, BaseService
 from aisland.sources import DEFAULT_REF, read_committed_sources, source_for_dependency
 
@@ -819,6 +822,22 @@ class JenkinsService(BaseService):
         # workspace project is now a zero-aisland-edit operation.
         gearlux_projects = discover_gearlux_projects(workspace_root)
 
+        # Framework extras this project's CI installs: what it DECLARES under
+        # `[tool.aisland] frameworks` intersected with the COMMITTED selection
+        # (`project-frameworks.toml`). Committed-only, for exactly the reason the source
+        # registry below is: a per-machine `.git/config aisland.frameworks` override must never
+        # reach a tracked build file, or one developer's "I only use torch" would silently stop
+        # every runner from testing the Keras backend. A project declaring no frameworks emits
+        # the historical `.[dev]` unchanged.
+        ci_extras = ",".join(
+            ["dev"]
+            + fw_extras_for(
+                project_name,
+                fw_declared(pyproject_path),
+                fw_committed(workspace_root),
+            )
+        )
+
         # Per-project sources (aisland/sources.py). CI reads ONE bit — is this dep published? —
         # and nothing else. In particular it deliberately IGNORES the configured `ref`.
         #
@@ -1170,7 +1189,7 @@ pipeline {{
                 sh "${{VENV_BIN}}/uv --version"
                 echo 'Installing Project in Editable Mode...'
                 {local_pip_str}
-                sh "${{VENV_BIN}}/uv pip install -e .[dev]"
+                sh "${{VENV_BIN}}/uv pip install -e .[{ci_extras}]"
                 // Notebook-only extras (matplotlib, jupyter kernels, etc.) live
                 // in the optional `[notebook]` extra when the project ships
                 // notebooks; absence is not an error.
@@ -1480,7 +1499,7 @@ pipeline {{
                 sh "${{VENV_BIN}}/pip install --upgrade pip uv"
                 echo 'Installing Dependencies...'
                 {jenkins_pip_str}
-                sh "${{VENV_BIN}}/uv pip install -e .[dev]"
+                sh "${{VENV_BIN}}/uv pip install -e .[{ci_extras}]"
                 // Notebook-only extras (matplotlib, jupyter kernels, etc.) live
                 // in the optional `[notebook]` extra when the project ships
                 // notebooks; absence is not an error.
@@ -1786,7 +1805,7 @@ jobs:
     - name: Install dependencies
       run: |
         {pip_install_str}
-        uv pip install --system -e ".[dev]"
+        uv pip install --system -e ".[{ci_extras}]"
     - name: Run Isort
       run: isort --check-only .
     - name: Run Black
@@ -1811,7 +1830,7 @@ jobs:
     - name: Install dependencies
       run: |
         {pip_install_str}
-        uv pip install --system -e ".[dev]"
+        uv pip install --system -e ".[{ci_extras}]"
     - name: Run Tests
       run: |
         if [ -d tests ] && find tests -name '*.py' | grep -q .; then
@@ -1841,7 +1860,7 @@ jobs:
     - name: Install dependencies
       run: |
         {pip_install_str}
-        uv pip install --system -e ".[dev]"
+        uv pip install --system -e ".[{ci_extras}]"
     - name: Run Examples
       run: |
         for f in examples/*.py; do
@@ -1875,7 +1894,7 @@ jobs:
     - name: Install dependencies
       run: |
         {pip_install_str}
-        uv pip install --system -e ".[dev]"
+        uv pip install --system -e ".[{ci_extras}]"
         # Notebook-only dependencies live in the optional `[notebook]` extra
         # when a project ships notebooks; absence is not an error.
         uv pip install --system -e ".[notebook]" 2>/dev/null || echo "No [notebook] extras declared; continuing with defaults."

@@ -478,6 +478,150 @@ ref = "dev/main"          # local/github only; omitted => "main"
 - `aisland setup` applies the configuration on every run, so a fresh clone converges without any
   manual step.
 
+## ML Frameworks (`aisland framework`)
+
+Workspace packages keep their core **framework-free** and put each ML framework behind an
+*extra*: `recordstream[torch]`, `sonair[lightning]` / `[keras]`, `marainer[torch,lightning,…]`.
+That makes "install only what I actually work with" expressible — this command decides *which*.
+
+### The commands
+
+There are exactly three, all under `aisland framework`:
+
+| command | what it does |
+| --- | --- |
+| `aisland framework list` | show what is declared, what is selected, and how to change it |
+| `aisland framework set <names...>` | choose frameworks **and reinstall** the projects that declare them |
+| `aisland framework unset` | clear the selection (the next `aisland setup` prompts again) |
+
+`--machine-only` and `--no-apply` are **flags on `set` / `unset`**, not commands — typing
+`aisland framework --machine-only` is an error. Always spell the verb:
+
+```bash
+aisland framework list                                  # start here
+aisland framework set torch lightning                   # shared choice; CI installs this too
+aisland framework set torch lightning --machine-only    # THIS machine only; nothing committed
+aisland framework set torch lightning --no-apply        # record it, install later
+aisland framework unset --machine-only                  # drop the override, use the shared choice
+aisland framework unset                                 # clear both layers
+```
+
+`aisland framework list` prints those commands back to you, filled in with the real framework
+names of this workspace:
+
+```
+  FRAMEWORK      COMMITTED   OVERRIDE   EFFECTIVE   PROJECTS
+  keras          yes         -          yes         marainer, sonair
+  lightning      yes         -          yes         marainer, sonair
+  tensorflow     no          -          no          marainer
+  torch          yes         -          yes         marainer, recordstream
+
+  '-' = that layer records no selection at all (project-frameworks.toml absent, or no override).
+
+  Change it (--machine-only / --no-apply are FLAGS on set/unset, not commands):
+    aisland framework set keras lightning                 # shared: writes project-frameworks.toml; CI installs it
+    aisland framework set keras lightning --machine-only  # this machine only (.git/config)
+    aisland framework unset --machine-only                # drop this machine's override
+    aisland framework set keras lightning --no-apply      # record it without reinstalling
+```
+
+### Switching frameworks on your own machine
+
+Use `--machine-only`. It writes `.git/config` and **reinstalls immediately** — no `aisland setup`
+afterwards, and nothing tracked is modified, so your choice never reaches CI or a teammate:
+
+```bash
+$ aisland framework set keras --machine-only
+==> This machine only: keras
+==> Installing recordstream (/w/recordstream[dev])...
+==> Installing marainer (/w/marainer[dev,keras])...
+==> Installing sonair (/w/sonair[dev,keras])...
+
+$ aisland framework unset --machine-only          # ...and back again
+==> Cleared this machine's override; the committed selection applies.
+==> Installing recordstream (/w/recordstream[dev,torch])...
+==> Installing marainer (/w/marainer[dev,torch,lightning,keras])...
+==> Installing sonair (/w/sonair[dev,lightning,keras])...
+```
+
+**Switching does not uninstall.** `uv` has no notion of "the packages that belonged to this
+extra" — they are ordinary dependencies, possibly shared — so after switching to `keras` the
+`pytorch-lightning` and `timm` wheels are still present and `LightningClassifier` still imports.
+The selection controls what is *declared and installed*, not what is *removed*. For a genuinely
+clean environment, recreate the `.venv` and run `aisland setup --framework keras`.
+
+> Several projects (`signals`, `raidar`, `deltaid`, `raidar-ultralytics`, `torpaido`) still
+> list `torch` in their hard `dependencies`, so on a full workspace torch is installed whatever
+> you select. Tracked in the workspace `TASKS.md`.
+
+### Choosing at setup time
+
+`aisland setup` takes `--framework` (repeatable), which **records** the selection so you only
+pass it once:
+
+```bash
+aisland setup --framework lightning --framework keras
+```
+
+With nothing recorded, `aisland setup` prompts and saves your answer. `aisland setup -y`
+(non-interactive) selects everything rather than hanging.
+
+### A project declares which of its extras are frameworks
+
+Selection needs to know which extras *are* frameworks — `dev`, `http`, `viz`, `notebook` and
+`all` live in the same table as `torch` and `keras`, so a name match would install a docs extra
+on a machine that asked for a training engine. Each project declares them itself:
+
+```toml
+# sonair/pyproject.toml
+[tool.aisland]
+frameworks = ["lightning", "keras"]
+```
+
+Declare only what is **implemented**: sonair keeps `tensorflow` / `jax` / `mlx` extras so its
+CLI templates can print a real install command, but declaring them would install three
+frameworks nothing can run yet. A project with **no** declaration is unaffected by any
+selection — it installs exactly as it always did.
+
+The names line up across projects on purpose (`keras` is `keras` everywhere), so one selection
+drives every project with no per-project mapping table. Each project then installs what it
+declares ∩ what is selected:
+
+| selection | recordstream | marainer | sonair |
+| --- | --- | --- | --- |
+| `torch lightning keras` | `[dev,torch]` | `[dev,torch,lightning,keras]` | `[dev,lightning,keras]` |
+| `keras` | `[dev]` | `[dev,keras]` | `[dev,keras]` |
+| *(none)* | `[dev]` | `[dev]` | `[dev]` |
+
+### The two configuration layers
+
+Same split as [Project Sources](#project-sources-aisland-source), for the same reason:
+
+| layer | where | drives |
+| --- | --- | --- |
+| **committed** | `project-frameworks.toml` | the shared default **and** what every generated CI pipeline installs |
+| **per-machine** | `git config --local aisland.frameworks` | this machine's `.venv` only |
+
+A machine-local choice must never reach a tracked build file. If one developer narrows to torch
+locally and that reached CI, every runner would silently stop testing the Keras backend — so
+`aisland jenkins scaffold` reads the **committed** layer only. Verified 2026-07-30 that the full
+set co-resolves (torch 2.13 + tensorflow 2.20 + keras 3.15 + pytorch-lightning 2.6.5 on one
+numpy), so committing everything and letting each machine narrow is a workable default.
+
+### Notes
+
+- **Unset is not empty.** No `project-frameworks.toml` and no override means *nobody has chosen*,
+  and `aisland setup` prompts (recording the answer); a recorded empty selection means *no
+  frameworks, I mean it*, and is honoured silently. `aisland setup -y` with nothing recorded
+  selects everything rather than hanging or producing a workspace that cannot train.
+- **Reinstalling does not uninstall.** Dropping `keras` from the selection leaves the keras wheel
+  in the `.venv` — guessing which packages "belonged" to an extra is unsound, and a stale wheel
+  costs disk, not correctness. Recreate the `.venv` for a truly clean set.
+- **Order matters, and is handled.** `aisland framework set` reinstalls in dependency order,
+  because a consumer's extra can name a sibling's (`sonair[keras]` requires `marainer[keras]`);
+  installing the consumer first makes uv warn `does not have an extra named 'keras'` and quietly
+  install without it.
+
 ## Submodule Management
 
 This repository uses Git submodules to manage its constituent projects.
