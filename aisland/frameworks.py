@@ -16,9 +16,12 @@ Two halves, deliberately separate:
   It has to be declared rather than guessed, because extras are a mixed bag — ``dev``, ``http``,
   ``viz``, ``notebook``, ``all`` sit in the same table as ``torch`` and ``keras``, and a name
   match would install a documentation extra on a machine that asked for a training engine. Only
-  IMPLEMENTED frameworks belong here: sonair keeps ``jax`` / ``mlx`` / ``tensorflow`` extras so
+  IMPLEMENTED frameworks belong here: sonair keeps ``jax`` / ``mlx`` / ``huggingface`` extras so
   its CLI templates have a name to point at, but declaring them would install three unused
-  frameworks.
+  frameworks. Declaring is not the same as installing — the declaration is the MENU, and the
+  workspace's committed SELECTION decides what lands (sonair declares ``tensorflow`` since its
+  backend became real on 2026-07-30, and the workspace does not select it simply because nothing
+  else needs a second engine's worth of download).
 
 * **The workspace SELECTS framework names**, and each project installs the extras it declares
   that are selected. The names line up across projects on purpose (``keras`` is ``keras``
