@@ -24,7 +24,7 @@ a source is set.
 Two configuration layers, mirroring the existing ``.gitmodules active`` +
 ``.git/config submodule.<name>.active`` split (:func:`aisland.manager._local_submodule_active`):
 
-* **committed** — ``<workspace>/project-sources.toml`` (tracked, shared between machines);
+* **committed** — ``<workspace>/sources.toml`` (tracked, shared between machines);
 * **per-machine** — ``git config --local aisland.source.<project>`` (never committed).
 
 Which layer drives what is load-bearing, because every downstream artifact EXCEPT the venv and
@@ -72,7 +72,7 @@ REF_KINDS: Tuple[str, ...] = ("local", "github")
 DETACHED_KINDS: Tuple[str, ...] = ("github", "pypi")
 
 #: Committed, workspace-root source registry.
-SOURCES_FILE = "project-sources.toml"
+SOURCES_FILE = "sources.toml"
 
 #: Ref used by a ``local`` / ``github`` source that does not name one — matches the ``@main``
 #: that the CI scaffolder emitted unconditionally before this module existed, so an unmanaged
@@ -152,7 +152,7 @@ class ProjectSource:
         return f"{self.distribution or project}{self.version or ''}"
 
 
-# --- committed layer: <workspace>/project-sources.toml ------------------------------------
+# --- committed layer: <workspace>/sources.toml ------------------------------------
 
 
 def read_committed_sources(workspace_root: Path) -> Dict[str, ProjectSource]:
@@ -496,7 +496,7 @@ def apply_all(workspace_root: Path, uv_cmd: str) -> None:
     managed = sorted(set(committed) | set(_overridden_projects(workspace_root)))
     if not managed:
         return
-    click.echo("==> Applying per-project sources (project-sources.toml + local overrides)...")
+    click.echo("==> Applying per-project sources (sources.toml + local overrides)...")
     for project in managed:
         source = effective_source(workspace_root, project, committed)
         if source is not None:

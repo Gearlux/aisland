@@ -9,20 +9,30 @@ VENV_DIR="$WORKSPACE_ROOT/.venv"
 
 echo "==> Gearlux Bootstrap: Initializing environment at $WORKSPACE_ROOT"
 
-# 1. Ensure Python 3.12+ is available
-if python3 -c "import sys; sys.exit(0 if sys.version_info >= (3, 12) else 1)" 2>/dev/null; then
-    PYTHON_BIN=$(command -v python3)
-elif command -v python3.12 &> /dev/null; then
-    PYTHON_BIN=$(command -v python3.12)
+# 1. Ensure a SUPPORTED Python is available.
+#
+# The workspace pins a MAXIMUM, not just a minimum, and the reason is wheels rather than
+# language features: TensorFlow 2.21 (the latest) publishes cp310-cp313 only, so a venv built
+# on 3.14 cannot install it AT ALL — `uv pip install tensorflow` fails with "we only found
+# wheels ... cp310, cp311, cp312, cp313". That is not a size or policy decision; it is a wall.
+# Measured 2026-07-31 on a 3.14.6 venv, which is why this pin exists.
+#
+# `WORKSPACE_PYTHON` picks the interpreter. Raise it when the frameworks this workspace
+# installs all publish wheels for the next version — check TensorFlow first, it lags most.
+WORKSPACE_PYTHON="${WORKSPACE_PYTHON:-3.13}"
+
+if command -v "python$WORKSPACE_PYTHON" &> /dev/null; then
+    PYTHON_BIN=$(command -v "python$WORKSPACE_PYTHON")
 else
-    echo "==> Python 3.12+ not found. Installing Python 3.12 via Homebrew..."
+    echo "==> Python $WORKSPACE_PYTHON not found. Installing it via Homebrew..."
     if ! command -v brew &> /dev/null; then
-        echo "Error: Homebrew is not installed. Please install Homebrew or Python 3.12 manually."
+        echo "Error: Homebrew is not installed. Install Homebrew or Python $WORKSPACE_PYTHON manually."
         exit 1
     fi
-    brew install python@3.12
-    PYTHON_BIN=$(command -v python3.12)
+    brew install "python@$WORKSPACE_PYTHON"
+    PYTHON_BIN=$(command -v "python$WORKSPACE_PYTHON")
 fi
+echo "==> Using $PYTHON_BIN ($("$PYTHON_BIN" -V 2>&1))"
 
 # 2. Create/Verify Virtual Environment
 # Try to get the git project name for the prompt
@@ -59,10 +69,12 @@ if [ ! -d "$VENV_DIR" ]; then
         fi
     fi
 else
-    # Check version of existing venv
+    # Check version of existing venv. Matched against WORKSPACE_PYTHON exactly rather than a
+    # ">= 3.12" range: the pin has an upper bound too (see above), so a venv on a NEWER
+    # interpreter is just as wrong as one on an older, and a range check would silently keep it.
     VENV_PYTHON_VERSION=$("$VENV_DIR/bin/python" --version 2>/dev/null | cut -d' ' -f2 || echo "0.0.0")
-    if [[ ! "$VENV_PYTHON_VERSION" =~ ^3\.1[2-9] ]]; then
-         echo "==> Existing virtual environment is version $VENV_PYTHON_VERSION. Recreating with 3.12+..."
+    if [[ ! "$VENV_PYTHON_VERSION" == "$WORKSPACE_PYTHON".* ]]; then
+         echo "==> Existing virtual environment is $VENV_PYTHON_VERSION, not $WORKSPACE_PYTHON. Recreating..."
          rm -rf "$VENV_DIR"
          if command -v uv &> /dev/null; then
              uv venv --prompt "$PROMPT_NAME" --python "$PYTHON_BIN" "$VENV_DIR"
@@ -92,11 +104,18 @@ fi
 # 3. Activate and upgrade core tools
 source "$VENV_DIR/bin/activate"
 echo "==> Upgrading core build tools..."
+# `uv venv` does NOT seed pip (unlike `python -m venv`), so a freshly uv-created venv has no
+# `pip` on PATH at all and this step used to die with "pip: command not found" — hit for real
+# while moving the workspace to 3.13. Seed it explicitly rather than assuming.
+if ! "$VENV_DIR/bin/python" -m pip --version &> /dev/null; then
+    echo "==> Seeding pip (uv venv does not create one)..."
+    "$VENV_DIR/bin/python" -m ensurepip --upgrade
+fi
 # torch 2.11.0 pins `setuptools<82`; unconstrained upgrades pull 82.0.1
 # and break the next torch install. Cap the upgrade until torch lifts it.
-pip install --upgrade pip "setuptools<82" wheel
+"$VENV_DIR/bin/python" -m pip install --upgrade pip "setuptools<82" wheel
 echo "==> Installing uv for fast dependency resolution..."
-pip install uv
+"$VENV_DIR/bin/python" -m pip install uv
 
 # 3. Install Aisland Manager in editable mode
 echo "==> Installing aisland manager..."
@@ -105,84 +124,24 @@ uv pip install -e "$WORKSPACE_ROOT/aisland"
 # 4. Hand off to 'aisland setup' for full project provisioning
 echo "==> Handing off to 'aisland setup' for full project provisioning..."
 cd "$WORKSPACE_ROOT"
-# We call it from the root so Path.glob("**/*.toml") works correctly
-"$VENV_DIR/bin/aisland" setup
-
-# 5. Install shell completion into a workspace-local rc file.
-# The generated file is sourced by project.bashrc and is gitignored, so
-# this step keeps the user's global ~/.bashrc clean and leaves no diff
-# in the tracked tree. Auto-discovers every Liquifai app in the venv.
+# We call it from the root so Path.glob("**/*.toml") works correctly.
 #
-# THREE completion families, because the workspace has three kinds of CLI:
-#   (a) liquifai apps  — the `liquifai.apps` entry-point group (recordstream,
-#       marainer, sonair, annotaide, ...): handled by liquifai-install-completions.
-#   (b) click apps     — `aisland`: click ships its own `_<PROG>_COMPLETE` protocol.
-#   (c) argparse apps  — `streamstudio`: neither of the above applies, so it uses
-#       argcomplete (declared as a streamstudio dependency; cli.py calls
-#       argcomplete.autocomplete).
-# (b) and (c) were previously missing entirely, which is why `aisland <TAB>` and
-# `streamstudio <TAB>` did nothing while every liquifai app completed fine.
-COMPLETION_RC="$WORKSPACE_ROOT/.project.bashrc.completion"
-echo "==> Installing shell completion → $COMPLETION_RC"
-if command -v liquifai-install-completions >/dev/null 2>&1; then
-    liquifai-install-completions --target-rc "$COMPLETION_RC" \
-        || echo "    (completion install failed; non-fatal — re-run setup.sh after fixing)"
-else
-    echo "    skip: liquifai-install-completions not found (liquifai not installed yet?)"
-fi
+# `-y` REUSES the activation decisions already recorded in .git/config instead of re-asking
+# about every optional submodule. Without it this script cannot finish anywhere there is no
+# TTY — a background shell, CI, or an agent — because the prompt blocks forever on stdin
+# (hit for real: `Activate 'raidar-ultralytics'? [y/N]:` with no terminal to answer it).
+# A genuinely NEW optional module still prompts even under `-y`, which is deliberate: a
+# machine must consciously opt into a private project before cloning its remote.
+"$VENV_DIR/bin/aisland" setup -y
 
-# 5a. Prune stale per-app blocks. liquifai-install-completions MERGES by marker
-# block (liquifai/completion/install.py::_replace_block) and leaves blocks it did
-# not write untouched — so a renamed or uninstalled app keeps a dead block forever
-# (the fluxstudio -> streamstudio rename left exactly that). Drop any block whose
-# program is no longer on PATH; the next run re-adds anything still installed.
-#
-# Gated on the venv being active (`liquifai` itself resolving): without it NO app is
-# on PATH and a naive pruner would delete every block. setup.sh sources the venv at
-# step 2, so this holds — the guard only protects a standalone re-run of this section.
-if [ -f "$COMPLETION_RC" ] && command -v liquifai >/dev/null 2>&1; then
-    for prog in $(grep -oE '^# >>> liquifai completion for [A-Za-z0-9_.-]+' "$COMPLETION_RC" \
-                  | sed 's/.*for //' | sort -u); do
-        if ! command -v "$prog" >/dev/null 2>&1; then
-            echo "    pruning stale completion block: $prog (no longer on PATH)"
-            awk -v p="$prog" '
-                $0 == "# >>> liquifai completion for " p " >>>" { skip = 1 }
-                skip != 1 { print }
-                $0 == "# <<< liquifai completion for " p " <<<" { skip = 0 }
-            ' "$COMPLETION_RC" > "$COMPLETION_RC.tmp" && mv "$COMPLETION_RC.tmp" "$COMPLETION_RC"
-        fi
-    done
-fi
-
-# 5b. Non-liquifai CLIs. Written with the same >>>/<<< marker convention so this
-# block is idempotent (rewritten wholesale on every setup) and so 5a's pruner and
-# liquifai's installer never collide with it.
-if [ -f "$COMPLETION_RC" ]; then
-    awk '
-        $0 == "# >>> acme completion for non-liquifai CLIs >>>" { skip = 1 }
-        skip != 1 { print }
-        $0 == "# <<< acme completion for non-liquifai CLIs <<<" { skip = 0 }
-    ' "$COMPLETION_RC" > "$COMPLETION_RC.tmp" && mv "$COMPLETION_RC.tmp" "$COMPLETION_RC"
-fi
-{
-    echo "# >>> acme completion for non-liquifai CLIs >>>"
-    echo "# Generated by: aisland/setup.sh (section 5b) — DO NOT EDIT BY HAND."
-    echo "# To regenerate: bash aisland/setup.sh  (or re-run just this section)"
-    echo "# click apps expose \`_<PROG>_COMPLETE=bash_source <prog>\`; argparse apps"
-    echo "# use argcomplete's \`register-python-argcomplete <prog>\`."
-    # (b) click — aisland. Click refuses to emit for bash < 4.4 (macOS /bin/bash is
-    # 3.2), so guard on BASH_VERSINFO rather than emitting a script that errors.
-    if command -v aisland >/dev/null 2>&1; then
-        echo 'if [ "${BASH_VERSINFO[0]}" -gt 4 ] || { [ "${BASH_VERSINFO[0]}" -eq 4 ] && [ "${BASH_VERSINFO[1]}" -ge 4 ]; }; then'
-        echo '    eval "$(_AISLAND_COMPLETE=bash_source aisland 2>/dev/null)" || true'
-        echo 'fi'
-    fi
-    # (c) argcomplete — streamstudio.
-    if command -v streamstudio >/dev/null 2>&1 && command -v register-python-argcomplete >/dev/null 2>&1; then
-        echo 'eval "$(register-python-argcomplete streamstudio 2>/dev/null)" || true'
-    fi
-    echo "# <<< acme completion for non-liquifai CLIs <<<"
-} >> "$COMPLETION_RC"
+# 5. Install shell completion for every workspace CLI.
+# One command, owned by `aisland/aisland/completion.py`. This used to be ~70 lines of inline
+# shell right here (three CLI families + a stale-block pruner), which meant a completion fix
+# could only reach a machine by re-running this whole provisioning script — so it silently
+# rotted. `aisland completion install` is re-runnable in a second and is unit-tested.
+echo "==> Installing shell completion"
+"$VENV_DIR/bin/aisland" completion install \
+    || echo "    (completion install failed; non-fatal — re-run 'aisland completion install')"
 
 # 6. Initialize Git Configuration
 echo "==> Setting up Git configurations..."

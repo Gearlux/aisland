@@ -824,7 +824,7 @@ class JenkinsService(BaseService):
 
         # Framework extras this project's CI installs: what it DECLARES under
         # `[tool.aisland] frameworks` intersected with the COMMITTED selection
-        # (`project-frameworks.toml`). Committed-only, for exactly the reason the source
+        # (`frameworks.toml`). Committed-only, for exactly the reason the source
         # registry below is: a per-machine `.git/config aisland.frameworks` override must never
         # reach a tracked build file, or one developer's "I only use torch" would silently stop
         # every runner from testing the Keras backend. A project declaring no frameworks emits

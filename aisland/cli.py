@@ -1,3 +1,4 @@
+from pathlib import Path
 from typing import Optional
 
 import click
@@ -69,7 +70,7 @@ def provision() -> None:
     "--framework",
     multiple=True,
     help="ML framework(s) to install, e.g. --framework torch --framework keras (repeatable). "
-    "Recorded in project-frameworks.toml; omit to reuse the recorded selection.",
+    "Recorded in frameworks.toml; omit to reuse the recorded selection.",
 )
 def setup(
     non_interactive: bool,
@@ -109,7 +110,7 @@ def source() -> None:
 
     `github` and `pypi` both deinit the submodule (empty directory) and drop it from the
     *.code-workspace folder list. Both layers of configuration — the committed
-    `project-sources.toml` and the per-machine `.git/config` override — are honoured.
+    `sources.toml` and the per-machine `.git/config` override — are honoured.
     """
     pass
 
@@ -141,7 +142,7 @@ def source_list() -> None:
 @click.option(
     "--machine-only",
     is_flag=True,
-    help="Record only the per-machine .git/config override; leave project-sources.toml (and the "
+    help="Record only the per-machine .git/config override; leave sources.toml (and the "
     "committed build files it drives) untouched.",
 )
 @click.option("--no-scaffold", is_flag=True, help="Skip regenerating dependent projects' CI files.")
@@ -212,7 +213,7 @@ def framework() -> None:
     extras are frameworks in `[tool.aisland] frameworks`; this command selects among them, and
     `aisland setup` installs the intersection.
 
-    Both layers are honoured: the committed `project-frameworks.toml` (shared, and the set
+    Both layers are honoured: the committed `frameworks.toml` (shared, and the set
     generated CI installs) and a per-machine `.git/config aisland.frameworks` override.
     """
     pass
@@ -257,7 +258,7 @@ def framework_list() -> None:
 @click.option(
     "--machine-only",
     is_flag=True,
-    help="Record only the per-machine .git/config override; leave project-frameworks.toml "
+    help="Record only the per-machine .git/config override; leave frameworks.toml "
     "(and the set generated CI installs) untouched.",
 )
 @click.option("--no-apply", is_flag=True, help="Record the selection without reinstalling anything.")
@@ -795,6 +796,52 @@ def reset() -> None:
     FiftyOneService().reset()
     SwiftBarService().reset()
     DockerService().reset()
+
+
+# --- Completion Commands ---
+
+
+@main.group()
+def completion() -> None:
+    """Install shell completion for every CLI in the workspace."""
+    pass
+
+
+@completion.command(name="install")
+@click.option(
+    "--target-rc",
+    type=click.Path(path_type=Path),
+    default=None,
+    help="Rc file to write into. Default: the workspace `.project.bashrc.completion`, which "
+    "project.bashrc sources. Pass ~/.bashrc (or project.bashrc) to install elsewhere.",
+)
+@click.option("--shell", type=click.Choice(["bash", "zsh", "fish"]), default=None, help="Default: detect from $SHELL.")
+@click.option("--no-prune", is_flag=True, help="Keep blocks for programs that are no longer installed.")
+def completion_install(target_rc: Optional[Path], shell: Optional[str], no_prune: bool) -> None:
+    """Install completion for every workspace CLI — liquifai apps, click apps, argparse apps.
+
+    Idempotent: every block is marker-delimited and rewritten in place, so re-run this after
+    installing a new project rather than re-running the whole of setup.sh.
+    """
+    from aisland.completion import install_completions, is_sourced_by, shell_snippet, verify_click_completion
+
+    report = install_completions(target_rc=target_rc, shell=shell, prune=not no_prune)
+
+    click.echo(f"==> {report.rc} ({report.shell})")
+    click.echo(f"    liquifai apps: {', '.join(report.liquifai_apps) or '(none discovered)'}")
+    click.echo(f"    other CLIs:    {', '.join(report.non_liquifai) or '(none found)'}")
+    if report.pruned:
+        click.echo(f"    pruned stale:  {', '.join(report.pruned)}")
+    if not verify_click_completion("aisland"):
+        click.echo("    WARNING: `aisland` emitted no completion script — its block will be inert.")
+
+    # The fragment only does anything once something sources it. Say so, but only when it
+    # is actually unsourced — this is a hint, not a nag on every re-run.
+    root = report.rc.parent
+    if not any(is_sourced_by(report.rc, root / name) for name in ("project.bashrc", ".bashrc", ".zshrc")):
+        if not is_sourced_by(report.rc, Path.home() / f".{report.shell}rc"):
+            click.echo(f"\n    Not sourced yet — add to your shell rc:\n      {shell_snippet(report.rc)}")
+    click.echo(f"\n    Open a new shell (or `exec {report.shell}`) to pick it up.")
 
 
 @main.command(name="check")

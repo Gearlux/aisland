@@ -1253,7 +1253,7 @@ def setup_workspace(
     """Perform a full workspace setup: system provisioning followed by editable pip installs.
 
     ``framework`` names the ML frameworks to install (``--framework torch --framework keras``).
-    Passing any RECORDS the selection in ``project-frameworks.toml``, so it is a one-time flag
+    Passing any RECORDS the selection in ``frameworks.toml``, so it is a one-time flag
     rather than something to repeat on every run; omitting it uses the recorded selection, and
     prompts when there is none. See :mod:`aisland.frameworks`.
     """

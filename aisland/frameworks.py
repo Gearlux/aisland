@@ -29,7 +29,7 @@ Two halves, deliberately separate:
 
 Two configuration layers, mirroring :mod:`aisland.sources` exactly:
 
-* **committed** — ``<workspace>/project-frameworks.toml`` (tracked, shared between machines,
+* **committed** — ``<workspace>/frameworks.toml`` (tracked, shared between machines,
   and the ONLY layer generated CI reads);
 * **per-machine** — ``git config --local aisland.frameworks`` (never committed).
 
@@ -56,7 +56,7 @@ import click
 from aisland.manager import get_workspace_root
 
 #: Committed, workspace-root framework selection.
-FRAMEWORKS_FILE = "project-frameworks.toml"
+FRAMEWORKS_FILE = "frameworks.toml"
 
 #: The ``pyproject.toml`` table a project declares its framework extras in.
 DECLARATION_TABLE = ("tool", "aisland", "frameworks")
@@ -138,7 +138,7 @@ def available_frameworks(workspace_root: Path) -> List[str]:
 
 
 # --------------------------------------------------------------------------- #
-# committed layer: project-frameworks.toml
+# committed layer: frameworks.toml
 # --------------------------------------------------------------------------- #
 
 
