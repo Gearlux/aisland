@@ -327,6 +327,45 @@ act -j unit-tests
 ```
 *Note: Running `act` requires Docker to be installed and running on your machine.*
 
+## Workspace configuration (`config.toml`)
+
+Every **shared** decision this workspace makes lives in one tracked file at the workspace root,
+`config.toml` — which frameworks to install, which tracking backends, and where each project's
+package comes from:
+
+```toml
+frameworks = ["torch", "lightning", "keras"]
+trackers   = ["mlflow", "tensorboard", "aim"]
+
+[sources.confluid]
+source = "local"
+distribution = "confluid"
+ref = "main"
+
+[sources.loggair]
+source = "pypi"
+distribution = "loggair"
+```
+
+You never edit it by hand: `aisland framework set` / `aisland tracker set` / `aisland source set`
+each rewrite their own section and leave the others alone. Two commands exist for the file
+itself:
+
+```bash
+aisland config show      # print it
+aisland config migrate   # fold a pre-2026-08 sources/frameworks/trackers.toml into it
+```
+
+**Per-machine deviations never land here.** They go to `.git/config` (`aisland.frameworks`,
+`aisland.trackers`, `aisland.source.<project>`), because this file is tracked and drives every
+generated CI pipeline — one developer's local narrowing must not decide what a runner installs.
+
+> The workspace-root **`uv.toml` is a different file and stays separate.** uv reads only a file
+> of its own settings and rejects anything else in it, and that file is *generated* per machine
+> from the activated project set (a private index reaches it only when its project is active),
+> so it is gitignored rather than committed. See [Optional submodules & the generated
+> `uv.toml`](#optional-submodules--the-generated-uvtoml).
+
 ## Project Sources (`aisland source`)
 
 Each workspace project can be consumed either as a **local checkout** (developed here, installed
@@ -422,7 +461,7 @@ submodules:
 
 | layer | where | committed? |
 |---|---|---|
-| default | `<workspace>/sources.toml` | **yes** — shared between machines |
+| default | the `[sources.*]` tables of `<workspace>/config.toml` | **yes** — shared between machines |
 | override | `git config --local aisland.source.<project>` | no — per machine |
 
 **Which layer drives what is load-bearing.** Every downstream artifact except the venv and the
@@ -434,12 +473,13 @@ checkout is itself a committed file, so a machine-local choice must never reach 
   editable/git/PyPI install into the shared `.venv`.
 - **neither** → `Jenkinsfile.local`, which resolves the question at build time instead.
 
-### `sources.toml`
+### The `[sources]` section of `config.toml`
 
-Written by `aisland source set`; hand edits are honoured but the header asks you not to.
+Written by `aisland source set`; hand edits are honoured, but the next command that writes
+re-renders the file (see [Workspace configuration](#workspace-configuration-configtoml)).
 
 ```toml
-[loggair]
+[sources.loggair]
 source = "github"         # "local" | "github" | "pypi"
 distribution = "loggair"  # PyPI/dist name — recorded because a deinit'd dir has no pyproject.toml
 ref = "dev/main"          # local/github only; omitted => "main"
@@ -459,7 +499,7 @@ ref = "dev/main"          # local/github only; omitted => "main"
   An unreachable index or remote warns and continues rather than blocking an offline machine.
 - `git switch` and `git submodule deinit` are never forced: a submodule with uncommitted work
   refuses, is reported, and neither the venv nor the registry is changed — a failed apply rolls
-  the configuration back so `sources.toml` never claims a state the tree does not have.
+  the configuration back so the registry never claims a state the tree does not have.
 - `aisland source set` re-scaffolds every **dependent** project's CI files **only when the
   published/not bit flips** — i.e. crossing the `pypi` boundary. A `--ref` change, or a switch
   between `local` and `github`, regenerates nothing. When it does run it uses `--force`, so it
@@ -473,10 +513,10 @@ ref = "dev/main"          # local/github only; omitted => "main"
 Workspace packages keep their core minimal and put optional capabilities behind *extras*.
 Two independent things need deciding, and each has its own command over the same machinery:
 
-| axis | command | decides | committed file |
+| axis | command | decides | committed key |
 | --- | --- | --- | --- |
-| **frameworks** | `aisland framework` | what this machine **trains with** (`recordstream[torch]`, `sonair[lightning]`/`[keras]`) | `frameworks.toml` |
-| **trackers** | `aisland tracker` | where results **go** (`marainer[mlflow]`/`[aim]`/`[tensorboard]`/`[wandb]`) | `trackers.toml` |
+| **frameworks** | `aisland framework` | what this machine **trains with** (`recordstream[torch]`, `sonair[lightning]`/`[keras]`) | `frameworks` in `config.toml` |
+| **trackers** | `aisland tracker` | where results **go** (`marainer[mlflow]`/`[aim]`/`[tensorboard]`/`[wandb]`) | `trackers` in `config.toml` |
 
 They are **siblings, never merged**: picking a training engine must not install a tracking
 client. Both work identically — same `list` / `set` / `unset` verbs, same committed +
@@ -521,10 +561,10 @@ names of this workspace:
   tensorflow     no          -          no          marainer
   torch          yes         -          yes         marainer, recordstream
 
-  '-' = that layer records no selection at all (frameworks.toml absent, or no override).
+  '-' = no selection recorded in that layer (config.toml has no `frameworks` key, or no override).
 
   Change it (--machine-only / --no-apply are FLAGS on set/unset, not commands):
-    aisland framework set keras lightning                 # shared: writes frameworks.toml; CI installs it
+    aisland framework set keras lightning                 # shared: writes config.toml; CI installs it
     aisland framework set keras lightning --machine-only  # this machine only (.git/config)
     aisland framework unset --machine-only                # drop this machine's override
     aisland framework set keras lightning --no-apply      # record it without reinstalling
@@ -609,7 +649,7 @@ Same split as [Project Sources](#project-sources-aisland-source), for the same r
 
 | layer | where | drives |
 | --- | --- | --- |
-| **committed** | `frameworks.toml` | the shared default **and** what every generated CI pipeline installs |
+| **committed** | the `frameworks` key of `config.toml` | the shared default **and** what every generated CI pipeline installs |
 | **per-machine** | `git config --local aisland.frameworks` | this machine's `.venv` only |
 
 A machine-local choice must never reach a tracked build file. If one developer narrows to torch
@@ -620,7 +660,7 @@ numpy), so committing everything and letting each machine narrow is a workable d
 
 ### Notes
 
-- **Unset is not empty.** No `frameworks.toml` and no override means *nobody has chosen*,
+- **Unset is not empty.** No `frameworks` key in `config.toml` and no override means *nobody has chosen*,
   and `aisland setup` prompts (recording the answer); a recorded empty selection means *no
   frameworks, I mean it*, and is honoured silently. `aisland setup -y` with nothing recorded
   selects everything rather than hanging or producing a workspace that cannot train.

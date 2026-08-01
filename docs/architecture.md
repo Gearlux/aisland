@@ -46,7 +46,7 @@ Configuration is **two layers**, mirroring the existing `.gitmodules active` +
 
 | layer | storage | committed |
 |---|---|---|
-| default | `<workspace>/sources.toml` | yes |
+| default | the `[sources.<project>]` tables of `<workspace>/config.toml` | yes |
 | override | `git config --local aisland.source.<project>` | no |
 
 The layers are **not** interchangeable. Each artifact reads exactly one:
@@ -131,12 +131,12 @@ introducing the mechanism changed no behaviour anywhere until a source was actua
 
 ```bash
 $ aisland source set loggair github --ref dev/main   # from local:main — no CI touched
-==> loggair: committed source set to github:dev/main in sources.toml
+==> loggair: committed source set to github:dev/main in config.toml
 ==> loggair: github @ dev/main (git+https://github.com/Gearlux/loggair.git@dev/main)
 ==> Updated acme.code-workspace folders (20 enabled)
 
 $ aisland source set loggair pypi                    # crosses the boundary — CI regenerates
-==> loggair: committed source set to pypi in sources.toml
+==> loggair: committed source set to pypi in config.toml
 ==> Regenerating CI files for 17 dependent project(s): annotaide, chainwind, confluid, …
 ```
 
@@ -195,7 +195,7 @@ already satisfies the invariant, so a no-op sync writes nothing.
 
 ### Consequences
 
-- The mechanism only touches entries for projects named in `sources.toml`. `vendorcli`,
+- The mechanism only touches entries for projects named in `config.toml`'s `[sources]`. `vendorcli`,
   `signals-bridge` and `raidar-ultralytics` are governed by submodule activation, not this,
   and are left exactly as they are.
 - A managed project with no entry at all is *inserted*, before any out-of-tree entry (`../logs`)
@@ -265,8 +265,8 @@ engine from a documentation extra.
    is selected. The names line up across projects deliberately (`keras` is `keras` everywhere),
    so one selection drives everything with no per-project mapping table.
 
-3. **Two configuration layers, mirroring `aisland/sources.py`**: the committed
-   `frameworks.toml` and a per-machine `git config --local aisland.frameworks`. The
+3. **Two configuration layers, mirroring `aisland/sources.py`**: the committed `frameworks`
+   key of `config.toml` and a per-machine `git config --local aisland.frameworks`. The
    committed layer is the shared default AND the only layer the CI scaffolder reads.
 
 4. **`None` is not `[]`.** An absent selection means *nobody has chosen* and `aisland setup`
@@ -325,7 +325,7 @@ target = install_target(project_dir, project["has_dev"], extras)          # /w/s
 
 ```bash
 $ aisland framework set torch lightning keras
-==> Recorded in frameworks.toml: torch, lightning, keras
+==> Recorded as `frameworks` in config.toml: torch, lightning, keras
 ==> Installing recordstream (/w/recordstream[dev,torch])...
 ==> Installing marainer (/w/marainer[dev,torch,lightning,keras])...
 ==> Installing sonair (/w/sonair[dev,lightning,keras])...
@@ -422,3 +422,96 @@ NON_LIQUIFAI_CLIS = (NonLiquifaiCli("aisland", "click"), NonLiquifaiCli("streams
 completion *mechanism* means a new `CliKind` and its renderer. Do not move any of
 this back into `setup.sh`, and do not let it grow a second copy there — the
 duplicate would rot exactly as the original did.
+
+---
+
+## The workspace's committed configuration is ONE file, and `uv.toml` cannot join it
+
+*2026-08-01*
+
+### Context
+
+Three mechanisms grew their own workspace-root file, each with its own provenance header,
+its own reader and its own writer: `sources.toml` (`aisland source`), `frameworks.toml` and
+`trackers.toml` (`aisland framework` / `aisland tracker`). They are the same KIND of thing —
+a committed, shared decision whose per-machine deviation lives in `.git/config` and never
+reaches a tracked file — and the resemblance was already load-bearing: `selection.py` was
+written by generalising `sources.py`, and every rule in one record repeats in the other.
+
+Four `*.toml` at the workspace root also read as four things to configure, when only three
+of them were configuration at all. The fourth, `uv.toml`, is *generated* per machine and
+gitignored.
+
+### Decision
+
+`aisland/config.py` owns ONE committed file, `<workspace>/config.toml`, holding a top-level
+key per concern: `frameworks`, `trackers`, and a `[sources.<project>]` table per managed
+project. It owns the FILE — layout, comments, reading, rewriting — and none of the DATA:
+`selection.py` and `sources.py` convert their own types to plain TOML values and call
+`config.update`, which is why `config.py` imports nothing from aisland and cannot be part of
+an import cycle with its two callers.
+
+Four properties hold it together:
+
+1. **Every write is whole-file, keyed.** `update(root, key, value)` loads the document,
+   replaces one top-level key and re-renders, so `aisland tracker set` cannot disturb the
+   `[sources.*]` tables. The cost, stated in the file's own header: a hand-edited file is
+   normalised (and its comments dropped) by the next command that writes.
+2. **Scalars are emitted before tables.** TOML binds a bare key to the most recent table
+   header, so `frameworks = [...]` written after `[sources.confluid]` would silently become
+   `sources.confluid.frameworks`. The renderer partitions on this, not on taste.
+3. **An absent KEY is what *unset* means** — the distinction `resolve_for_setup` prompts on.
+   It used to be an absent FILE, which three concerns can no longer share. An empty document
+   still removes the file, so a workspace that has configured nothing carries no stub.
+4. **The legacy files are still read**, per key, and deleted by the first write (or by
+   `aisland config migrate`, which `aisland setup` calls). Without the fallback a checkout
+   predating the merge reads as "nothing is configured", which for sources means every
+   project silently unmanaged — a failure with no symptom until CI resolves the wrong thing.
+
+**`uv.toml` stays out, permanently.** uv reads only its own settings file and rejects any
+foreign table — measured against uv 0.11.8: `UV_CONFIG_FILE=config.toml uv pip install …`
+fails with ``error: Failed to parse: `config.toml`. The `sources` field is not allowed in a
+`uv.toml` file.`` It is also generated from the activated project set and gitignored (a
+private index must reach it only when its project is active), so it is not the same kind of
+artifact in the first place.
+
+### Consequences
+
+- One provenance header, one `aisland config show`, one file in a review diff.
+- `Axis.file` is gone; `Axis.plural` now names the `[tool.aisland]` declaration key, the
+  `config.toml` key AND the `.git/config` suffix — one word driving three things instead of
+  two, which is the drift this merge removes rather than adds.
+- A new axis needs no new file: `write_committed` already writes a key. It gets no comment
+  block until one is added to `_SECTION_DOC`, which is the only per-axis knowledge in
+  `config.py`.
+- The renderer is a general TOML emitter for the scalar/list/table subset, so an unknown
+  hand-added section survives a write instead of being dropped.
+- The legacy fallback is dead weight once every machine has migrated. It is deliberately
+  cheap to delete (one dict, one loop) and is tracked in `TASKS.md`.
+
+### Example
+
+```toml
+# config.toml — one file, three sections, each with its own command
+frameworks = ["torch", "lightning", "keras"]
+trackers   = ["mlflow", "tensorboard", "aim"]
+
+[sources.loggair]
+source = "pypi"
+distribution = "loggair"
+```
+
+```python
+# selection.py and sources.py never format anything — they hand over plain values
+update_config(workspace_root, axis.plural, list(names))          # frameworks = [...]
+update_config(workspace_root, SOURCES_KEY, table or None)        # [sources.*], or drop it
+```
+
+### What you may change
+
+Add a section by writing its key through `config.update` and (optionally) a comment block in
+`_SECTION_DOC`. Do NOT teach `config.py` about `ProjectSource` or `Axis` — the one-way
+dependency is what keeps it cycle-free. Do NOT move the uv overrides in here; uv cannot read
+this file, and `manager._ROOT_UV_BASE` -> the generated root `uv.toml` is a different
+artifact with a different lifetime. Deleting the legacy fallback is safe once no machine
+carries a pre-2026-08-01 checkout.

@@ -21,7 +21,9 @@ from typing import Any, Callable, Dict, List
 
 import pytest
 
+from aisland import config
 from aisland import sources as s
+from aisland.config import CONFIG_FILE
 from aisland.services.jenkins import JenkinsService
 
 # The real workspace file, condensed to the structure that matters: JSONC (trailing commas and
@@ -149,9 +151,26 @@ class TestCommittedSources:
 
     def test_written_file_is_valid_toml_with_provenance(self, tmp_path: Path) -> None:
         s.write_committed_sources(tmp_path, {"loggair": s.ProjectSource(kind="pypi", distribution="loggair")})
-        text = (tmp_path / s.SOURCES_FILE).read_text()
+        text = (tmp_path / CONFIG_FILE).read_text()
         assert "aisland source set" in text, "generated files must name the command that regenerates them"
-        assert tomllib.loads(text) == {"loggair": {"source": "pypi", "distribution": "loggair"}}
+        assert tomllib.loads(text) == {"sources": {"loggair": {"source": "pypi", "distribution": "loggair"}}}
+
+    def test_writing_sources_leaves_the_other_sections_alone(self, tmp_path: Path) -> None:
+        """The whole point of the merge: three concerns in one file, each written independently."""
+        config.update(tmp_path, "frameworks", ["torch"])
+        s.write_committed_sources(tmp_path, {"loggair": s.ProjectSource(kind="pypi", distribution="loggair")})
+
+        assert config.load(tmp_path)["frameworks"] == ["torch"]
+        assert set(s.read_committed_sources(tmp_path)) == {"loggair"}
+
+    def test_an_empty_registry_drops_the_section(self, tmp_path: Path) -> None:
+        """`unset` and the rollback both go through here — neither may leave an empty table."""
+        config.update(tmp_path, "frameworks", ["torch"])
+        s.write_committed_sources(tmp_path, {"loggair": s.ProjectSource(kind="pypi")})
+        s.write_committed_sources(tmp_path, {})
+
+        assert "sources" not in config.load(tmp_path)
+        assert config.load(tmp_path)["frameworks"] == ["torch"]
 
     def test_ref_omitted_for_pypi_and_version_omitted_for_git(self, tmp_path: Path) -> None:
         s.write_committed_sources(
@@ -161,15 +180,15 @@ class TestCommittedSources:
                 "b": s.ProjectSource(kind="local", ref="dev/main", version="ignored", distribution="b"),
             },
         )
-        data = tomllib.loads((tmp_path / s.SOURCES_FILE).read_text())
+        data = tomllib.loads((tmp_path / CONFIG_FILE).read_text())["sources"]
         assert "ref" not in data["a"] and "version" not in data["b"]
 
     def test_unknown_kind_is_skipped_not_raised(self, tmp_path: Path) -> None:
-        (tmp_path / s.SOURCES_FILE).write_text('[loggair]\nsource = "svn"\n[confluid]\nsource = "local"\n')
+        (tmp_path / CONFIG_FILE).write_text('[sources.loggair]\nsource = "svn"\n[sources.confluid]\nsource = "local"\n')
         assert set(s.read_committed_sources(tmp_path)) == {"confluid"}
 
     def test_malformed_toml_degrades_to_unmanaged(self, tmp_path: Path) -> None:
-        (tmp_path / s.SOURCES_FILE).write_text("[loggair\nsource =\n")
+        (tmp_path / CONFIG_FILE).write_text("[sources.loggair\nsource =\n")
         assert s.read_committed_sources(tmp_path) == {}
 
 
@@ -838,7 +857,8 @@ class TestSetProjectSourceRollback:
         monkeypatch.setattr(s, "_pypi_provenance", lambda dist: (True, "0.1.0"))
 
         assert s.set_project_source("loggair", "pypi", workspace_root=ci_workspace) == 1
-        assert not (ci_workspace / s.SOURCES_FILE).exists(), "a registry created by the failed run must be removed"
+        assert s.read_committed_sources(ci_workspace) == {}, "a registry created by the failed run must be removed"
+        assert not (ci_workspace / CONFIG_FILE).exists(), "and nothing else was configured, so no file is left"
 
     def test_failed_apply_restores_a_pre_existing_entry(
         self, ci_workspace: Path, monkeypatch: pytest.MonkeyPatch
@@ -858,11 +878,11 @@ class TestSetProjectSourceRollback:
     def test_rejected_pypi_name_writes_nothing(self, ci_workspace: Path, monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.setattr(s, "_pypi_provenance", lambda dist: (False, "is not published on PyPI"))
         assert s.set_project_source("loggair", "pypi", workspace_root=ci_workspace) == 1
-        assert not (ci_workspace / s.SOURCES_FILE).exists()
+        assert not (ci_workspace / CONFIG_FILE).exists()
 
     def test_unknown_project_writes_nothing(self, ci_workspace: Path) -> None:
         assert s.set_project_source("nosuchproj", "pypi", workspace_root=ci_workspace) == 1
-        assert not (ci_workspace / s.SOURCES_FILE).exists()
+        assert not (ci_workspace / CONFIG_FILE).exists()
 
 
 class TestUnsetProjectSource:
@@ -894,7 +914,7 @@ class TestUnsetProjectSource:
     def test_already_unmanaged_is_a_no_op(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.setattr(s, "local_override", lambda root, name: None)
         assert s.unset_project_source("loggair", scaffold=False, workspace_root=tmp_path) == 0
-        assert not (tmp_path / s.SOURCES_FILE).exists()
+        assert not (tmp_path / CONFIG_FILE).exists()
 
     def test_machine_only_keeps_the_committed_entry(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
         cleared: List[Any] = []

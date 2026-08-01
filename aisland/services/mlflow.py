@@ -18,7 +18,7 @@ class MLflowService(BaseService):
 
         Installing it ad hoc would contradict the very layer this service depends on: which
         tracking backends a machine has is decided by ``aisland tracker`` and recorded in
-        ``trackers.toml`` / ``.git/config``, and a silent ``pip install`` behind the
+        ``config.toml`` / ``.git/config``, and a silent ``pip install`` behind the
         operator's back leaves the venv holding something no selection asked for (and gone
         again after the next ``aisland setup``). Point at the command that makes it stick.
         """

@@ -2,7 +2,8 @@
 
 `test_frameworks.py` covers the framework axis through its facade; this covers what the
 generic module adds:
-- the two axes are INDEPENDENT — separate files, separate git keys, separate vocabularies;
+- the two axes are INDEPENDENT — separate keys in the one committed `config.toml`, separate
+  git keys, separate vocabularies, and a write to one leaves every other section intact;
 - an install target carries BOTH axes' selected extras, so changing one never drops the other;
 - the tracker axis behaves like the framework one (layers, unset-vs-empty, precedence).
 """
@@ -16,6 +17,8 @@ from pathlib import Path
 import pytest
 
 from aisland import selection as s
+from aisland.config import CONFIG_FILE
+from aisland.config import update as update_config
 from aisland.selection import FRAMEWORKS, TRACKERS
 
 _PYPROJECT = """\
@@ -59,8 +62,9 @@ def workspace(tmp_path: Path) -> Path:
 # --------------------------------------------------------------------------- #
 
 
-def test_the_axes_use_separate_files_and_keys() -> None:
-    assert FRAMEWORKS.file == "frameworks.toml" and TRACKERS.file == "trackers.toml"
+def test_the_axes_use_separate_keys_in_one_file() -> None:
+    """Separate KEYS, not separate files, since the workspace merged its config into one."""
+    assert FRAMEWORKS.plural == "frameworks" and TRACKERS.plural == "trackers"
     assert FRAMEWORKS.config_key == "aisland.frameworks"
     assert TRACKERS.config_key == "aisland.trackers"
     assert FRAMEWORKS.table_path == ("tool", "aisland", "frameworks")
@@ -150,16 +154,37 @@ def test_clearing_the_override_falls_back_to_committed(workspace: Path) -> None:
 
 def test_the_committed_file_is_valid_toml_with_the_axis_key(workspace: Path) -> None:
     path = s.write_committed(workspace, ["mlflow", "aim"], TRACKERS)
-    assert path.name == "trackers.toml"
+    assert path.name == CONFIG_FILE
     assert tomllib.loads(path.read_text()) == {"trackers": ["mlflow", "aim"]}
 
 
+def test_writing_one_axis_leaves_the_other_sections_intact(workspace: Path) -> None:
+    """Both axes and the source registry share ONE file, so a write must be surgical."""
+    s.write_committed(workspace, ["lightning"], FRAMEWORKS)
+    update_config(workspace, "sources", {"loggair": {"source": "pypi"}})
+    s.write_committed(workspace, ["mlflow"], TRACKERS)
+
+    data = tomllib.loads((workspace / CONFIG_FILE).read_text())
+    assert data == {"frameworks": ["lightning"], "trackers": ["mlflow"], "sources": {"loggair": {"source": "pypi"}}}
+
+
+def test_unsetting_one_axis_keeps_the_file_and_its_other_sections(workspace: Path) -> None:
+    """Dropping the KEY is what unset means now; deleting the file would take sources with it."""
+    s.write_committed(workspace, ["lightning"], FRAMEWORKS)
+    s.write_committed(workspace, ["mlflow"], TRACKERS)
+    update_config(workspace, TRACKERS.plural, None)
+
+    assert s.read_committed(workspace, TRACKERS) is None
+    assert s.read_committed(workspace, FRAMEWORKS) == ["lightning"]
+
+
 def test_the_managed_header_names_the_right_command(workspace: Path) -> None:
-    """The header is the only instruction the file carries; it must name THIS axis."""
+    """The comments are the only instruction the file carries; each section names its command."""
     text = s.write_committed(workspace, ["mlflow"], TRACKERS).read_text()
     assert "aisland tracker set" in text
-    assert "aisland framework set" not in text
     assert "aisland.trackers" in text
+    # The tracker section only — a file holding no framework selection must not document one.
+    assert "aisland framework list" not in text
 
 
 def test_resolve_for_setup_records_an_explicit_request(workspace: Path) -> None:
@@ -184,7 +209,7 @@ def test_resolve_for_setup_is_inert_without_declarations(tmp_path: Path) -> None
     subprocess.run(["git", "init", "-q"], cwd=tmp_path, check=True)
     _project(tmp_path, "confluid")
     assert s.resolve_for_setup(tmp_path, None, True, TRACKERS) == ([], False)
-    assert not (tmp_path / "trackers.toml").exists()
+    assert not (tmp_path / CONFIG_FILE).exists()
 
 
 def test_parse_selection_warns_with_the_axis_noun(capsys: pytest.CaptureFixture) -> None:

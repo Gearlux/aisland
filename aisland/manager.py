@@ -1253,9 +1253,9 @@ def setup_workspace(
     """Perform a full workspace setup: system provisioning followed by editable pip installs.
 
     ``framework`` names the ML frameworks to install (``--framework torch --framework keras``).
-    Passing any RECORDS the selection in ``frameworks.toml``, so it is a one-time flag
-    rather than something to repeat on every run; omitting it uses the recorded selection, and
-    prompts when there is none. See :mod:`aisland.frameworks`.
+    Passing any RECORDS the selection in ``config.toml``, so it is a one-time flag rather than
+    something to repeat on every run; omitting it uses the recorded selection, and prompts when
+    there is none. See :mod:`aisland.frameworks`.
     """
     workspace_root = get_workspace_root()
     venv_bin = workspace_root / ".venv" / "bin"
@@ -1267,6 +1267,12 @@ def setup_workspace(
     # 0. Ensure uv is present in the venv — required by everything below and by
     #    every Jenkinsfile.local job that targets this workspace.
     uv_cmd = ensure_uv_in_venv(venv_bin)
+
+    # 0a. Fold any pre-2026-08-01 sources/frameworks/trackers.toml into the single config.toml.
+    #     A no-op (and byte-silent) once there is nothing left to migrate — see aisland.config.
+    from aisland.config import migrate as migrate_config
+
+    migrate_config(workspace_root)
 
     # 0b. Symlink the aisland-managed project.bashrc to the workspace root so
     #     users can `source ./project.bashrc` from the workspace as before.

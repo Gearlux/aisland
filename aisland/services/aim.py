@@ -35,7 +35,7 @@ class AimService(BaseService):
         """Fail with the selection command when aim is absent — never install it here.
 
         Which tracking backends a machine has is decided by ``aisland tracker`` and recorded
-        in ``trackers.toml`` / ``.git/config``; a silent install leaves the venv holding
+        in ``config.toml`` / ``.git/config``; a silent install leaves the venv holding
         something no selection asked for, and gone again after the next ``aisland setup``.
         """
         import importlib.util

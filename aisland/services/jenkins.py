@@ -825,7 +825,7 @@ class JenkinsService(BaseService):
 
         # Selected extras this project's CI installs: what it DECLARES on each axis
         # (`[tool.aisland] frameworks` / `trackers`) intersected with that axis's COMMITTED
-        # selection (`frameworks.toml` / `trackers.toml`). Committed-only, for exactly the
+        # selection (the `frameworks` / `trackers` keys of `config.toml`). Committed-only, for the
         # reason the source registry below is: a per-machine `.git/config aisland.frameworks`
         # override must never reach a tracked build file, or one developer's "I only use torch"
         # would silently stop every runner from testing the Keras backend. The same holds for

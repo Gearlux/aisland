@@ -7,9 +7,9 @@ sibling :data:`~aisland.selection.TRACKERS` axis, and a module named ``framework
 the tracker axis would describe its first consumer rather than its role.
 
 Everything about *how* the selection works — the declaration table, the committed
-``frameworks.toml`` vs. the per-machine ``.git/config aisland.frameworks`` override, why an
-unset selection is not an empty one, and why an override must never reach a committed
-file — is documented in :mod:`aisland.selection`.
+``frameworks`` key of ``config.toml`` vs. the per-machine ``.git/config aisland.frameworks``
+override, why an unset selection is not an empty one, and why an override must never reach a
+committed file — is documented in :mod:`aisland.selection`.
 
 This module keeps the ``*_frameworks`` names the workspace already calls (``aisland
 setup``, the Jenkins scaffolder, the CLI) bound to that axis, so nothing had to move when
@@ -21,6 +21,7 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Dict, List, Optional, Sequence, Tuple
 
+from aisland.config import CONFIG_FILE
 from aisland.selection import FRAMEWORKS, Axis
 from aisland.selection import apply_selection as _apply
 from aisland.selection import available as _available
@@ -39,8 +40,8 @@ from aisland.selection import set_selection as _set_selection
 from aisland.selection import unset_selection as _unset_selection
 from aisland.selection import write_committed as _write_committed
 
-#: Committed, workspace-root framework selection.
-FRAMEWORKS_FILE = FRAMEWORKS.file
+#: The committed selection's key in the workspace's single ``config.toml``.
+FRAMEWORKS_KEY = FRAMEWORKS.plural
 
 #: The ``pyproject.toml`` table a project declares its framework extras in.
 DECLARATION_TABLE = FRAMEWORKS.table_path
@@ -65,12 +66,12 @@ def available_frameworks(workspace_root: Path) -> List[str]:
 
 
 def read_committed_frameworks(workspace_root: Path) -> Optional[List[str]]:
-    """The committed selection, or ``None`` when ``frameworks.toml`` does not exist."""
+    """The committed selection, or ``None`` when ``config.toml`` has no ``frameworks`` key."""
     return _read_committed(workspace_root, FRAMEWORKS)
 
 
 def write_committed_frameworks(workspace_root: Path, names: Sequence[str]) -> Path:
-    """Write the committed selection, preserving the managed-file header."""
+    """Record the committed selection in ``config.toml``, leaving its other sections intact."""
     return _write_committed(workspace_root, names, FRAMEWORKS)
 
 
@@ -124,10 +125,11 @@ def unset_frameworks(machine_only: bool = False, apply: bool = True) -> int:
 
 
 __all__ = [
+    "CONFIG_FILE",
     "CONFIG_KEY",
     "DECLARATION_TABLE",
     "FRAMEWORKS",
-    "FRAMEWORKS_FILE",
+    "FRAMEWORKS_KEY",
     "Axis",
     "apply_frameworks",
     "available_frameworks",

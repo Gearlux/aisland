@@ -124,7 +124,7 @@ class TestLayers:
 
     def test_committed_round_trip_with_provenance(self, workspace: Path) -> None:
         f.write_committed_frameworks(workspace, ["torch", "keras"])
-        text = (workspace / f.FRAMEWORKS_FILE).read_text()
+        text = (workspace / f.CONFIG_FILE).read_text()
 
         assert f.read_committed_frameworks(workspace) == ["torch", "keras"]
         assert "AUTO-GENERATED" in text and "aisland framework set" in text
@@ -153,10 +153,10 @@ class TestLayers:
 
     def test_setting_the_override_does_not_touch_the_committed_file(self, workspace: Path) -> None:
         f.write_committed_frameworks(workspace, ["torch"])
-        before = (workspace / f.FRAMEWORKS_FILE).read_bytes()
+        before = (workspace / f.CONFIG_FILE).read_bytes()
         f.set_local_override(workspace, ["keras"])
 
-        assert (workspace / f.FRAMEWORKS_FILE).read_bytes() == before
+        assert (workspace / f.CONFIG_FILE).read_bytes() == before
 
 
 # --------------------------------------------------------------------------- #
@@ -230,7 +230,7 @@ class TestResolveForSetup:
         _project(tmp_path, "confluid", [])
 
         assert f.resolve_for_setup(tmp_path, [], non_interactive=False) == ([], False)
-        assert not (tmp_path / f.FRAMEWORKS_FILE).exists()
+        assert not (tmp_path / f.CONFIG_FILE).exists()
 
 
 # --------------------------------------------------------------------------- #
