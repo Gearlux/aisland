@@ -14,14 +14,24 @@ class MLflowService(BaseService):
         self.artifacts_path = self.service_data_dir / "artifacts"
 
     def setup(self) -> None:
-        """Ensure mlflow is installed in the current environment."""
+        """Fail with the selection command when mlflow is absent — never install it here.
+
+        Installing it ad hoc would contradict the very layer this service depends on: which
+        tracking backends a machine has is decided by ``aisland tracker`` and recorded in
+        ``trackers.toml`` / ``.git/config``, and a silent ``pip install`` behind the
+        operator's back leaves the venv holding something no selection asked for (and gone
+        again after the next ``aisland setup``). Point at the command that makes it stick.
+        """
         import importlib.util
 
         if importlib.util.find_spec("mlflow") is None:
-            click.echo("MLflow is not installed. Installing via pip...")
-            import subprocess
-
-            subprocess.run([sys.executable, "-m", "pip", "install", "mlflow"], check=True)
+            raise click.ClickException(
+                "MLflow is not installed in this environment.\n"
+                "  Select it, so the choice is recorded and survives the next setup:\n"
+                "      aisland tracker set mlflow\n"
+                "  Or, for this machine only:\n"
+                "      aisland tracker set mlflow --machine-only"
+            )
 
     def info(self) -> None:
         """Show detailed MLflow configuration."""

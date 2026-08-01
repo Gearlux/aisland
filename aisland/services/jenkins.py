@@ -13,10 +13,11 @@ from typing import Any, List, Optional, cast
 
 import click
 
-from aisland.frameworks import declared_frameworks as fw_declared
-from aisland.frameworks import extras_for as fw_extras_for
-from aisland.frameworks import read_committed_frameworks as fw_committed
 from aisland.manager import BIN_DIR, BaseService
+from aisland.selection import AXES
+from aisland.selection import declared as sel_declared
+from aisland.selection import extras_for as sel_extras_for
+from aisland.selection import read_committed as sel_committed
 from aisland.sources import DEFAULT_REF, read_committed_sources, source_for_dependency
 
 # Match the Gearlux GitHub URL forms (SSH and HTTPS), capturing the repo name.
@@ -822,21 +823,23 @@ class JenkinsService(BaseService):
         # workspace project is now a zero-aisland-edit operation.
         gearlux_projects = discover_gearlux_projects(workspace_root)
 
-        # Framework extras this project's CI installs: what it DECLARES under
-        # `[tool.aisland] frameworks` intersected with the COMMITTED selection
-        # (`frameworks.toml`). Committed-only, for exactly the reason the source
-        # registry below is: a per-machine `.git/config aisland.frameworks` override must never
-        # reach a tracked build file, or one developer's "I only use torch" would silently stop
-        # every runner from testing the Keras backend. A project declaring no frameworks emits
-        # the historical `.[dev]` unchanged.
-        ci_extras = ",".join(
-            ["dev"]
-            + fw_extras_for(
+        # Selected extras this project's CI installs: what it DECLARES on each axis
+        # (`[tool.aisland] frameworks` / `trackers`) intersected with that axis's COMMITTED
+        # selection (`frameworks.toml` / `trackers.toml`). Committed-only, for exactly the
+        # reason the source registry below is: a per-machine `.git/config aisland.frameworks`
+        # override must never reach a tracked build file, or one developer's "I only use torch"
+        # would silently stop every runner from testing the Keras backend. The same holds for
+        # trackers — a runner that stops installing mlflow silently stops running the tests that
+        # need it, and they SKIP rather than fail. A project declaring neither emits the
+        # historical `.[dev]` unchanged.
+        selected_extras: list[str] = []
+        for axis in AXES:
+            selected_extras += sel_extras_for(
                 project_name,
-                fw_declared(pyproject_path),
-                fw_committed(workspace_root),
+                sel_declared(pyproject_path, axis),
+                sel_committed(workspace_root, axis),
             )
-        )
+        ci_extras = ",".join(["dev"] + selected_extras)
 
         # Per-project sources (aisland/sources.py). CI reads ONE bit — is this dep published? —
         # and nothing else. In particular it deliberately IGNORES the configured `ref`.

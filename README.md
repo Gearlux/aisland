@@ -468,6 +468,21 @@ ref = "dev/main"          # local/github only; omitted => "main"
 - `aisland setup` applies the configuration on every run, so a fresh clone converges without any
   manual step.
 
+## Optional extras: two selection axes
+
+Workspace packages keep their core minimal and put optional capabilities behind *extras*.
+Two independent things need deciding, and each has its own command over the same machinery:
+
+| axis | command | decides | committed file |
+| --- | --- | --- | --- |
+| **frameworks** | `aisland framework` | what this machine **trains with** (`recordstream[torch]`, `sonair[lightning]`/`[keras]`) | `frameworks.toml` |
+| **trackers** | `aisland tracker` | where results **go** (`marainer[mlflow]`/`[aim]`/`[tensorboard]`/`[wandb]`) | `trackers.toml` |
+
+They are **siblings, never merged**: picking a training engine must not install a tracking
+client. Both work identically — same `list` / `set` / `unset` verbs, same committed +
+per-machine layers, same rule that an override never reaches a tracked build file. Everything
+below is written for `framework`; substitute `tracker` and it all holds.
+
 ## ML Frameworks (`aisland framework`)
 
 Workspace packages keep their core **framework-free** and put each ML framework behind an
@@ -616,6 +631,76 @@ numpy), so committing everything and letting each machine narrow is a workable d
   because a consumer's extra can name a sibling's (`sonair[keras]` requires `marainer[keras]`);
   installing the consumer first makes uv warn `does not have an extra named 'keras'` and quietly
   install without it.
+- **Both axes go into one install.** Changing the framework selection reinstalls with the
+  selected *tracker* extras too, and vice versa — a target naming only the axis you changed
+  would describe a package you never asked for.
+
+## Tracking backends (`aisland tracker`)
+
+The sibling axis. Experiment-tracking backends live behind extras
+(`marainer[mlflow]` / `[aim]` / `[tensorboard]` / `[wandb]`) and each imports its library
+*lazily*, so code runs with none of them installed — the local-file backend always works. This
+command decides which a machine actually installs.
+
+```bash
+aisland tracker list                          # start here
+aisland tracker set mlflow tensorboard aim    # the free, self-hostable set
+aisland tracker set mlflow --machine-only     # THIS machine only; nothing committed
+aisland tracker unset --machine-only          # drop the override, use the shared choice
+```
+
+```
+  TRACKER        COMMITTED   OVERRIDE   EFFECTIVE   PROJECTS
+  aim            yes         -          yes         marainer
+  mlflow         yes         -          yes         marainer
+  tensorboard    yes         -          yes         marainer
+  wandb          yes         -          yes         marainer
+```
+
+A project declares its backends the same way it declares frameworks — a sibling key, not an
+addition:
+
+```toml
+[tool.aisland]
+frameworks = ["torch", "lightning", "keras"]   # what it can train with
+trackers   = ["mlflow", "tensorboard", "aim", "wandb"]  # what it can track to
+```
+
+Two things worth knowing:
+
+- **A service will not install its own backend.** `aisland mlflow start` and `aisland aim start`
+  fail with `aisland tracker set <name>` rather than pip-installing behind your back — an
+  ad-hoc install is not recorded anywhere and disappears at the next `aisland setup`.
+- **CI installs the committed selection**, for the same reason as frameworks, and it matters
+  more here: tests needing a backend `importorskip` it, so a runner that stops installing
+  `mlflow` produces a green build that quietly checks less than it used to.
+
+### The Aim UI (`aisland aim`)
+
+Aim needs no server infrastructure: runs live in an `.aim` repository directory and `aim up`
+serves the comparison UI from it.
+
+```bash
+aisland tracker set aim              # install the backend (once)
+aisland aim start --background       # serve http://localhost:43800
+aisland aim info                     # URL + which repository it is serving
+aisland aim stop
+```
+
+**The repository path is the whole contract.** `aisland aim start` publishes it to the
+workspace `.env` as `AIM_REPO`, so a run config points its tracker at the same place:
+
+```yaml
+trackers:
+  - !class:AimTracker { save_dir: $AIM_REPO }
+```
+
+Without that, a run writes to one repository and the UI serves another — the failure looks
+like "my runs aren't showing up". `--repo <dir>` serves a different one and republishes the
+variable to match.
+
+If a freshly-finished run does not appear, it is Aim's index rather than a lost write: the UI
+indexes when it starts, so `aisland aim restart` shows it. Nothing is missing from disk.
 
 ## Shell Completion (`aisland completion`)
 

@@ -275,10 +275,23 @@ class TestScaffolderUsesThisModule:
     """A pin on the wiring itself: the emitted files must carry the extras, not just the helper."""
 
     def test_the_real_scaffolder_imports_the_committed_reader(self) -> None:
+        """CI must read the COMMITTED layer — never `effective`, which folds in the override."""
+        from aisland import selection
         from aisland.services import jenkins
 
-        assert jenkins.fw_committed is f.read_committed_frameworks
-        assert jenkins.fw_extras_for is f.extras_for
+        assert jenkins.sel_committed is selection.read_committed
+        assert jenkins.sel_extras_for is selection.extras_for
+        assert jenkins.sel_declared is selection.declared
+        # The negative half is the point: an override must not be able to reach a tracked file.
+        assert jenkins.sel_committed is not selection.effective
+
+    def test_the_scaffolder_covers_every_axis(self) -> None:
+        """A new axis must reach CI without editing the scaffolder again."""
+        from aisland.selection import AXES, FRAMEWORKS, TRACKERS
+        from aisland.services import jenkins
+
+        assert jenkins.AXES is AXES
+        assert set(AXES) == {FRAMEWORKS, TRACKERS}
 
     def test_every_emission_site_uses_ci_extras(self) -> None:
         """Guards against a new install line being added with a hardcoded `.[dev]`."""

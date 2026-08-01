@@ -12,6 +12,8 @@ from aisland.manager import (
     run_quality_gates,
     setup_workspace,
 )
+from aisland.services.aim import DEFAULT_PORT as AIM_PORT
+from aisland.services.aim import AimService
 from aisland.services.docker import DockerService
 from aisland.services.fiftyone import FiftyOneService
 from aisland.services.jenkins import JenkinsService
@@ -285,6 +287,93 @@ def framework_unset(machine_only: bool, no_apply: bool) -> None:
     raise SystemExit(unset_frameworks(machine_only=machine_only, apply=not no_apply))
 
 
+# --- Tracker Selection Commands ---
+#
+# The sibling of `framework`, over the same machinery (aisland/selection.py) with the
+# TRACKERS axis. A separate command rather than more names under `framework` because the
+# axes are independent: what a machine TRAINS WITH and where its results GO are unrelated,
+# and merging them would install a tracking client because someone picked a training engine.
+
+
+@main.group()
+def tracker() -> None:
+    """Choose which experiment-tracking backends this workspace installs.
+
+    Tracking backends live behind extras (`marainer[mlflow]`/`[aim]`/`[tensorboard]`/`[wandb]`)
+    and each imports its library lazily, so code runs with none of them installed — the
+    local-file backend always works. A project declares which of its extras are trackers in
+    `[tool.aisland] trackers`; this command selects among them, and `aisland setup` installs
+    the intersection.
+
+    Both layers are honoured: the committed `trackers.toml` (shared, and the set generated
+    CI installs) and a per-machine `.git/config aisland.trackers` override.
+    """
+    pass
+
+
+@tracker.command(name="list")
+def tracker_list() -> None:
+    """Show each declared tracker, which projects offer it, and whether it is selected."""
+    from aisland.selection import TRACKERS, describe
+
+    rows = describe(axis=TRACKERS)
+    if not rows:
+        click.echo("No project declares tracker extras ([tool.aisland] trackers).")
+        return
+    header = f"  {'TRACKER':<14} {'COMMITTED':<11} {'OVERRIDE':<10} {'EFFECTIVE':<11} PROJECTS"
+    click.echo(click.style(header, bold=True))
+    for row in rows:
+        click.echo(
+            f"  {row['tracker']:<14} {row['committed']:<11} {row['override']:<10} "
+            f"{row['effective']:<11} {row['projects']}"
+        )
+    click.echo(f"\n  '-' = that layer records no selection at all ({TRACKERS.file} absent, or no override).")
+
+    example = " ".join(row["tracker"] for row in rows[:2])
+    commands = [
+        (f"aisland tracker set {example}", f"shared: writes {TRACKERS.file}; CI installs it"),
+        (f"aisland tracker set {example} --machine-only", "this machine only (.git/config)"),
+        ("aisland tracker unset --machine-only", "drop this machine's override"),
+        (f"aisland tracker set {example} --no-apply", "record it without reinstalling"),
+    ]
+    width = max(len(cmd) for cmd, _ in commands)
+    click.echo("\n  Change it (--machine-only / --no-apply are FLAGS on set/unset, not commands):")
+    for cmd, note in commands:
+        click.echo(f"    {cmd:<{width}}  # {note}")
+
+
+@tracker.command(name="set")
+@click.argument("names", nargs=-1, required=True)
+@click.option(
+    "--machine-only",
+    is_flag=True,
+    help="Record only the per-machine .git/config override; leave trackers.toml "
+    "(and the set generated CI installs) untouched.",
+)
+@click.option("--no-apply", is_flag=True, help="Record the selection without reinstalling anything.")
+def tracker_set(names: tuple[str, ...], machine_only: bool, no_apply: bool) -> None:
+    """Select TRACKERS and reinstall the projects that declare them.
+
+    \b
+    aisland tracker set mlflow                  # a machine that only uses the MLflow server
+    aisland tracker set aim tensorboard         # local-only, no server to operate
+    aisland tracker set mlflow --machine-only   # this machine only; nothing committed
+    """
+    from aisland.selection import TRACKERS, set_selection
+
+    raise SystemExit(set_selection(names=names, axis=TRACKERS, machine_only=machine_only, apply=not no_apply))
+
+
+@tracker.command(name="unset")
+@click.option("--machine-only", is_flag=True, help="Clear only this machine's override; keep the committed selection.")
+@click.option("--no-apply", is_flag=True, help="Clear the selection without reinstalling anything.")
+def tracker_unset(machine_only: bool, no_apply: bool) -> None:
+    """Clear the tracker selection; the next `aisland setup` prompts again."""
+    from aisland.selection import TRACKERS, unset_selection
+
+    raise SystemExit(unset_selection(axis=TRACKERS, machine_only=machine_only, apply=not no_apply))
+
+
 # --- Docker Commands ---
 
 
@@ -484,6 +573,64 @@ def mlflow_reset() -> None:
 def mlflow_ui(db_file: str, port: int) -> None:
     """Run local MLflow UI with the given database file."""
     MLflowService().ui(db_path=db_file, port=port)
+
+
+# --- Aim Commands ---
+
+
+@main.group()
+def aim() -> None:
+    """Serve the Aim experiment-tracking UI from a local repository.
+
+    Aim needs no server infrastructure — runs live in an `.aim` repository directory and
+    `aim up` serves the comparison UI from it. The repository path is published to the
+    workspace `.env` as `AIM_REPO`, so a run config points its tracker at `$AIM_REPO` and
+    what a run writes is what this UI shows.
+
+    Requires the `aim` backend: `aisland tracker set aim`.
+    """
+    pass
+
+
+@aim.command(name="start")
+@click.option("--port", default=AIM_PORT, help="HTTP port for the Aim UI.")
+@click.option("--background", "-b", is_flag=True, help="Run in background.")
+@click.option("--repo", default=None, help="Aim repository to serve (default: the workspace one).")
+def aim_start(port: int, background: bool, repo: Optional[str]) -> None:
+    """Start the Aim UI."""
+    AimService().launch(port=port, background=background, repo=repo)
+
+
+@aim.command(name="stop")
+def aim_stop() -> None:
+    """Stop the Aim UI."""
+    AimService().stop()
+
+
+@aim.command(name="status")
+def aim_status() -> None:
+    """Show Aim UI status."""
+    AimService().status()
+
+
+@aim.command(name="info")
+def aim_info() -> None:
+    """Show detailed Aim configuration (URL, repository path)."""
+    AimService().info()
+
+
+@aim.command(name="restart")
+@click.option("--port", default=AIM_PORT, help="HTTP port for the Aim UI.")
+@click.option("--background", "-b", is_flag=True, help="Run in background.")
+def aim_restart(port: int, background: bool) -> None:
+    """Restart the Aim UI."""
+    AimService().restart(port=port, background=background)
+
+
+@aim.command(name="reset")
+def aim_reset() -> None:
+    """Delete the Aim repository and its logs."""
+    AimService().reset()
 
 
 # --- Label Studio Commands ---

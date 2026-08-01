@@ -1307,11 +1307,16 @@ def setup_workspace(
     #       discovery (the vocabulary comes from the discovered projects' declarations) and
     #       BEFORE the install loop, which reads it per project. Prompts once when nothing has
     #       been chosen yet; a recorded choice is used silently.
-    from aisland.frameworks import declared_frameworks, extras_for, install_target, resolve_for_setup
+    from aisland.selection import AXES, all_extras, install_target, resolve_for_setup
 
-    selected_frameworks, _just_chosen = resolve_for_setup(workspace_root, framework, non_interactive)
-    if selected_frameworks:
-        click.echo(f"==> Frameworks: {', '.join(selected_frameworks)}")
+    for axis in AXES:
+        # Only the framework axis takes a flag; the tracker axis resolves from its recorded
+        # selection (or prompts once), which is why `requested` is None for it.
+        selected, _just_chosen = resolve_for_setup(
+            workspace_root, framework if axis.plural == "frameworks" else None, non_interactive, axis
+        )
+        if selected:
+            click.echo(f"==> {axis.plural.capitalize()}: {', '.join(selected)}")
 
     # 2c. Generated root uv.toml — workspace base merged with each activated project's uv.toml,
     #     so a private index (e.g. vendorcli's Company Artifactory URLs) is present ONLY when that
@@ -1329,13 +1334,10 @@ def setup_workspace(
             pass
 
         # Python Provisioning (Editable Installs)
-        # The framework extras this project DECLARES, narrowed to what the machine SELECTED —
-        # so a project declaring none installs exactly as it always did.
-        extras = extras_for(
-            project["name"],
-            declared_frameworks(project_dir / "pyproject.toml"),
-            selected_frameworks,
-        )
+        # Every extra this project DECLARES on either axis, narrowed to what the machine
+        # SELECTED — so a project declaring none installs exactly as it always did. Both axes
+        # go into ONE target: naming only one would describe a package nobody asked for.
+        extras = all_extras(workspace_root, project_dir / "pyproject.toml", project["name"])
         target = install_target(project_dir, project["has_dev"], extras)
         click.echo(f"==> Installing {project['name']} ({target})...")
         try:
