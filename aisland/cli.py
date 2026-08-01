@@ -14,6 +14,8 @@ from aisland.manager import (
 )
 from aisland.services.aim import DEFAULT_PORT as AIM_PORT
 from aisland.services.aim import AimService
+from aisland.services.clearml import DEFAULT_WEB_PORT as CLEARML_WEB_PORT
+from aisland.services.clearml import ClearMLService
 from aisland.services.docker import DockerService
 from aisland.services.fiftyone import FiftyOneService
 from aisland.services.jenkins import JenkinsService
@@ -631,6 +633,56 @@ def aim_restart(port: int, background: bool) -> None:
 def aim_reset() -> None:
     """Delete the Aim repository and its logs."""
     AimService().reset()
+
+
+# --- ClearML Commands ---
+
+
+@main.group()
+def clearml() -> None:
+    """Run the ClearML server (upstream's docker-compose stack, workspace-local state).
+
+    Seven containers, wired by upstream's compose file at a pinned release and verified by
+    checksum; aisland layers a generated override that moves every host bind mount out of
+    `/opt/clearml` into `aisland/data/clearml/state`, so a service's data stays inside the
+    workspace.
+
+    Requires the `clearml` backend (`aisland tracker set clearml`) and a running Docker
+    daemon (`aisland docker start`). For tracking WITHOUT a server, `ClearMLTracker(offline=True)`
+    records to local disk and needs neither.
+    """
+    pass
+
+
+@clearml.command(name="start")
+@click.option("--port", default=CLEARML_WEB_PORT, help="HTTP port for the ClearML web UI.")
+def clearml_start(port: int) -> None:
+    """Start the ClearML server stack (detached)."""
+    ClearMLService().launch(port=port)
+
+
+@clearml.command(name="stop")
+def clearml_stop() -> None:
+    """Stop the ClearML server stack."""
+    ClearMLService().stop()
+
+
+@clearml.command(name="status")
+def clearml_status() -> None:
+    """Show the ClearML containers."""
+    ClearMLService().status()
+
+
+@clearml.command(name="info")
+def clearml_info() -> None:
+    """Show detailed ClearML configuration (pinned version, compose files, state dir)."""
+    ClearMLService().info()
+
+
+@clearml.command(name="reset")
+def clearml_reset() -> None:
+    """Tear the stack down and delete its state, volumes and compose files."""
+    ClearMLService().reset()
 
 
 # --- Label Studio Commands ---

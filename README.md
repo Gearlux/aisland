@@ -702,6 +702,39 @@ variable to match.
 If a freshly-finished run does not appear, it is Aim's index rather than a lost write: the UI
 indexes when it starts, so `aisland aim restart` shows it. Nothing is missing from disk.
 
+### The ClearML server (`aisland clearml`)
+
+Seven containers (apiserver, webserver, fileserver, elasticsearch, mongo, redis, agent-services).
+aisland does **not** reimplement that topology — it fetches upstream's compose file at a pinned
+release, checks it against a pinned SHA-256, and layers a generated override on top.
+
+```bash
+aisland tracker set clearml     # install the backend (once)
+aisland docker start            # the stack needs a Docker daemon
+aisland clearml start           # ~2 GB of images on first run
+aisland clearml status          # the containers
+aisland clearml stop            # keeps the data
+aisland clearml reset           # tears down AND deletes the state
+```
+
+**Why the override exists.** Upstream hardcodes `/opt/clearml/...` as the host side of every
+bind mount, which would put service state outside the workspace and need root to create.
+Compose merges a service's `volumes` **by container target**, so the generated override
+replaces each host path with one under `aisland/data/clearml/state`. It is derived *from*
+upstream's file, so bumping the pinned version cannot leave a stale path behind.
+
+`aisland clearml start` publishes `CLEARML_WEB_HOST` / `CLEARML_API_HOST` / `CLEARML_FILES_HOST`
+to the workspace `.env`. Two things to know before you point a tracker at it:
+
+- **The server needs a user before the SDK can connect.** Open <http://localhost:8080> once and
+  complete the sign-up; ClearML then shows you the credentials to put in `~/clearml.conf`. That
+  is ClearML's own onboarding, not something aisland can do for you.
+- **You may not need the server at all.** `ClearMLTracker(offline=True)` records a full session
+  to local disk with no server and no credentials — worth trying first.
+
+On Apple silicon the images are `linux/amd64` and run under emulation; expect the web UI to take
+~30 s on first boot while Elasticsearch comes up.
+
 ## Shell Completion (`aisland completion`)
 
 Installs tab-completion for **every** CLI in the workspace in one command:
