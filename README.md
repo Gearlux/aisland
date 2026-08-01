@@ -723,14 +723,28 @@ Compose merges a service's `volumes` **by container target**, so the generated o
 replaces each host path with one under `aisland/data/clearml/state`. It is derived *from*
 upstream's file, so bumping the pinned version cannot leave a stale path behind.
 
-`aisland clearml start` publishes `CLEARML_WEB_HOST` / `CLEARML_API_HOST` / `CLEARML_FILES_HOST`
-to the workspace `.env`. Two things to know before you point a tracker at it:
+**Credentials are minted for you.** `aisland clearml start` enables a fixed user (generating a
+password on first use and recording it), waits for the API, logs in and creates SDK credentials
+— so the workspace `.env` ends up with everything a tracker needs and there is no browser
+sign-up step:
 
-- **The server needs a user before the SDK can connect.** Open <http://localhost:8080> once and
-  complete the sign-up; ClearML then shows you the credentials to put in `~/clearml.conf`. That
-  is ClearML's own onboarding, not something aisland can do for you.
+```
+CLEARML_WEB_HOST / CLEARML_API_HOST / CLEARML_FILES_HOST   where the server is
+CLEARML_USERNAME / CLEARML_PASSWORD                        the web login
+CLEARML_API_ACCESS_KEY / CLEARML_API_SECRET_KEY            what the SDK uses
+```
+
+Source `.env` and a `ClearMLTracker` connects with no further setup. Minting is best-effort: if
+the API is not up yet it says so and the next `aisland clearml start` completes it — a stack
+that is otherwise running is never failed over a convenience.
+
+Two things worth knowing:
+
 - **You may not need the server at all.** `ClearMLTracker(offline=True)` records a full session
   to local disk with no server and no credentials — worth trying first.
+- **ClearML rejects very short task names.** A `run_name` of one or two characters fails at task
+  creation with `Data validation error: name=String value is too short`. marainer's generated
+  names are well clear of it; a hand-written `run_name: r` is not.
 
 On Apple silicon the images are `linux/amd64` and run under emulation; expect the web UI to take
 ~30 s on first boot while Elasticsearch comes up.

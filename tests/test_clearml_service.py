@@ -208,3 +208,98 @@ def test_info_does_not_claim_the_supervisor_owns_it(service: ClearMLService, cap
     out = capsys.readouterr().out
     assert "docker compose" in out
     assert "process-compose (" not in out
+
+
+# --------------------------------------------------------------------------- #
+# headless credentials
+# --------------------------------------------------------------------------- #
+
+
+def test_the_fixed_user_goes_in_a_conf_file_not_env_vars(service: ClearMLService) -> None:
+    """Measured: the env-var override cannot express a LIST OF OBJECTS.
+
+    `CLEARML__apiserver__auth__fixed_users__users__0__username=...` makes the server die on
+    every login with `FixedUser() argument after ** must be a mapping, not str`, because
+    pyhocon builds a string where the apiserver unpacks a mapping. A `.conf` in the mounted
+    config directory is ClearML's documented mechanism and the one that works.
+    """
+    service._write_override(service.upstream_file)
+    override = yaml.safe_load(service.override_file.read_text())
+    for spec in override["services"].values():
+        assert "environment" not in spec, "fixed users must not be configured through env vars"
+
+    written = service._write_apiserver_conf({"CLEARML_USERNAME": "u", "CLEARML_PASSWORD": "p"})
+    assert written.name == "apiserver.conf"
+    body = written.read_text()
+    assert "fixed_users" in body and "enabled: true" in body
+    assert 'username: "u"' in body and 'password: "p"' in body
+
+
+def test_the_conf_lands_where_the_container_reads_it(service: ClearMLService) -> None:
+    """It must be inside the directory the override binds to /opt/clearml/config."""
+    written = service._write_apiserver_conf({"CLEARML_USERNAME": "u", "CLEARML_PASSWORD": "p"})
+    assert written.parent == service.state_dir / "config"
+
+
+def test_the_conf_is_not_world_readable(service: ClearMLService) -> None:
+    """It carries a password literal, because the server has to be able to read it."""
+    written = service._write_apiserver_conf({"CLEARML_USERNAME": "u", "CLEARML_PASSWORD": "p"})
+    assert written.stat().st_mode & 0o077 == 0
+
+
+def test_an_existing_login_is_reused_not_regenerated(service: ClearMLService, tmp_path: Path) -> None:
+    """A fresh password each start would not match the server that already has the old one."""
+    root = tmp_path / "ws"
+    root.mkdir()
+    (root / ".env").write_text("CLEARML_USERNAME=me\nCLEARML_PASSWORD=keepme\n")
+    with patch("aisland.manager.get_workspace_root", return_value=root):
+        with patch(
+            "aisland.supervisor.read_workspace_env",
+            return_value={"CLEARML_USERNAME": "me", "CLEARML_PASSWORD": "keepme"},
+        ):
+            login = service._login()
+    assert login == {"CLEARML_USERNAME": "me", "CLEARML_PASSWORD": "keepme"}
+
+
+def test_a_missing_login_is_generated_and_recorded(service: ClearMLService, tmp_path: Path) -> None:
+    root = tmp_path / "ws"
+    root.mkdir()
+    with patch("aisland.manager.get_workspace_root", return_value=root):
+        with patch("aisland.supervisor.read_workspace_env", return_value={}):
+            with patch("aisland.manager.get_workspace_name", return_value="acme"):
+                login = service._login()
+    body = (root / ".env").read_text()
+    assert login["CLEARML_USERNAME"] == "acme"
+    assert len(login["CLEARML_PASSWORD"]) >= 20  # generated, not a default anyone could guess
+    assert f"CLEARML_PASSWORD={login['CLEARML_PASSWORD']}" in body
+
+
+def test_credential_minting_never_raises(service: ClearMLService, tmp_path: Path) -> None:
+    """A tracking convenience must not fail a stack that is otherwise up."""
+    root = tmp_path / "ws"
+    root.mkdir()
+    with patch("aisland.manager.get_workspace_root", return_value=root):
+        with patch("urllib.request.urlopen", side_effect=OSError("connection refused")):
+            assert service._mint_credentials({"CLEARML_USERNAME": "u", "CLEARML_PASSWORD": "p"}) is None
+
+
+def test_minted_credentials_are_recorded_in_the_env(service: ClearMLService, tmp_path: Path) -> None:
+    root = tmp_path / "ws"
+    root.mkdir()
+    replies = [
+        {"data": {"token": "tok"}},
+        {"data": {"credentials": {"access_key": "AK", "secret_key": "SK"}}},
+    ]
+
+    def fake_urlopen(request: Any, timeout: Any = None) -> Any:
+        response = MagicMock()
+        response.read.return_value = __import__("json").dumps(replies.pop(0)).encode()
+        response.__enter__ = lambda s: s
+        response.__exit__ = lambda *a: None
+        return response
+
+    with patch("aisland.manager.get_workspace_root", return_value=root):
+        with patch("urllib.request.urlopen", side_effect=fake_urlopen):
+            minted = service._mint_credentials({"CLEARML_USERNAME": "u", "CLEARML_PASSWORD": "p"})
+    assert minted == {"CLEARML_API_ACCESS_KEY": "AK", "CLEARML_API_SECRET_KEY": "SK"}
+    assert "CLEARML_API_ACCESS_KEY=AK" in (root / ".env").read_text()
