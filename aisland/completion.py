@@ -9,7 +9,7 @@ makes it a one-second command, and puts it where aisland's own tests can reach i
 
 **Three families, because the workspace has three kinds of CLI:**
 
-* **liquifai apps** (``recordstream``, ``marainer``, ``sonair``, ``annotaide``, …) declare
+* **liquifai apps** (``recordstream``, ``matrainer``, ``sonair``, ``annotaide``, …) declare
   themselves in the ``liquifai.apps`` entry-point group. :func:`liquifai.completion.install_for_apps`
   discovers and installs them — called in-process, not through the
   ``liquifai-install-completions`` console script, so a missing PATH entry cannot silently

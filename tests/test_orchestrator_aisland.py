@@ -15,9 +15,9 @@ from aisland.services.jenkins import pyproject_to_workspace_dir
 
 def test_pyproject_to_workspace_dir_identity() -> None:
     """Most projects: pyproject name == workspace dir name."""
-    initialized = {"confluid", "loggair", "marainer"}
+    initialized = {"confluid", "loggair", "matrainer"}
     assert pyproject_to_workspace_dir("confluid", initialized) == "confluid"
-    assert pyproject_to_workspace_dir("marainer", initialized) == "marainer"
+    assert pyproject_to_workspace_dir("matrainer", initialized) == "matrainer"
 
 
 def test_pyproject_to_workspace_dir_dashed_pypi_name() -> None:
@@ -39,7 +39,7 @@ def test_pyproject_to_workspace_dir_handles_aisland_manager_suffix() -> None:
 
 def test_pyproject_to_workspace_dir_unknown_passes_through() -> None:
     """An unknown name (e.g. an external dep) is returned as-is — the caller decides what to do."""
-    initialized = {"loggair", "marainer"}
+    initialized = {"loggair", "matrainer"}
     assert pyproject_to_workspace_dir("requests", initialized) == "requests"
 
 

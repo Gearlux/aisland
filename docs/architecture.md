@@ -232,7 +232,7 @@ already satisfies the invariant, so a no-op sync writes nothing.
 
 The workspace's packages were made framework-neutral: each keeps a numpy/config core and puts
 its ML framework behind an extra — `recordstream[torch]`, `sonair[lightning]` / `[keras]`,
-`marainer[torch,lightning,keras,tensorflow]`. That is what makes "install only what I work with"
+`matrainer[torch,lightning,keras,tensorflow]`. That is what makes "install only what I work with"
 *expressible*, but nothing yet *decided* it. `aisland setup`'s install line was:
 
 ```python
@@ -285,7 +285,7 @@ engine from a documentation extra.
   everything and letting each machine narrow is therefore a real option, not a hope.
 - **Reinstall order is load-bearing.** `apply_frameworks` iterates `get_install_order`, not
   `discover_projects`: a consumer's extra can name a sibling's (`sonair[keras]` requires
-  `marainer[keras]>=0.1.0`), and installing the consumer first resolves against the sibling's
+  `matrainer[keras]>=0.1.0`), and installing the consumer first resolves against the sibling's
   already-installed metadata — uv then warns `does not have an extra named 'keras'` and installs
   without it. Found on the first real run of the function, not in review.
 - **Deselecting does not uninstall.** uv has no notion of "the packages that belonged to this
@@ -294,7 +294,7 @@ engine from a documentation extra.
 - **`--non-interactive` selects everything** when nothing is recorded. A headless setup must
   neither hang on the prompt nor hand back a workspace that cannot train.
 - **Scope is deliberately limited to projects that OFFER a choice** (decided 2026-07-30 after
-  reading each project, not counting its imports). `recordstream`, `marainer` and `sonair` declare
+  reading each project, not counting its imports). `recordstream`, `matrainer` and `sonair` declare
   frameworks because a genuine alternative exists. Four others keep `torch` as a plain hard
   dependency and are NOT declarable:
 
@@ -327,7 +327,7 @@ target = install_target(project_dir, project["has_dev"], extras)          # /w/s
 $ aisland framework set torch lightning keras
 ==> Recorded as `frameworks` in config.toml: torch, lightning, keras
 ==> Installing recordstream (/w/recordstream[dev,torch])...
-==> Installing marainer (/w/marainer[dev,torch,lightning,keras])...
+==> Installing matrainer (/w/matrainer[dev,torch,lightning,keras])...
 ==> Installing sonair (/w/sonair[dev,lightning,keras])...
 ```
 

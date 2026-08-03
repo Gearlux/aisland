@@ -32,7 +32,7 @@ def test_scaffold_all_projects_includes_aisland(monkeypatch: pytest.MonkeyPatch,
     targets — previously it was filtered out by `child.name != "aisland"`.
     """
     # Build a fake workspace with three sibling projects, one of which is aisland.
-    for name in ("aisland", "marainer", "traidwind"):
+    for name in ("aisland", "matrainer", "traidwind"):
         _make_pyproject(tmp_path / name, name)
 
     from aisland import manager
@@ -57,7 +57,7 @@ def test_scaffold_all_projects_includes_aisland(monkeypatch: pytest.MonkeyPatch,
     svc.scaffold_pipelines(project_name=None)
 
     assert "aisland" in visited, "aisland must not be filtered out of the all-projects loop"
-    assert {"aisland", "marainer", "traidwind"} <= set(visited)
+    assert {"aisland", "matrainer", "traidwind"} <= set(visited)
 
 
 def test_scaffold_emits_directory_example_runner(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:

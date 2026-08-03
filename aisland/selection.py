@@ -8,7 +8,7 @@ mechanism because the mechanism is identical and only the vocabulary differs:
 * :data:`FRAMEWORKS` — the ML framework a machine TRAINS WITH (``recordstream[torch]``,
   ``sonair[lightning]`` / ``[keras]``). Nothing trains without one, so a workspace with no
   selection is broken.
-* :data:`TRACKERS` — the experiment-tracking backend results GO TO (``marainer[mlflow]`` /
+* :data:`TRACKERS` — the experiment-tracking backend results GO TO (``matrainer[mlflow]`` /
   ``[aim]`` / ``[tensorboard]`` / ``[wandb]``).
 
 They are **sibling axes, never merged**: what a machine trains with and where its results
@@ -438,7 +438,7 @@ def apply_selection(
     Order comes from :func:`aisland.manager.get_install_order` — the same topological order
     ``aisland setup`` uses — NOT from discovery order. That is load-bearing rather than
     tidy: a consumer's extra can name a sibling's (``sonair[keras]`` requires
-    ``marainer[keras]>=0.1.0``), so installing the consumer first resolves it against the
+    ``matrainer[keras]>=0.1.0``), so installing the consumer first resolves it against the
     sibling's ALREADY-INSTALLED metadata and uv warns ``does not have an extra named
     'keras'`` while quietly installing without it. Observed on the first real run.
 

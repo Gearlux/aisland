@@ -51,7 +51,7 @@ def _project(root: Path, name: str, frameworks: list[str] = [], trackers: list[s
 @pytest.fixture
 def workspace(tmp_path: Path) -> Path:
     subprocess.run(["git", "init", "-q"], cwd=tmp_path, check=True)
-    _project(tmp_path, "marainer", frameworks=["torch", "lightning"], trackers=["mlflow", "aim"])
+    _project(tmp_path, "matrainer", frameworks=["torch", "lightning"], trackers=["mlflow", "aim"])
     _project(tmp_path, "recordstream", frameworks=["torch"])
     _project(tmp_path, "confluid")  # declares nothing on either axis
     return tmp_path
@@ -91,8 +91,8 @@ def test_a_project_declaring_neither_axis_is_unaffected(workspace: Path) -> None
 
 
 def test_declarations_are_read_per_axis(workspace: Path) -> None:
-    assert s.declarations(workspace, TRACKERS) == {"marainer": ["mlflow", "aim"]}
-    assert set(s.declarations(workspace, FRAMEWORKS)) == {"marainer", "recordstream"}
+    assert s.declarations(workspace, TRACKERS) == {"matrainer": ["mlflow", "aim"]}
+    assert set(s.declarations(workspace, FRAMEWORKS)) == {"matrainer", "recordstream"}
 
 
 # --------------------------------------------------------------------------- #
@@ -103,26 +103,26 @@ def test_declarations_are_read_per_axis(workspace: Path) -> None:
 def test_all_extras_spans_both_axes(workspace: Path) -> None:
     s.write_committed(workspace, ["lightning"], FRAMEWORKS)
     s.write_committed(workspace, ["mlflow", "aim"], TRACKERS)
-    pyproject = workspace / "marainer" / "pyproject.toml"
-    assert s.all_extras(workspace, pyproject, "marainer") == ["lightning", "mlflow", "aim"]
+    pyproject = workspace / "matrainer" / "pyproject.toml"
+    assert s.all_extras(workspace, pyproject, "matrainer") == ["lightning", "mlflow", "aim"]
 
 
 def test_all_extras_follows_declaration_order_not_selection_order(workspace: Path) -> None:
     s.write_committed(workspace, [], FRAMEWORKS)
     s.write_committed(workspace, ["aim", "mlflow"], TRACKERS)  # reversed on purpose
-    pyproject = workspace / "marainer" / "pyproject.toml"
-    assert s.all_extras(workspace, pyproject, "marainer") == ["mlflow", "aim"]
+    pyproject = workspace / "matrainer" / "pyproject.toml"
+    assert s.all_extras(workspace, pyproject, "matrainer") == ["mlflow", "aim"]
 
 
 def test_all_extras_honours_the_per_machine_override(workspace: Path) -> None:
     s.write_committed(workspace, ["mlflow", "aim"], TRACKERS)
     s.set_local_override(workspace, ["aim"], TRACKERS)
-    pyproject = workspace / "marainer" / "pyproject.toml"
-    assert s.all_extras(workspace, pyproject, "marainer") == ["aim"]
+    pyproject = workspace / "matrainer" / "pyproject.toml"
+    assert s.all_extras(workspace, pyproject, "matrainer") == ["aim"]
 
 
 def test_install_target_spells_both_axes_once(workspace: Path) -> None:
-    target = s.install_target(workspace / "marainer", True, ["lightning", "mlflow"])
+    target = s.install_target(workspace / "matrainer", True, ["lightning", "mlflow"])
     assert target.endswith("[dev,lightning,mlflow]")
 
 
@@ -227,4 +227,4 @@ def test_describe_keys_rows_by_the_axis_noun(workspace: Path) -> None:
     rows = s.describe(workspace, TRACKERS)
     assert [row["tracker"] for row in rows] == ["aim", "mlflow"]
     assert {row["tracker"]: row["effective"] for row in rows} == {"aim": "no", "mlflow": "yes"}
-    assert rows[0]["projects"] == "marainer"
+    assert rows[0]["projects"] == "matrainer"

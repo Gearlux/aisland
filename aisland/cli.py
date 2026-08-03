@@ -350,7 +350,7 @@ def framework_unset(machine_only: bool, no_apply: bool) -> None:
 def tracker() -> None:
     """Choose which experiment-tracking backends this workspace installs.
 
-    Tracking backends live behind extras (`marainer[mlflow]`/`[aim]`/`[tensorboard]`/`[wandb]`)
+    Tracking backends live behind extras (`matrainer[mlflow]`/`[aim]`/`[tensorboard]`/`[wandb]`)
     and each imports its library lazily, so code runs with none of them installed — the
     local-file backend always works. A project declares which of its extras are trackers in
     `[tool.aisland] trackers`; this command selects among them, and `aisland setup` installs

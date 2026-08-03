@@ -516,7 +516,7 @@ Two independent things need deciding, and each has its own command over the same
 | axis | command | decides | committed key |
 | --- | --- | --- | --- |
 | **frameworks** | `aisland framework` | what this machine **trains with** (`recordstream[torch]`, `sonair[lightning]`/`[keras]`) | `frameworks` in `config.toml` |
-| **trackers** | `aisland tracker` | where results **go** (`marainer[mlflow]`/`[aim]`/`[tensorboard]`/`[wandb]`) | `trackers` in `config.toml` |
+| **trackers** | `aisland tracker` | where results **go** (`matrainer[mlflow]`/`[aim]`/`[tensorboard]`/`[wandb]`) | `trackers` in `config.toml` |
 
 They are **siblings, never merged**: picking a training engine must not install a tracking
 client. Both work identically — same `list` / `set` / `unset` verbs, same committed +
@@ -526,7 +526,7 @@ below is written for `framework`; substitute `tracker` and it all holds.
 ## ML Frameworks (`aisland framework`)
 
 Workspace packages keep their core **framework-free** and put each ML framework behind an
-*extra*: `recordstream[torch]`, `sonair[lightning]` / `[keras]`, `marainer[torch,lightning,…]`.
+*extra*: `recordstream[torch]`, `sonair[lightning]` / `[keras]`, `matrainer[torch,lightning,…]`.
 That makes "install only what I actually work with" expressible — this command decides *which*.
 
 ### The commands
@@ -556,10 +556,10 @@ names of this workspace:
 
 ```
   FRAMEWORK      COMMITTED   OVERRIDE   EFFECTIVE   PROJECTS
-  keras          yes         -          yes         marainer, sonair
-  lightning      yes         -          yes         marainer, sonair
-  tensorflow     no          -          no          marainer
-  torch          yes         -          yes         marainer, recordstream
+  keras          yes         -          yes         matrainer, sonair
+  lightning      yes         -          yes         matrainer, sonair
+  tensorflow     no          -          no          matrainer
+  torch          yes         -          yes         matrainer, recordstream
 
   '-' = no selection recorded in that layer (config.toml has no `frameworks` key, or no override).
 
@@ -579,13 +579,13 @@ afterwards, and nothing tracked is modified, so your choice never reaches CI or 
 $ aisland framework set keras --machine-only
 ==> This machine only: keras
 ==> Installing recordstream (/w/recordstream[dev])...
-==> Installing marainer (/w/marainer[dev,keras])...
+==> Installing matrainer (/w/matrainer[dev,keras])...
 ==> Installing sonair (/w/sonair[dev,keras])...
 
 $ aisland framework unset --machine-only          # ...and back again
 ==> Cleared this machine's override; the committed selection applies.
 ==> Installing recordstream (/w/recordstream[dev,torch])...
-==> Installing marainer (/w/marainer[dev,torch,lightning,keras])...
+==> Installing matrainer (/w/matrainer[dev,torch,lightning,keras])...
 ==> Installing sonair (/w/sonair[dev,lightning,keras])...
 ```
 
@@ -637,7 +637,7 @@ The names line up across projects on purpose (`keras` is `keras` everywhere), so
 drives every project with no per-project mapping table. Each project then installs what it
 declares ∩ what is selected:
 
-| selection | recordstream | marainer | sonair |
+| selection | recordstream | matrainer | sonair |
 | --- | --- | --- | --- |
 | `torch lightning keras` | `[dev,torch]` | `[dev,torch,lightning,keras]` | `[dev,lightning,keras]` |
 | `keras` | `[dev]` | `[dev,keras]` | `[dev,keras]` |
@@ -668,7 +668,7 @@ numpy), so committing everything and letting each machine narrow is a workable d
   in the `.venv` — guessing which packages "belonged" to an extra is unsound, and a stale wheel
   costs disk, not correctness. Recreate the `.venv` for a truly clean set.
 - **Order matters, and is handled.** `aisland framework set` reinstalls in dependency order,
-  because a consumer's extra can name a sibling's (`sonair[keras]` requires `marainer[keras]`);
+  because a consumer's extra can name a sibling's (`sonair[keras]` requires `matrainer[keras]`);
   installing the consumer first makes uv warn `does not have an extra named 'keras'` and quietly
   install without it.
 - **Both axes go into one install.** Changing the framework selection reinstalls with the
@@ -678,7 +678,7 @@ numpy), so committing everything and letting each machine narrow is a workable d
 ## Tracking backends (`aisland tracker`)
 
 The sibling axis. Experiment-tracking backends live behind extras
-(`marainer[mlflow]` / `[aim]` / `[tensorboard]` / `[wandb]`) and each imports its library
+(`matrainer[mlflow]` / `[aim]` / `[tensorboard]` / `[wandb]`) and each imports its library
 *lazily*, so code runs with none of them installed — the local-file backend always works. This
 command decides which a machine actually installs.
 
@@ -691,10 +691,10 @@ aisland tracker unset --machine-only          # drop the override, use the share
 
 ```
   TRACKER        COMMITTED   OVERRIDE   EFFECTIVE   PROJECTS
-  aim            yes         -          yes         marainer
-  mlflow         yes         -          yes         marainer
-  tensorboard    yes         -          yes         marainer
-  wandb          yes         -          yes         marainer
+  aim            yes         -          yes         matrainer
+  mlflow         yes         -          yes         matrainer
+  tensorboard    yes         -          yes         matrainer
+  wandb          yes         -          yes         matrainer
 ```
 
 A project declares its backends the same way it declares frameworks — a sibling key, not an
@@ -783,7 +783,7 @@ Two things worth knowing:
 - **You may not need the server at all.** `ClearMLTracker(offline=True)` records a full session
   to local disk with no server and no credentials — worth trying first.
 - **ClearML rejects very short task names.** A `run_name` of one or two characters fails at task
-  creation with `Data validation error: name=String value is too short`. marainer's generated
+  creation with `Data validation error: name=String value is too short`. matrainer's generated
   names are well clear of it; a hand-written `run_name: r` is not.
 
 On Apple silicon the images are `linux/amd64` and run under emulation; expect the web UI to take
@@ -805,7 +805,7 @@ calls it for you at provisioning time).
 ==> /path/to/workspace/.project.bashrc.completion (bash)
     liquifai apps: annotaide, purifai, raidar, recordstream, sonair, wf, ...
     other CLIs:    aisland, streamstudio
-    pruned stale:  marainer
+    pruned stale:  matrainer
 ```
 
 **Three families, because the workspace has three kinds of CLI**, and a CLI that is none of

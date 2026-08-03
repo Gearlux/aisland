@@ -14,7 +14,7 @@ from click.testing import CliRunner
 from aisland import completion as comp
 from aisland.cli import main
 
-LIQUIFAI_APPS = ["marainer", "sonair"]
+LIQUIFAI_APPS = ["matrainer", "sonair"]
 
 
 @pytest.fixture
