@@ -176,6 +176,69 @@ aisland/data/backups/<project>/<YYYYMMDD-HHMMSS>/
 └── files/          # the project tree, mirrored — restore with `cp -R files/. <project>/`
 ```
 
+### Inspecting and undoing a clean (`aisland backups`)
+
+`aisland clean` acts on a project's working tree; `aisland backups` acts on the store it
+writes to. Two verbs:
+
+```bash
+aisland backups list                 # everything in the store, newest first
+aisland backups list sonair          # just one project's
+aisland backups restore sonair       # move the most recent backup back into the project
+aisland backups prune                # apply the retention window without cleaning anything
+```
+
+```text
+  PROJECT                BACKUP              AGE       SIZE  ENTRIES  EXPIRES
+  torpaido               20260804-171924      0d    2.1 MiB       18  in 7d
+  sonair                 20260804-171409      0d    1.4 GiB       47  in 7d
+
+  2 backup(s), 1.4 GiB under /Users/you/acme/aisland/data/backups
+  Restore the newest:  aisland backups restore torpaido
+```
+
+Restore **moves**, like the clean did — the disk was full enough to warrant a clean, so a
+second copy of the payload is the one thing that may not fit. The backup is consumed as it is
+restored: its manifest is rewritten and a backup with nothing left in it is removed.
+
+```bash
+aisland backups restore sonair --stamp 20260728-101500  # an older one
+aisland backups restore sonair --entry checkpoints      # one path only (repeatable)
+aisland backups restore sonair --dry-run                # what would come back
+aisland backups restore sonair --force                  # replace what the project re-created
+```
+
+A path the project has a **different** copy of is skipped, never clobbered — usually a cache
+or a `.venv` that rebuilt itself since the clean, and almost always the one you want to keep.
+Those entries stay in the backup and the command exits **1**, so a script notices a partial
+restore; `--force` replaces them instead (it asks first, `-y` skips the prompt).
+
+A path the project has an **identical** copy of is not a collision at all: it is reported as
+`already`, the backup's redundant copy is dropped, and the exit code stays 0. The comparison
+is a real one — sizes and file counts first (so a rebuilt `.venv` is rejected without reading
+a byte), then byte-for-byte for whatever survives that. Timestamps are deliberately not part
+of it, because the case this exists for is a path you already copied back by hand, and
+`cp -R` restamps every file it writes.
+
+The manifest is what makes restore finer-grained than `cp -R`: it records the paths that
+actually moved, so a backed-up `data/jenkins` merges back into a `data/` the project has
+since re-created, and `--entry` can pull back a single directory.
+
+**Pruning on its own.** `aisland clean` already sweeps on every run, so the store keeps itself
+in check as long as you keep cleaning. `aisland backups prune` is that same sweep as a
+standalone command, for a workspace nobody is currently cleaning:
+
+```bash
+aisland backups prune --dry-run      # what has expired
+aisland backups prune                # delete it (asks first; -y skips)
+aisland backups prune --keep-days 1  # tighter window on a full disk
+```
+
+It covers every project — the retention window belongs to the store, not to one project — and
+confirms before deleting, because standalone it is the only thing happening: inside a clean
+the sweep is bounded by the fresh backup taken right after it, while here a mistyped
+`--keep-days 0` would empty the store outright.
+
 **Retention.** Every invocation sweeps backups older than `--keep-days` (default **7**) —
 across *all* projects, not just the one being cleaned. The sweep runs before the move, so a
 run on a full disk frees the expiring space first. It only ever deletes directories whose
@@ -193,7 +256,8 @@ root is left alone.
 Cleaning a project undoes work that has to be redone: `aisland clean aisland` takes away the
 provisioned `bin/` and every service's `data/` (re-run `aisland provision` / `aisland setup`),
 and cleaning any project removes caches that the next `pytest` / `mypy` run rebuilds slowly.
-That is the point of the backup — check it before the retention window closes.
+That is the point of the backup — `aisland backups restore <project>` puts it back, until the
+retention window closes.
 
 ## Service Supervision (process-compose)
 

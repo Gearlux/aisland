@@ -566,11 +566,34 @@ Three invariants protect the destructive half:
 | An ignored entry containing the backup store is split into its children (`_split_around`) | `aisland clean aisland`: its `.gitignore` ignores `data/` wholesale and the store is `data/backups`, so the collapsed entry git reports **contains the destination** |
 | The sweep deletes only directories whose name parses as `STAMP_FORMAT` | Anything a human dropped under the backup root; the name is also why an interrupted run (no manifest) still expires, and why an mtime — which any write underneath changes — is not the clock |
 
+The store gets its own command group — `aisland backups list|restore` — rather than
+subcommands of `clean`, because the two act on different objects: `clean` on a project's
+working tree, `backups` on the store. It also keeps the destructive verb one word long.
+
+Restore **moves** as well, and consumes the backup as it goes (the manifest is rewritten,
+an emptied backup is removed). Two of its rules are the interesting ones:
+
+- A path the project has a **different** copy of is skipped, never clobbered, and the command
+  exits 1. The usual case is a cache or `.venv` that rebuilt itself since the clean — almost
+  always the copy to keep — and a script must be able to see that the restore was partial.
+  `--force` replaces instead, after asking.
+- A path the project has an **identical** copy of is not a collision: it is reported
+  `already`, the redundant backup copy is dropped, and the exit code stays 0. Because that
+  decision deletes data, the comparison is a real one and not a quick check — size and file
+  count, then the path set, then byte-for-byte; any `OSError` means "not the same". The
+  rsync-style size+mtime check was rejected outright: the case this exists for is a path the
+  operator already put back with `cp -R`, which restamps every file it writes.
+- The **manifest**, not the payload's top level, is the restore granularity, because it
+  records the paths that actually moved. A backed-up `data/jenkins` merges into a `data/`
+  the project has since re-created; a top-level walk would try to restore `data` itself and
+  collide with it. A manifest-less backup falls back to the payload's own top level.
+
 ### Consequences
 
-- A clean is undoable for `--keep-days` days, by copying `files/` back. That is the whole
-  reason the payload mirrors the project tree instead of being an archive: recovery is
-  `cp -R`, needs no tool, and works when this code is the thing that broke.
+- A clean is undoable for `--keep-days` days, by `aisland backups restore` or by copying
+  `files/` back. That is the whole reason the payload mirrors the project tree instead of
+  being an archive: recovery also works as a plain `cp -R`, needs no tool, and survives this
+  code being the thing that broke — which is why `clean` prints both forms.
 - Disk usage temporarily *doubles* for the moved content — it is still on disk until it
   expires. `--keep-days 0` is the escape hatch on a genuinely full volume.
 - The manifest's `bytes` is what the sweep later reports as freed. Re-walking an expiring
@@ -587,6 +610,8 @@ Three invariants protect the destructive half:
 ```bash
 aisland clean sonair --dry-run     # the plan + which backups expire; nothing changes
 aisland clean sonair               # confirm, sweep, move
+aisland backups restore sonair     # put it back
+aisland backups prune              # the sweep on its own, for a workspace nobody is cleaning
 ```
 
 ```text
@@ -608,10 +633,11 @@ def _split_around(entry: Path, protected: Path) -> Iterator[Path]:
 
 ### What you may change
 
-The retention window, the manifest's fields, and the output format are all free. Adding a
-`restore` subcommand is a natural extension (the manifest already describes the payload) and
-is tracked in `TASKS.md`. What must NOT change: the move-instead-of-delete semantics, the
-per-project scope (no `--all`), the toplevel-equality guard, and the sweep's rule that it
-only ever deletes what it created. Moving the backup store out of `aisland/data/` would also
-mean revisiting `_split_around` — it exists precisely because the store lives inside a
-project that can itself be cleaned.
+The retention window, the manifest's fields, and the output format are all free. What must
+NOT change: the move-instead-of-delete semantics on both sides, the per-project scope (no
+`--all`), the toplevel-equality guard, restore's skip-don't-clobber default, and the sweep's
+rule that it only ever deletes what it created. Moving the backup store out of
+`aisland/data/` would also mean revisiting `_split_around` — it exists precisely because the
+store lives inside a project that can itself be cleaned. Adding a field to the manifest is
+cheap; *relying* on one being present is not, since an interrupted clean leaves none and both
+the sweep and restore are built to work without it.

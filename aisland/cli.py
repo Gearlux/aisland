@@ -130,6 +130,93 @@ def clean(project: str, keep_days: int, dry_run: bool, yes: bool) -> None:
     raise SystemExit(clean_project(project, keep_days=keep_days, dry_run=dry_run, assume_yes=yes))
 
 
+@main.group()
+def backups() -> None:
+    """Inspect and restore the backups `aisland clean` takes.
+
+    A separate group from `clean` on purpose: `aisland clean <project>` acts on a project's
+    working tree, while these act on the STORE under `aisland/data/backups`. Keeping the
+    destructive verb one word long also keeps it from ever being typed by accident.
+    """
+    pass
+
+
+@backups.command(name="list")
+@click.argument("project", required=False)
+@click.option(
+    "--keep-days",
+    type=click.IntRange(min=0),
+    default=DEFAULT_KEEP_DAYS,
+    show_default=True,
+    help="Retention window the EXPIRES column is computed against.",
+)
+def backups_list(project: Optional[str], keep_days: int) -> None:
+    """Show every backup in the store (newest first), optionally just PROJECT's."""
+    from aisland.clean import list_store
+
+    raise SystemExit(list_store(project, keep_days=keep_days))
+
+
+@backups.command(name="prune")
+@click.option(
+    "--keep-days",
+    type=click.IntRange(min=0),
+    default=DEFAULT_KEEP_DAYS,
+    show_default=True,
+    help="Delete backups older than this, for every project.",
+)
+@click.option("--dry-run", is_flag=True, help="Show what would be deleted; change nothing.")
+@click.option("-y", "--yes", is_flag=True, help="Skip the confirmation prompt.")
+def backups_prune(keep_days: int, dry_run: bool, yes: bool) -> None:
+    """Apply the retention window to the whole store, without cleaning anything.
+
+    `aisland clean` already sweeps on every run; this is the same sweep on its own, for a
+    workspace nobody is currently cleaning. It covers every project — the retention window is
+    a property of the store, not of one project.
+
+    \b
+    aisland backups prune --dry-run    # what has expired
+    aisland backups prune              # delete it (asks first)
+    aisland backups prune --keep-days 1
+    """
+    from aisland.clean import prune_store
+
+    raise SystemExit(prune_store(keep_days=keep_days, dry_run=dry_run, assume_yes=yes))
+
+
+@backups.command(name="restore")
+@click.argument("project")
+@click.option("--stamp", default=None, help="Backup to restore from  [default: the most recent]")
+@click.option("--entry", "entries", multiple=True, help="Restore only this path (repeatable).")
+@click.option("--force", is_flag=True, help="Replace a path the project already has, instead of skipping it.")
+@click.option("--dry-run", is_flag=True, help="Show what would be restored; change nothing.")
+@click.option("-y", "--yes", is_flag=True, help="Skip the confirmation --force asks for.")
+def backups_restore(
+    project: str,
+    stamp: Optional[str],
+    entries: tuple[str, ...],
+    force: bool,
+    dry_run: bool,
+    yes: bool,
+) -> None:
+    """Move a backup's content back into PROJECT.
+
+    Moves rather than copies — the disk was full enough to run a clean, so a second copy is
+    the one thing that may not fit. The backup is consumed as it is restored: its manifest is
+    rewritten and an emptied backup is removed. A path the project already has is SKIPPED
+    (exit 1) unless `--force` replaces it.
+
+    \b
+    aisland backups restore sonair                       # the most recent backup, whole
+    aisland backups restore sonair --stamp 20260804-164945
+    aisland backups restore sonair --entry checkpoints   # just this one, repeatable
+    aisland backups restore sonair --force               # overwrite what came back on its own
+    """
+    from aisland.clean import restore_backup
+
+    raise SystemExit(restore_backup(project, stamp=stamp, only=entries, force=force, dry_run=dry_run, assume_yes=yes))
+
+
 # --- Workspace Configuration Commands ---
 #
 # `config.toml` is maintained by `aisland source/framework/tracker set` — this group only
