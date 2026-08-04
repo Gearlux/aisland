@@ -4,6 +4,7 @@ from typing import Optional
 import click
 
 from aisland import supervisor as supervisor_mod
+from aisland.clean import DEFAULT_KEEP_DAYS
 from aisland.manager import (
     generate_gemini_settings,
     get_workspace_root,
@@ -98,6 +99,35 @@ def doctor() -> None:
     from aisland.doctor import run_doctor
 
     raise SystemExit(run_doctor())
+
+
+@main.command(name="clean")
+@click.argument("project")
+@click.option(
+    "--keep-days",
+    type=click.IntRange(min=0),
+    default=DEFAULT_KEEP_DAYS,
+    show_default=True,
+    help="Delete backups older than this; the sweep runs on EVERY invocation.",
+)
+@click.option("--dry-run", is_flag=True, help="Show what would be moved and swept; change nothing.")
+@click.option("-y", "--yes", is_flag=True, help="Skip the confirmation prompt.")
+def clean(project: str, keep_days: int, dry_run: bool, yes: bool) -> None:
+    """Move PROJECT's git-ignored content into a dated backup under aisland/data/backups.
+
+    Reclaims the disk a checkout accumulates (`.venv/`, `build/`, caches, run dirs) without
+    the irreversibility of `git clean -Xdf`: everything is renamed into the backup store and
+    only really disappears when the retention sweep expires it. ONE project per invocation —
+    there is no `--all`, and the workspace root is refused.
+
+    \b
+    aisland clean sonair --dry-run     # what would move, and which backups expire
+    aisland clean sonair               # move it, after confirming
+    aisland clean sonair --keep-days 1 # sweep harder on a full disk
+    """
+    from aisland.clean import clean_project
+
+    raise SystemExit(clean_project(project, keep_days=keep_days, dry_run=dry_run, assume_yes=yes))
 
 
 # --- Workspace Configuration Commands ---

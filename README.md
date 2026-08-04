@@ -137,6 +137,64 @@ Add a check by writing a `check_*` function in `aisland/doctor.py` and listing i
 `CHECKS`. A check must be cheap, read-only, and specific: it reports a known-recurring skew
 with the command that fixes it, never a vague "something looks off".
 
+### Reclaiming disk space (`aisland clean`)
+
+A checkout accumulates gigabytes that git never sees: `.venv/`, `build/`, `.mypy_cache/`,
+coverage reports, `lightning_logs/`, downloaded checkpoints, run directories. `git status`
+stays clean the whole time. `aisland clean <project>` removes all of it — but **moves it into
+a dated backup instead of deleting it**, because in this workspace an ignored path can be
+load-bearing (a provisioned `bin/`, a service's `data/`, an `.env`) and `git clean -Xdf` gives
+you no second chance.
+
+```bash
+aisland clean sonair --dry-run   # what would move, and which backups expire — changes nothing
+aisland clean sonair             # move it (asks first)
+aisland clean sonair -y          # ...without the prompt
+aisland clean sonair --keep-days 1   # sweep harder when the disk is actually full
+```
+
+```text
+Git-ignored content in sonair (/Users/gert/acme/sonair)
+  .mypy_cache/                                            4 files   210.9 MiB
+  lightning_logs/                                       105 files   252.5 MiB
+  runs/                                                 484 files     4.9 MiB
+  ...                                                  1892 files     1.4 GiB  in 48 entries
+
+Deleted 2 backup(s) older than 7 days (1.9 GiB):
+  .../aisland/data/backups/sonair/20260726-101500
+
+Moved 48 entries (1.4 GiB) into .../aisland/data/backups/sonair/20260804-164945
+Restore with:  cp -R .../aisland/data/backups/sonair/20260804-164945/files/. /Users/gert/acme/sonair/
+```
+
+**Backup layout.** Everything lives under `aisland/data/backups/` (git-ignored, and *not*
+touched by `aisland reset`, which wipes each **service's** own directory):
+
+```text
+aisland/data/backups/<project>/<YYYYMMDD-HHMMSS>/
+├── manifest.json   # project, timestamp, every entry with its size and file count
+└── files/          # the project tree, mirrored — restore with `cp -R files/. <project>/`
+```
+
+**Retention.** Every invocation sweeps backups older than `--keep-days` (default **7**) —
+across *all* projects, not just the one being cleaned. The sweep runs before the move, so a
+run on a full disk frees the expiring space first. It only ever deletes directories whose
+name parses as `YYYYMMDD-HHMMSS`, i.e. ones this tool created; anything else under the backup
+root is left alone.
+
+| Guard | Why |
+|---|---|
+| One project per run — there is no `--all` | "Delete every ignored file in the workspace" would take out the shared `.venv`, every service's data directory and `.env` in one keystroke |
+| The workspace **root** repo is refused | Its ignored set *is* that `.venv` / `.env` / generated `uv.toml` + `pyrightconfig.json` |
+| A directory that is not its repository's root is refused | `git status` there reports the **enclosing** repo's ignored set |
+| A project with no checkout (`github` / `pypi` source) is refused | Nothing to clean; see `aisland source list` |
+| The backup store itself is never moved | Cleaning `aisland` matters here: its `.gitignore` ignores `data/` wholesale and the store lives at `data/backups`, so that one entry is split and everything *except* the store moves |
+
+Cleaning a project undoes work that has to be redone: `aisland clean aisland` takes away the
+provisioned `bin/` and every service's `data/` (re-run `aisland provision` / `aisland setup`),
+and cleaning any project removes caches that the next `pytest` / `mypy` run rebuilds slowly.
+That is the point of the backup — check it before the retention window closes.
+
 ## Service Supervision (process-compose)
 
 Aisland delegates process supervision (spawn, liveness, readiness, crash
