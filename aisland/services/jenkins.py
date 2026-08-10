@@ -841,6 +841,46 @@ class JenkinsService(BaseService):
             )
         ci_extras = ",".join(["dev"] + selected_extras)
 
+        # A project that REGISTERS a `slow` pytest marker gets its CI test invocations SPLIT:
+        # the routine run deselects the slow tests (`-m 'not slow'`) and a separate stage/job
+        # runs `-m slow`, so an 8-minute end-to-end smoke test stops sitting on every push's
+        # critical path while its dep-bump-drift coverage is preserved. The DECLARATION is the
+        # marker registration itself (`[tool.pytest.ini_options] markers`), not a new aisland
+        # knob — a project without the marker gets byte-identical output to before, so opting
+        # in never churns the other projects' committed CI files. Exit code 5 ("no tests
+        # matched the marker") is tolerated in the slow leg: a registered marker with nothing
+        # currently marked is a valid state, not a failure.
+        with open(pyproject_path, "rb") as fh:
+            _pyproject_data = tomllib.load(fh)
+        _markers = _pyproject_data.get("tool", {}).get("pytest", {}).get("ini_options", {}).get("markers", [])
+        has_slow_marker = any(str(m).split(":", 1)[0].strip() == "slow" for m in _markers)
+        pytest_deselect = " -m 'not slow'" if has_slow_marker else ""
+        if has_slow_marker:
+            slow_stage = """
+        stage('Slow Tests') {
+            steps {
+                script {
+                    // 5 = the marker is registered but nothing is currently marked — valid, not a failure.
+                    def rc = sh(script: "${VENV_BIN}/pytest tests -m slow --junitxml=slow-test-report.xml", returnStatus: true)
+                    if (rc != 0 && rc != 5) {
+                        error("Slow tests failed (exit ${rc}).")
+                    }
+                }
+            }
+            post {
+                always {
+                    script {
+                        if (fileExists('slow-test-report.xml')) {
+                            junit allowEmptyResults: true, testResults: 'slow-test-report.xml'
+                        }
+                    }
+                }
+            }
+        }
+"""
+        else:
+            slow_stage = ""
+
         # Per-project sources (aisland/sources.py). CI reads ONE bit — is this dep published? —
         # and nothing else. In particular it deliberately IGNORES the configured `ref`.
         #
@@ -1001,6 +1041,42 @@ class JenkinsService(BaseService):
 """
         else:
             app_token_step = ""
+
+        # The GitHub half of the slow-marker split (see `has_slow_marker` above): a SEPARATE job
+        # rather than a second step, so it runs in PARALLEL with unit-tests on its own runner —
+        # the routine result lands fast while the slow leg proceeds concurrently.
+        if has_slow_marker:
+            slow_job = f"""
+  slow-tests:
+    name: Slow Tests
+    needs: [quality-gates]
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v4
+{app_token_step}    - name: Set up Python 3.12
+      uses: actions/setup-python@v5
+      with:
+        python-version: "3.12"
+    - name: Install uv
+      uses: astral-sh/setup-uv@v4
+    - name: Install dependencies
+      run: |
+        {pip_install_str}
+        uv pip install --system -e ".[{ci_extras}]"
+    - name: Run Slow Tests
+      run: |
+        rc=0; pytest tests -m slow --junitxml=slow-test-report.xml || rc=$?
+        # 5 = the marker is registered but nothing is currently marked — valid, not a failure.
+        if [ $rc -ne 0 ] && [ $rc -ne 5 ]; then exit $rc; fi
+    - name: Upload Slow Test Results
+      uses: actions/upload-artifact@v4
+      with:
+        name: slow-test-results
+        path: slow-test-report.xml
+      if: always()
+"""
+        else:
+            slow_job = ""
 
         # Jenkinsfile (standard) — sh-wrapped, installs from GitHub via uv.
         # Install order identical to the GH Actions path: `.[dev]` first, Gearlux
@@ -1366,7 +1442,7 @@ with open('isort-checkstyle.xml', 'w') as f:
             steps {{
                 script {{
                     if (fileExists('tests') && sh(script: "find tests -name '*.py' | grep -q .", returnStatus: true) == 0) {{
-                        sh "${{VENV_BIN}}/pytest tests --junitxml=test-report.xml --cov={pkg_name} --cov-report=xml:coverage.xml --cov-report=term"
+                        sh "${{VENV_BIN}}/pytest tests{pytest_deselect} --junitxml=test-report.xml --cov={pkg_name} --cov-report=xml:coverage.xml --cov-report=term"
                     }} else {{
                         echo "No tests found in 'tests' directory. Skipping."
                     }}
@@ -1389,7 +1465,7 @@ with open('isort-checkstyle.xml', 'w') as f:
                 }}
             }}
         }}
-
+{slow_stage}
         stage('Verify Examples') {{
             steps {{
                 echo 'Running project examples...'
@@ -1675,7 +1751,7 @@ with open('isort-checkstyle.xml', 'w') as f:
             steps {{
                 script {{
                     if (fileExists('tests') && sh(script: "find tests -name '*.py' | grep -q .", returnStatus: true) == 0) {{
-                        sh "${{VENV_BIN}}/pytest tests --junitxml=test-report.xml --cov={pkg_name} --cov-report=xml:coverage.xml --cov-report=term"
+                        sh "${{VENV_BIN}}/pytest tests{pytest_deselect} --junitxml=test-report.xml --cov={pkg_name} --cov-report=xml:coverage.xml --cov-report=term"
                     }} else {{
                         echo "No tests found in 'tests' directory. Skipping."
                     }}
@@ -1698,7 +1774,7 @@ with open('isort-checkstyle.xml', 'w') as f:
                 }}
             }}
         }}
-
+{slow_stage}
         stage('Verify Examples') {{
             steps {{
                 echo 'Running project examples...'
@@ -1837,7 +1913,7 @@ jobs:
     - name: Run Tests
       run: |
         if [ -d tests ] && find tests -name '*.py' | grep -q .; then
-          pytest tests --junitxml=test-report.xml --cov={pkg_name} --cov-report=xml --cov-report=term
+          pytest tests{pytest_deselect} --junitxml=test-report.xml --cov={pkg_name} --cov-report=xml --cov-report=term
         else
           echo "No tests found. Skipping."
         fi
@@ -1847,7 +1923,7 @@ jobs:
         name: test-results
         path: test-report.xml
       if: always()
-
+{slow_job}
   verify-examples:
     name: Verify Examples
     needs: [unit-tests]

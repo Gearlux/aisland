@@ -117,3 +117,60 @@ def test_the_regenerate_header_is_a_command_the_cli_accepts(monkeypatch: pytest.
         # The command's own parser is the authority on what the rest means.
         with jenkins_scaffold.make_context("scaffold", argv[3:], resilient_parsing=False) as ctx:
             assert ctx.params == {"project": "proj", "force": True}, f"{path.name}: {ctx.params}"
+
+
+def _make_pyproject_with_slow_marker(dir_: Path, name: str) -> None:
+    _make_pyproject(dir_, name)
+    (dir_ / "pyproject.toml").write_text(
+        f'[project]\nname = "{name}"\nversion = "0.0.0"\n\n'
+        "[tool.pytest.ini_options]\n"
+        "markers = [\"slow: heavy end-to-end tests; deselect with -m 'not slow'.\"]\n",
+        encoding="utf-8",
+    )
+
+
+def _scaffolded(monkeypatch: pytest.MonkeyPatch, tmp_path: Path, make: Any) -> dict[str, str]:
+    from aisland import manager
+
+    make(tmp_path / "proj", "proj")
+    (tmp_path / ".gitmodules").write_text("", encoding="utf-8")
+    monkeypatch.setattr(manager, "get_workspace_root", lambda: tmp_path)
+    JenkinsService().scaffold_pipelines(project_name="proj", force=True)
+    return {
+        "Jenkinsfile": (tmp_path / "proj" / "Jenkinsfile").read_text(encoding="utf-8"),
+        "Jenkinsfile.local": (tmp_path / "proj" / "Jenkinsfile.local").read_text(encoding="utf-8"),
+        "ci.yml": (tmp_path / "proj" / ".github" / "workflows" / "ci.yml").read_text(encoding="utf-8"),
+    }
+
+
+class TestTheSlowMarkerSplitsTheTestInvocations:
+    """A registered `slow` pytest marker IS the declaration: the routine run deselects the slow
+    tests and a separate stage/job runs them, so a long end-to-end smoke test leaves every
+    push's critical path while its dep-bump-drift coverage is preserved. A project WITHOUT the
+    marker gets byte-identical output to before — opting in never churns the fleet's files."""
+
+    def test_a_registered_slow_marker_splits_all_three_artifacts(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ) -> None:
+        files = _scaffolded(monkeypatch, tmp_path, _make_pyproject_with_slow_marker)
+        for name, content in files.items():
+            assert "-m 'not slow'" in content, f"{name}: the routine run must deselect the slow tests"
+            assert "-m slow" in content, f"{name}: the slow leg is missing"
+        assert "stage('Slow Tests')" in files["Jenkinsfile"]
+        assert "stage('Slow Tests')" in files["Jenkinsfile.local"]
+        assert "slow-tests:" in files["ci.yml"]
+        # The GitHub slow leg runs PARALLEL to unit-tests (same dependency), not after it.
+        assert files["ci.yml"].count("needs: [quality-gates]") >= 2
+
+    def test_exit_code_5_is_tolerated_in_the_slow_leg(self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+        """A registered marker with nothing currently marked is a valid state, not a failure."""
+        files = _scaffolded(monkeypatch, tmp_path, _make_pyproject_with_slow_marker)
+        assert "rc != 0 && rc != 5" in files["Jenkinsfile"]
+        assert "rc != 0 && rc != 5" in files["Jenkinsfile.local"]
+        assert "-ne 5" in files["ci.yml"]
+
+    def test_a_project_without_the_marker_is_untouched(self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+        files = _scaffolded(monkeypatch, tmp_path, _make_pyproject)
+        for name, content in files.items():
+            assert "not slow" not in content, f"{name}: an unmarked project must not deselect anything"
+            assert "Slow Tests" not in content and "slow-tests:" not in content, name
