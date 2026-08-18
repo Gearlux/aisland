@@ -14,6 +14,7 @@ This directory contains the infrastructure and server management tools for the d
 | Jenkins       | 9080 | http://localhost:9080      |
 | Label Studio  | 9081 | http://localhost:9081      |
 | MLflow        | 5005 | http://localhost:5005      |
+| IQEngine      | 3000 | http://localhost:3000      |
 
 All ports are configurable via `--port` flag.
 
@@ -386,6 +387,28 @@ aisland docker stop
 aisland docker status
 ```
 
+**Sharing host directories with the VM (`--mount`).** A `docker run -v <host>:<target>` binds a
+path *inside the Colima VM*, and Colima shares **only `$HOME`** with it by default. A bind mount
+from anywhere else — an external volume such as `$DATA_ROOT=/Volumes/...` — silently mounts an
+empty directory that Docker creates inside the VM: no error, the container just lists nothing.
+Share the directory first, in Colima's own `DIR[:w]` syntax (bare = read-only):
+
+```bash
+aisland docker start --mount "$DATA_ROOT:r"          # repeatable; $HOME:w is always kept
+aisland docker restart --mount "$DATA_ROOT:r"        # on a running engine — mounts apply at VM boot
+aisland docker info                                  # "VM mounts : /Users/me:w, /Volumes/Store:r"
+```
+
+Two things the flag handles for you (both measured on colima 0.10.3): passing *any* `--mount` to
+colima **replaces** its default `$HOME` share rather than adding to it, so aisland re-states
+`$HOME:w` ahead of your mounts; and colima **persists** the flags into
+`~/.colima/default/colima.yaml`, so a later bare `aisland docker start` keeps them. A running
+engine that lacks a requested mount is *refused* with the restart command rather than restarted
+for you — a VM restart stops every container on it. A symlink under `$HOME` that points outside
+the shared set (`~/data -> /Volumes/Store`) is not enough on its own: the VM sees the symlink
+itself and resolves it against *its* tree (`colima ssh -- readlink ~/data` → `/Volumes/Store/`),
+so the real target must be shared — `--mount` resolves symlinks for exactly that reason.
+
 ### 5. Manage Label Studio
 ```bash
 # Start Label Studio (foreground)
@@ -411,6 +434,44 @@ Default: [http://localhost:9081](http://localhost:9081)
 | `LABELSTUDIO_LOCAL_FILES_ROOT` | `aisland/data/labelstudio/local-files` | Directory LS serves via `/data/local-files/?d=<rel>` |
 
 To change a credential, edit `.env` and restart (`aisland labelstudio stop && aisland labelstudio start --background`), or pass `--username/--password/--user-token` once — the flags update `.env` for subsequent starts. Credentials never appear on the server's command line (`ps`) or as literals in the generated `data/process-compose.yaml`: the supervisor document stores `${LABELSTUDIO_*}` references that aisland expands from `.env` on every apply, and the server process receives them through its environment only.
+
+### IQEngine SigMF viewer (`aisland iqengine`)
+
+[IQEngine](https://github.com/IQEngine/IQEngine) is a web viewer for SigMF recordings — the
+recording table with annotation counts, and a spectrogram with the annotation boxes drawn on it.
+aisland runs it as **one container over a local directory**: the image is pinned by version *and*
+digest (Docker checks it; `:latest` on ghcr is a 2023 build and `:pre` moves), the directory is
+bind-mounted **read-only** at the path upstream documents, and there is no database — the index
+is rebuilt from the directory at every start.
+
+```bash
+aisland docker start                                            # a Docker daemon (Colima)
+aisland iqengine start --recordings "$DATA_ROOT/my-sigmf"        # remembered as IQENGINE_RECORDINGS in .env
+aisland iqengine start                                          # next time: same directory
+aisland iqengine status | info | stop                           # stop removes the container, keeps the files
+aisland iqengine reset                                          # also drops the pinned image (re-pulled on start)
+```
+
+Then open http://localhost:3000 → **Local to Backend** → click a recording → **Spectrogram**;
+annotations are drawn with their `core:label` and listed under the plot (click one to jump to
+it). Edits made in the UI stay in the container's in-memory index — never written to your files,
+gone at the next start.
+
+Two things make an empty table, and `start` diagnoses both instead of leaving you to guess:
+
+- **Every `.sigmf-meta` needs its `<same name>.sigmf-data` beside it.** IQEngine's local sync
+  skips a sidecar without one (and ignores SigMF's `core:dataset`). An annotation-only export —
+  sidecars whose IQ lives elsewhere — lists nothing; `start` prints
+  `N of M sidecars have no .sigmf-data beside them`. Write the payload next to each sidecar (the
+  `core:datatype` the sidecar already declares, e.g. `cf32_le`).
+- **The Docker VM must share the directory.** Colima shares only `$HOME` by default, so a bind
+  mount from an external volume comes up *empty* inside the container with no error anywhere.
+  `start` compares what the host and the container see and, on a mismatch, tells you the fix:
+  `aisland docker restart --mount "<dir>:r"` (see *Sharing host directories with the VM* above).
+
+The image is `linux/amd64` only; on Apple silicon it runs under emulation and answers after
+~20 s. Bump `IQENGINE_VERSION` and `IQENGINE_DIGEST` in `aisland/services/iqengine.py`
+together — the digest of a tag is the `docker-content-digest` of its manifest.
 
 ## Jenkins Configuration
 - **JENKINS_HOME:** All data, jobs, and configurations are stored in `aisland/data/jenkins`. This directory is ignored by Git to keep your local environment clean.

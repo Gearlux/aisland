@@ -178,6 +178,28 @@ def read_workspace_env() -> Dict[str, str]:
     return out
 
 
+def write_workspace_env(values: Dict[str, str]) -> Path:
+    """Set each ``KEY=VALUE`` in the workspace ``.env``, replacing an existing key IN PLACE.
+
+    The counterpart of :func:`read_workspace_env`, for services that publish what they
+    decided (a served directory, a URL) so a config or a later start can read it back as
+    ``$KEY``. Neighbouring lines — comments included — are left untouched; a key not yet
+    present is appended. Values are written verbatim (no quoting, no interpolation).
+    """
+    env_file = _workspace_root() / ".env"
+    lines = env_file.read_text().splitlines() if env_file.exists() else []
+    for key, value in values.items():
+        entry = f"{key}={value}"
+        for index, existing in enumerate(lines):
+            if existing.strip().startswith(f"{key}="):
+                lines[index] = entry
+                break
+        else:
+            lines.append(entry)
+    env_file.write_text("\n".join(lines) + "\n")
+    return env_file
+
+
 def is_server_running() -> bool:
     """True if the aisland process-compose server answers on its socket."""
     if find_binary() is None:

@@ -1,11 +1,81 @@
+"""Docker engine (Colima) — lifecycle plus the VM mounts a container can bind.
+
+A ``docker run -v <host>:<target>`` on macOS binds a path INSIDE the Colima VM, and the VM
+sees only what Colima shares with it. Two facts, both measured on colima 0.10.3 (2026-08-17)
+and both load-bearing for every containerised service here:
+
+- **The default share is ``$HOME`` and nothing else** (``colima ssh -- mount | grep virtiofs``
+  → ``/Users/<me>``). A bind mount from an external volume such as ``$DATA_ROOT=/Volumes/…``
+  therefore mounts an EMPTY directory that Docker creates inside the VM — with no error
+  anywhere; the container simply lists nothing.
+- **Any ``--mount`` REPLACES that default rather than adding to it.** ``colima start --mount
+  /Volumes/Store:r`` left the VM sharing ``/Volumes/Store`` and no ``$HOME``, which breaks
+  every bind mount under the home directory (all of ``aisland/data/…``). Colima persists the
+  flags into ``~/.colima/default/colima.yaml`` (``--save-config`` defaults to true), so the
+  breakage would survive every later restart.
+
+``aisland docker start --mount DIR[:w]`` exists so those two facts are handled in ONE place:
+``$HOME:w`` is always re-stated ahead of the requested mounts, and a mount change under a
+RUNNING engine is refused with the restart command instead of restarting the VM — and every
+container on it — unasked. Mounts apply at VM boot; the profile file is the record of what
+the VM currently shares, which is what :meth:`DockerService.configured_mounts` reads.
+"""
+
 import os
 import subprocess
+from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
+from typing import Any, List, Sequence
 
 import click
+import yaml
 
 from aisland.manager import BaseService
+
+#: The Colima profile aisland drives (its default profile). ``colima start --save-config``
+#: (default true) writes the effective flags — mounts included — into ``colima.yaml`` here.
+COLIMA_PROFILE_DIR = Path(".colima") / "default"
+
+
+@dataclass(frozen=True)
+class Mount:
+    """One VM share, in the shape colima's ``mounts:`` list records it."""
+
+    location: Path
+    writable: bool
+
+    @property
+    def spec(self) -> str:
+        """Colima's own ``--mount`` syntax: ``DIR:w`` writable, ``DIR:r`` read-only."""
+        return f"{self.location}:{'w' if self.writable else 'r'}"
+
+
+def parse_mount(spec: str) -> Mount:
+    """``DIR`` / ``DIR:r`` / ``DIR:w`` -> :class:`Mount` (bare = read-only, as colima treats it).
+
+    The directory must exist: colima itself would create the mount point inside the VM and
+    share an empty directory, which is exactly the silent failure this flag exists to prevent.
+    """
+    location, writable = spec, False
+    if spec.endswith((":r", ":w")):
+        location, writable = spec[:-2], spec.endswith(":w")
+    path = Path(location).expanduser().resolve()
+    if not path.is_dir():
+        raise click.ClickException(f"--mount {spec}: {path} is not a directory.")
+    return Mount(path, writable)
+
+
+def covers(configured: Sequence[Mount], wanted: Mount) -> bool:
+    """Whether the VM's current shares already give a container ``wanted``.
+
+    A share at or above the wanted location suffices (``/Volumes`` covers ``/Volumes/Store``),
+    and a writable share covers a read-only request — never the reverse.
+    """
+    for mount in configured:
+        if wanted.location == mount.location or mount.location in wanted.location.parents:
+            if mount.writable or not wanted.writable:
+                return True
+    return False
 
 
 class DockerService(BaseService):
@@ -14,37 +84,86 @@ class DockerService(BaseService):
     def __init__(self) -> None:
         super().__init__("docker")
 
-    def is_running(self) -> bool:
-        """Check if Colima is currently running."""
-        try:
-            # colima status returns non-zero if not running
-            result = subprocess.run(
-                ["colima", "status"],
-                capture_output=True,
-                text=True,
-                check=False,
-            )
-            return "status: running" in result.stdout.lower()
-        except (subprocess.CalledProcessError, FileNotFoundError):
-            return False
+    # -- VM mounts ------------------------------------------------------------------------
 
-    def launch(self, background: bool = True, **kwargs: Any) -> None:
-        """Start the Docker engine via Colima."""
+    @property
+    def colima_config(self) -> Path:
+        return Path.home() / COLIMA_PROFILE_DIR / "colima.yaml"
+
+    def configured_mounts(self) -> List[Mount]:
+        """What the profile shares with the VM; an empty ``mounts:`` is colima's ``$HOME:w`` default."""
+        mounts: List[Mount] = []
+        if self.colima_config.exists():
+            document = yaml.safe_load(self.colima_config.read_text()) or {}
+            for entry in document.get("mounts") or []:
+                mounts.append(Mount(Path(entry["location"]).expanduser(), bool(entry.get("writable", False))))
+        return mounts or [Mount(Path.home(), writable=True)]
+
+    def _start_argv(self, mounts: Sequence[Mount]) -> List[str]:
+        """``colima start`` — with ``$HOME:w`` re-stated first whenever any mount is requested."""
+        argv = ["colima", "start"]
+        if not mounts:
+            return argv
+        home = Path.home()
+        ordered = list(mounts)
+        if not any(mount.location == home for mount in ordered):
+            ordered.insert(0, Mount(home, writable=True))
+        else:  # the user named $HOME themselves — keep their choice, but keep it first
+            ordered.sort(key=lambda mount: mount.location != home)
+        for mount in ordered:
+            argv += ["--mount", mount.spec]
+        return argv
+
+    # -- lifecycle ------------------------------------------------------------------------
+
+    def is_running(self) -> bool:
+        """Whether Colima is running — judged by ``colima status``'s EXIT CODE.
+
+        Not by its text: colima (0.10.3) writes every status line to STDERR as
+        ``level=info msg="colima is running …"`` and never prints ``status: running``, so the
+        former stdout grep was always False — ``launch()`` then ran ``colima start`` against a
+        live VM (colima says "already running, ignoring") and, with ``--mount``, colima still
+        SAVED the ignored flags into the profile, leaving it claiming a share the VM did not
+        have. Exit 0 = running, non-zero = stopped, and it is what :meth:`status` already used.
+        """
+        try:
+            result = subprocess.run(["colima", "status"], capture_output=True, text=True, check=False)
+        except FileNotFoundError:
+            return False
+        return result.returncode == 0
+
+    def launch(self, background: bool = True, mounts: Sequence[str] = (), **kwargs: Any) -> None:
+        """Start the Docker engine via Colima.
+
+        Args:
+            background: Unused (Colima always detaches); kept for the shared launch signature.
+            mounts: Extra host directories to share with the VM, in colima's ``DIR[:w]`` syntax
+                (bare = read-only). ``$HOME:w`` is always kept alongside them — see the module
+                docstring for why. Mounts apply at VM boot: on a running engine that lacks one,
+                this refuses and names ``aisland docker restart --mount …`` rather than
+                restarting the engine (and every container on it) unasked.
+        """
+        wanted = [parse_mount(spec) for spec in mounts]  # validated before colima is touched
         if self.is_running():
+            configured = self.configured_mounts()
+            missing = [mount for mount in wanted if not covers(configured, mount)]
+            if missing:
+                flags = " ".join(f"--mount {mount.spec}" for mount in wanted)
+                raise click.ClickException(
+                    "Docker (Colima) is running WITHOUT these VM mounts: "
+                    + ", ".join(str(mount.location) for mount in missing)
+                    + "\n  Mounts take effect when the VM boots. Restart it (this stops every running container):\n"
+                    f"      aisland docker restart {flags}"
+                )
             click.echo("Docker (Colima) is already running.")
             self.configure_socket()
             return
 
         click.echo("Starting Docker (Colima)...")
         try:
-            # We always run colima start in a way that it can return or background
-            # Colima start itself backgrounds by default but we can check if it succeeds.
-            cmd = ["colima", "start"]
-
-            # For Apple Silicon, we might need specific architecture if the user encountered issues
-            # but we'll stick to defaults for now as per brew installation.
-
-            subprocess.check_call(cmd)
+            # Colima start itself backgrounds by default; we only check that it succeeds.
+            # Colima persists these flags into its profile, so a later bare start keeps the mounts.
+            subprocess.check_call(self._start_argv(wanted))
 
             # Ensure Docker socket is configured
             self.configure_socket()
@@ -100,7 +219,12 @@ class DockerService(BaseService):
             click.echo("  Install with  : brew install colima")
             return
 
-        colima_socket_default = Path.home() / ".colima" / "default" / "docker.sock"
+        click.echo(
+            "  VM mounts     : "
+            + ", ".join(mount.spec for mount in self.configured_mounts())
+            + "  (a container bind mount sees only these; add one with `aisland docker start --mount DIR[:w]`)"
+        )
+        colima_socket_default = Path.home() / COLIMA_PROFILE_DIR / "docker.sock"
         colima_socket_legacy = Path.home() / ".colima" / "docker.sock"
         colima_socket = colima_socket_default if colima_socket_default.exists() else colima_socket_legacy
         standard_socket = Path("/var/run/docker.sock")
@@ -119,7 +243,7 @@ class DockerService(BaseService):
     def configure_socket(self) -> None:
         """Ensure the Docker client is pointing to the standard /var/run/docker.sock."""
         # Colima socket path
-        colima_socket = Path.home() / ".colima" / "default" / "docker.sock"
+        colima_socket = Path.home() / COLIMA_PROFILE_DIR / "docker.sock"
         standard_socket = Path("/var/run/docker.sock")
 
         if not colima_socket.exists():

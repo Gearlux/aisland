@@ -1,5 +1,5 @@
 from pathlib import Path
-from typing import Optional
+from typing import Optional, Tuple
 
 import click
 
@@ -19,6 +19,9 @@ from aisland.services.clearml import DEFAULT_WEB_PORT as CLEARML_WEB_PORT
 from aisland.services.clearml import ClearMLService
 from aisland.services.docker import DockerService
 from aisland.services.fiftyone import FiftyOneService
+from aisland.services.iqengine import DEFAULT_PORT as IQENGINE_PORT
+from aisland.services.iqengine import RECORDINGS_ENV_KEY as IQENGINE_RECORDINGS_KEY
+from aisland.services.iqengine import IQEngineService
 from aisland.services.jenkins import JenkinsService
 from aisland.services.labelstudio import LabelStudioService
 from aisland.services.mlflow import MLflowService
@@ -554,10 +557,18 @@ def docker() -> None:
     pass
 
 
+_MOUNT_HELP = (
+    "Share a host directory with the Colima VM so containers can bind-mount it: DIR (read-only) "
+    "or DIR:w (writable); repeatable. $HOME is always kept. Colima shares ONLY $HOME by default, "
+    'so an external volume needs this — e.g. --mount "$DATA_ROOT:r". Applies at VM boot.'
+)
+
+
 @docker.command(name="start")
-def docker_start() -> None:
-    """Start Docker."""
-    DockerService().launch()
+@click.option("--mount", "mounts", multiple=True, metavar="DIR[:w]", help=_MOUNT_HELP)
+def docker_start(mounts: Tuple[str, ...]) -> None:
+    """Start Docker (optionally sharing extra host directories with the VM)."""
+    DockerService().launch(mounts=mounts)
 
 
 @docker.command(name="stop")
@@ -579,9 +590,10 @@ def docker_info() -> None:
 
 
 @docker.command(name="restart")
-def docker_restart() -> None:
-    """Restart Docker."""
-    DockerService().restart()
+@click.option("--mount", "mounts", multiple=True, metavar="DIR[:w]", help=_MOUNT_HELP)
+def docker_restart(mounts: Tuple[str, ...]) -> None:
+    """Restart Docker (the way to change VM mounts on a running engine)."""
+    DockerService().restart(mounts=mounts)
 
 
 @docker.command(name="reset")
@@ -852,6 +864,64 @@ def clearml_info() -> None:
 def clearml_reset() -> None:
     """Tear the stack down and delete its state, volumes and compose files."""
     ClearMLService().reset()
+
+
+# --- IQEngine Commands ---
+
+
+@main.group()
+def iqengine() -> None:
+    """Run the IQEngine SigMF viewer over a local directory of recordings.
+
+    One pinned container (image digest checked by Docker), the directory bind-mounted
+    READ-ONLY at the path upstream documents, no database (the index is rebuilt from the
+    directory at every start). Open http://localhost:3000 -> "Local to Backend" to browse the
+    recordings, their annotation counts, and the spectrogram with the annotation boxes drawn.
+
+    Every `.sigmf-meta` needs its `<name>.sigmf-data` beside it — IQEngine skips the rest —
+    and the Docker VM must share the directory (`aisland docker start --mount DIR`); `start`
+    diagnoses both instead of showing an empty table. Requires a running Docker daemon
+    (`aisland docker start`).
+    """
+    pass
+
+
+@iqengine.command(name="start")
+@click.option(
+    "--recordings",
+    default=None,
+    metavar="DIR",
+    help=f"Directory of SigMF recordings to serve (default: ${IQENGINE_RECORDINGS_KEY} from .env, "
+    "else aisland/data/iqengine/recordings). Remembered in .env.",
+)
+@click.option("--port", default=IQENGINE_PORT, show_default=True, help="Host port for the IQEngine web UI.")
+def iqengine_start(recordings: Optional[str], port: int) -> None:
+    """Start the viewer (detached) over a recordings directory."""
+    IQEngineService().launch(recordings=recordings, port=port)
+
+
+@iqengine.command(name="stop")
+def iqengine_stop() -> None:
+    """Stop and remove the viewer container (the recordings are untouched)."""
+    IQEngineService().stop()
+
+
+@iqengine.command(name="status")
+def iqengine_status() -> None:
+    """Show whether the viewer container is running."""
+    IQEngineService().status()
+
+
+@iqengine.command(name="info")
+def iqengine_info() -> None:
+    """Show the pinned image, the served directory and the URL."""
+    IQEngineService().info()
+
+
+@iqengine.command(name="reset")
+def iqengine_reset() -> None:
+    """Remove the container and the pinned image (re-pulled on next start); keeps the recordings."""
+    IQEngineService().reset()
 
 
 # --- Label Studio Commands ---
