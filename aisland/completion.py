@@ -14,7 +14,7 @@ makes it a one-second command, and puts it where aisland's own tests can reach i
   discovers and installs them — called in-process, not through the
   ``liquifai-install-completions`` console script, so a missing PATH entry cannot silently
   skip the whole family.
-* **click apps** (``aisland``) ship their own ``_<PROG>_COMPLETE`` protocol.
+* **click apps** (``aisland``, ``hydraide``) ship their own ``_<PROG>_COMPLETE`` protocol.
 * **argparse apps** (``streamstudio``) use argcomplete's ``register-python-argcomplete``.
 
 Every block is marker-delimited, so re-running rewrites in place rather than appending.
@@ -64,6 +64,7 @@ class NonLiquifaiCli(NamedTuple):
 #: same reason sonair's backend table is: the per-kind rendering differs in one string.
 NON_LIQUIFAI_CLIS: Tuple[NonLiquifaiCli, ...] = (
     NonLiquifaiCli("aisland", "click"),
+    NonLiquifaiCli("hydraide", "click"),  # confluid's preprocessor command (confluid[cli]) — 2026-08-17
     NonLiquifaiCli("streamstudio", "argcomplete"),
 )
 

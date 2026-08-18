@@ -997,7 +997,7 @@ them silently gets no completion at all:
 | Family | Who | Mechanism |
 |---|---|---|
 | liquifai apps | `recordstream`, `sonair`, `annotaide`, `raidar`, … | the `liquifai.apps` entry-point group |
-| click apps | `aisland` | click's `_<PROG>_COMPLETE` protocol |
+| click apps | `aisland`, `hydraide` | click's `_<PROG>_COMPLETE` protocol |
 | argparse apps | `streamstudio` | `argcomplete` |
 
 **Where it writes.** By default, the workspace-local `.project.bashrc.completion`, which

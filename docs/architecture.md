@@ -415,7 +415,7 @@ aisland completion install --target-rc ~/.bashrc # or your own rc
 ```python
 # setup.sh's whole share of the job:
 #   "$VENV_DIR/bin/aisland" completion install
-NON_LIQUIFAI_CLIS = (NonLiquifaiCli("aisland", "click"), NonLiquifaiCli("streamstudio", "argcomplete"))
+NON_LIQUIFAI_CLIS = (NonLiquifaiCli("aisland", "click"), NonLiquifaiCli("hydraide", "click"), NonLiquifaiCli("streamstudio", "argcomplete"))
 ```
 
 **What you may change.** Add a CLI as a row in `NON_LIQUIFAI_CLIS`. A fourth

@@ -54,10 +54,11 @@ def test_all_three_families_land_in_one_file(rc: Path, all_present: None) -> Non
     for app in LIQUIFAI_APPS:  # (a) liquifai
         assert f"# >>> liquifai completion for {app} >>>" in text
     assert "_AISLAND_COMPLETE=bash_source aisland" in text  # (b) click
+    assert "_HYDRAIDE_COMPLETE=bash_source hydraide" in text  # (b) click — confluid's preprocessor command
     assert "register-python-argcomplete --shell bash streamstudio" in text  # (c) argcomplete
 
     assert report.liquifai_apps == LIQUIFAI_APPS
-    assert report.non_liquifai == ["aisland", "streamstudio"]
+    assert report.non_liquifai == ["aisland", "hydraide", "streamstudio"]
 
 
 def test_the_click_block_is_guarded_on_the_bash_version(rc: Path, all_present: None) -> None:
