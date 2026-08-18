@@ -3,7 +3,12 @@
 This directory contains the infrastructure and server management tools for the development environment. It is designed to be cross-platform and easily portable across development machines.
 
 ## Prerequisites
-- **Python 3.12+**
+- **Python 3.13** — the version `setup.sh`'s `WORKSPACE_PYTHON` pins (exact, not a
+  range: the ceiling is set by framework wheels, see the comment there). If no
+  `python3.13` is on `PATH`, `setup.sh` provisions one itself via
+  [uv](https://docs.astral.sh/uv/) (`uv python install 3.13`, no root, works the
+  same on Linux, WSL and macOS), installing `uv` into `~/.local/bin` first when
+  it is missing. A machine that already has the interpreter is left alone.
 - **Java OpenJDK 17 or higher** (Required for Jenkins)
 - **process-compose** (service supervisor — installed automatically by `aisland setup` / `setup.sh`; see [Service Supervision](#service-supervision-process-compose))
 

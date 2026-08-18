@@ -1,6 +1,13 @@
 #!/bin/bash
 # Gearlux Workspace Bootstrap Script
 # This script creates the project virtual environment and installs the aisland manager.
+
+# Re-exec under bash when launched as `sh setup.sh` (dash on Debian/Ubuntu): the script uses
+# `[[ ]]`, `source` and `&>`, and under dash it half-runs — `&>` forks a background job, the
+# rest prints "not found" (hit 2026-08-17). Only POSIX syntax may appear above this line.
+if [ -z "$BASH_VERSION" ]; then
+    exec bash "$0" "$@"
+fi
 set -e
 
 # Resolve the project root (one level up from this script)
@@ -21,17 +28,33 @@ echo "==> Gearlux Bootstrap: Initializing environment at $WORKSPACE_ROOT"
 # installs all publish wheels for the next version — check TensorFlow first, it lags most.
 WORKSPACE_PYTHON="${WORKSPACE_PYTHON:-3.13}"
 
+# The markers delimit the block tests/test_setup_sh.py runs in a real bash against stub tools.
+# --- python-provisioning ---
 if command -v "python$WORKSPACE_PYTHON" &> /dev/null; then
     PYTHON_BIN=$(command -v "python$WORKSPACE_PYTHON")
 else
-    echo "==> Python $WORKSPACE_PYTHON not found. Installing it via Homebrew..."
-    if ! command -v brew &> /dev/null; then
-        echo "Error: Homebrew is not installed. Install Homebrew or Python $WORKSPACE_PYTHON manually."
-        exit 1
+    # No system interpreter at the pinned version. uv provisions one into its own store
+    # (~/.local/share/uv/python) with no root and on every platform — the historical branch
+    # ran `brew install python@X`, which is macOS-only and left every Linux/WSL machine dead
+    # here (hit 2026-08-17 on Ubuntu 24.04, whose apt carries no python3.13 at all). A machine
+    # that already has the interpreter (e.g. a Homebrew Mac) never reaches this branch.
+    echo "==> Python $WORKSPACE_PYTHON not found. Provisioning it via uv..."
+    # ~/.local/bin is where the uv installer puts the binary, and a fresh non-login shell often
+    # lacks it on PATH — without this, every re-run re-fetched the installer (seen on the second
+    # run of this script). For THIS shell only; the installer edits the rc files for future ones.
+    export PATH="$HOME/.local/bin:$PATH"
+    if ! command -v uv &> /dev/null; then
+        echo "==> uv not found. Installing it into ~/.local/bin..."
+        curl -LsSf https://astral.sh/uv/install.sh | sh
     fi
-    brew install "python@$WORKSPACE_PYTHON"
-    PYTHON_BIN=$(command -v "python$WORKSPACE_PYTHON")
+    uv python install "$WORKSPACE_PYTHON"
+    # `uv python find` returns the store path directly, so PATH shims / `--default` are not needed.
+    # `--system` is load-bearing: without it uv prefers a `.venv` in the cwd (measured: it
+    # returned `<root>/.venv/bin/python3`), and step 2 may `rm -rf` that venv when its version
+    # mismatches — leaving PYTHON_BIN pointing at a deleted interpreter.
+    PYTHON_BIN=$(uv python find --system "$WORKSPACE_PYTHON")
 fi
+# --- /python-provisioning ---
 echo "==> Using $PYTHON_BIN ($("$PYTHON_BIN" -V 2>&1))"
 
 # 2. Create/Verify Virtual Environment
