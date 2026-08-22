@@ -1313,7 +1313,7 @@ def setup_workspace(
     #       discovery (the vocabulary comes from the discovered projects' declarations) and
     #       BEFORE the install loop, which reads it per project. Prompts once when nothing has
     #       been chosen yet; a recorded choice is used silently.
-    from aisland.selection import AXES, all_extras, install_target, resolve_for_setup
+    from aisland.selection import AXES, editable_target, resolve_for_setup
 
     for axis in AXES:
         # Only the framework axis takes a flag; the tracker axis resolves from its recorded
@@ -1342,9 +1342,9 @@ def setup_workspace(
         # Python Provisioning (Editable Installs)
         # Every extra this project DECLARES on either axis, narrowed to what the machine
         # SELECTED — so a project declaring none installs exactly as it always did. Both axes
-        # go into ONE target: naming only one would describe a package nobody asked for.
-        extras = all_extras(workspace_root, project_dir / "pyproject.toml", project["name"])
-        target = install_target(project_dir, project["has_dev"], extras)
+        # go into ONE target: naming only one would describe a package nobody asked for. The
+        # helper is shared with `aisland source … local`, so the two installs cannot drift.
+        target = editable_target(workspace_root, project_dir, project["name"])
         click.echo(f"==> Installing {project['name']} ({target})...")
         try:
             # Run from the workspace root so uv reads the generated root uv.toml (the merged

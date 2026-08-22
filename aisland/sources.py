@@ -3,13 +3,13 @@
 A workspace project can be consumed in exactly three ways, and this module owns the
 choice plus every artifact that has to agree with it:
 
-========== ================================= ============================== ==============================
-source     directory                         ``.venv``                      consumer CI install line
-========== ================================= ============================== ==============================
-``local``  checked out, ``git switch <ref>`` ``uv pip install -e <dir>``    ``git+…/<name>.git@<ref>``
-``github`` deinit'd (empty)                  ``uv pip install git+…@<ref>`` ``git+…/<name>.git@<ref>``
-``pypi``   deinit'd (empty)                  ``uv pip install -U <dist>``   *(none — ``.[dev]`` resolves it from PyPI)*
-========== ================================= ============================== ==============================
+========== ================================= ===================================== ==============================
+source     directory                         ``.venv``                             consumer CI install line
+========== ================================= ===================================== ==============================
+``local``  checked out, ``git switch <ref>`` ``uv pip install -e <dir>[dev,…]`` ``git+…/<name>.git@<ref>``
+``github`` deinit'd (empty)                  ``uv pip install git+…@<ref>``        ``git+…/<name>.git@<ref>``
+``pypi``   deinit'd (empty)                  ``uv pip install -U <dist>``          *(none — ``.[dev]`` resolves it from PyPI)*
+========== ================================= ===================================== ==============================
 
 ``local`` and ``github`` both carry a ``ref`` (branch or tag) and differ ONLY in whether the
 working tree survives: ``local`` is "I develop this here", ``github`` is "pin it to a remote
@@ -61,6 +61,7 @@ from aisland.config import CONFIG_FILE
 from aisland.config import load as load_config
 from aisland.config import update as update_config
 from aisland.manager import _set_local_submodule_active, get_workspace_root, submodule_active_map
+from aisland.selection import editable_target
 
 # The closed set of source kinds. Everything that needs to enumerate them (click's
 # ``Choice``, docs, future MCP/JSON schemas) derives from THIS annotation via
@@ -424,7 +425,9 @@ def apply_source(workspace_root: Path, project: str, source: ProjectSource, uv_c
         if not _run(["git", "switch", source.ref], path):
             click.echo(f"  - {project}: left on its current branch; resolve local changes and re-run.", err=True)
             return False
-        return _run([uv_cmd, "pip", "install", "-e", str(path)], workspace_root)
+        # The SAME target `aisland setup` installs (dev extra + the selected framework/tracker
+        # extras) — the bare directory used to drop every extra the machine had selected.
+        return _run([uv_cmd, "pip", "install", "-e", editable_target(workspace_root, path, project)], workspace_root)
 
     # github / pypi — both detach. Read the distribution name while the directory still exists
     # (afterwards there is no pyproject.toml left to ask), then empty it.

@@ -228,3 +228,24 @@ def test_describe_keys_rows_by_the_axis_noun(workspace: Path) -> None:
     assert [row["tracker"] for row in rows] == ["aim", "mlflow"]
     assert {row["tracker"]: row["effective"] for row in rows} == {"aim": "no", "mlflow": "yes"}
     assert rows[0]["projects"] == "matrainer"
+
+
+# --------------------------------------------------------------------------- #
+# editable_target — the one spelling of "install this checkout", shared by setup and sources
+# --------------------------------------------------------------------------- #
+
+
+def test_editable_target_carries_the_dev_extra_and_both_axes(workspace: Path) -> None:
+    update_config(workspace, "frameworks", ["lightning"])
+    update_config(workspace, "trackers", ["aim"])
+    assert (
+        s.editable_target(workspace, workspace / "matrainer", "matrainer")
+        == f"{workspace / 'matrainer'}[dev,lightning,aim]"
+    )
+    assert s.editable_target(workspace, workspace / "confluid", "confluid") == f"{workspace / 'confluid'}[dev]"
+
+
+def test_editable_target_without_a_pyproject_is_the_bare_directory(workspace: Path) -> None:
+    """A checkout with nothing to read falls back to the directory, so uv reports the real error."""
+    (workspace / "empty").mkdir()
+    assert s.editable_target(workspace, workspace / "empty", "empty") == str(workspace / "empty")

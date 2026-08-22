@@ -371,6 +371,8 @@ def recorder(monkeypatch: pytest.MonkeyPatch) -> _Recorder:
 
 class TestApplySource:
     def test_git_initializes_switches_and_installs_editable(self, tmp_path: Path, recorder: _Recorder) -> None:
+        """No ``pyproject.toml`` in the checkout -> the bare directory (uv then reports its own
+        "not a Python project" error, exactly as before extras were threaded in)."""
         source = s.ProjectSource(kind="local", ref="dev/main")
         assert s.apply_source(tmp_path, "loggair", source, "/venv/bin/uv") is True
         flat = recorder.flat()
@@ -383,6 +385,37 @@ class TestApplySource:
         (tmp_path / "loggair" / ".git").write_text("gitdir: ../.git/modules/loggair\n")
         s.apply_source(tmp_path, "loggair", s.ProjectSource(kind="local"), "/venv/bin/uv")
         assert not any("submodule update" in c for c in recorder.flat())
+
+    def test_local_installs_the_dev_extra_and_the_selected_frameworks(
+        self, tmp_path: Path, recorder: _Recorder
+    ) -> None:
+        """The local install is the SAME target ``aisland setup`` computes for the checkout.
+
+        Measured 2026-08-22: ``aisland source set confluid local --ref dev/main`` ran
+        ``uv pip install -e <w>/confluid`` — no ``[dev]`` — so the dev-only ``omegaconf``
+        vanished from the venv and its pin skipped; a framework project lost its backends too.
+        """
+        subprocess.run(["git", "init", "-q"], cwd=tmp_path, check=True)
+        (tmp_path / CONFIG_FILE).write_text('frameworks = ["lightning"]\n')
+        (tmp_path / "sonair").mkdir()
+        (tmp_path / "sonair" / ".git").write_text("gitdir: ../.git/modules/sonair\n")
+        (tmp_path / "sonair" / "pyproject.toml").write_text(
+            '[project]\nname = "sonair"\n'
+            '[project.optional-dependencies]\ndev = ["pytest"]\nlightning = ["lightning"]\nkeras = ["keras"]\n'
+            '[tool.aisland]\nframeworks = ["lightning", "keras"]\n'
+        )
+        source = s.ProjectSource(kind="local", ref="dev/main")
+        assert s.apply_source(tmp_path, "sonair", source, "/venv/bin/uv") is True
+        assert recorder.flat()[-1] == f"/venv/bin/uv pip install -e {tmp_path / 'sonair'}[dev,lightning]"
+
+    def test_local_without_extras_keeps_the_bare_directory(self, tmp_path: Path, recorder: _Recorder) -> None:
+        """A project declaring no ``dev`` extra and no frameworks installs exactly as before."""
+        subprocess.run(["git", "init", "-q"], cwd=tmp_path, check=True)
+        (tmp_path / "loggair").mkdir()
+        (tmp_path / "loggair" / ".git").write_text("gitdir: ../.git/modules/loggair\n")
+        (tmp_path / "loggair" / "pyproject.toml").write_text('[project]\nname = "loggair"\n')
+        assert s.apply_source(tmp_path, "loggair", s.ProjectSource(kind="local"), "/venv/bin/uv") is True
+        assert recorder.flat()[-1] == f"/venv/bin/uv pip install -e {tmp_path / 'loggair'}"
 
     def test_failed_switch_reports_and_leaves_venv_alone(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, recorder: _Recorder

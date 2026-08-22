@@ -566,9 +566,13 @@ only in whether a working tree survives; `pypi` takes a `--version` instead:
 
 | source | directory | `.venv` | `*.code-workspace` | consumer CI install line |
 |---|---|---|---|---|
-| `local` | checked out, `git switch <ref>` | `uv pip install -e loggair` | listed | `git+…/loggair.git@main` |
+| `local` | checked out, `git switch <ref>` | `uv pip install -e loggair[dev,…]` | listed | `git+…/loggair.git@main` |
 | `github` | **deinit'd — empty** | `uv pip install git+…@<ref>` | **commented out** | `git+…/loggair.git@main` |
 | `pypi` | **deinit'd — empty** | `uv pip install -U loggair` | **commented out** | *(none — `.[dev]` resolves it from PyPI)* |
+
+The `local` install target is the one `aisland setup` computes for that checkout — its `dev` extra
+plus every framework/tracker extra this machine selected (`sonair[dev,lightning]`) — so switching a
+project to `local` never drops a test dependency or a training backend from the venv.
 
 Note the last column: **CI never sees your `--ref`.** It is a development pin, and these files are
 tracked and shared — see [What CI does with all this](#what-ci-does-with-all-this).
@@ -658,7 +662,8 @@ checkout is itself a committed file, so a machine-local choice must never reach 
 - **committed source only** → the `*.code-workspace` `folders` list, and the published/not bit
   that `Jenkinsfile` and `ci.yml` read. A `--machine-only` change touches neither.
 - **effective source** (override, else committed) → submodule init/deinit + branch switch, and the
-  editable/git/PyPI install into the shared `.venv`.
+  editable/git/PyPI install into the shared `.venv` (the editable one with the same `[dev,…]` extras
+  `aisland setup` installs).
 - **neither** → `Jenkinsfile.local`, which resolves the question at build time instead.
 
 ### The `[sources]` section of `config.toml`

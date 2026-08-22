@@ -165,6 +165,11 @@ def _dep_is_pypi(dep: str) -> bool:
 - What must not change: the layer→artifact mapping above; that CI reads the published bit and
   never the `ref`; and that `Jenkinsfile.local` reads nothing at all. Reintroducing per-kind
   branching in that file would quietly restore the churn this record exists to remove.
+- The `local` kind's editable install has ONE spelling, `selection.editable_target` (the `dev`
+  extra plus the selected extras on both axes), shared with `setup_workspace` (2026-08-22). Do
+  not inline a bare `uv pip install -e <dir>` at a new call site: that is how `aisland source set
+  … local` dropped every extra `setup` had just installed, and the helper exists so the two
+  installs cannot disagree again.
 
 ---
 

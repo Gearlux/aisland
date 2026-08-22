@@ -70,7 +70,7 @@ import click
 from aisland.config import CONFIG_FILE
 from aisland.config import load as load_config
 from aisland.config import update as update_config
-from aisland.manager import get_workspace_root
+from aisland.manager import get_project_metadata, get_workspace_root
 
 
 @dataclass(frozen=True)
@@ -294,6 +294,22 @@ def install_target(project_dir: Path, has_dev: bool, extras: Sequence[str]) -> s
     """
     parts = (["dev"] if has_dev else []) + list(extras)
     return f"{project_dir}[{','.join(parts)}]" if parts else str(project_dir)
+
+
+def editable_target(workspace_root: Path, project_dir: Path, project_name: str) -> str:
+    """The ``uv pip install -e`` target for one CHECKOUT: its ``dev`` extra plus every selected
+    extra on both axes — the ONE spelling ``aisland setup`` and ``aisland source … local`` share.
+
+    Before 2026-08-22 the source path installed the bare directory, so switching a project to
+    ``local`` dropped ``[dev]`` (a dev-only test dependency vanished and its pin skipped) and a
+    framework project lost the backends the machine had selected. A checkout with no
+    ``pyproject.toml`` yields the bare directory so uv reports its own error for it.
+    """
+    pyproject = project_dir / "pyproject.toml"
+    if not pyproject.exists():
+        return str(project_dir)
+    has_dev = bool(get_project_metadata(pyproject)["has_dev"])
+    return install_target(project_dir, has_dev, all_extras(workspace_root, pyproject, project_name))
 
 
 # --------------------------------------------------------------------------- #
