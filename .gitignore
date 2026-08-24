@@ -34,7 +34,7 @@ tools/
 flake8.txt
 mypy.txt
 coverage.xml
-test-report.xml
+*test-report.xml
 coverage/
 
 # Coverage artifacts
