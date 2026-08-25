@@ -63,7 +63,7 @@ import subprocess
 import tomllib
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Dict, List, Optional, Sequence, Tuple
+from typing import Dict, List, NamedTuple, Optional, Sequence, Tuple
 
 import click
 
@@ -250,6 +250,91 @@ def effective(workspace_root: Path, axis: Axis) -> Optional[List[str]]:
     """
     override = local_override(workspace_root, axis)
     return override if override is not None else read_committed(workspace_root, axis)
+
+
+# --------------------------------------------------------------------------- #
+# declarations that name an extra nobody defined
+# --------------------------------------------------------------------------- #
+
+
+class UndefinedDeclaration(NamedTuple):
+    """One ``[tool.aisland]`` axis name with no matching ``[project.optional-dependencies]`` key."""
+
+    project: str
+    axis: str  #: the axis plural, e.g. "trackers"
+    name: str  #: the declared extra that does not exist
+    defined: List[str]  #: the extras the project DOES define
+
+    def __str__(self) -> str:
+        return f"{self.project}  {self.axis}  {self.name}  (defines: {', '.join(self.defined) or 'nothing'})"
+
+
+def _defined_extras(pyproject_path: Path) -> List[str]:
+    """The ``[project.optional-dependencies]`` keys of one pyproject, sorted."""
+    try:
+        data = tomllib.loads(pyproject_path.read_text())
+    except (OSError, tomllib.TOMLDecodeError):
+        return []
+    return sorted(data.get("project", {}).get("optional-dependencies", {}))
+
+
+def undefined_declarations(workspace_root: Path, axes: Tuple[Axis, ...] = AXES) -> List[UndefinedDeclaration]:
+    """Every axis name declared across the workspace that is not a real extra.
+
+    :func:`extras_for` is set intersection and trusts the declaration, so a name declared
+    here but never defined as an extra reaches uv, which warns and installs nothing --
+    leaving ``aisland tracker set mlflow`` a silent no-op for that project. Checking the
+    WHOLE workspace in one pass is deliberate: the operator gets every project to fix from
+    one run instead of failing at the twelfth and going again.
+    """
+    from aisland.manager import discover_projects
+
+    out: List[UndefinedDeclaration] = []
+    for pyproject in discover_projects(workspace_root):
+        extras = _defined_extras(pyproject)
+        try:
+            name = tomllib.loads(pyproject.read_text()).get("project", {}).get("name") or pyproject.parent.name
+        except (OSError, tomllib.TOMLDecodeError):
+            name = pyproject.parent.name
+        for axis in axes:
+            for declaration in declared(pyproject, axis):
+                if declaration not in extras:
+                    out.append(UndefinedDeclaration(name, axis.plural, declaration, extras))
+    return sorted(out)
+
+
+def require_defined_declarations(workspace_root: Path, axes: Tuple[Axis, ...] = AXES) -> None:
+    """Refuse to install while any project declares an extra it never defined.
+
+    User ruling 2026-08-25 (option B): stop and NAME the project and the name, rather than
+    letting uv emit a warning nobody reads in the middle of a twenty-project install. Raised
+    before anything is installed, from both entry points -- ``aisland setup`` and
+    ``aisland tracker/framework set``.
+    """
+    offenders = undefined_declarations(workspace_root, axes)
+    if not offenders:
+        return
+    # Align the columns: an operator scanning this list is looking for the project name.
+    widths = [max(len(getattr(o, f)) for o in offenders) for f in ("project", "axis", "name")]
+    lines = [
+        f"  {o.project:<{widths[0]}}  {o.axis:<{widths[1]}}  {o.name:<{widths[2]}}"
+        f"  (defines: {', '.join(o.defined) or 'nothing'})"
+        for o in offenders
+    ]
+    headline = (
+        "1 declaration names an extra that does not exist"
+        if len(offenders) == 1
+        else f"{len(offenders)} declarations name extras that do not exist"
+    )
+    raise click.ClickException(
+        headline
+        + ":\n\n"
+        + "\n".join(lines)
+        + "\n\nEach name above is listed under [tool.aisland] in that project's pyproject.toml\n"
+        "but has no matching entry under [project.optional-dependencies]. Either define the\n"
+        "extra there, or drop the name from the declaration -- until then, selecting it\n"
+        "installs nothing for these projects."
+    )
 
 
 def extras_for(project_name: str, declared_names: Sequence[str], selected: Optional[Sequence[str]]) -> List[str]:
@@ -465,6 +550,8 @@ def apply_selection(
     clean set.
     """
     from aisland.manager import ensure_uv_in_venv, get_install_order
+
+    require_defined_declarations(workspace_root)
 
     uv = uv_cmd or ensure_uv_in_venv(workspace_root / ".venv" / "bin")
     failures = 0

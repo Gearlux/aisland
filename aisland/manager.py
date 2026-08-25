@@ -1313,7 +1313,7 @@ def setup_workspace(
     #       discovery (the vocabulary comes from the discovered projects' declarations) and
     #       BEFORE the install loop, which reads it per project. Prompts once when nothing has
     #       been chosen yet; a recorded choice is used silently.
-    from aisland.selection import AXES, editable_target, resolve_for_setup
+    from aisland.selection import AXES, editable_target, require_defined_declarations, resolve_for_setup
 
     for axis in AXES:
         # Only the framework axis takes a flag; the tracker axis resolves from its recorded
@@ -1328,6 +1328,11 @@ def setup_workspace(
     #     so a private index (e.g. vendorcli's Company Artifactory URLs) is present ONLY when that
     #     project is active. Written BEFORE the install loop so `uv pip install` sees the index.
     _write_root_uv_toml(workspace_root, install_order)
+
+    # 2d. Refuse while any project declares an extra it never defined. Checked over the
+    #     WHOLE workspace before ANYTHING is installed, so one run names every project to
+    #     fix rather than failing at the twelfth (user ruling 2026-08-25, option B).
+    require_defined_declarations(workspace_root)
 
     # 3. Provisioning (Git & Python)
     for project in install_order:
