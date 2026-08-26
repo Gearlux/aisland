@@ -46,8 +46,13 @@ def all_present(monkeypatch: pytest.MonkeyPatch) -> None:
 # --------------------------------------------------------------------------- #
 
 
-def test_all_three_families_land_in_one_file(rc: Path, all_present: None) -> None:
-    """The whole point: liquifai apps, click apps and argparse apps in a single install."""
+def test_the_families_land_in_one_file(rc: Path, all_present: None) -> None:
+    """The whole point: every family in a single install.
+
+    Only TWO are populated by the workspace today — ``streamstudio`` was the sole argparse CLI
+    until its 2026-08-26 liquifai migration, and it now completes with the rest of that family.
+    The argcomplete RENDERING is still exercised, on a synthetic row, by the test below.
+    """
     report = comp.install_completions(target_rc=rc, shell="bash", apps=LIQUIFAI_APPS)
     text = rc.read_text()
 
@@ -55,10 +60,25 @@ def test_all_three_families_land_in_one_file(rc: Path, all_present: None) -> Non
         assert f"# >>> liquifai completion for {app} >>>" in text
     assert "_AISLAND_COMPLETE=bash_source aisland" in text  # (b) click
     assert "_HYDRAIDE_COMPLETE=bash_source hydraide" in text  # (b) click — confluid's preprocessor command
-    assert "register-python-argcomplete --shell bash streamstudio" in text  # (c) argcomplete
 
     assert report.liquifai_apps == LIQUIFAI_APPS
-    assert report.non_liquifai == ["aisland", "hydraide", "streamstudio"]
+    assert report.non_liquifai == ["aisland", "hydraide"]
+
+
+def test_a_streamstudio_row_would_be_a_SECOND_dead_block(rc: Path, all_present: None) -> None:
+    """streamstudio must not be in the non-liquifai table — it is a liquifai app now.
+
+    Left there, every install would emit an argcomplete registration ALONGSIDE the liquifai one,
+    for a binary that no longer calls ``argcomplete.autocomplete``.
+    """
+    assert "streamstudio" not in [cli.prog for cli in comp.NON_LIQUIFAI_CLIS]
+
+
+def test_the_argcomplete_family_still_renders(rc: Path, all_present: None, monkeypatch: pytest.MonkeyPatch) -> None:
+    """The branch stays covered on a synthetic row, so it is ready for the next argparse CLI."""
+    monkeypatch.setattr(comp, "NON_LIQUIFAI_CLIS", (comp.NonLiquifaiCli("someargparsecli", "argcomplete"),))
+    comp.install_completions(target_rc=rc, shell="bash", apps=[])
+    assert "register-python-argcomplete --shell bash someargparsecli" in rc.read_text()
 
 
 def test_the_click_block_is_guarded_on_the_bash_version(rc: Path, all_present: None) -> None:

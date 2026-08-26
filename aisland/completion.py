@@ -15,7 +15,9 @@ makes it a one-second command, and puts it where aisland's own tests can reach i
   ``liquifai-install-completions`` console script, so a missing PATH entry cannot silently
   skip the whole family.
 * **click apps** (``aisland``, ``hydraide``) ship their own ``_<PROG>_COMPLETE`` protocol.
-* **argparse apps** (``streamstudio``) use argcomplete's ``register-python-argcomplete``.
+* **argparse apps** use argcomplete's ``register-python-argcomplete``. No workspace CLI is in
+  this family today (``streamstudio`` moved to liquifai on 2026-08-26); the rendering stays
+  because the next third-party argparse CLI needs it.
 
 Every block is marker-delimited, so re-running rewrites in place rather than appending.
 
@@ -65,7 +67,9 @@ class NonLiquifaiCli(NamedTuple):
 NON_LIQUIFAI_CLIS: Tuple[NonLiquifaiCli, ...] = (
     NonLiquifaiCli("aisland", "click"),
     NonLiquifaiCli("hydraide", "click"),  # confluid's preprocessor command (confluid[cli]) — 2026-08-17
-    NonLiquifaiCli("streamstudio", "argcomplete"),
+    # streamstudio was here as "argcomplete" until 2026-08-26, when its CLI became a liquifai app
+    # (`[project.entry-points."liquifai.apps"] streamstudio = "streamstudio.cli:app"`). It is now
+    # discovered with the rest of that family — a row here would register a SECOND, dead block.
 )
 
 
