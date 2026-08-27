@@ -49,11 +49,20 @@ def test_launch_registers_supervised_process() -> None:
         patch.object(FiftyOneService, "setup"),
         patch.object(FiftyOneService, "_update_env_file"),
         patch("aisland.supervisor.get_process", return_value=None),
+        # `manager.start` pre-flights the readiness port against the REAL OS. Unstubbed,
+        # this test passes or fails depending on what happens to hold 5151 on the
+        # developer's machine — it failed here because VS Code's plugin helper had it,
+        # and `start` returned before ever reaching register_process. The guard itself is
+        # covered by the companion test below.
+        patch("aisland.supervisor.port_in_use", return_value=None),
         patch("aisland.supervisor.register_process") as register_mock,
         patch("aisland.supervisor.apply") as apply_mock,
+        # `manager.start` calls wait_for_outcome (NOT wait_for) and unpacks an
+        # (outcome, state) tuple. Stubbing the wrong name still "succeeds" — both exist —
+        # so the real 45s-timeout poll ran on every pass until this was corrected.
         patch(
-            "aisland.supervisor.wait_for",
-            return_value={"is_running": True, "pid": 4242, "status": "Running"},
+            "aisland.supervisor.wait_for_outcome",
+            return_value=("running", {"pid": 4242, "status": "Running"}),
         ),
     ):
         svc.launch(port=5151, background=True)
@@ -67,3 +76,25 @@ def test_launch_registers_supervised_process() -> None:
     assert kwargs["env"]["FIFTYONE_DATABASE_DIR"] == str(svc.database_dir)
     assert kwargs["enabled"] is True
     apply_mock.assert_called_once()
+
+
+def test_launch_refuses_a_port_held_by_an_unmanaged_process() -> None:
+    """An occupied readiness port must abort BEFORE the process is registered.
+
+    A service registered onto a taken port crash-loops through its whole restart budget
+    with only a log-side error. This is the guard the test above stubs out, pinned here so
+    stubbing it can never quietly disable it.
+    """
+    svc = FiftyOneService()
+    with (
+        patch.object(FiftyOneService, "setup"),
+        patch.object(FiftyOneService, "_update_env_file"),
+        patch("aisland.supervisor.get_process", return_value=None),
+        patch("aisland.supervisor.port_in_use", return_value=23713),
+        patch("aisland.supervisor.register_process") as register_mock,
+        patch("aisland.supervisor.apply") as apply_mock,
+    ):
+        svc.launch(port=5151, background=True)
+
+    register_mock.assert_not_called()
+    apply_mock.assert_not_called()
