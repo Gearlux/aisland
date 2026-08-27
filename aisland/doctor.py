@@ -34,6 +34,14 @@ _OPENCV_KEPT = "opencv-python-headless"
 _OPENCV_DROPPED = "opencv-python"
 
 
+#: The exact symbol every MCP server in the workspace imports. The 2.x SDK renamed BOTH the
+#: module and the class (`mcp.server.fastmcp.FastMCP` -> `mcp.server.mcpserver.MCPServer`) and
+#: the two spellings NEVER coexist — 1.x ships only the old one, 2.x only the new. Because the
+#: consuming projects declare an unbounded floor, either version resolves cleanly and the
+#: mismatch surfaces only when someone actually starts a server.
+_MCP_SERVER_IMPORT = "from mcp.server.mcpserver import MCPServer"
+
+
 @dataclass(frozen=True)
 class CheckResult:
     """Outcome of one health check.
@@ -147,10 +155,34 @@ def check_huggingface_hub_floor() -> CheckResult:
     return CheckResult("huggingface_hub", True, f"huggingface_hub {output} satisfies transformers' import surface")
 
 
+def check_mcp_server_api() -> CheckResult:
+    """The installed `mcp` must expose the server class the workspace's MCP servers import.
+
+    `mcp` 2.0 renamed `mcp.server.fastmcp.FastMCP` to `mcp.server.mcpserver.MCPServer`. The
+    names do not overlap, so a venv holding either version satisfies an unbounded
+    `mcp>=1.9.0` floor while breaking whichever side the code is not written against. The
+    failure is invisible until an MCP server is launched — a CLI built on the same package
+    keeps working, because it never imports the server module.
+    """
+    if _installed_version("mcp") is None:
+        return CheckResult("mcp", True, "mcp not installed — no MCP server surface in play")
+
+    ok, output = _import_probe(f"{_MCP_SERVER_IMPORT}; import importlib.metadata as m; print(m.version('mcp'))")
+    if not ok:
+        return CheckResult(
+            "mcp",
+            False,
+            f"the MCP server class is missing — servers cannot start: {output}",
+            "uv pip install 'mcp>=2.0'",
+        )
+    return CheckResult("mcp", True, f"mcp {output} exposes MCPServer — MCP servers can start")
+
+
 #: Every check the doctor runs, in report order.
 CHECKS: Tuple[Callable[[], CheckResult], ...] = (
     check_opencv_single_variant,
     check_huggingface_hub_floor,
+    check_mcp_server_api,
 )
 
 
@@ -185,6 +217,7 @@ __all__ = [
     "CHECKS",
     "CheckResult",
     "check_huggingface_hub_floor",
+    "check_mcp_server_api",
     "check_opencv_single_variant",
     "run_checks",
     "run_doctor",

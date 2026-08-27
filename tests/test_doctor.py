@@ -109,6 +109,51 @@ class TestHuggingFaceHubCheck:
         assert result.remedy == "uv pip install 'huggingface_hub>=1.5.0,<2.0'"
 
 
+class TestMcpServerApiCheck:
+    """The 2.x MCP SDK renamed the server class AND its module; the two never coexist.
+
+    The real incident: `mcp` 2.0.0 resolved into the shared venv against an unbounded
+    `mcp>=1.9.0` floor, `mcp.server.fastmcp` vanished, and `vendorcli-mcp` died on import —
+    discovered only when someone tried to use it.
+    """
+
+    def test_skipped_when_mcp_absent(self, installed: Dict[str, Optional[str]]) -> None:
+        result = doctor.check_mcp_server_api()
+        assert result.ok is True
+        assert "not installed" in result.detail
+
+    def test_healthy_when_the_server_class_imports(
+        self, installed: Dict[str, Optional[str]], probe: Dict[str, Any]
+    ) -> None:
+        installed["mcp"] = "2.0.0"
+        probe["output"] = "2.0.0"
+        result = doctor.check_mcp_server_api()
+        assert result.ok is True
+        assert "2.0.0" in result.detail
+
+    def test_missing_server_class_reports_the_upgrade(
+        self, installed: Dict[str, Optional[str]], probe: Dict[str, Any]
+    ) -> None:
+        installed["mcp"] = "1.28.1"
+        probe["ok"] = False
+        probe["output"] = "ModuleNotFoundError: No module named 'mcp.server.mcpserver'"
+        result = doctor.check_mcp_server_api()
+        assert result.ok is False
+        assert "mcp.server.mcpserver" in result.detail
+        assert "mcp>=2.0" in result.remedy
+
+    def test_probes_the_exact_symbol_the_servers_import(
+        self, installed: Dict[str, Optional[str]], probe: Dict[str, Any]
+    ) -> None:
+        """Guards against a refactor that turns the check into a version comparison.
+
+        A version number does not prove the class is importable; the symbol does.
+        """
+        installed["mcp"] = "2.0.0"
+        doctor.check_mcp_server_api()
+        assert any("from mcp.server.mcpserver import MCPServer" in call for call in probe["calls"])
+
+
 class TestReporting:
     def test_exit_code_is_zero_when_everything_passes(self, monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.setattr(doctor, "CHECKS", (lambda: doctor.CheckResult("x", True, "fine"),))

@@ -128,8 +128,9 @@ aisland doctor
 # Environment doctor — /path/to/.venv/bin/python3
 #   ✓ opencv           cv2 4.13.0 imports; only opencv-python-headless=4.13.0.92 installed
 #   ✓ huggingface_hub  huggingface_hub 1.12.2 satisfies transformers' import surface
+#   ✓ mcp              mcp 2.0.0 exposes MCPServer — MCP servers can start
 #
-# All 2 checks passed.
+# All 3 checks passed.
 ```
 
 It exits non-zero when a check fails, so it works as a CI preflight step. Current checks:
@@ -138,6 +139,7 @@ It exits non-zero when a check fails, so it works as a CI preflight step. Curren
 |---|---|---|
 | `opencv` | Only `opencv-python-headless` is installed (the root `uv.toml` override drops the GUI wheel — both distributions own `cv2/`) | `Library not loaded: @loader_path/libsrt.1.5.3.dylib` during pytest **collection** |
 | `huggingface_hub` | `transformers`' import surface (`is_offline_mode`) resolves | `ImportError` while importing `pytorch_lightning` via `torchmetrics` |
+| `mcp` | The installed SDK exposes `mcp.server.mcpserver.MCPServer` | An MCP server entry point dies on import (`No module named 'mcp.server.fastmcp'`) while the CLI built on the same package keeps working |
 
 Add a check by writing a `check_*` function in `aisland/doctor.py` and listing it in
 `CHECKS`. A check must be cheap, read-only, and specific: it reports a known-recurring skew
