@@ -1,10 +1,12 @@
-"""Preflight health checks for the shared workspace ``.venv``.
+"""Preflight health checks for known-recurring environment skew.
 
-Some breakages in this workspace are *environment* skew, not code: the venv is shared by
+Some breakages in this workspace are *environment* skew, not code. The venv is shared by
 every project and built incrementally, so one `pip install` can leave a package pair
-inconsistent. Those failures surface far from their cause — a `dlopen` error inside a pytest
-COLLECTION step, an `ImportError` three libraries deep in an unrelated import chain — and cost
-a long diagnosis every time they recur.
+inconsistent; the Docker layer (Colima) has its own equivalents — a client config left behind
+by an uninstalled tool, a VM whose trust store does not match the network the host is on.
+Those failures surface far from their cause — a `dlopen` error inside a pytest COLLECTION
+step, an `ImportError` three libraries deep in an unrelated import chain, a `docker pull`
+dying on credentials it does not need — and cost a long diagnosis every time they recur.
 
 Each check here encodes one such skew that `AGENTS.md` documents as recurring, together with
 the remediation recorded there. The point is to turn a twenty-minute forensic session into
@@ -15,13 +17,18 @@ Adding a check: write a ``check_*`` function returning a :class:`CheckResult` an
 skew with the exact command that fixes it, never a generic "something looks off".
 """
 
+import json
+import shutil
 import subprocess
 import sys
 from dataclasses import dataclass
 from importlib.metadata import PackageNotFoundError, version
+from pathlib import Path
 from typing import Callable, List, Optional, Tuple
 
 import click
+
+from aisland.services.docker import DockerService
 
 #: The OpenCV variant the workspace keeps. Both distributions install the SAME files
 #: (`cv2/cv2.abi3.so` + `cv2/.dylibs/*` appear in BOTH RECORDs) with different bundled native
@@ -40,6 +47,35 @@ _OPENCV_DROPPED = "opencv-python"
 #: consuming projects declare an unbounded floor, either version resolves cleanly and the
 #: mismatch surfaces only when someone actually starts a server.
 _MCP_SERVER_IMPORT = "from mcp.server.mcpserver import MCPServer"
+
+
+#: The URL the VM-trust probe fetches: the registry the workspace's digest-pinned containers
+#: actually pull from (`aisland iqengine`'s image lives on ghcr.io). Any HTTP answer — even a
+#: 401 — proves the TLS handshake verified; curl exit 60 is specifically "certificate
+#: verification failed".
+_VM_TLS_PROBE_URL = "https://ghcr.io/v2/"
+
+#: Drop the `credsStore` key from the docker client config, with a backup first. Removing the
+#: key (rather than repointing it) is correct because the workspace's registries are public —
+#: with `auths` empty and no helper configured, every pull runs anonymously.
+_CREDSSTORE_REMEDY = (
+    "cp ~/.docker/config.json ~/.docker/config.json.bak && "
+    "python3 -c \"import json,pathlib; p=pathlib.Path.home()/'.docker'/'config.json'; "
+    "c=json.loads(p.read_text()); c.pop('credsStore',None); "
+    "p.write_text(json.dumps(c,indent=2)+'\\n')\""
+)
+
+#: Install the CA chain the network actually presents into the VM's trust store. Capturing it
+#: from a live handshake (rather than naming a corporate CA file) works for ANY intercepting
+#: proxy and stays correct when the proxy's chain rotates; the leaf riding along in the bundle
+#: is inert (it cannot sign, so it anchors nothing).
+_VM_CA_REMEDY = (
+    "echo | openssl s_client -connect ghcr.io:443 -servername ghcr.io -showcerts 2>/dev/null"
+    " | awk '/BEGIN CERT/,/END CERT/'"
+    " | colima ssh -- sudo tee /usr/local/share/ca-certificates/corporate-proxy-ca.crt >/dev/null"
+    " && colima ssh -- sudo update-ca-certificates"
+    " && colima ssh -- sudo systemctl restart docker"
+)
 
 
 @dataclass(frozen=True)
@@ -178,11 +214,114 @@ def check_mcp_server_api() -> CheckResult:
     return CheckResult("mcp", True, f"mcp {output} exposes MCPServer — MCP servers can start")
 
 
+def check_docker_credsstore() -> CheckResult:
+    """`~/.docker/config.json` must not name a credential helper that does not exist.
+
+    Docker Desktop writes ``"credsStore": "desktop"`` into the client config and ships the
+    `docker-credential-desktop` binary; uninstalling it in favour of Colima leaves the config
+    behind with the binary gone, and the docker CLI then consults the dead helper on EVERY
+    pull — ``exec: "docker-credential-desktop": executable file not found in $PATH`` — even
+    for public images that need no credentials at all (hit 2026-08-31 by `aisland iqengine
+    start`; documented in the root AGENTS.md alongside the other recurring skews). The remedy
+    removes the key rather than repointing it: with ``auths`` empty, anonymous pulls are the
+    correct state for this workspace's public registries.
+    """
+    config_path = Path.home() / ".docker" / "config.json"
+    if not config_path.exists():
+        return CheckResult("docker-creds", True, "no ~/.docker/config.json — nothing to skew")
+
+    try:
+        document = json.loads(config_path.read_text())
+    except (OSError, json.JSONDecodeError) as error:
+        # An inconclusive probe must never cry wolf (same principle as
+        # `supervisor._preflight_full_disk_access`): a mangled config is docker's to report.
+        return CheckResult("docker-creds", True, f"~/.docker/config.json did not parse ({error}) — inconclusive")
+    if not isinstance(document, dict) or not document.get("credsStore"):
+        detail = (
+            "no credsStore configured — public pulls run anonymously"
+            if isinstance(document, dict)
+            else "~/.docker/config.json is not a JSON object — inconclusive"
+        )
+        return CheckResult("docker-creds", True, detail)
+
+    store = document["credsStore"]
+    helper = f"docker-credential-{store}"
+    if shutil.which(helper) is None:
+        return CheckResult(
+            "docker-creds",
+            False,
+            f'credsStore "{store}" needs {helper}, which is not on PATH — '
+            "every docker pull dies before contacting the registry",
+            _CREDSSTORE_REMEDY,
+        )
+    return CheckResult("docker-creds", True, f'credsStore "{store}" resolves — {helper} is on PATH')
+
+
+def _colima_running() -> bool:
+    """Whether the Colima VM is up — the docker service's exit-code judgement, reused.
+
+    `DockerService.is_running` judges by `colima status`'s EXIT CODE, never its text (see the
+    mandate in aisland's AGENTS.md); this seam exists so tests can control the answer.
+    """
+    return DockerService().is_running()
+
+
+def _vm_curl_exit(url: str) -> int:
+    """Exit code of ``curl -sI <url>`` run INSIDE the Colima VM.
+
+    In a subprocess for the same reason as :func:`_import_probe` — and inside the VM because
+    that is where the docker daemon verifies TLS: the HOST succeeding proves nothing about the
+    VM's trust store, which is the thing that breaks.
+    """
+    completed = subprocess.run(
+        ["colima", "ssh", "--", "curl", "-sI", "-o", "/dev/null", "--max-time", "10", url],
+        capture_output=True,
+    )
+    return completed.returncode
+
+
+def check_colima_vm_trust() -> CheckResult:
+    """The Colima VM must be able to verify TLS on the network the host is on.
+
+    A TLS-intercepting corporate firewall re-signs all traffic with a private CA that macOS
+    trusts (System keychain) but the Ubuntu VM inside Colima does not, so every `docker pull`
+    dies with ``tls: failed to verify certificate: x509: certificate signed by unknown
+    authority`` while the same URL works on the host (hit 2026-08-31; documented in the root
+    AGENTS.md). The remedy installs the CA into the VM — which does NOT survive
+    ``colima delete``, so this check is what turns the post-recreation re-diagnosis into one
+    line. Judged by curl's exit code: 60 is specifically "certificate verification failed";
+    any HTTP answer means the handshake verified; other network errors are inconclusive, not
+    failures. A stopped VM passes with a note — the doctor never boots a VM, and a laptop not
+    running Docker must pass preflight.
+    """
+    if shutil.which("colima") is None:
+        return CheckResult("colima-tls", True, "colima not installed — no VM trust store in play")
+    if not _colima_running():
+        return CheckResult("colima-tls", True, "Colima is not running — VM trust store not probed")
+
+    exit_code = _vm_curl_exit(_VM_TLS_PROBE_URL)
+    if exit_code == 60:
+        return CheckResult(
+            "colima-tls",
+            False,
+            f"the VM cannot verify TLS to {_VM_TLS_PROBE_URL} (curl exit 60) — an intercepting "
+            "proxy's CA is trusted by macOS but not by the VM, so every docker pull fails",
+            _VM_CA_REMEDY,
+        )
+    if exit_code != 0:
+        return CheckResult(
+            "colima-tls", True, f"probe inconclusive (curl exit {exit_code}) — a network error, not a trust failure"
+        )
+    return CheckResult("colima-tls", True, f"the VM verifies TLS to {_VM_TLS_PROBE_URL} — pulls can download")
+
+
 #: Every check the doctor runs, in report order.
 CHECKS: Tuple[Callable[[], CheckResult], ...] = (
     check_opencv_single_variant,
     check_huggingface_hub_floor,
     check_mcp_server_api,
+    check_docker_credsstore,
+    check_colima_vm_trust,
 )
 
 
@@ -216,6 +355,8 @@ def run_doctor() -> int:
 __all__ = [
     "CHECKS",
     "CheckResult",
+    "check_colima_vm_trust",
+    "check_docker_credsstore",
     "check_huggingface_hub_floor",
     "check_mcp_server_api",
     "check_opencv_single_variant",

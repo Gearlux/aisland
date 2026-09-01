@@ -120,8 +120,10 @@ aisland status
 The shared `.venv` is built incrementally by every project, so one install can leave a
 package pair inconsistent — and those failures surface far from their cause (a `dlopen`
 error inside a *pytest collection* step, an `ImportError` three libraries deep in an
-unrelated chain). `aisland doctor` checks for the skews that have actually recurred here and
-prints the exact command that fixes each one:
+unrelated chain). The Docker layer (Colima) has its own equivalents: a client config left
+behind by an uninstalled tool, a VM whose trust store does not match the network the host is
+on. `aisland doctor` checks for the skews that have actually recurred here and prints the
+exact command that fixes each one:
 
 ```bash
 aisland doctor
@@ -129,8 +131,10 @@ aisland doctor
 #   ✓ opencv           cv2 4.13.0 imports; only opencv-python-headless=4.13.0.92 installed
 #   ✓ huggingface_hub  huggingface_hub 1.12.2 satisfies transformers' import surface
 #   ✓ mcp              mcp 2.0.0 exposes MCPServer — MCP servers can start
+#   ✓ docker-creds     no credsStore configured — public pulls run anonymously
+#   ✓ colima-tls       the VM verifies TLS to https://ghcr.io/v2/ — pulls can download
 #
-# All 3 checks passed.
+# All 5 checks passed.
 ```
 
 It exits non-zero when a check fails, so it works as a CI preflight step. Current checks:
@@ -140,6 +144,8 @@ It exits non-zero when a check fails, so it works as a CI preflight step. Curren
 | `opencv` | Only `opencv-python-headless` is installed (the root `uv.toml` override drops the GUI wheel — both distributions own `cv2/`) | `Library not loaded: @loader_path/libsrt.1.5.3.dylib` during pytest **collection** |
 | `huggingface_hub` | `transformers`' import surface (`is_offline_mode`) resolves | `ImportError` while importing `pytorch_lightning` via `torchmetrics` |
 | `mcp` | The installed SDK exposes `mcp.server.mcpserver.MCPServer` | An MCP server entry point dies on import (`No module named 'mcp.server.fastmcp'`) while the CLI built on the same package keeps working |
+| `docker-creds` | `~/.docker/config.json` names no credential helper that is missing from PATH (Docker Desktop's `credsStore: "desktop"` outlives its uninstall) | `exec: "docker-credential-desktop": executable file not found in $PATH` on **every** `docker pull`, even of public images |
+| `colima-tls` | The Colima VM verifies TLS on the host's network (a TLS-intercepting proxy's CA must be in the VM's trust store, not just the macOS keychain) | `tls: failed to verify certificate: x509: certificate signed by unknown authority` during `docker pull`, while the same URL works on the host |
 
 Add a check by writing a `check_*` function in `aisland/doctor.py` and listing it in
 `CHECKS`. A check must be cheap, read-only, and specific: it reports a known-recurring skew

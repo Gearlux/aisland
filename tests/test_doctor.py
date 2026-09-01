@@ -6,6 +6,8 @@ the checks through both the healthy state and the exact broken state that motiva
 a future refactor cannot silently turn a check into a no-op.
 """
 
+import json
+from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 import pytest
@@ -152,6 +154,143 @@ class TestMcpServerApiCheck:
         installed["mcp"] = "2.0.0"
         doctor.check_mcp_server_api()
         assert any("from mcp.server.mcpserver import MCPServer" in call for call in probe["calls"])
+
+
+class TestDockerCredsStoreCheck:
+    """A `credsStore` naming an absent helper kills EVERY docker pull before the registry is contacted.
+
+    The real incident (2026-08-31): `~/.docker/config.json` still carried `"credsStore":
+    "desktop"` after Docker Desktop was replaced by Colima, so `aisland iqengine start` died
+    with `exec: "docker-credential-desktop": executable file not found in $PATH` — for a
+    PUBLIC image that needs no credentials at all.
+    """
+
+    @pytest.fixture()
+    def docker_config(self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> Path:
+        """Point `Path.home()` at a temp dir; return the docker config path inside it (not yet written)."""
+        monkeypatch.setattr(Path, "home", lambda: tmp_path)
+        (tmp_path / ".docker").mkdir()
+        return tmp_path / ".docker" / "config.json"
+
+    @pytest.fixture()
+    def helpers(self, monkeypatch: pytest.MonkeyPatch) -> Dict[str, str]:
+        """Control which `docker-credential-*` binaries `shutil.which` finds."""
+        table: Dict[str, str] = {}
+        monkeypatch.setattr(doctor.shutil, "which", lambda name: table.get(name))
+        return table
+
+    def test_no_config_file_is_healthy(self, docker_config: Path, helpers: Dict[str, str]) -> None:
+        result = doctor.check_docker_credsstore()
+        assert result.ok is True
+        assert "nothing to skew" in result.detail
+
+    def test_no_credsstore_key_is_healthy(self, docker_config: Path, helpers: Dict[str, str]) -> None:
+        # The post-fix state of the incident machine: auths empty, no credsStore at all.
+        docker_config.write_text(json.dumps({"auths": {}, "currentContext": "colima"}))
+        result = doctor.check_docker_credsstore()
+        assert result.ok is True
+        assert "no credsStore" in result.detail
+
+    def test_missing_helper_fails_with_the_removal_remedy(self, docker_config: Path, helpers: Dict[str, str]) -> None:
+        # The exact state that produced the incident.
+        docker_config.write_text(json.dumps({"auths": {}, "credsStore": "desktop"}))
+        result = doctor.check_docker_credsstore()
+        assert result.ok is False
+        assert "docker-credential-desktop" in result.detail
+        assert "config.json.bak" in result.remedy  # the remedy backs up before editing
+        assert "credsStore" in result.remedy
+
+    def test_present_helper_is_healthy(self, docker_config: Path, helpers: Dict[str, str]) -> None:
+        # A working helper is NOT the skew — only a dangling reference is.
+        docker_config.write_text(json.dumps({"credsStore": "osxkeychain"}))
+        helpers["docker-credential-osxkeychain"] = "/usr/local/bin/docker-credential-osxkeychain"
+        result = doctor.check_docker_credsstore()
+        assert result.ok is True
+        assert "osxkeychain" in result.detail
+
+    @pytest.mark.parametrize("content", ["not json {{", "[]"])
+    def test_unreadable_config_is_inconclusive_not_a_failure(
+        self, docker_config: Path, helpers: Dict[str, str], content: str
+    ) -> None:
+        # An inconclusive probe must never cry wolf (same principle as
+        # `supervisor._preflight_full_disk_access`): a mangled config is docker's problem
+        # to report, not this check's.
+        docker_config.write_text(content)
+        result = doctor.check_docker_credsstore()
+        assert result.ok is True
+        assert "inconclusive" in result.detail
+
+
+class TestColimaVmTrustCheck:
+    """The Colima VM must verify TLS on the network the host is on, or every pull fails.
+
+    The real incident (2026-08-31): a TLS-intercepting corporate firewall re-signs all
+    traffic with a private CA that macOS trusts (System keychain) but the Ubuntu VM inside
+    Colima does not — `docker pull` died with `tls: failed to verify certificate: x509:
+    certificate signed by unknown authority` on the blob host. The fix (installing the CA
+    into the VM) does NOT survive `colima delete`, which is why a doctor check exists.
+    """
+
+    @pytest.fixture()
+    def colima(self, monkeypatch: pytest.MonkeyPatch) -> Dict[str, Any]:
+        """Control colima's presence, the VM's run state, and the in-VM curl probe."""
+        state: Dict[str, Any] = {"installed": True, "running": True, "curl_exit": 0, "urls": []}
+        monkeypatch.setattr(
+            doctor.shutil,
+            "which",
+            lambda name: "/opt/homebrew/bin/colima" if (name == "colima" and state["installed"]) else None,
+        )
+        monkeypatch.setattr(doctor, "_colima_running", lambda: state["running"])
+
+        def _fake_curl(url: str) -> int:
+            state["urls"].append(url)
+            return int(state["curl_exit"])
+
+        monkeypatch.setattr(doctor, "_vm_curl_exit", _fake_curl)
+        return state
+
+    def test_skipped_when_colima_is_not_installed(self, colima: Dict[str, Any]) -> None:
+        colima["installed"] = False
+        result = doctor.check_colima_vm_trust()
+        assert result.ok is True
+        assert "not installed" in result.detail
+        assert colima["urls"] == []  # nothing was probed
+
+    def test_a_stopped_vm_is_not_probed_and_not_a_failure(self, colima: Dict[str, Any]) -> None:
+        # The doctor must never boot a VM, and a laptop not running Docker must pass preflight.
+        colima["running"] = False
+        result = doctor.check_colima_vm_trust()
+        assert result.ok is True
+        assert "not probed" in result.detail
+        assert colima["urls"] == []
+
+    def test_cert_failure_reports_the_ca_install_remedy(self, colima: Dict[str, Any]) -> None:
+        # curl exit 60 is specifically "certificate verification failed" — the incident state.
+        colima["curl_exit"] = 60
+        result = doctor.check_colima_vm_trust()
+        assert result.ok is False
+        assert "cannot verify TLS" in result.detail
+        assert "s_client" in result.remedy  # the CA is captured from a live handshake
+        assert "update-ca-certificates" in result.remedy
+        assert "restart docker" in result.remedy
+
+    def test_a_network_hiccup_is_inconclusive_not_a_failure(self, colima: Dict[str, Any]) -> None:
+        # Exit 7 = connection refused/unreachable: the handshake never happened, so trust
+        # was not tested — an inconclusive probe must never cry wolf.
+        colima["curl_exit"] = 7
+        result = doctor.check_colima_vm_trust()
+        assert result.ok is True
+        assert "inconclusive" in result.detail
+
+    def test_healthy_when_the_vm_verifies(self, colima: Dict[str, Any]) -> None:
+        result = doctor.check_colima_vm_trust()
+        assert result.ok is True
+        assert "verifies TLS" in result.detail
+
+    def test_probes_the_registry_the_workspace_pulls_from(self, colima: Dict[str, Any]) -> None:
+        """Guards against a refactor silently retargeting the probe at an unrelated host."""
+        doctor.check_colima_vm_trust()
+        assert colima["urls"] == ["https://ghcr.io/v2/"]
 
 
 class TestReporting:
