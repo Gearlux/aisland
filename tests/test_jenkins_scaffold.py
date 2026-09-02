@@ -174,3 +174,197 @@ class TestTheSlowMarkerSplitsTheTestInvocations:
         for name, content in files.items():
             assert "not slow" not in content, f"{name}: an unmarked project must not deselect anything"
             assert "Slow Tests" not in content and "slow-tests:" not in content, name
+
+
+def _make_gearlux_workspace(tmp_path: Path, projects: dict[str, str]) -> None:
+    """A fake workspace where every project is a Gearlux submodule.
+
+    Writes a ``.gitmodules`` whose every entry is on ``github.com:Gearlux/`` (so
+    ``discover_gearlux_projects`` classifies each name as internal) plus one
+    directory per project carrying the given pyproject.toml text and an inner
+    package dir.
+    """
+    lines = []
+    for name in projects:
+        lines += [f'[submodule "{name}"]', f"\tpath = {name}", f"\turl = git@github.com:Gearlux/{name}.git"]
+    (tmp_path / ".gitmodules").write_text("\n".join(lines) + "\n", encoding="utf-8")
+    for name, pyproject in projects.items():
+        dir_ = tmp_path / name
+        dir_.mkdir(parents=True, exist_ok=True)
+        (dir_ / "pyproject.toml").write_text(pyproject, encoding="utf-8")
+        pkg = dir_ / name.replace("-", "")
+        pkg.mkdir(exist_ok=True)
+        (pkg / "__init__.py").touch()
+
+
+def _scaffold_app(monkeypatch: pytest.MonkeyPatch, tmp_path: Path, projects: dict[str, str]) -> dict[str, str]:
+    """Scaffold the project named ``app`` inside a Gearlux workspace; return the three artifacts."""
+    from aisland import manager
+
+    _make_gearlux_workspace(tmp_path, projects)
+    monkeypatch.setattr(manager, "get_workspace_root", lambda: tmp_path)
+    JenkinsService().scaffold_pipelines(project_name="app", force=True)
+    return {
+        "Jenkinsfile": (tmp_path / "app" / "Jenkinsfile").read_text(encoding="utf-8"),
+        "Jenkinsfile.local": (tmp_path / "app" / "Jenkinsfile.local").read_text(encoding="utf-8"),
+        "ci.yml": (tmp_path / "app" / ".github" / "workflows" / "ci.yml").read_text(encoding="utf-8"),
+    }
+
+
+class TestTheInternalDepClosureFollowsWhatCIInstalls:
+    """The pre-install closure mirrors exactly what CI installs, nothing more.
+
+    CI installs each internal dep bare (``--no-deps`` + the root's ``.[dev,…]``,
+    which resolves only the dep's BASE dependencies), so a transitive dep's
+    extras are never requested and must not add pre-installs — the old
+    walk-every-extras-group rule made signals-analysis's CI install
+    torpaido/matrainer/annotaide (reachable only through signals's dev extra
+    and matrainer's torpaido extra) and made annotaide's CI pre-install
+    annotaide ITSELF from git@main. The ROOT is different: its dev/notebook and
+    selected framework/tracker extras ARE installed, so their internal deps stay
+    in. An extras-carrying spec (``libmid[gpu]``) is a real request: the named
+    extra's contents are walked for that dep — the old regex split couldn't even
+    parse the bracket form and silently dropped the whole spec.
+    """
+
+    def test_a_transitive_deps_extras_do_not_add_preinstalls(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ) -> None:
+        """The signals-analysis shape: app -> libmid, whose dev extra names libextra.
+
+        CI installs libmid bare, so libmid's dev extra is never requested and
+        libextra must not be pre-installed.
+        """
+        files = _scaffold_app(
+            monkeypatch,
+            tmp_path,
+            {
+                "app": '[project]\nname = "app"\nversion = "0.0.0"\ndependencies = ["libmid>=0.1.0"]\n',
+                "libmid": (
+                    '[project]\nname = "libmid"\nversion = "0.0.0"\n\n'
+                    "[project.optional-dependencies]\n"
+                    'dev = ["libextra>=0.1.0", "pytest"]\n'
+                ),
+                "libextra": '[project]\nname = "libextra"\nversion = "0.0.0"\n',
+            },
+        )
+        for name, content in files.items():
+            assert "Gearlux/libmid.git" in content, f"{name}: the declared dep must be pre-installed"
+            assert "Gearlux/libextra.git" not in content, f"{name}: a transitive dep's dev extra is never installed"
+
+    def test_the_roots_own_dev_and_notebook_extras_are_walked(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ) -> None:
+        """The signals shape (the CON pin): CI installs the ROOT's `.[dev]` and the
+        best-effort `.[notebook]`, so internal deps named there stay pre-installed —
+        while an extra CI never installs (`viz`) adds nothing.
+        """
+        files = _scaffold_app(
+            monkeypatch,
+            tmp_path,
+            {
+                "app": (
+                    '[project]\nname = "app"\nversion = "0.0.0"\n\n'
+                    "[project.optional-dependencies]\n"
+                    'dev = ["devdep>=0.1.0", "pytest"]\n'
+                    'notebook = ["nbdep>=0.1.0", "jupyter"]\n'
+                    'viz = ["vizdep>=0.1.0"]\n'
+                ),
+                "devdep": '[project]\nname = "devdep"\nversion = "0.0.0"\n',
+                "nbdep": '[project]\nname = "nbdep"\nversion = "0.0.0"\n',
+                "vizdep": '[project]\nname = "vizdep"\nversion = "0.0.0"\n',
+            },
+        )
+        for name, content in files.items():
+            assert "Gearlux/devdep.git" in content, f"{name}: the dev extra IS installed by CI"
+            assert "Gearlux/nbdep.git" in content, f"{name}: the notebook extra IS installed (best-effort step)"
+            assert "Gearlux/vizdep.git" not in content, f"{name}: an uninstalled extra must not add pre-installs"
+
+    def test_an_extras_carrying_spec_resolves_and_walks_the_named_extra(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ) -> None:
+        """`libmid[gpu]>=0.1.0` with NO bare spec beside it: libmid must still be
+        pre-installed (the old regex stripped the spec to `libmid[gpu]`, matching
+        nothing), and the REQUESTED extra's internal content (gpudep) comes with it —
+        while libmid's unrequested `docs` extra adds nothing.
+        """
+        files = _scaffold_app(
+            monkeypatch,
+            tmp_path,
+            {
+                "app": '[project]\nname = "app"\nversion = "0.0.0"\ndependencies = ["libmid[gpu]>=0.1.0"]\n',
+                "libmid": (
+                    '[project]\nname = "libmid"\nversion = "0.0.0"\n\n'
+                    "[project.optional-dependencies]\n"
+                    'gpu = ["gpudep>=0.1.0"]\n'
+                    'docs = ["docsdep>=0.1.0"]\n'
+                ),
+                "gpudep": '[project]\nname = "gpudep"\nversion = "0.0.0"\n',
+                "docsdep": '[project]\nname = "docsdep"\nversion = "0.0.0"\n',
+            },
+        )
+        for name, content in files.items():
+            assert "Gearlux/libmid.git" in content, f"{name}: a bracket spec must resolve to its dep"
+            assert "Gearlux/gpudep.git" in content, f"{name}: the requested extra's content is installed by CI"
+            assert "Gearlux/docsdep.git" not in content, f"{name}: an unrequested extra adds nothing"
+
+    def test_a_project_never_preinstalls_itself(self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+        """The annotaide shape: a dependency cycle reaching back to the root must not
+        make the root's CI install ITS OWN main branch over the checkout under test.
+        """
+        files = _scaffold_app(
+            monkeypatch,
+            tmp_path,
+            {
+                "app": '[project]\nname = "app"\nversion = "0.0.0"\ndependencies = ["libmid>=0.1.0"]\n',
+                "libmid": '[project]\nname = "libmid"\nversion = "0.0.0"\ndependencies = ["app>=0.1.0"]\n',
+            },
+        )
+        for name, content in files.items():
+            assert "Gearlux/libmid.git" in content, name
+            assert "Gearlux/app.git" not in content, f"{name}: a project must never pre-install itself"
+
+    def test_transitive_base_deps_are_still_fully_walked(self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+        """The reason the closure exists at all: `.[dev]` must resolve libmid's own
+        base deps, and libdeep is not on PyPI — so base deps stay transitively
+        collected, topologically ordered (libdeep installs before libmid).
+        """
+        files = _scaffold_app(
+            monkeypatch,
+            tmp_path,
+            {
+                "app": '[project]\nname = "app"\nversion = "0.0.0"\ndependencies = ["libmid>=0.1.0"]\n',
+                "libmid": '[project]\nname = "libmid"\nversion = "0.0.0"\ndependencies = ["libdeep>=0.1.0"]\n',
+                "libdeep": '[project]\nname = "libdeep"\nversion = "0.0.0"\n',
+            },
+        )
+        for name, content in files.items():
+            assert "Gearlux/libdeep.git" in content, f"{name}: transitive base deps must stay in the closure"
+            assert content.index("Gearlux/libdeep.git") < content.index(
+                "Gearlux/libmid.git"
+            ), f"{name}: a dep installs before its consumer"
+
+    def test_the_roots_selected_axis_extras_are_walked(self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+        """A selected framework extra is part of `.[dev,<selected>]`, so its internal
+        deps are pre-installed — an axis extra the committed selection omits is not.
+        """
+        (tmp_path / "config.toml").write_text('frameworks = ["keras"]\n', encoding="utf-8")
+        files = _scaffold_app(
+            monkeypatch,
+            tmp_path,
+            {
+                "app": (
+                    '[project]\nname = "app"\nversion = "0.0.0"\n\n'
+                    "[project.optional-dependencies]\n"
+                    'keras = ["kerasdep>=0.1.0"]\n'
+                    'torch = ["torchdep>=0.1.0"]\n\n'
+                    "[tool.aisland]\n"
+                    'frameworks = ["keras", "torch"]\n'
+                ),
+                "kerasdep": '[project]\nname = "kerasdep"\nversion = "0.0.0"\n',
+                "torchdep": '[project]\nname = "torchdep"\nversion = "0.0.0"\n',
+            },
+        )
+        for name, content in files.items():
+            assert "Gearlux/kerasdep.git" in content, f"{name}: a selected axis extra IS installed by CI"
+            assert "Gearlux/torchdep.git" not in content, f"{name}: an unselected axis extra is not"

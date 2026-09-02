@@ -12,6 +12,10 @@ dependencies = [
     "click>=8.0.0",
     # Generates the process-compose desired-state document (aisland/supervisor.py).
     "pyyaml>=6.0",
+    # PEP 508 requirement parsing for the CI scaffolder's internal-dep closure
+    # (services/jenkins.py) — an extras-carrying spec like `matrainer[keras]>=0.1.0`
+    # must resolve to its dep and the named extra, which a regex split cannot do.
+    "packaging>=23.0",
 ]
 requires-python = ">=3.12"
 

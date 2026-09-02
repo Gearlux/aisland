@@ -625,6 +625,14 @@ possible — exactly one bit, and never your `--ref`:
 | `Jenkinsfile.local` | your machine, against the workspace | **identical for every config** — a `[ -f <dep>/pyproject.toml ]` guard: editable if the checkout is there, else `git@main` |
 | `Jenkinsfile`, `ci.yml` | a runner, no workspace | `git@main` — unless the dep is `pypi`-sourced, in which case it is omitted and `.[dev]` resolves it from PyPI |
 
+The dependency list itself is the closure of **exactly what CI installs**: the project's own base
+dependencies plus the extras its CI steps install (`dev`, the best-effort `notebook`, and the
+selected framework/tracker extras), then each reached dep's base dependencies transitively. An
+extras-carrying spec like `matrainer[keras]` also pulls what that named extra needs — but a
+transitive dep's *other* extras contribute nothing, because CI never requests them: each dep
+installs bare (`--no-deps`), and `.[dev]` resolves only its base deps. So a sibling named only in
+a dependency's `dev` extra never reaches your pipeline.
+
 Two consequences worth knowing:
 
 - **`aisland source set --ref` regenerates nothing.** A ref is a development pin ("I'm working

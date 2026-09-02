@@ -12,6 +12,7 @@ from pathlib import Path
 from typing import Any, List, Optional, cast
 
 import click
+from packaging.requirements import InvalidRequirement, Requirement
 
 from aisland.manager import BIN_DIR, BaseService
 from aisland.selection import AXES
@@ -905,39 +906,58 @@ class JenkinsService(BaseService):
             source = source_for_dependency(committed_sources, dep)
             return source is not None and source.kind == "pypi"
 
-        # Collect the FULL TRANSITIVE closure of internal Gearlux deps, not just
-        # the direct ones. When CI installs a direct dep like `confluid` with
-        # --no-deps, `.[dev]` below still needs to resolve confluid's own deps
-        # (e.g. loggair) — and Gearlux distribution names aren't on PyPI, so uv
-        # fails unless WE'VE ALSO pre-installed those transitive deps first.
+        # Collect the internal Gearlux deps CI must pre-install: the closure of
+        # exactly what CI's install steps resolve, nothing more. When CI installs
+        # a direct dep like `confluid` with --no-deps, `.[dev]` below still needs
+        # to resolve confluid's own BASE deps (e.g. loggair) — and Gearlux
+        # distribution names aren't on PyPI, so uv fails unless WE'VE ALSO
+        # pre-installed those transitive deps first.
         #
-        # Build the closure by walking each Gearlux dep's own pyproject.toml.
-        # Topologically sort so every package's deps are installed before it.
+        # What each node contributes (2026-09-02, replaces "walk every extras
+        # group of every project", which pre-installed packages nothing would
+        # ever import):
+        #   - the ROOT project: its base deps PLUS the extras its CI actually
+        #     installs — `.[dev,<selected axis extras>]` plus the best-effort
+        #     `.[notebook]` step;
+        #   - a TRANSITIVE dep: its base deps PLUS only the extras the incoming
+        #     requirement named (`matrainer[keras]` walks matrainer's keras
+        #     extra). Its OTHER extras are never requested by any install step
+        #     (each dep installs bare, and `.[dev]` resolves only its base deps),
+        #     so they must not add pre-installs — the old rule made
+        #     signals-analysis's CI install torpaido/matrainer/annotaide,
+        #     reachable only through signals's dev extra and matrainer's
+        #     torpaido extra.
+        # Specs are parsed with packaging.Requirement: the regex split it
+        # replaces couldn't parse `matrainer[torch]>=0.1.0` and silently dropped
+        # the spec. Topologically sorted so every package's deps install first.
 
-        def _strip_specifier(dep_str: str) -> str:
-            return re.split(r"[>=< ]", dep_str)[0].strip()
-
-        def _read_internal_deps(pyproject: Path) -> list[str]:
-            """Return the direct Gearlux deps of one pyproject.toml, including all extras.
-
-            Walks both `project.dependencies` (runtime) and every extras group in
-            `project.optional-dependencies` (dev, test, notebook, ...). Reason:
-            extras like dev can list sibling workspace packages (e.g. navigaitor's
-            dev extra can depend on sibling workspace packages for tests). CI runs `.[dev]`, so
-            those extras ARE installed and must be pre-satisfied by the
-            --no-deps Gearlux install loop — otherwise `.[dev]` can't resolve
-            them from PyPI.
-            """
+        def _load_project_table(pyproject: Path) -> dict:
+            """The [project] table of one pyproject.toml; {} when missing/unparseable
+            (a detached submodule's directory is empty and contributes nothing)."""
             try:
                 with open(pyproject, "rb") as f:
                     data = tomllib.load(f)
             except Exception:
-                return []
-            project = data.get("project", {})
-            all_specs: list[str] = list(project.get("dependencies") or [])
-            for extra_name, extras in (project.get("optional-dependencies") or {}).items():
-                all_specs.extend(extras or [])
-            return [_strip_specifier(d) for d in all_specs if _strip_specifier(d) in gearlux_projects]
+                return {}
+            table = data.get("project", {})
+            return table if isinstance(table, dict) else {}
+
+        def _gearlux_requirements(project_table: dict, extras: frozenset[str]) -> list[Requirement]:
+            """The Gearlux requirements one node contributes: its base dependencies
+            plus the contents of exactly the requested extras groups."""
+            specs: list[str] = list(project_table.get("dependencies") or [])
+            optional = project_table.get("optional-dependencies") or {}
+            for extra in extras:
+                specs.extend(optional.get(extra) or [])
+            reqs: list[Requirement] = []
+            for spec in specs:
+                try:
+                    req = Requirement(spec)
+                except InvalidRequirement:
+                    continue
+                if req.name in gearlux_projects:
+                    reqs.append(req)
+            return reqs
 
         # Map each Gearlux project name to its workspace dir (for locating its
         # pyproject.toml). PyPI-dashed names resolve to dashless dirs.
@@ -947,34 +967,38 @@ class JenkinsService(BaseService):
             stripped = name.replace("-", "")
             return workspace_root / stripped
 
-        # BFS over Gearlux deps starting from this project, accumulating all
-        # reachable Gearlux packages. Start from BOTH runtime and extras deps
-        # (see `_read_internal_deps` rationale): CI's `.[dev]` step installs
-        # every extras group, so extras must be pre-satisfied too.
-        direct = _read_internal_deps(pyproject_path)
-
+        # BFS over (dep, requested extras) pairs — the same dep may be reached
+        # with different extras sets, and each set can name different siblings.
+        root_installed_extras = frozenset(["dev", "notebook", *selected_extras])
+        work: list[tuple[str, frozenset[str]]] = [
+            (req.name, frozenset(req.extras))
+            for req in _gearlux_requirements(_pyproject_data.get("project", {}), root_installed_extras)
+        ]
+        visited: set[tuple[str, frozenset[str]]] = set()
         seen: set[str] = set()
-        stack = list(direct)
-        while stack:
-            dep = stack.pop()
-            if dep in seen:
+        while work:
+            item = work.pop()
+            if item in visited:
                 continue
+            visited.add(item)
+            dep, dep_extras = item
             seen.add(dep)
-            sub_pyproject = _gearlux_workspace_path(dep) / "pyproject.toml"
-            if sub_pyproject.exists():
-                for sub_dep in _read_internal_deps(sub_pyproject):
-                    if sub_dep not in seen:
-                        stack.append(sub_dep)
+            sub_table = _load_project_table(_gearlux_workspace_path(dep) / "pyproject.toml")
+            work.extend((req.name, frozenset(req.extras)) for req in _gearlux_requirements(sub_table, dep_extras))
+
+        # A project never pre-installs itself: a dependency cycle back to the root
+        # (annotaide <-> signals through dev extras) would otherwise install the
+        # root's own main branch over the very checkout under test.
+        seen.discard(metadata["name"])
 
         # Topological sort so loggair is installed before confluid, etc.
-        # Build adjacency: dep -> set(prerequisites)
+        # Base deps suffice for ordering (every install runs --no-deps anyway).
         prereqs: dict[str, set[str]] = {name: set() for name in seen}
         for name in seen:
-            sub_pyproject = _gearlux_workspace_path(name) / "pyproject.toml"
-            if sub_pyproject.exists():
-                for sub_dep in _read_internal_deps(sub_pyproject):
-                    if sub_dep in seen:
-                        prereqs[name].add(sub_dep)
+            sub_table = _load_project_table(_gearlux_workspace_path(name) / "pyproject.toml")
+            for req in _gearlux_requirements(sub_table, frozenset()):
+                if req.name in seen and req.name != name:
+                    prereqs[name].add(req.name)
 
         # Kahn's algorithm.
         internal_deps: list[str] = []
