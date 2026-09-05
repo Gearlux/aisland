@@ -1052,6 +1052,30 @@ same whether or not you have sourced `project.bashrc`.
 > it does not, check that something sources the target file — the command tells you when
 > nothing does.
 
+## MCP client configuration (`aisland mcp`)
+
+Every workspace project that ships an MCP server is registered with the MCP clients in use,
+from ONE discovery: a `[project.scripts]` entry targeting `<pkg>.server:main` whose module
+imports the SDK's server package (`mcp.server`). The commands are absolute venv paths, which
+is why both files are gitignored and regenerated per machine — `aisland setup` writes them
+after the editable installs, and each has a standalone command:
+
+```bash
+aisland mcp gemini    # .gemini/settings.json — the Gemini CLI
+aisland mcp claude    # .mcp.json            — Claude Code's project-scoped servers
+```
+
+```json
+{"mcpServers": {"annotaide":  {"command": "/…/.venv/bin/annotaide-mcp"},
+                "navigaitor": {"command": "/…/.venv/bin/navigaitor"},
+                "vendorcli":     {"command": "/…/.venv/bin/vendorcli-mcp"}}}
+```
+
+Claude Code reads `.mcp.json` when a session starts in the workspace and asks once whether
+to use the project's servers (`enableAllProjectMcpServers` in its settings skips the prompt);
+`claude mcp list` then shows them. A server whose annotaide, say, is not running still starts
+— its tools answer in-band with the command that starts the service.
+
 ## Submodule Management
 
 This repository uses Git submodules to manage its constituent projects.

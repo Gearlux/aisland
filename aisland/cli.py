@@ -7,6 +7,7 @@ from aisland import supervisor as supervisor_mod
 from aisland.clean import DEFAULT_KEEP_DAYS
 from aisland.manager import (
     generate_gemini_settings,
+    generate_mcp_json,
     get_workspace_root,
     provision_system,
     reconcile_submodules,
@@ -698,6 +699,12 @@ def mcp() -> None:
 def mcp_gemini() -> None:
     """Generate .gemini/settings.json for the workspace MCP servers (gitignored; regenerated)."""
     generate_gemini_settings()
+
+
+@mcp.command(name="claude")
+def mcp_claude() -> None:
+    """Generate .mcp.json (Claude Code's project servers) for the workspace MCP servers (gitignored; regenerated)."""
+    generate_mcp_json()
 
 
 # --- MLflow Commands ---
