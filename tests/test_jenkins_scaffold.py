@@ -217,8 +217,8 @@ class TestTheInternalDepClosureFollowsWhatCIInstalls:
     CI installs each internal dep bare (``--no-deps`` + the root's ``.[dev,…]``,
     which resolves only the dep's BASE dependencies), so a transitive dep's
     extras are never requested and must not add pre-installs — the old
-    walk-every-extras-group rule made signals-analysis's CI install
-    torpaido/matrainer/annotaide (reachable only through signals's dev extra
+    walk-every-extras-group rule made the CI of a project depending only on
+    signals install torpaido/matrainer/annotaide (reachable only through signals's dev extra
     and matrainer's torpaido extra) and made annotaide's CI pre-install
     annotaide ITSELF from git@main. The ROOT is different: its dev/notebook and
     selected framework/tracker extras ARE installed, so their internal deps stay
@@ -230,7 +230,7 @@ class TestTheInternalDepClosureFollowsWhatCIInstalls:
     def test_a_transitive_deps_extras_do_not_add_preinstalls(
         self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
     ) -> None:
-        """The signals-analysis shape: app -> libmid, whose dev extra names libextra.
+        """The shape that motivated the rule: app -> libmid, whose dev extra names libextra.
 
         CI installs libmid bare, so libmid's dev extra is never requested and
         libextra must not be pre-installed.

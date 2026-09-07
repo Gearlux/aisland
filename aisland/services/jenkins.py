@@ -923,10 +923,10 @@ class JenkinsService(BaseService):
         #     requirement named (`matrainer[keras]` walks matrainer's keras
         #     extra). Its OTHER extras are never requested by any install step
         #     (each dep installs bare, and `.[dev]` resolves only its base deps),
-        #     so they must not add pre-installs — the old rule made
-        #     signals-analysis's CI install torpaido/matrainer/annotaide,
-        #     reachable only through signals's dev extra and matrainer's
-        #     torpaido extra.
+        #     so they must not add pre-installs — the old rule made the CI of
+        #     a project depending only on signals install torpaido/matrainer/
+        #     annotaide, reachable only through signals's dev extra and
+        #     matrainer's torpaido extra.
         # Specs are parsed with packaging.Requirement: the regex split it
         # replaces couldn't parse `matrainer[torch]>=0.1.0` and silently dropped
         # the spec. Topologically sorted so every package's deps install first.

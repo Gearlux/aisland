@@ -748,8 +748,8 @@ with `--no-deps` first, and something must compute *which* deps that loop names.
 rule collected the transitive closure of "every Gearlux name in `project.dependencies` **or any
 extras group** of every reachable pyproject". Extras walk was justified for the scaffolded
 project itself (its CI does install `.[dev]`), but applying it transitively collected packages
-no install step would ever request: signals-analysis depends on `signals`; signals's
-*dev* extra names `matrainer` and `annotaide`; matrainer's *torpaido* extra names `torpaido` —
+no install step would ever request: a signal-analysis app (since removed from the workspace)
+depended only on `signals`; signals's *dev* extra names `matrainer` and `annotaide`; matrainer's *torpaido* extra names `torpaido` —
 and CI installed all three, half-broken (`--no-deps`, their own deps never resolved), for a
 project that imports none of them. The same walk let annotaide's and signals's mutual
 dev-extra references cycle back to the scaffolded project, so each pipeline pre-installed *its
@@ -773,8 +773,8 @@ The closure mirrors the install steps the templates themselves emit, node by nod
 
 ### Consequences
 
-Twelve projects' pre-install lists shrank to their real dependency cones (signals-analysis:
-five deps → two). A sibling named only inside a dependency's dev extra no longer reaches any
+Twelve projects' pre-install lists shrank to their real dependency cones (the signals-only
+app above: five deps → two). A sibling named only inside a dependency's dev extra no longer reaches any
 consumer pipeline — if a root's CI genuinely needs it, the root's own extras must say so, which
 is also where uv will look. The committed CI files stop churning when an unrelated project
 edits its dev extra. What the closure still deliberately keeps: transitive **base** deps
