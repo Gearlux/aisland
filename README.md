@@ -662,6 +662,40 @@ verifies the name and its provenance against PyPI before touching anything. Scaf
 re-probe the index: if it did, the content of committed files would depend on network
 reachability, and an offline scaffold would flip every project to git URLs.
 
+### A `playwright` dev dependency installs its browser
+
+Playwright's package alone cannot open a page — the browser is a separate download — so a
+test that drives the page would `skip` wherever only pip ran, and CI would go green while
+checking less than it used to. Listing `playwright` under the `dev` extra is therefore the
+**whole declaration** (the same shape as a registered `slow` pytest marker: no aisland knob):
+
+```toml
+# <project>/pyproject.toml
+[project.optional-dependencies]
+dev = ["pytest>=7.0.0,<9.0.0", "playwright>=1.40.0,<2.0.0"]
+```
+
+With that one line, `aisland setup` runs `<venv>/bin/playwright install chromium` right after
+the project's editable install, and `aisland jenkins scaffold` emits the same step after
+`.[dev]` in every artifact that runs the tests:
+
+```groovy
+// Jenkinsfile, Jenkinsfile.local — one venv serves every stage, so once
+sh "${VENV_BIN}/uv pip install -e .[dev]"
+sh "${VENV_BIN}/playwright install chromium"
+```
+
+```yaml
+# ci.yml — in each job that runs pytest (unit-tests, and slow-tests when the marker is registered)
+uv pip install --system -e ".[dev]"
+playwright install --with-deps chromium   # --with-deps: the OS libraries an Ubuntu runner lacks
+```
+
+Chromium only: it is the one browser a workspace test asks for. A project without the
+dependency gets byte-identical output, and the browser cache is per user (`~/Library/Caches/
+ms-playwright` on macOS), so a Jenkins agent downloads it once, not per build.
+
+
 ### The two configuration layers
 
 Mirrors the `.gitmodules active` + `.git/config submodule.<name>.active` split used for optional

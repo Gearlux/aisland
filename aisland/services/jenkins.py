@@ -15,8 +15,9 @@ import click
 from packaging.requirements import InvalidRequirement, Requirement
 
 from aisland.manager import BIN_DIR, BaseService
-from aisland.selection import AXES
+from aisland.selection import AXES, PLAYWRIGHT_BROWSER
 from aisland.selection import declared as sel_declared
+from aisland.selection import dev_extra_names
 from aisland.selection import extras_for as sel_extras_for
 from aisland.selection import read_committed as sel_committed
 from aisland.sources import DEFAULT_REF, read_committed_sources, source_for_dependency
@@ -856,6 +857,20 @@ class JenkinsService(BaseService):
         _markers = _pyproject_data.get("tool", {}).get("pytest", {}).get("ini_options", {}).get("markers", [])
         has_slow_marker = any(str(m).split(":", 1)[0].strip() == "slow" for m in _markers)
         pytest_deselect = " -m 'not slow'" if has_slow_marker else ""
+        # A project whose `dev` extra lists PLAYWRIGHT gets its browser fetched right after the
+        # dev install, in every artifact that runs its tests — the package alone cannot open a
+        # page, and a browser-driven test would otherwise `skip` its way into a green build that
+        # checks less. Same shape as the slow marker above: the dependency IS the declaration,
+        # there is no aisland knob, and a project without it gets byte-identical output.
+        # `--with-deps` on the GitHub runner adds the OS libraries Ubuntu lacks (sudo is available
+        # there, never assumed on a Jenkins agent, where the browser cache is per user and the
+        # download happens once). `aisland setup` runs the same install for a developer's venv
+        # (`selection.browser_install_command`), so the two never disagree on the browser.
+        needs_browser = "playwright" in dev_extra_names(_pyproject_data)
+        browser_sh = (
+            f'\n                sh "${{VENV_BIN}}/playwright install {PLAYWRIGHT_BROWSER}"' if needs_browser else ""
+        )
+        browser_gh = f"\n        playwright install --with-deps {PLAYWRIGHT_BROWSER}" if needs_browser else ""
         if has_slow_marker:
             slow_stage = """
         stage('Slow Tests') {
@@ -1086,7 +1101,7 @@ class JenkinsService(BaseService):
     - name: Install dependencies
       run: |
         {pip_install_str}
-        uv pip install --system -e ".[{ci_extras}]"
+        uv pip install --system -e ".[{ci_extras}]"{browser_gh}
     - name: Run Slow Tests
       run: |
         rc=0; pytest tests -m slow --junitxml=slow-test-report.xml || rc=$?
@@ -1292,7 +1307,7 @@ pipeline {{
                 sh "${{VENV_BIN}}/uv --version"
                 echo 'Installing Project in Editable Mode...'
                 {local_pip_str}
-                sh "${{VENV_BIN}}/uv pip install -e .[{ci_extras}]"
+                sh "${{VENV_BIN}}/uv pip install -e .[{ci_extras}]"{browser_sh}
                 // Notebook-only extras (matplotlib, jupyter kernels, etc.) live
                 // in the optional `[notebook]` extra when the project ships
                 // notebooks; absence is not an error.
@@ -1586,7 +1601,7 @@ pipeline {{
                 sh "${{VENV_BIN}}/pip install --upgrade pip uv"
                 echo 'Installing Dependencies...'
                 {jenkins_pip_str}
-                sh "${{VENV_BIN}}/uv pip install -e .[{ci_extras}]"
+                sh "${{VENV_BIN}}/uv pip install -e .[{ci_extras}]"{browser_sh}
                 // Notebook-only extras (matplotlib, jupyter kernels, etc.) live
                 // in the optional `[notebook]` extra when the project ships
                 // notebooks; absence is not an error.
@@ -1901,7 +1916,7 @@ jobs:
     - name: Install dependencies
       run: |
         {pip_install_str}
-        uv pip install --system -e ".[{ci_extras}]"
+        uv pip install --system -e ".[{ci_extras}]"{browser_gh}
     - name: Run Tests
       run: |
         if [ -d tests ] && find tests -name '*.py' | grep -q .; then

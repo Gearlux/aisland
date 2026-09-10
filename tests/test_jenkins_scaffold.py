@@ -129,6 +129,21 @@ def _make_pyproject_with_slow_marker(dir_: Path, name: str) -> None:
     )
 
 
+def _make_pyproject_with_playwright(dir_: Path, name: str, slow_marker: bool = False) -> None:
+    _make_pyproject(dir_, name)
+    marker = (
+        "\n[tool.pytest.ini_options]\nmarkers = [\"slow: heavy end-to-end tests; deselect with -m 'not slow'.\"]\n"
+        if slow_marker
+        else ""
+    )
+    (dir_ / "pyproject.toml").write_text(
+        f'[project]\nname = "{name}"\nversion = "0.0.0"\n\n'
+        "[project.optional-dependencies]\n"
+        'dev = ["pytest>=7.0.0,<9.0.0", "playwright>=1.40.0,<2.0.0"]\n' + marker,
+        encoding="utf-8",
+    )
+
+
 def _scaffolded(monkeypatch: pytest.MonkeyPatch, tmp_path: Path, make: Any) -> dict[str, str]:
     from aisland import manager
 
@@ -174,6 +189,42 @@ class TestTheSlowMarkerSplitsTheTestInvocations:
         for name, content in files.items():
             assert "not slow" not in content, f"{name}: an unmarked project must not deselect anything"
             assert "Slow Tests" not in content and "slow-tests:" not in content, name
+
+
+class TestAPlaywrightDevDependencyInstallsItsBrowser:
+    """Listing `playwright` under the `dev` extra IS the declaration (the slow marker's shape —
+    no aisland knob): every artifact that runs the tests fetches chromium right after the dev
+    install, so a browser-driven test runs in CI instead of skipping into a green build that
+    checks less. A project without the dependency gets byte-identical output."""
+
+    def test_all_three_artifacts_fetch_chromium_after_the_dev_install(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ) -> None:
+        files = _scaffolded(monkeypatch, tmp_path, _make_pyproject_with_playwright)
+        for name in ("Jenkinsfile", "Jenkinsfile.local"):
+            content = files[name]
+            assert content.count('sh "${VENV_BIN}/playwright install chromium"') == 1, name
+            assert content.index("pip install -e .[dev]") < content.index("playwright install chromium"), name
+        ci = files["ci.yml"]
+        assert ci.count("playwright install --with-deps chromium") == 1, "the unit-tests job, and only it"
+        at = ci.index("playwright install --with-deps chromium")
+        assert ci.rindex('uv pip install --system -e ".[dev]"', 0, at) > ci.rindex(
+            "- name: Install dependencies", 0, at
+        )
+        run = ci.index("pytest tests", at)
+        assert "Install dependencies" not in ci[at:run], "the browser lands in the job that runs pytest"
+
+    def test_a_slow_leg_fetches_it_too(self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+        """Both GitHub jobs that run pytest need the browser — the routine one and the slow one."""
+        files = _scaffolded(monkeypatch, tmp_path, lambda d, n: _make_pyproject_with_playwright(d, n, slow_marker=True))
+        assert files["ci.yml"].count("playwright install --with-deps chromium") == 2
+        for name in ("Jenkinsfile", "Jenkinsfile.local"):
+            assert files[name].count("playwright install chromium") == 1, f"{name}: one venv serves every stage"
+
+    def test_a_project_without_it_is_untouched(self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+        files = _scaffolded(monkeypatch, tmp_path, _make_pyproject)
+        for name, content in files.items():
+            assert "playwright" not in content, name
 
 
 def _make_gearlux_workspace(tmp_path: Path, projects: dict[str, str]) -> None:

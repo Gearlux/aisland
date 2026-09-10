@@ -1363,7 +1363,14 @@ def setup_workspace(
     #       discovery (the vocabulary comes from the discovered projects' declarations) and
     #       BEFORE the install loop, which reads it per project. Prompts once when nothing has
     #       been chosen yet; a recorded choice is used silently.
-    from aisland.selection import AXES, editable_target, require_defined_declarations, resolve_for_setup
+    from aisland.selection import (
+        AXES,
+        PLAYWRIGHT_BROWSER,
+        browser_install_command,
+        editable_target,
+        require_defined_declarations,
+        resolve_for_setup,
+    )
 
     for axis in AXES:
         # Only the framework axis takes a flag; the tracker axis resolves from its recorded
@@ -1407,6 +1414,17 @@ def setup_workspace(
             subprocess.check_call([uv_cmd, "pip", "install", "-e", target], cwd=workspace_root)
         except subprocess.CalledProcessError as e:
             click.echo(f"  - Error: Failed to install {project['name']}: {e}")
+
+        # A `playwright` dev dependency needs its browser fetched once the package is in — the
+        # SAME declaration the scaffolded CI reads, so a browser-driven test runs here as it
+        # runs there instead of skipping (see `selection.browser_install_command`).
+        browser = browser_install_command(project_dir / "pyproject.toml", venv_bin)
+        if browser:
+            click.echo(f"==> Installing Playwright's {PLAYWRIGHT_BROWSER} for {project['name']}...")
+            try:
+                subprocess.check_call(browser, cwd=project_dir)
+            except (subprocess.CalledProcessError, FileNotFoundError) as e:
+                click.echo(f"  - Error: Failed to install Playwright's {PLAYWRIGHT_BROWSER} for {project['name']}: {e}")
 
     # 4. MCP client config — register every workspace MCP server (navigaitor,
     #    vendorcli, annotaide, …) for the Gemini CLI AND for Claude Code, with

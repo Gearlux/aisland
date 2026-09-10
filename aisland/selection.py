@@ -63,9 +63,10 @@ import subprocess
 import tomllib
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Dict, List, NamedTuple, Optional, Sequence, Tuple
+from typing import Any, Dict, List, Mapping, NamedTuple, Optional, Sequence, Set, Tuple
 
 import click
+from packaging.requirements import InvalidRequirement, Requirement
 
 from aisland.config import CONFIG_FILE
 from aisland.config import load as load_config
@@ -624,3 +625,45 @@ def unset_selection(axis: Axis = FRAMEWORKS, machine_only: bool = False, apply: 
     if resolved is None or not apply:
         return 0
     return apply_selection(workspace_root, resolved, axis)
+
+
+# --------------------------------------------------------------------------- #
+# a dev dependency that needs more than pip: playwright's browser
+# --------------------------------------------------------------------------- #
+
+#: The one browser a workspace test asks for — Playwright's package alone cannot open a page.
+PLAYWRIGHT_BROWSER = "chromium"
+
+
+def dev_extra_names(pyproject_data: Mapping[str, Any]) -> Set[str]:
+    """The distribution names a parsed ``pyproject.toml`` lists under its ``dev`` extra, lower-cased.
+
+    Each spec is read with ``packaging.Requirement``, so ``playwright>=1.40``, ``foo[bar]; python_version
+    > '3'`` and ``x @ git+…`` all yield their bare name; a spec that does not parse is skipped rather
+    than failing the read — declaring is the project's job, judging the spelling is uv's.
+    """
+    names: Set[str] = set()
+    for spec in pyproject_data.get("project", {}).get("optional-dependencies", {}).get("dev", []) or []:
+        try:
+            names.add(Requirement(str(spec)).name.lower())
+        except InvalidRequirement:
+            continue
+    return names
+
+
+def browser_install_command(pyproject: Path, venv_bin: Path) -> Optional[List[str]]:
+    """The command that fetches the browser a ``playwright`` DEV dependency needs, or ``None``.
+
+    Listing ``playwright`` under ``dev`` is the whole declaration — the shape of the ``slow`` pytest
+    marker, never an aisland knob. ``aisland setup`` runs this right after the project's editable
+    install, and the scaffolded CI emits its equivalent after ``.[dev]``, so a browser-driven test
+    runs everywhere the extra is installed instead of ``skip``-ping into a green build that checks
+    less. A project without the dependency gets exactly what it always did.
+    """
+    if not pyproject.exists():
+        return None
+    with open(pyproject, "rb") as fh:
+        data = tomllib.load(fh)
+    if "playwright" not in dev_extra_names(data):
+        return None
+    return [str(venv_bin / "playwright"), "install", PLAYWRIGHT_BROWSER]
