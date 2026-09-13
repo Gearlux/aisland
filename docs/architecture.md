@@ -54,7 +54,7 @@ The layers are **not** interchangeable. Each artifact reads exactly one:
 | artifact | reads | why |
 |---|---|---|
 | `Jenkinsfile`, `ci.yml` | committed, **published bit only** | tracked *and shared* — a dev's `ref` must not reach another consumer's CI |
-| `Jenkinsfile.local` | **nothing** | resolves it at build time instead (see the guard below) |
+| `Jenkinsfile.local` | **nothing** | installs nothing — it tests the `.venv`, where the effective source was already applied |
 | `*.code-workspace` `folders` | committed only | tracked, hand-maintained |
 | submodule checkout, shared `.venv` | effective (override ?? committed) | untracked machine state — the whole point of an override |
 
@@ -71,23 +71,11 @@ introducing the mechanism changed no behaviour anywhere until a source was actua
 
 ### Consequences
 
-- **The build-time guard is the mechanism, not defensive polish.** It asks at *build* time exactly
-  the question the configuration answers — "does this machine have a checkout?" — so
-  `Jenkinsfile.local` needs no configuration at all: one identical line per dep, editable if the
-  checkout is there, `git@main` otherwise. Deciding it at build time rather than scaffold time is
-  also what lets a per-machine override work, since by construction it never reaches this tracked
-  file. Its accepted cost is that a `pypi`-sourced dep is built from `main` here rather than from
-  the released wheel — the local pipeline exists to catch breakage *before* a release, so that is
-  the useful direction to err in.
-- **The guard tests `pyproject.toml`, not the directory.** `git submodule deinit` empties the
-  working tree but leaves the directory itself, so a `[ -d ]` predicate answers "yes, a checkout"
-  for every detached dep — the editable branch then runs against an empty directory, `uv` reports
-  *"does not appear to be a Python project"*, and the git fallback that exists for exactly this
-  case is unreachable. Testing the file the editable install actually consumes is what makes the
-  predicate agree with the question. The wider lesson: when a guard stands in for a configuration
-  value, its predicate has to be *equivalent* to that value, not merely correlated with it — and
-  the way to establish that is to execute the emitted shell against the real on-disk state, which
-  an assertion on the emitted string can never do.
+- **`Jenkinsfile.local` needs no source configuration at all**, because it installs nothing: the
+  effective source of every dep was applied to the `.venv` by `aisland setup`, and the local
+  pipeline tests that venv as it is (see [the local pipeline tests the venv, it does not
+  install](#the-local-pipeline-tests-the-venv-it-does-not-install)). A per-machine override is
+  therefore honoured there for free, and no source change of any kind can rewrite the file.
 - **Order of operations in a `pypi` switch is fixed by information loss.** The distribution name
   (`aisland` → `aisland-manager`) can only be read from `pyproject.toml`, which the deinit
   removes — so it is resolved first and then *persisted* into the committed registry.
@@ -142,8 +130,8 @@ $ aisland source set loggair pypi                    # crosses the boundary — 
 
 ```python
 # The scaffolder reads the COMMITTED layer only — never `effective_source` — and only one bit
-# of it. `Jenkinsfile.local`'s loop calls none of this: it emits the same guarded line for every
-# dep, so the file cannot depend on configuration at all.
+# of it, for the runner files. `Jenkinsfile.local` calls none of this: it installs nothing, so
+# the file cannot depend on configuration at all.
 committed_sources = read_committed_sources(workspace_root)
 
 def _dep_is_pypi(dep: str) -> bool:
@@ -164,7 +152,8 @@ def _dep_is_pypi(dep: str) -> bool:
   kind name.
 - What must not change: the layer→artifact mapping above; that CI reads the published bit and
   never the `ref`; and that `Jenkinsfile.local` reads nothing at all. Reintroducing per-kind
-  branching in that file would quietly restore the churn this record exists to remove.
+  branching — or any install — in that file would quietly restore the churn this record exists
+  to remove.
 - The `local` kind's editable install has ONE spelling, `selection.editable_target` (the `dev`
   extra plus the selected extras on both axes), shared with `setup_workspace` (2026-08-22). Do
   not inline a bare `uv pip install -e <dir>` at a new call site: that is how `aisland source set
@@ -827,10 +816,10 @@ The dependency IS the declaration. `selection.dev_extra_names` reads the `dev` e
 distribution names (through `packaging.Requirement`, so every spec spelling yields its bare
 name); `selection.browser_install_command` turns a `playwright` among them into the venv's
 `playwright install chromium`, which `aisland setup` runs right after that project's editable
-install; and `services/jenkins.py` emits the equivalent line after `.[dev]` in all three
-templates — once in each Jenkinsfile (one venv serves every stage), and in every `ci.yml` job
-that runs pytest, with `--with-deps` there because an Ubuntu runner lacks the OS libraries and
-has sudo. This mirrors the registered `slow` marker: a project opts in through something it
+install; and `services/jenkins.py` emits the equivalent line after `.[dev]` in the two runner
+templates — once in `Jenkinsfile` (one venv serves every stage), and in every `ci.yml` job that
+runs pytest, with `--with-deps` there because an Ubuntu runner lacks the OS libraries and has
+sudo. `Jenkinsfile.local` fetches nothing: it tests the venv setup already provisioned. This mirrors the registered `slow` marker: a project opts in through something it
 declares anyway, and a project that does not gets byte-identical output.
 
 Rejected: a generic `[tool.aisland] post-install = ["…"]` list of shell commands. It would have
@@ -863,8 +852,99 @@ browser_install_command(Path("proj/pyproject.toml"), Path(".venv/bin"))
 
 ### What you may change
 
-- The browser set, if a test ever needs another engine — change the constant and the three
+- The browser set, if a test ever needs another engine — change the constant and the two
   template lines together, and the pins in `tests/test_jenkins_scaffold.py`.
 - Generalising to a declared post-install list — only once a second dependency needs it, and
   as a replacement for this rule, never beside it.
 
+## The local pipeline tests the venv, it does not install
+
+*2026-09-13*
+
+### Context
+
+`aisland jenkins scaffold` emits a `Jenkinsfile.local` per project, seeded into the local Jenkins
+as `<project>.local` and run inside the workspace checkout against the shared `.venv`. Its
+`Initialize` stage used to install into that venv: every internal dep editable with `--no-deps`,
+then the project's `dev` extra (plus selected framework/tracker extras), then its `notebook`
+extra, then `jupyter nbconvert`. The venv those installs targeted is the one `aisland setup`
+provisions, where every workspace project is already editable-installed from its own checkout —
+so the installs changed nothing, but each one re-resolved the full dependency set against the
+configured indexes. Measured on 2026-09-13 on a slow VPN link: torpaido's `Initialize` took
+1430 s (`Resolved 82 packages in 11m 50s`, then 696 s more for the notebook extra) to reinstall
+only torpaido itself, recordstream's 830 s and vendorcli's 574 s, while the quality gates and tests
+that followed took about 12 s. The installs also serialised builds on the venv's exclusive lock
+(`Waiting to acquire exclusive lock for …/.venv`).
+
+A second queue sat in front of that one. The `<workspace>.local` orchestrator declared
+`agent { node { label 'built-in' } }`, holding one of the built-in node's two executors for its
+whole run although it only triggers jobs. Each "parallel" phase therefore ran its projects one
+at a time: vendorcli waited 875 s for recordstream, and annotaide and purifai showed
+`Waiting for next available executor` behind torpaido.
+
+### Decision
+
+- `Jenkinsfile.local` installs nothing. Installing is `aisland setup`'s job; the local pipeline
+  runs the gates of a checkout against the venv exactly as setup left it.
+- Its `Initialize` stage keeps one check: the project's distribution in the venv must record THIS
+  checkout as its source (`direct_url.json`, written for every editable install), else the build
+  stops naming `aisland setup`. It reads the distribution rather than looking up the package, for
+  two reasons: nothing is imported, and a project may ship its code inside another project's
+  package namespace (`signals-bridge` installs `signals/bridge/`), where a package lookup
+  would resolve a sibling's checkout. It runs `python3 -P` — Jenkins runs inside the checkout,
+  and without `-P` the working directory is first on `sys.path`, so a stale `<name>.egg-info`
+  left there shadows the venv's record and a correctly-installed project fails (measured on
+  `signals-bridge`: exit 1 without `-P`, exit 0 with it).
+- The orchestrator declares `agent none`; `build job:` needs no node.
+- The runner files (`Jenkinsfile`, `ci.yml`) are unchanged: a runner has no workspace venv.
+
+Rejected: speeding the installs up (resolving only a private package from the corporate index,
+or caching harder). It keeps two owners of the venv and still pays a resolve per build for
+nothing.
+
+### Consequences
+
+- A project that gains a dependency fails its local build with `ModuleNotFoundError` until
+  `aisland setup` has run. That is the intended signal; the pipeline never installs it.
+- `Jenkinsfile.local` carries no dependency list and reads no source or selection configuration,
+  so neither `aisland source` nor `aisland framework`/`tracker` changes can rewrite it.
+- With installs gone nothing holds the venv lock, and with the orchestrator off the executors a
+  phase's builds run in parallel, bounded by the node's executor count.
+
+### Example
+
+```groovy
+// <project>/Jenkinsfile.local — the whole Initialize stage
+stage('Initialize') {
+    steps {
+        echo 'Validating Environment...'
+        sh "${VENV_BIN}/python3 --version"
+        sh """${VENV_BIN}/python3 -P - 'torpaido' "${env.WORKSPACE_ROOT}/torpaido" <<'PY'
+import importlib.metadata, json, pathlib, sys
+dist, checkout = sys.argv[1], pathlib.Path(sys.argv[2]).resolve()
+try:
+    raw = importlib.metadata.distribution(dist).read_text("direct_url.json")
+    found = json.loads(raw)["url"] if raw else "an install with no source URL"
+except importlib.metadata.PackageNotFoundError:
+    found = "not installed"
+if found != checkout.as_uri():
+    sys.exit(f"{dist} is not installed from {checkout} (found: {found}) - run `aisland setup`")
+print(f"{dist} -> {checkout}")
+PY"""
+    }
+}
+```
+
+```text
+torpaido -> /Users/you/acme/torpaido                                                                              # exit 0
+torpaido is not installed from /Users/you/acme/torpaido (found: file:///Users/you/other/torpaido) - run `aisland setup`   # exit 1
+```
+
+### What you may change
+
+- The check itself (what counts as "this checkout"), as long as it imports nothing, keys on the
+  distribution rather than a package name, and does not let the working directory decide the
+  answer — the pins in `tests/test_jenkins_scaffold.py::TestTheLocalPipelineInstallsNothing` run
+  the emitted shell from inside a checkout carrying a stale `egg-info` for exactly that reason.
+- The orchestrator's phase layout. What must not change: it holds no executor
+  (`tests/test_orchestrator_executor.py`), and `Jenkinsfile.local` gains no install step.

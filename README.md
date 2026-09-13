@@ -489,6 +489,7 @@ together — the digest of a tag is the `docker-content-digest` of its manifest.
 ## Jenkins Configuration
 - **JENKINS_HOME:** All data, jobs, and configurations are stored in `aisland/data/jenkins`. This directory is ignored by Git to keep your local environment clean.
 - **Pipelines:** Each project (e.g., `loggair/`) contains its own `Jenkinsfile`. When creating a new job in Jenkins, point it to the local repository path and select "Pipeline from SCM" with the script path set to `loggair/Jenkinsfile`.
+- **Local orchestrator:** `aisland jenkins init --local` also seeds `<workspace>.local` (e.g. `acme.local`), which triggers every project's `<project>.local` job phase by phase in dependency order, the projects of one phase in parallel. The orchestrator itself holds no executor, so a phase's builds share only the built-in node's executors (two by default) — never one of them with the orchestrator.
 
 ### 6. Check Quality Gates
 You can run automated quality checks across projects using the `check` command. This includes formatting (`isort`, `black`), linting (`flake8`), type checking (`mypy`), unit tests (`pytest`), and GitHub Actions validation (`act`).
@@ -622,7 +623,7 @@ possible — exactly one bit, and never your `--ref`:
 
 | file | runs where | how it installs an internal dep |
 |---|---|---|
-| `Jenkinsfile.local` | your machine, against the workspace | **identical for every config** — a `[ -f <dep>/pyproject.toml ]` guard: editable if the checkout is there, else `git@main` |
+| `Jenkinsfile.local` | your machine, against the workspace | **it doesn't** — it tests the `.venv` that `aisland setup` provisioned, exactly as it is |
 | `Jenkinsfile`, `ci.yml` | a runner, no workspace | `git@main` — unless the dep is `pypi`-sourced, in which case it is omitted and `.[dev]` resolves it from PyPI |
 
 The dependency list itself is the closure of **exactly what CI installs**: the project's own base
@@ -639,23 +640,26 @@ Two consequences worth knowing:
   against `dev/main` today"); letting it decide what a runner builds would publish a personal
   choice to every consumer's CI *and* rewrite 17 projects' committed files on every switch. Only
   crossing the `pypi` boundary changes a CI file — because that is the one bit CI reads.
-- **`Jenkinsfile.local` is config-independent entirely.** The guard asks at *build* time the same
-  question the config answers — "does this machine have a checkout?" — so the file is a function
-  of the dependency list alone. That also makes a `--machine-only` override work correctly instead
-  of failing on an empty directory.
+- **`Jenkinsfile.local` installs nothing and reads no configuration.** Every source decision was
+  already applied to your `.venv` by `aisland setup`, so the local pipeline just runs the quality
+  gates and tests of the checkout against that venv — no `aisland source` change of any kind
+  rewrites it. Its `Initialize` stage only checks that the venv imports *this* checkout:
 
-  ```groovy
-  sh "if [ -f '${env.WORKSPACE_ROOT}/loggair/pyproject.toml' ]; then ${VENV_BIN}/uv pip install --no-deps -e '${env.WORKSPACE_ROOT}/loggair'; else ${VENV_BIN}/uv pip install --no-deps git+https://github.com/Gearlux/loggair.git@main; fi"
+  ```text
+  + /Users/you/acme/.venv/bin/python3 -P - torpaido /Users/you/acme/torpaido
+  torpaido -> /Users/you/acme/torpaido/torpaido
   ```
 
-  It tests `pyproject.toml` rather than the directory because `git submodule deinit` leaves an
-  **empty directory** behind — under a `[ -d ]` test every detached dep took the editable branch
-  and the build died with *"does not appear to be a Python project"*.
+  and stops the build when it does not, instead of testing another copy:
 
-  The one cost: a `pypi`-sourced dep is built from `main` here rather than from the released
-  wheel, so this file alone diverges from your `.venv` and from `ci.yml`. That is deliberate —
-  the local pipeline's job is "does my workspace code build", and testing against `main` catches
-  breakage *before* it is released.
+  ```text
+  torpaido is not installed from /Users/you/acme/torpaido (found: None) - run `aisland setup`
+  ```
+
+  The same applies to a dependency you just added to a project's `pyproject.toml`: until
+  `aisland setup` has run, the local build fails with `ModuleNotFoundError` — run setup, the
+  pipeline will not install it for you. See [architecture: the local pipeline tests the venv, it
+  does not install](docs/architecture.md#the-local-pipeline-tests-the-venv-it-does-not-install).
 
 "Available on PyPI" is decided once, when you run `aisland source set <p> pypi` — that command
 verifies the name and its provenance against PyPI before touching anything. Scaffolding does not
@@ -677,10 +681,11 @@ dev = ["pytest>=7.0.0,<9.0.0", "playwright>=1.40.0,<2.0.0"]
 
 With that one line, `aisland setup` runs `<venv>/bin/playwright install chromium` right after
 the project's editable install, and `aisland jenkins scaffold` emits the same step after
-`.[dev]` in every artifact that runs the tests:
+`.[dev]` in every runner artifact that runs the tests (`Jenkinsfile.local` needs none — it
+tests the venv setup already provisioned):
 
 ```groovy
-// Jenkinsfile, Jenkinsfile.local — one venv serves every stage, so once
+// Jenkinsfile — one venv serves every stage, so once
 sh "${VENV_BIN}/uv pip install -e .[dev]"
 sh "${VENV_BIN}/playwright install chromium"
 ```
@@ -714,7 +719,7 @@ checkout is itself a committed file, so a machine-local choice must never reach 
 - **effective source** (override, else committed) → submodule init/deinit + branch switch, and the
   editable/git/PyPI install into the shared `.venv` (the editable one with the same `[dev,…]` extras
   `aisland setup` installs).
-- **neither** → `Jenkinsfile.local`, which resolves the question at build time instead.
+- **neither** → `Jenkinsfile.local`, which installs nothing and tests the venv as setup left it.
 
 ### The `[sources]` section of `config.toml`
 

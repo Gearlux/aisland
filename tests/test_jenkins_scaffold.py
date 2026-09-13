@@ -7,6 +7,10 @@ aisland's own CI surface).
 
 from __future__ import annotations
 
+import json
+import os
+import subprocess
+import sys
 from pathlib import Path
 from typing import Any, List
 
@@ -193,18 +197,19 @@ class TestTheSlowMarkerSplitsTheTestInvocations:
 
 class TestAPlaywrightDevDependencyInstallsItsBrowser:
     """Listing `playwright` under the `dev` extra IS the declaration (the slow marker's shape —
-    no aisland knob): every artifact that runs the tests fetches chromium right after the dev
-    install, so a browser-driven test runs in CI instead of skipping into a green build that
-    checks less. A project without the dependency gets byte-identical output."""
+    no aisland knob): every RUNNER artifact that runs the tests fetches chromium right after the
+    dev install, so a browser-driven test runs in CI instead of skipping into a green build that
+    checks less. `Jenkinsfile.local` fetches nothing — `aisland setup` already installed the
+    browser into the venv it tests. A project without the dependency gets byte-identical output."""
 
-    def test_all_three_artifacts_fetch_chromium_after_the_dev_install(
+    def test_the_runner_artifacts_fetch_chromium_after_the_dev_install(
         self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
     ) -> None:
         files = _scaffolded(monkeypatch, tmp_path, _make_pyproject_with_playwright)
-        for name in ("Jenkinsfile", "Jenkinsfile.local"):
-            content = files[name]
-            assert content.count('sh "${VENV_BIN}/playwright install chromium"') == 1, name
-            assert content.index("pip install -e .[dev]") < content.index("playwright install chromium"), name
+        content = files["Jenkinsfile"]
+        assert content.count('sh "${VENV_BIN}/playwright install chromium"') == 1
+        assert content.index("pip install -e .[dev]") < content.index("playwright install chromium")
+        assert "playwright" not in files["Jenkinsfile.local"], "the local pipeline tests the venv setup provisioned"
         ci = files["ci.yml"]
         assert ci.count("playwright install --with-deps chromium") == 1, "the unit-tests job, and only it"
         at = ci.index("playwright install --with-deps chromium")
@@ -218,8 +223,8 @@ class TestAPlaywrightDevDependencyInstallsItsBrowser:
         """Both GitHub jobs that run pytest need the browser — the routine one and the slow one."""
         files = _scaffolded(monkeypatch, tmp_path, lambda d, n: _make_pyproject_with_playwright(d, n, slow_marker=True))
         assert files["ci.yml"].count("playwright install --with-deps chromium") == 2
-        for name in ("Jenkinsfile", "Jenkinsfile.local"):
-            assert files[name].count("playwright install chromium") == 1, f"{name}: one venv serves every stage"
+        assert files["Jenkinsfile"].count("playwright install chromium") == 1, "one venv serves every stage"
+        assert "playwright" not in files["Jenkinsfile.local"]
 
     def test_a_project_without_it_is_untouched(self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
         files = _scaffolded(monkeypatch, tmp_path, _make_pyproject)
@@ -249,17 +254,125 @@ def _make_gearlux_workspace(tmp_path: Path, projects: dict[str, str]) -> None:
 
 
 def _scaffold_app(monkeypatch: pytest.MonkeyPatch, tmp_path: Path, projects: dict[str, str]) -> dict[str, str]:
-    """Scaffold the project named ``app`` inside a Gearlux workspace; return the three artifacts."""
+    """Scaffold the project named ``app`` inside a Gearlux workspace; return the RUNNER artifacts.
+
+    ``Jenkinsfile.local`` is left out on purpose: it installs nothing, so it has no closure —
+    ``TestTheLocalPipelineInstallsNothing`` pins that.
+    """
     from aisland import manager
 
     _make_gearlux_workspace(tmp_path, projects)
     monkeypatch.setattr(manager, "get_workspace_root", lambda: tmp_path)
+    monkeypatch.setattr("aisland.services.jenkins.is_private_gearlux_repo", lambda name: False)
     JenkinsService().scaffold_pipelines(project_name="app", force=True)
     return {
         "Jenkinsfile": (tmp_path / "app" / "Jenkinsfile").read_text(encoding="utf-8"),
-        "Jenkinsfile.local": (tmp_path / "app" / "Jenkinsfile.local").read_text(encoding="utf-8"),
         "ci.yml": (tmp_path / "app" / ".github" / "workflows" / "ci.yml").read_text(encoding="utf-8"),
     }
+
+
+def _venv_check_script(jenkinsfile_local: str, python: str, workspace_root: Path) -> str:
+    """The emitted venv-check ``sh`` block, unwrapped from Groovy with Jenkins' substitutions applied."""
+    start = jenkinsfile_local.index('sh """', jenkinsfile_local.index("stage('Initialize')")) + len('sh """')
+    script = jenkinsfile_local[start : jenkinsfile_local.index('"""', start)]
+    return script.replace("${VENV_BIN}/python3", python).replace("${env.WORKSPACE_ROOT}", str(workspace_root))
+
+
+class TestTheLocalPipelineInstallsNothing:
+    """`Jenkinsfile.local` tests a checkout against the workspace venv exactly as `aisland setup`
+    left it. Installing is setup's job: on 2026-09-13 the local Initialize stage spent up to
+    1430 s re-resolving ~80 packages (`uv pip install -e .[dev]`, then `.[notebook]`) to install
+    nothing but the project itself, and every build queued on the shared `.venv` lock. The runner
+    files (`Jenkinsfile`, `ci.yml`) have no workspace venv and keep installing."""
+
+    _PROJECTS = {
+        "app": (
+            '[project]\nname = "app"\nversion = "0.0.0"\ndependencies = ["libmid>=0.1.0"]\n\n'
+            "[project.optional-dependencies]\n"
+            'dev = ["pytest", "playwright>=1.40.0,<2.0.0"]\n'
+            'notebook = ["jupyter"]\n'
+        ),
+        "libmid": '[project]\nname = "libmid"\nversion = "0.0.0"\n',
+    }
+
+    def _local(self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> str:
+        _scaffold_app(monkeypatch, tmp_path, self._PROJECTS)
+        return (tmp_path / "app" / "Jenkinsfile.local").read_text(encoding="utf-8")
+
+    def test_the_local_pipeline_runs_no_install_step(self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+        local = self._local(monkeypatch, tmp_path)
+        for forbidden in ("pip install", "/uv", "git+https://", "playwright install", "WORKSPACE_ROOT}/libmid"):
+            assert forbidden not in local, f"Jenkinsfile.local still carries {forbidden!r}"
+
+    def test_the_runner_files_still_install(self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+        """The CON pin: a runner has no workspace venv, so removing the local installs must not
+        reach the files a runner executes."""
+        files = _scaffold_app(monkeypatch, tmp_path, self._PROJECTS)
+        assert 'sh "${VENV_BIN}/uv pip install -e .[dev]"' in files["Jenkinsfile"]
+        assert 'uv pip install --system -e ".[dev]"' in files["ci.yml"]
+        for name, content in files.items():
+            assert "Gearlux/libmid.git" in content, name
+
+    @staticmethod
+    def _install_record(site: Path, source: Path) -> dict[str, str]:
+        """A venv's view of an editable install of ``app`` from ``source``: the dist-info with the
+        `direct_url.json` every PEP 660 install writes. Returns the env that puts it on sys.path."""
+        info = site / "app-0.0.0.dist-info"
+        info.mkdir(parents=True)
+        (info / "METADATA").write_text("Metadata-Version: 2.1\nName: app\nVersion: 0.0.0\n", encoding="utf-8")
+        record = {"url": source.resolve().as_uri(), "dir_info": {"editable": True}}
+        (info / "direct_url.json").write_text(json.dumps(record), encoding="utf-8")
+        return {**os.environ, "PYTHONPATH": str(site)}
+
+    def _run_check(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path, env: dict[str, str]
+    ) -> "subprocess.CompletedProcess[str]":
+        script = _venv_check_script(self._local(monkeypatch, tmp_path), sys.executable, tmp_path)
+        # From INSIDE the checkout, as Jenkins runs it (customWorkspace).
+        return subprocess.run(["bash", "-c", script], capture_output=True, text=True, cwd=tmp_path / "app", env=env)
+
+    def test_the_venv_check_passes_for_the_installed_checkout(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ) -> None:
+        env = self._install_record(tmp_path / "site", tmp_path / "app")
+        run = self._run_check(monkeypatch, tmp_path, env)
+        assert run.returncode == 0, run.stderr
+        assert f"app -> {(tmp_path / 'app').resolve()}" in run.stdout
+
+    def test_the_venv_check_refuses_a_venv_without_the_project(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ) -> None:
+        env = {k: v for k, v in os.environ.items() if k != "PYTHONPATH"}
+        run = self._run_check(monkeypatch, tmp_path, env)
+        assert run.returncode == 1
+        assert f"app is not installed from {(tmp_path / 'app').resolve()} (found: not installed)" in run.stderr
+        assert "run `aisland setup`" in run.stderr
+
+    def test_the_venv_check_refuses_an_install_from_another_copy(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ) -> None:
+        """The silent case: the project IS installed, but from somewhere else — the gates would run
+        against code that is not the checkout under test."""
+        elsewhere = tmp_path / "elsewhere"
+        elsewhere.mkdir()
+        env = self._install_record(tmp_path / "site", elsewhere)
+        run = self._run_check(monkeypatch, tmp_path, env)
+        assert run.returncode == 1
+        assert f"(found: {elsewhere.resolve().as_uri()})" in run.stderr
+
+    def test_a_stale_egg_info_in_the_checkout_does_not_shadow_the_venv(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ) -> None:
+        """Why the check runs `python3 -P`: Jenkins runs inside the checkout, and without -P the
+        working directory is first on sys.path, so a leftover `app.egg-info` there (an old
+        setuptools build — a real workspace checkout carries one) is found before the venv's record
+        and a correctly-installed project fails with "found: an install with no source URL"."""
+        egg = tmp_path / "app" / "app.egg-info"
+        egg.mkdir(parents=True)
+        (egg / "PKG-INFO").write_text("Metadata-Version: 2.1\nName: app\nVersion: 0.0.0\n", encoding="utf-8")
+        env = self._install_record(tmp_path / "site", tmp_path / "app")
+        run = self._run_check(monkeypatch, tmp_path, env)
+        assert run.returncode == 0, run.stderr
 
 
 class TestTheInternalDepClosureFollowsWhatCIInstalls:
