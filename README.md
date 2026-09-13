@@ -643,17 +643,18 @@ Two consequences worth knowing:
 - **`Jenkinsfile.local` installs nothing and reads no configuration.** Every source decision was
   already applied to your `.venv` by `aisland setup`, so the local pipeline just runs the quality
   gates and tests of the checkout against that venv — no `aisland source` change of any kind
-  rewrites it. Its `Initialize` stage only checks that the venv imports *this* checkout:
+  rewrites it. Its `Initialize` stage only checks that the venv has *this* checkout installed:
 
   ```text
   + /Users/you/acme/.venv/bin/python3 -P - torpaido /Users/you/acme/torpaido
-  torpaido -> /Users/you/acme/torpaido/torpaido
+  torpaido -> /Users/you/acme/torpaido
   ```
 
   and stops the build when it does not, instead of testing another copy:
 
   ```text
-  torpaido is not installed from /Users/you/acme/torpaido (found: None) - run `aisland setup`
+  torpaido is not installed from /Users/you/acme/torpaido (found: not installed) - run `aisland setup`
+  torpaido is not installed from /Users/you/acme/torpaido (found: file:///Users/you/other/torpaido) - run `aisland setup`
   ```
 
   The same applies to a dependency you just added to a project's `pyproject.toml`: until
