@@ -532,3 +532,48 @@ class TestTheInternalDepClosureFollowsWhatCIInstalls:
         for name, content in files.items():
             assert "Gearlux/kerasdep.git" in content, f"{name}: a selected axis extra IS installed by CI"
             assert "Gearlux/torchdep.git" not in content, f"{name}: an unselected axis extra is not"
+
+
+class TestTheWorkflowActionsRunOnNode24:
+    """Every `uses:` line a generated `ci.yml` emits comes from ONE table, `GH_ACTIONS`, pinned to
+    major tags whose `action.yml` declares `using: node24` (2026-09-26: GitHub annotated every
+    run "Node.js 20 is deprecated … being forced to run on Node.js 24" for checkout@v4,
+    setup-python@v5 and upload-artifact@v4). One table means a bump is one line, and this pin
+    catches a template line that bypasses it."""
+
+    @staticmethod
+    def _every_job(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> str:
+        """A ci.yml carrying every optional job and step: the slow leg AND the app-token step."""
+        from aisland import manager
+
+        marker = "\n[tool.pytest.ini_options]\nmarkers = [\"slow: heavy tests; deselect with -m 'not slow'.\"]\n"
+        _make_gearlux_workspace(
+            tmp_path,
+            {
+                "lib": '[project]\nname = "lib"\nversion = "0.0.0"\n',
+                "app": '[project]\nname = "app"\nversion = "0.0.0"\ndependencies = ["lib>=0.0.0"]\n' + marker,
+            },
+        )
+        monkeypatch.setattr(manager, "get_workspace_root", lambda: tmp_path)
+        monkeypatch.setattr("aisland.services.jenkins.is_private_gearlux_repo", lambda name: True)
+        JenkinsService().scaffold_pipelines(project_name="app", force=True)
+        return (tmp_path / "app" / ".github" / "workflows" / "ci.yml").read_text(encoding="utf-8")
+
+    def test_every_uses_line_comes_from_the_one_table(self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+        from aisland.services.jenkins import GH_ACTIONS
+
+        ci = self._every_job(monkeypatch, tmp_path)
+        used = {line.split("uses:", 1)[1].strip() for line in ci.splitlines() if "uses:" in line}
+        assert used == set(GH_ACTIONS.values()), used ^ set(GH_ACTIONS.values())
+        assert "slow-tests:" in ci and "create-github-app-token" in ci  # both optional paths were rendered
+
+    def test_the_table_names_the_node24_majors(self) -> None:
+        from aisland.services.jenkins import GH_ACTIONS
+
+        assert GH_ACTIONS == {
+            "checkout": "actions/checkout@v7",
+            "setup-python": "actions/setup-python@v7",
+            "setup-uv": "astral-sh/setup-uv@v7",
+            "upload-artifact": "actions/upload-artifact@v7",
+            "create-github-app-token": "actions/create-github-app-token@v3",
+        }

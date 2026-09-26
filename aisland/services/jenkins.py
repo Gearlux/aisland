@@ -9,7 +9,7 @@ import tomllib
 import urllib.request
 import xml.etree.ElementTree as ET
 from pathlib import Path
-from typing import Any, List, Optional, cast
+from typing import Any, Dict, List, Optional, cast
 
 import click
 from packaging.requirements import InvalidRequirement, Requirement
@@ -27,6 +27,20 @@ from aisland.sources import DEFAULT_REF, released_on_pypi
 # accidentally match — Gearlux repos are always top-level under the org.
 _GEARLUX_URL_RE = re.compile(r"(?:git@github\.com:|https://github\.com/)Gearlux/([^/]+?)(?:\.git)?$")
 _SUBMODULE_KEY_RE = re.compile(r"^submodule\.(.+)\.url$")
+
+#: Every GitHub Action a generated ``ci.yml`` uses — the ONE place their versions live. Each is a
+#: MAJOR tag whose ``action.yml`` declares ``using: node24`` (2026-09-26: GitHub annotated every run
+#: "Node.js 20 is deprecated … being forced to run on Node.js 24" for checkout@v4, setup-python@v5
+#: and upload-artifact@v4). ``setup-uv`` stays on ``@v7``: from v8 upstream publishes NO moving major
+#: tags (immutable ``@v8.0.0``-style pins only), and v7 is its last moving tag and already node24.
+#: Verify a bump with ``gh api repos/<owner>/<action>/contents/action.yml?ref=<tag>`` (``runs.using``).
+GH_ACTIONS: Dict[str, str] = {
+    "checkout": "actions/checkout@v7",
+    "setup-python": "actions/setup-python@v7",
+    "setup-uv": "astral-sh/setup-uv@v7",
+    "upload-artifact": "actions/upload-artifact@v7",
+    "create-github-app-token": "actions/create-github-app-token@v3",
+}
 
 
 def discover_gearlux_projects(workspace_root: Path) -> list[str]:
@@ -1062,9 +1076,12 @@ class JenkinsService(BaseService):
         needs_app_token = any(is_private_gearlux_repo(dep) for dep in internal_deps if not _dep_is_released(dep))
 
         if needs_app_token:
-            app_token_step = """    - name: Mint GitHub App token for private Gearlux deps
+            app_token_step = (
+                """    - name: Mint GitHub App token for private Gearlux deps
       id: app-token
-      uses: actions/create-github-app-token@v1
+      uses: """
+                + GH_ACTIONS["create-github-app-token"]
+                + """
       with:
         app-id: ${{ secrets.GEARLUX_APP_ID }}
         private-key: ${{ secrets.GEARLUX_APP_PRIVATE_KEY }}
@@ -1072,6 +1089,7 @@ class JenkinsService(BaseService):
     - name: Configure git auth for Gearlux
       run: git config --global url."https://x-access-token:${{ steps.app-token.outputs.token }}@github.com/".insteadOf "https://github.com/"
 """
+            )
         else:
             app_token_step = ""
 
@@ -1085,13 +1103,13 @@ class JenkinsService(BaseService):
     needs: [quality-gates]
     runs-on: ubuntu-latest
     steps:
-    - uses: actions/checkout@v4
+    - uses: {GH_ACTIONS['checkout']}
 {app_token_step}    - name: Set up Python 3.12
-      uses: actions/setup-python@v5
+      uses: {GH_ACTIONS['setup-python']}
       with:
         python-version: "3.12"
     - name: Install uv
-      uses: astral-sh/setup-uv@v4
+      uses: {GH_ACTIONS['setup-uv']}
     - name: Install dependencies
       run: |
         {pip_install_str}
@@ -1102,7 +1120,7 @@ class JenkinsService(BaseService):
         # 5 = the marker is registered but nothing is currently marked — valid, not a failure.
         if [ $rc -ne 0 ] && [ $rc -ne 5 ]; then exit $rc; fi
     - name: Upload Slow Test Results
-      uses: actions/upload-artifact@v4
+      uses: {GH_ACTIONS['upload-artifact']}
       with:
         name: slow-test-results
         path: slow-test-report.xml
@@ -1833,13 +1851,13 @@ jobs:
     name: Quality Gates
     runs-on: ubuntu-latest
     steps:
-    - uses: actions/checkout@v4
+    - uses: {GH_ACTIONS['checkout']}
 {app_token_step}    - name: Set up Python 3.12
-      uses: actions/setup-python@v5
+      uses: {GH_ACTIONS['setup-python']}
       with:
         python-version: "3.12"
     - name: Install uv
-      uses: astral-sh/setup-uv@v4
+      uses: {GH_ACTIONS['setup-uv']}
     - name: Install dependencies
       run: |
         {pip_install_str}
@@ -1858,13 +1876,13 @@ jobs:
     needs: [quality-gates]
     runs-on: ubuntu-latest
     steps:
-    - uses: actions/checkout@v4
+    - uses: {GH_ACTIONS['checkout']}
 {app_token_step}    - name: Set up Python 3.12
-      uses: actions/setup-python@v5
+      uses: {GH_ACTIONS['setup-python']}
       with:
         python-version: "3.12"
     - name: Install uv
-      uses: astral-sh/setup-uv@v4
+      uses: {GH_ACTIONS['setup-uv']}
     - name: Install dependencies
       run: |
         {pip_install_str}
@@ -1877,7 +1895,7 @@ jobs:
           echo "No tests found. Skipping."
         fi
     - name: Upload Test Results
-      uses: actions/upload-artifact@v4
+      uses: {GH_ACTIONS['upload-artifact']}
       with:
         name: test-results
         path: test-report.xml
@@ -1888,13 +1906,13 @@ jobs:
     needs: [unit-tests]
     runs-on: ubuntu-latest
     steps:
-    - uses: actions/checkout@v4
+    - uses: {GH_ACTIONS['checkout']}
 {app_token_step}    - name: Set up Python 3.12
-      uses: actions/setup-python@v5
+      uses: {GH_ACTIONS['setup-python']}
       with:
         python-version: "3.12"
     - name: Install uv
-      uses: astral-sh/setup-uv@v4
+      uses: {GH_ACTIONS['setup-uv']}
     - name: Install dependencies
       run: |
         {pip_install_str}
@@ -1922,13 +1940,13 @@ jobs:
     needs: [unit-tests]
     runs-on: ubuntu-latest
     steps:
-    - uses: actions/checkout@v4
+    - uses: {GH_ACTIONS['checkout']}
 {app_token_step}    - name: Set up Python 3.12
-      uses: actions/setup-python@v5
+      uses: {GH_ACTIONS['setup-python']}
       with:
         python-version: "3.12"
     - name: Install uv
-      uses: astral-sh/setup-uv@v4
+      uses: {GH_ACTIONS['setup-uv']}
     - name: Install dependencies
       run: |
         {pip_install_str}
