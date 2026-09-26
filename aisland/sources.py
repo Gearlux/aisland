@@ -1,15 +1,22 @@
 """Per-project dependency-source management (``aisland source``).
 
-A workspace project can be consumed in exactly three ways, and this module owns the
-choice plus every artifact that has to agree with it:
+A workspace project can be consumed in exactly three ways ON THIS MACHINE, and this module owns
+the choice plus the artifacts that have to agree with it — the checkout, the shared ``.venv``
+and the editor folder list:
 
-========== ================================= ===================================== ==============================
-source     directory                         ``.venv``                             consumer CI install line
-========== ================================= ===================================== ==============================
-``local``  checked out, ``git switch <ref>`` ``uv pip install -e <dir>[dev,…]`` ``git+…/<name>.git@<ref>``
-``github`` deinit'd (empty)                  ``uv pip install git+…@<ref>``        ``git+…/<name>.git@<ref>``
-``pypi``   deinit'd (empty)                  ``uv pip install -U <dist>``          *(none — ``.[dev]`` resolves it from PyPI)*
-========== ================================= ===================================== ==============================
+========== ================================= =====================================
+source     directory                         ``.venv``
+========== ================================= =====================================
+``local``  checked out, ``git switch <ref>`` ``uv pip install -e <dir>[dev,…]``
+``github`` deinit'd (empty)                  ``uv pip install git+…@<ref>``
+``pypi``   deinit'd (empty)                  ``uv pip install -U <dist>``
+========== ================================= =====================================
+
+**No CI file reads a source.** A runner installs a RELEASED dependency from PyPI and an
+unreleased one from GitHub ``main`` (:func:`released_on_pypi`, asked by
+:meth:`aisland.services.jenkins.JenkinsService.scaffold_pipelines`) — user ruling 2026-09-26:
+"it should always point to released packages, and to GitHub for non-released ones". So
+``aisland source set`` / ``unset`` never regenerate a CI file.
 
 ``local`` and ``github`` both carry a ``ref`` (branch or tag) and differ ONLY in whether the
 working tree survives: ``local`` is "I develop this here", ``github`` is "pin it to a remote
@@ -17,9 +24,8 @@ commit, I am not editing it". The names are deliberately far apart because the c
 word apart and one of them runs ``git submodule deinit`` — ``git``/``github`` would have been a
 three-character difference between keeping and deleting a checkout.
 
-A project with no entry anywhere is *unmanaged*: nothing is switched, nothing is installed
-differently, and CI keeps the historical ``@main`` — so this module changes no behaviour until
-a source is set.
+A project with no entry anywhere is *unmanaged*: nothing is switched and nothing is installed
+differently — so this module changes no behaviour until a source is set.
 
 Two configuration layers, mirroring the existing ``.gitmodules active`` +
 ``.git/config submodule.<name>.active`` split (:func:`aisland.manager._local_submodule_active`):
@@ -28,34 +34,29 @@ Two configuration layers, mirroring the existing ``.gitmodules active`` +
   workspace's single config file (tracked, shared between machines; see :mod:`aisland.config`);
 * **per-machine** — ``git config --local aisland.source.<project>`` (never committed).
 
-Which layer drives what is load-bearing, because every downstream artifact EXCEPT the venv and
-the checkout is itself committed — a machine-local choice must never reach one:
+Which layer drives what is load-bearing, because the editor folder list is committed — a
+machine-local choice must never reach it:
 
-* *committed source only* -> ``Jenkinsfile`` / ``Jenkinsfile.local`` / ``.github/workflows/ci.yml``
-  (via :meth:`aisland.services.jenkins.JenkinsService.scaffold_pipelines`) and the
-  ``*.code-workspace`` ``folders`` list (via :func:`sync_code_workspace`);
+* *committed source only* -> the ``*.code-workspace`` ``folders`` list (via
+  :func:`sync_code_workspace`); the registry's ``distribution`` field also lets the CI scaffolder
+  DISCOVER a detached project whose directory is empty (never to choose its install line);
 * *effective source* (override, else committed) -> submodule init/deinit + branch switch and the
   editable/PyPI install into the shared ``.venv`` (via :func:`apply_source`).
-
-Because a per-machine override can empty a directory the COMMITTED ``Jenkinsfile.local`` still
-names, every dep's generated editable-install line carries a ``[ -f <dir>/pyproject.toml ]``
-guard that falls back to the committed source's git URL. The predicate tests the FILE, not the
-directory: ``git submodule deinit`` leaves an empty directory behind, so a ``-d`` test would be
-true for a detached dep and run the editable install against nothing. See ``jenkins.py``'s
-``local_pip_cmds`` loop.
 """
 
 from __future__ import annotations
 
+import functools
 import json
 import re
 import subprocess
 import tomllib
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Dict, List, Literal, Optional, Tuple, cast, get_args
+from typing import Any, Dict, List, Literal, Optional, Tuple, cast, get_args
 
 import click
+from packaging.version import InvalidVersion, Version
 
 from aisland.config import CONFIG_FILE
 from aisland.config import load as load_config
@@ -254,26 +255,6 @@ def effective_source(
             distribution=committed[project].distribution,
         )
     return override
-
-
-def source_for_dependency(committed: Dict[str, ProjectSource], dep_name: str) -> Optional[ProjectSource]:
-    """Resolve a DISTRIBUTION name (as it appears in a ``pyproject.toml`` dependency) to its entry.
-
-    The registry is keyed by project (== submodule/directory) name, but CI scaffolding walks
-    dependency specifiers. Three conventions are accepted, matching
-    :func:`aisland.services.jenkins.pyproject_to_workspace_dir`: identity, an explicit
-    ``distribution`` field, and the dash-stripped form.
-    """
-    if dep_name in committed:
-        return committed[dep_name]
-    for project, src in committed.items():
-        if src.distribution == dep_name:
-            return src
-    dashless = dep_name.replace("-", "")
-    return committed.get(dashless)
-
-
-# --- filesystem helpers -------------------------------------------------------------------
 
 
 def project_path(workspace_root: Path, project: str) -> Path:
@@ -766,6 +747,76 @@ def known_projects(workspace_root: Path) -> List[str]:
 _GEARLUX_URL_FRAGMENT = "github.com/Gearlux/"
 
 
+class ReleaseProbeError(click.ClickException):
+    """PyPI could not answer whether ``distribution`` is released — the scaffold must stop, not guess."""
+
+    def __init__(self, distribution: str, reason: str) -> None:
+        super().__init__(
+            f"cannot tell whether {distribution!r} is released: {reason}. The CI files were not written — "
+            f"generating them needs PyPI, because a guess would flip every released dependency to a "
+            f"GitHub install line. Retry when PyPI is reachable."
+        )
+        self.distribution = distribution
+
+
+def _pypi_json(distribution: str) -> Tuple[Literal["ok", "missing", "unreachable"], Any]:
+    """PyPI's JSON document for ``distribution``: ``("ok", data)``, ``("missing", None)`` on a 404,
+    or ``("unreachable", reason)`` — shared by the provenance probe and the release probe."""
+    import urllib.error
+    import urllib.request
+
+    try:
+        with urllib.request.urlopen(f"https://pypi.org/pypi/{distribution}/json", timeout=5) as resp:
+            return "ok", json.loads(resp.read().decode())
+    except urllib.error.HTTPError as e:
+        if e.code == 404:
+            return "missing", None
+        return "unreachable", f"PyPI returned HTTP {e.code}"
+    except (urllib.error.URLError, OSError, TimeoutError, ValueError) as e:
+        return "unreachable", f"could not reach PyPI ({e})"
+
+
+def _points_at_gearlux(info: Dict[str, Any]) -> bool:
+    """The provenance marker: the published metadata names a ``github.com/Gearlux/…`` URL."""
+    urls = list((info.get("project_urls") or {}).values()) + [info.get("home_page") or ""]
+    return any(_GEARLUX_URL_FRAGMENT in str(url) for url in urls)
+
+
+@functools.lru_cache(maxsize=None)
+def released_on_pypi(distribution: str) -> bool:
+    """Whether ``distribution`` is RELEASED: PyPI holds at least one FINAL (non-pre-release)
+    version with a file that is not yanked, and its metadata points at ``github.com/Gearlux/``.
+
+    The ONE question the CI scaffolder asks per internal dependency (user ruling 2026-09-26):
+    released -> the runner installs it from PyPI (``.[dev]`` resolves it); not released -> from
+    GitHub ``main``. The workspace SOURCE of the dependency (``config.toml``) plays no part —
+    it describes one machine's checkout, never what a runner builds against. A pre-release
+    alone (``recordstream`` 0.1.0a1) is not a release: a plain ``>=0.1.0`` excludes it, and the
+    project is still developed from ``main``. A stranger's package under the same global name
+    is not ours (the provenance rule :func:`_pypi_provenance` applies).
+
+    Unlike :func:`_pypi_provenance` — where an unreachable index warns and continues — this
+    RAISES :class:`ReleaseProbeError`: a guess here would rewrite committed CI files, and
+    "assume unreleased" flips every released dependency to a GitHub line. Cached per process —
+    a workspace scaffold asks about the same few distributions for every project.
+    """
+    status, payload = _pypi_json(distribution)
+    if status == "missing":
+        return False
+    if status == "unreachable":
+        raise ReleaseProbeError(distribution, str(payload))
+    if not _points_at_gearlux(payload.get("info") or {}):
+        return False
+    for version, files in (payload.get("releases") or {}).items():
+        try:
+            final = not Version(version).is_prerelease
+        except InvalidVersion:
+            continue
+        if final and any(not f.get("yanked", False) for f in files or []):
+            return True
+    return False
+
+
 def _pypi_provenance(distribution: str) -> Tuple[Optional[bool], str]:
     """Whether PyPI's ``distribution`` really is THIS workspace's project.
 
@@ -783,22 +834,14 @@ def _pypi_provenance(distribution: str) -> Tuple[Optional[bool], str]:
     An unreachable index yields ``None`` (warn and continue) — never a false negative that would
     block an offline machine.
     """
-    import urllib.error
-    import urllib.request
-
-    try:
-        with urllib.request.urlopen(f"https://pypi.org/pypi/{distribution}/json", timeout=5) as resp:
-            data = json.loads(resp.read().decode())
-    except urllib.error.HTTPError as e:
-        if e.code == 404:
-            return False, "is not published on PyPI"
-        return None, f"PyPI returned HTTP {e.code}"
-    except (urllib.error.URLError, OSError, TimeoutError, ValueError) as e:
-        return None, f"could not reach PyPI ({e})"
+    status, data = _pypi_json(distribution)
+    if status == "missing":
+        return False, "is not published on PyPI"
+    if status == "unreachable":
+        return None, str(data)
 
     info = data.get("info") or {}
-    urls = list((info.get("project_urls") or {}).values()) + [info.get("home_page") or ""]
-    if not any(_GEARLUX_URL_FRAGMENT in str(url) for url in urls):
+    if not _points_at_gearlux(info):
         return False, (
             f"is published on PyPI (version {info.get('version')}) but its metadata does not point at "
             f"{_GEARLUX_URL_FRAGMENT}… — that name is owned by a different project"
@@ -831,56 +874,20 @@ def _remote_ref_exists(workspace_root: Path, project: str, ref: str) -> bool:
     return bool(probe.stdout.strip())
 
 
-def dependent_projects(workspace_root: Path, project: str, distribution: str) -> List[str]:
-    """Workspace directory names whose dependency closure reaches ``project``.
-
-    Only these need their ``Jenkinsfile`` / ``Jenkinsfile.local`` / ``ci.yml`` regenerated after a
-    source change — re-scaffolding the whole workspace would be byte-identical for everyone else
-    but costs a Jenkins linter round-trip per file.
-    """
-    from aisland.manager import get_install_order
-
-    # A dependency specifier names a DISTRIBUTION ("aisland-manager"), while the CI scaffolder is
-    # keyed by DIRECTORY ("aisland") — so each directory carries every alias it answers to.
-    aliases: Dict[str, set[str]] = {}
-    deps_by_dir: Dict[str, set[str]] = {}
-    for meta in get_install_order(workspace_root):
-        directory = Path(meta["path"]).name
-        dist = str(meta["name"])
-        aliases[directory] = {directory, dist, dist.replace("-", ""), dist.removesuffix("-manager")}
-        deps_by_dir[directory] = {re.split(r"[>=<;\[ ]", spec)[0].strip() for spec in meta["dependencies"]}
-
-    targets = {project, distribution, distribution.replace("-", "")}
-    # Fixed point: a project depending on a dependent is itself a dependent.
-    dependents: set[str] = set()
-    changed = True
-    while changed:
-        changed = False
-        reach = set(targets)
-        for name in dependents:
-            reach |= aliases.get(name, {name})
-        for directory, deps in deps_by_dir.items():
-            if directory in dependents or directory == project:
-                continue
-            if deps & reach:
-                dependents.add(directory)
-                changed = True
-    return sorted(dependents)
-
-
 def set_project_source(
     project: str,
     kind: str,
     ref: Optional[str] = None,
     version: Optional[str] = None,
     machine_only: bool = False,
-    scaffold: bool = True,
     workspace_root: Optional[Path] = None,
 ) -> int:
     """Record and apply a project's source. Returns a process exit code (0 = success).
 
     Order matters: validate first, then write configuration, then apply to the checkout + venv,
-    then regenerate the committed artifacts the COMMITTED layer drives (editor folders, CI).
+    then sync the one committed artifact the COMMITTED layer drives (the editor folder list).
+    No CI file is touched: CI installs what is RELEASED, never what this machine checked out
+    (see :func:`released_on_pypi`).
     A failed apply ROLLS THE CONFIGURATION BACK — a registry claiming a state the working tree
     does not have is worse than no change at all (and `aisland setup` would keep retrying it).
     """
@@ -952,33 +959,18 @@ def set_project_source(
         click.echo(f"  - {project}: source change reverted; configuration is unchanged.", err=True)
         return 1
 
-    # Committed artifacts follow the COMMITTED layer only — a --machine-only change must not
-    # dirty the editor workspace or any project's CI files.
+    # The committed layer drives the editor folder list — a --machine-only change must not dirty it.
     if machine_only:
-        click.echo("  - Skipped editor/CI regeneration (--machine-only affects this machine's venv only).")
+        click.echo("  - Skipped editor regeneration (--machine-only affects this machine's venv only).")
         return 0
 
     sync_code_workspace(root, committed)
-    # CI reads ONE bit of this registry — is the dep published? — and ignores the ref entirely
-    # (see jenkins.scaffold_pipelines). So a ref change, or any switch between the two git-backed
-    # kinds, cannot alter a tracked CI file; only crossing the pypi boundary can. Skipping the
-    # regeneration when nothing would change avoids rewriting every dependent's three files (and
-    # absorbing their unrelated template drift) on a routine `--ref` switch.
-    if scaffold and _publishedness_changed(previous, source):
-        _rescaffold_dependents(root, project, distribution)
     return 0
-
-
-def _publishedness_changed(previous: Optional[ProjectSource], new: ProjectSource) -> bool:
-    """Whether the pypi/not-pypi bit — the only thing CI reads — differs between two sources."""
-    was_pypi = previous is not None and previous.kind == "pypi"
-    return was_pypi != (new.kind == "pypi")
 
 
 def unset_project_source(
     project: str,
     machine_only: bool = False,
-    scaffold: bool = True,
     workspace_root: Optional[Path] = None,
 ) -> int:
     """Return a project to *unmanaged*. Returns a process exit code (0 = success).
@@ -1005,7 +997,7 @@ def unset_project_source(
         return 0
 
     set_local_override(root, project, None)
-    previous = committed.pop(project, None)
+    committed.pop(project, None)
     path = write_committed_sources(root, committed)
     click.echo(f"==> {project}: removed from {path.name} — now unmanaged.")
 
@@ -1013,26 +1005,7 @@ def unset_project_source(
     # lingering `// aisland source:` block would point at configuration that no longer exists.
     # Nothing is recorded — the synthetic entry only tells the sync which state to restore.
     sync_code_workspace(root, {**committed, project: ProjectSource(kind="local")})
-    # Unmanaged reads as not-published to CI, so only dropping a `pypi` entry changes anything
-    # there (see `_publishedness_changed`).
-    if scaffold and _publishedness_changed(previous, ProjectSource(kind="local")):
-        distribution = (previous.distribution if previous else None) or project
-        _rescaffold_dependents(root, project, distribution)
     return 0
-
-
-def _rescaffold_dependents(workspace_root: Path, project: str, distribution: str) -> None:
-    """Regenerate the CI files of every project that depends on ``project``."""
-    from aisland.services.jenkins import JenkinsService
-
-    dependents = dependent_projects(workspace_root, project, distribution)
-    if not dependents:
-        click.echo("  - No dependent projects; no CI files to regenerate.")
-        return
-    click.echo(f"==> Regenerating CI files for {len(dependents)} dependent project(s): {', '.join(dependents)}")
-    service = JenkinsService()
-    for dependent in dependents:
-        service.scaffold_pipelines(project_name=dependent, force=True)
 
 
 def apply_configured(project: Optional[str] = None, workspace_root: Optional[Path] = None) -> int:

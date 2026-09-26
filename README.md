@@ -567,23 +567,24 @@ generated CI pipeline — one developer's local narrowing must not decide what a
 
 Each workspace project can be consumed either as a **local checkout** (developed here, installed
 editable) or as a **published wheel** (not checked out at all). `aisland source` owns that choice
-and drives every artifact that has to agree with it — the checkout, the shared `.venv`, the
-`*.code-workspace` folder list, and every dependent project's generated CI files.
+and drives every artifact that has to agree with it — the checkout, the shared `.venv` and the
+`*.code-workspace` folder list. It never touches a CI file: a runner installs what is **released**,
+whatever you checked out (see [What CI does with all this](#what-ci-does-with-all-this)).
 
 There are **three kinds**. `local` and `github` both take a `--ref` (branch or tag) and differ
 only in whether a working tree survives; `pypi` takes a `--version` instead:
 
-| source | directory | `.venv` | `*.code-workspace` | consumer CI install line |
-|---|---|---|---|---|
-| `local` | checked out, `git switch <ref>` | `uv pip install -e loggair[dev,…]` | listed | `git+…/loggair.git@main` |
-| `github` | **deinit'd — empty** | `uv pip install git+…@<ref>` | **commented out** | `git+…/loggair.git@main` |
-| `pypi` | **deinit'd — empty** | `uv pip install -U loggair` | **commented out** | *(none — `.[dev]` resolves it from PyPI)* |
+| source | directory | `.venv` | `*.code-workspace` |
+|---|---|---|---|
+| `local` | checked out, `git switch <ref>` | `uv pip install -e loggair[dev,…]` | listed |
+| `github` | **deinit'd — empty** | `uv pip install git+…@<ref>` | **commented out** |
+| `pypi` | **deinit'd — empty** | `uv pip install -U loggair` | **commented out** |
 
 The `local` install target is the one `aisland setup` computes for that checkout — its `dev` extra
 plus every framework/tracker extra this machine selected (`sonair[dev,lightning]`) — so switching a
 project to `local` never drops a test dependency or a training backend from the venv.
 
-Note the last column: **CI never sees your `--ref`.** It is a development pin, and these files are
+**CI never sees your source or your `--ref`.** They describe this machine; the CI files are
 tracked and shared — see [What CI does with all this](#what-ci-does-with-all-this).
 
 Pick `local` when you edit the project here, `github` when you want a specific branch or tag but
@@ -618,13 +619,27 @@ rewritten to `git+ssh://git@host/org/repo` because pip cannot parse the scp form
 
 ### What CI does with all this
 
-Generated CI files are **tracked and shared**, so they read as little of your configuration as
-possible — exactly one bit, and never your `--ref`:
+Generated CI files are **tracked and shared**, so they read none of your source configuration.
+A runner installs an internal dependency by asking one question — **is it released on PyPI?**
 
 | file | runs where | how it installs an internal dep |
 |---|---|---|
 | `Jenkinsfile.local` | your machine, against the workspace | **it doesn't** — it tests the `.venv` that `aisland setup` provisioned, exactly as it is |
-| `Jenkinsfile`, `ci.yml` | a runner, no workspace | `git@main` — unless the dep is `pypi`-sourced, in which case it is omitted and `.[dev]` resolves it from PyPI |
+| `Jenkinsfile`, `ci.yml` | a runner, no workspace | **released** → no install line; `.[dev]` resolves the release from PyPI. **Not released** → `git+https://github.com/Gearlux/<dep>.git@main` |
+
+"Released" means PyPI holds a **final** version (not only a pre-release such as `0.1.0a1`, not
+only yanked files) whose metadata points at `github.com/Gearlux/…` — a stranger's package under
+the same name does not count. `aisland jenkins scaffold` asks PyPI while generating; when PyPI
+cannot be reached it stops and names the package instead of guessing:
+
+```text
+Error: cannot tell whether 'liquifai' is released: could not reach PyPI (…). The CI files were not
+written — generating them needs PyPI, because a guess would flip every released dependency to a
+GitHub install line. Retry when PyPI is reachable.
+```
+
+The accepted cost: a consumer that uses something a released dependency has only on `main` fails
+its CI until that dependency is released — it builds against the release, never your checkout.
 
 The dependency list itself is the closure of **exactly what CI installs**: the project's own base
 dependencies plus the extras its CI steps install (`dev`, the best-effort `notebook`, and the
@@ -636,10 +651,11 @@ a dependency's `dev` extra never reaches your pipeline.
 
 Two consequences worth knowing:
 
-- **`aisland source set --ref` regenerates nothing.** A ref is a development pin ("I'm working
-  against `dev/main` today"); letting it decide what a runner builds would publish a personal
-  choice to every consumer's CI *and* rewrite 17 projects' committed files on every switch. Only
-  crossing the `pypi` boundary changes a CI file — because that is the one bit CI reads.
+- **`aisland source set` / `unset` regenerate nothing.** A source and a ref are development
+  choices ("I'm working on liquifai here, on `dev/main`"); letting them decide what a runner builds
+  would publish a personal choice to every consumer's CI *and* rewrite the committed files of every
+  dependent on each switch. Releasing a dependency is what changes a CI file — on the next
+  `aisland jenkins scaffold`.
 - **`Jenkinsfile.local` installs nothing and reads no configuration.** Every source decision was
   already applied to your `.venv` by `aisland setup`, so the local pipeline just runs the quality
   gates and tests of the checkout against that venv — no `aisland source` change of any kind
@@ -662,10 +678,6 @@ Two consequences worth knowing:
   pipeline will not install it for you. See [architecture: the local pipeline tests the venv, it
   does not install](docs/architecture.md#the-local-pipeline-tests-the-venv-it-does-not-install).
 
-"Available on PyPI" is decided once, when you run `aisland source set <p> pypi` — that command
-verifies the name and its provenance against PyPI before touching anything. Scaffolding does not
-re-probe the index: if it did, the content of committed files would depend on network
-reachability, and an offline scaffold would flip every project to git URLs.
 
 ### A `playwright` dev dependency installs its browser
 
@@ -749,11 +761,8 @@ ref = "dev/main"          # local/github only; omitted => "main"
 - `git switch` and `git submodule deinit` are never forced: a submodule with uncommitted work
   refuses, is reported, and neither the venv nor the registry is changed — a failed apply rolls
   the configuration back so the registry never claims a state the tree does not have.
-- `aisland source set` re-scaffolds every **dependent** project's CI files **only when the
-  published/not bit flips** — i.e. crossing the `pypi` boundary. A `--ref` change, or a switch
-  between `local` and `github`, regenerates nothing. When it does run it uses `--force`, so it
-  also absorbs any unrelated template drift those files had accumulated; pass `--no-scaffold` to
-  skip it.
+- `aisland source set` / `unset` never regenerate a CI file — see
+  [What CI does with all this](#what-ci-does-with-all-this).
 - `aisland setup` applies the configuration on every run, so a fresh clone converges without any
   manual step.
 

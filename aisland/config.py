@@ -114,8 +114,9 @@ _SECTION_DOC: Dict[str, str] = {
 #   aisland tracker unset --machine-only     drop the override, fall back to this file""",
     "sources": """\
 # --- sources: where each project's package comes from --------------------
-# Drives the generated Jenkinsfile / Jenkinsfile.local / .github/workflows/ci.yml of every
-# dependent project, and the `folders` list of the *.code-workspace file.
+# Drives this machine's checkout and venv, and the `folders` list of the *.code-workspace file.
+# Never a CI file: a runner installs a RELEASED dependency from PyPI and an unreleased one from
+# GitHub main, whatever is set here.
 #
 #   source       = "local"  -> submodule is checked out on `ref` and installed editable.
 #   source       = "github" -> submodule is deinit'd (empty dir); installed from the remote
@@ -126,8 +127,8 @@ _SECTION_DOC: Dict[str, str] = {
 #   ref          = local/github only; branch or tag. Omitted => "main".
 #   version      = pypi only; a PEP 440 specifier such as ">=0.1.0". Omitted => latest.
 #
-# A project with NO entry here is unmanaged: its checkout, its install and its CI lines keep
-# the historical behaviour.
+# A project with NO entry here is unmanaged: its checkout and its install keep the historical
+# behaviour.
 #   aisland source list                      per project: committed, override, disk state
 #   aisland source set loggair pypi          record a source and apply it
 #   aisland source unset loggair             back to unmanaged""",

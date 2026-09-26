@@ -20,7 +20,7 @@ from aisland.selection import declared as sel_declared
 from aisland.selection import dev_extra_names
 from aisland.selection import extras_for as sel_extras_for
 from aisland.selection import read_committed as sel_committed
-from aisland.sources import DEFAULT_REF, read_committed_sources, source_for_dependency
+from aisland.sources import DEFAULT_REF, released_on_pypi
 
 # Match the Gearlux GitHub URL forms (SSH and HTTPS), capturing the repo name.
 # Trailing ``.git`` is optional. Anchored so a repo path like "Gearlux/x/y" can't
@@ -897,29 +897,22 @@ class JenkinsService(BaseService):
         else:
             slow_stage = ""
 
-        # Per-project sources (aisland/sources.py). CI reads ONE bit — is this dep published? —
-        # and nothing else. In particular it deliberately IGNORES the configured `ref`.
+        # CI asks ONE question per internal dependency — is it RELEASED on PyPI? — and nothing
+        # about the workspace's `config.toml` sources (user ruling 2026-09-26: "it should always
+        # point to released packages, and to GitHub for non-released ones").
         #
-        # Rationale: `--ref` is a DEVELOPMENT pin ("I'm working against dev/main today"). These
-        # three files are tracked and shared, so letting a dev pin decide what a runner builds
-        # would (a) publish a personal choice to every consumer's CI and (b) churn 17 projects'
-        # committed files on every ref change. A runner therefore always clones `DEFAULT_REF`,
-        # which is also what makes `local` and `github` indistinguishable here — the kinds differ
-        # only in whether a WORKSPACE checkout exists, and a runner never has one.
+        # Released (a final, non-yanked version whose metadata points at github.com/Gearlux/ —
+        # `sources.released_on_pypi`) -> the dep drops out of the pre-install loop and `.[dev]`
+        # resolves the release from PyPI. Not released -> the runner installs GitHub `main`
+        # (`DEFAULT_REF`). A source (`local` / `github` / `pypi`, any `ref`) describes ONE
+        # machine's checkout and venv; before this rule it also decided the runner's install line,
+        # so `aisland source set` rewrote every dependent's committed CI files and a released
+        # package developed locally (liquifai) was built from GitHub `main` by every consumer.
         #
-        # A pypi-sourced dep drops out of the pre-install loop entirely: that loop exists ONLY
-        # because Gearlux distribution names are unpublished (see the block below), and for a
-        # published dep the premise is gone — `.[dev]` resolves it from PyPI. The explicit drop
-        # matters because the dep may still be checked out on the machine running the scaffold
-        # (a `local` override), which would otherwise classify it as internal and emit a git URL.
-        #
-        # Net effect: the only source change that rewrites a tracked CI file is flipping a dep
-        # to or from `pypi`. `aisland source set --ref` regenerates nothing.
-        committed_sources = read_committed_sources(workspace_root)
-
-        def _dep_is_pypi(dep: str) -> bool:
-            source = source_for_dependency(committed_sources, dep)
-            return source is not None and source.kind == "pypi"
+        # PyPI unreachable -> `ReleaseProbeError` stops the scaffold before any file of this
+        # project is written: assuming "unreleased" would flip every released dep to a GitHub line.
+        def _dep_is_released(dep: str) -> bool:
+            return released_on_pypi(dep)
 
         # Collect the internal Gearlux deps CI must pre-install: the closure of
         # exactly what CI's install steps resolve, nothing more. When CI installs
@@ -1033,10 +1026,11 @@ class JenkinsService(BaseService):
         # GH Actions — raw uv commands (valid inside `run: |` blocks).
         #
         # Install order: git-URL Gearlux deps FIRST (--no-deps), then `-e .[dev]`.
-        # Rationale: all Gearlux distribution names (loggair, recordstream, liquifai,
-        # torpaido, confluid, ...) are intentionally NOT published on PyPI. If
-        # `.[dev]` ran first, uv would try to resolve `loggair>=0.1.0` from PyPI,
-        # fail ("not found in the package registry"), and abort the whole install.
+        # Rationale: an UNRELEASED Gearlux distribution (recordstream, torpaido, ...)
+        # is not on PyPI (or only as a pre-release). If `.[dev]` ran first, uv would
+        # try to resolve `recordstream>=0.1.0` from PyPI, fail ("not found in the
+        # package registry"), and abort the whole install. A RELEASED one never
+        # enters this loop — `.[dev]` resolves it from PyPI (see `_dep_is_released`).
         # By installing each Gearlux dep from its git URL first (with --no-deps to
         # skip its own Gearlux transitive deps — each is handled in its own loop
         # iteration, topologically ordered), we pre-satisfy the constraints so
@@ -1044,8 +1038,8 @@ class JenkinsService(BaseService):
         # --system installs into the runner's Python rather than requiring a venv.
         pip_install_cmds = []
         for dep in internal_deps:
-            if _dep_is_pypi(dep):
-                continue  # published — `.[dev]` resolves it from PyPI, which is the point.
+            if _dep_is_released(dep):
+                continue  # released — `.[dev]` resolves it from PyPI, which is the point.
             pip_install_cmds.append(
                 f"uv pip install --system --no-deps " f"git+https://github.com/Gearlux/{dep}.git@{DEFAULT_REF}"
             )
@@ -1063,9 +1057,9 @@ class JenkinsService(BaseService):
         # is_private_gearlux_repo() queries `gh api` with a per-process cache; it
         # falls back to False (assume public) on any error, so this is safe to call
         # in environments without gh CLI configured.
-        # Only deps CI actually clones from GitHub need the token — a pypi-sourced dep is fetched
+        # Only deps CI actually clones from GitHub need the token — a released dep is fetched
         # from the public index, so it must not keep the step alive on its own.
-        needs_app_token = any(is_private_gearlux_repo(dep) for dep in internal_deps if not _dep_is_pypi(dep))
+        needs_app_token = any(is_private_gearlux_repo(dep) for dep in internal_deps if not _dep_is_released(dep))
 
         if needs_app_token:
             app_token_step = """    - name: Mint GitHub App token for private Gearlux deps
@@ -1122,8 +1116,8 @@ class JenkinsService(BaseService):
         # deps LAST with --reinstall so PyPI name collisions get overwritten.
         jenkins_pip_cmds = []
         for dep in internal_deps:
-            if _dep_is_pypi(dep):
-                continue  # published — `.[dev]` resolves it from PyPI.
+            if _dep_is_released(dep):
+                continue  # released — `.[dev]` resolves it from PyPI.
             jenkins_pip_cmds.append(
                 f'sh "${{VENV_BIN}}/uv pip install --no-deps '
                 f'git+https://github.com/Gearlux/{dep}.git@{DEFAULT_REF}"'
@@ -1133,7 +1127,7 @@ class JenkinsService(BaseService):
             jenkins_pip_str = (
                 "\n                // Internal Gearlux dependencies — installed FIRST with --no-deps"
                 "\n                // so .[dev] below finds them pre-satisfied instead of hitting PyPI"
-                "\n                // (Gearlux distribution names are intentionally unpublished on PyPI)."
+                "\n                // (these are not released on PyPI; a released one resolves through .[dev])."
                 "\n                " + jenkins_pip_str
             )
 

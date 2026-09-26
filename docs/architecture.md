@@ -53,7 +53,7 @@ The layers are **not** interchangeable. Each artifact reads exactly one:
 
 | artifact | reads | why |
 |---|---|---|
-| `Jenkinsfile`, `ci.yml` | committed, **published bit only** | tracked *and shared* — a dev's `ref` must not reach another consumer's CI |
+| `Jenkinsfile`, `ci.yml` | **neither layer** — asks PyPI "is this dep released?" (2026-09-26) | tracked *and shared* — a dev's source or `ref` must not reach another consumer's CI |
 | `Jenkinsfile.local` | **nothing** | installs nothing — it tests the `.venv`, where the effective source was already applied |
 | `*.code-workspace` `folders` | committed only | tracked, hand-maintained |
 | submodule checkout, shared `.venv` | effective (override ?? committed) | untracked machine state — the whole point of an override |
@@ -64,6 +64,21 @@ editing today* (a personal one) — so a routine `--ref` switch rewrote seventee
 now always clones `DEFAULT_REF` and reads exactly one bit: is this dep published? That is also
 why `local` and `github` are indistinguishable to a runner — it never has a workspace checkout,
 so the axis they differ on does not exist there.
+
+**Revision 2026-09-26 — the bit comes from PyPI, not from the registry.** The one bit used to be
+"is this dep `pypi`-SOURCED?", which is a statement about one machine's checkout, not about the
+dependency. Two failures followed from reading it: switching confluid to `local` to fix bugs made
+every consumer's committed CI install confluid from GitHub `main` (and switching back rewrote
+them again — sixteen projects, twice, in one afternoon), and liquifai, released on PyPI but
+developed `local`, was built from GitHub `main` by every consumer. The user's ruling: CI "should
+always point to released packages, and to GitHub for non-released ones". So the scaffolder asks
+`sources.released_on_pypi(dep)` — a FINAL, non-yanked version whose metadata points at
+`github.com/Gearlux/` — and `aisland source set` / `unset` regenerate nothing at all. The earlier
+objection to a scaffold-time probe (an offline run would flip every project to git URLs) is met
+by refusing instead of guessing: an unreachable PyPI raises `ReleaseProbeError` and the project's
+files are not written. Rejected alternative: a hand-kept "released" list in `config.toml` —
+offline, but it has to be remembered at every first release, and forgetting it silently keeps a
+released dependency on GitHub.
 
 A project with no entry in either layer is *unmanaged*, and `DEFAULT_REF = "main"` makes an
 unmanaged project and an explicit `local:main` produce byte-identical build files — so
@@ -103,15 +118,16 @@ introducing the mechanism changed no behaviour anywhere until a source was actua
 - **Two mechanisms could fight over one submodule**, so they don't: `reconcile_submodules` folds
   `sources.detached_projects()` — BOTH detaching kinds, not just `pypi` — into its active set,
   otherwise the next `aisland setup` would re-init a directory the source says is empty.
-- **Almost no source change re-scaffolds anything.** Since CI reads one bit,
-  `_publishedness_changed` gates the regeneration on that bit flipping: a `--ref` switch or a
-  `local` <-> `github` move rewrites nothing. Crossing the `pypi` boundary still re-scaffolds
-  dependents with `--force`, which also absorbs any unrelated template drift those files had
-  accumulated — a real, visible side effect; `--no-scaffold` exists for when it is unwanted.
-- **PyPI availability is decided once, not on every scaffold.** `aisland source set … pypi`
-  probes the index; the scaffolder never does. A scaffold-time probe would make the content of
-  *committed* files depend on network reachability, so an offline run would flip every project to
-  git URLs and churn the tree.
+- **No source change re-scaffolds anything** (2026-09-26). CI reads no source, so `source set`
+  and `unset` have nothing to regenerate; what changes a CI file is a dependency's FIRST RELEASE,
+  picked up by the next `aisland jenkins scaffold`.
+- **Generating CI needs PyPI** (2026-09-26). `released_on_pypi` is asked once per distribution
+  per process (cached) and raises when the index cannot answer — committed file content must never
+  depend on whether the network happened to be up, so the run stops rather than guessing.
+- **A consumer builds against the RELEASE of a released dependency, never its `main`.** Using
+  something a released dependency has only on `main` fails that consumer's CI until the release —
+  the accepted cost of the ruling (measured on day one: streamstudio requires `liquifai>=0.3.0`,
+  and 0.3.0 exists only on liquifai's `dev/main`).
 - Discovery still does the heavy lifting: a `pypi`-sourced project's directory is empty, so
   `discover_projects()` drops it from the editable-install loop with no special-casing.
 
@@ -123,21 +139,18 @@ $ aisland source set loggair github --ref dev/main   # from local:main — no CI
 ==> loggair: github @ dev/main (git+https://github.com/Gearlux/loggair.git@dev/main)
 ==> Updated acme.code-workspace folders (20 enabled)
 
-$ aisland source set loggair pypi                    # crosses the boundary — CI regenerates
+$ aisland source set loggair pypi                    # no CI touched either
 ==> loggair: committed source set to pypi in config.toml
-==> Regenerating CI files for 17 dependent project(s): annotaide, chainwind, confluid, …
 ```
 
 ```python
-# The scaffolder reads the COMMITTED layer only — never `effective_source` — and only one bit
-# of it, for the runner files. `Jenkinsfile.local` calls none of this: it installs nothing, so
-# the file cannot depend on configuration at all.
-committed_sources = read_committed_sources(workspace_root)
+# The scaffolder reads NO source — it asks PyPI, per internal dependency, for the runner files.
+# `Jenkinsfile.local` calls none of this: it installs nothing, so it depends on nothing.
+def _dep_is_released(dep: str) -> bool:
+    return released_on_pypi(dep)   # released -> `.[dev]` resolves it; else git+…@main
 
-def _dep_is_pypi(dep: str) -> bool:
-    """Published -> drop it from the pre-install loop; `.[dev]` resolves it from the index."""
-    source = source_for_dependency(committed_sources, dep)
-    return source is not None and source.kind == "pypi"
+>>> [(d, released_on_pypi(d)) for d in ("liquifai", "recordstream", "purifai")]
+[('liquifai', True), ('recordstream', False), ('purifai', False)]   # 0.1.0a1 only / a stranger's name
 ```
 
 ### What you may change
@@ -150,8 +163,9 @@ def _dep_is_pypi(dep: str) -> bool:
 - A new kind must decide two things before anything else: does it carry a `ref` (`REF_KINDS`) and
   does it leave a working tree (`DETACHED_KINDS`). Every call site branches on those, not on the
   kind name.
-- What must not change: the layer→artifact mapping above; that CI reads the published bit and
-  never the `ref`; and that `Jenkinsfile.local` reads nothing at all. Reintroducing per-kind
+- What must not change: the layer→artifact mapping above; that CI reads no source and no `ref`
+  (only whether PyPI has a release); that an unreachable PyPI stops the scaffold rather than
+  guessing; and that `Jenkinsfile.local` reads nothing at all. Reintroducing per-kind
   branching — or any install — in that file would quietly restore the churn this record exists
   to remove.
 - The `local` kind's editable install has ONE spelling, `selection.editable_target` (the `dev`

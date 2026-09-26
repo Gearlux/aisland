@@ -17,8 +17,9 @@ import shutil
 import subprocess
 import tomllib
 from pathlib import Path
-from typing import Any, Callable, Dict, List
+from typing import Any, Callable, Dict, List, Set
 
+import click
 import pytest
 
 from aisland import config
@@ -245,23 +246,6 @@ class TestEffectiveSource:
     def test_malformed_override_is_ignored(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.setattr(s.subprocess, "run", self._fake_config({"aisland.source.loggair": "svn:trunk"}))
         assert s.local_override(tmp_path, "loggair") is None
-
-
-class TestSourceForDependency:
-    def test_matches_project_key(self) -> None:
-        committed = {"loggair": s.ProjectSource(kind="pypi")}
-        assert s.source_for_dependency(committed, "loggair") is committed["loggair"]
-
-    def test_matches_explicit_distribution(self) -> None:
-        committed = {"aisland": s.ProjectSource(kind="pypi", distribution="aisland-manager")}
-        assert s.source_for_dependency(committed, "aisland-manager") is committed["aisland"]
-
-    def test_matches_dash_stripped_form(self) -> None:
-        committed = {"recordstream": s.ProjectSource(kind="local")}
-        assert s.source_for_dependency(committed, "record-stream") is committed["recordstream"]
-
-    def test_unknown_dependency_is_none(self) -> None:
-        assert s.source_for_dependency({"loggair": s.ProjectSource(kind="pypi")}, "numpy") is None
 
 
 # --- *.code-workspace folders --------------------------------------------------------------
@@ -603,77 +587,70 @@ def _generated(root: Path, project: str) -> Dict[str, str]:
     }
 
 
-class TestScaffoldHonoursSources:
-    def test_unmanaged_dep_keeps_the_historical_main_ref(self, ci_workspace: Path) -> None:
-        """Adding this feature must be a no-op until a source is actually set."""
+class TestScaffoldAsksPypiNotTheSource:
+    """CI installs a RELEASED dependency from PyPI and an unreleased one from GitHub `main`,
+    whatever `config.toml` says its source is (user ruling 2026-09-26: "it should always point
+    to released packages, and to GitHub for non-released ones"). The source setting describes
+    THIS machine's checkout; it never reaches a runner."""
+
+    def test_an_unreleased_dep_is_installed_from_github_main(self, ci_workspace: Path) -> None:
         JenkinsService().scaffold_pipelines(project_name="confluid", force=True)
         files = _generated(ci_workspace, "confluid")
         assert "git+https://github.com/Gearlux/loggair.git@main" in files["Jenkinsfile"]
         assert "git+https://github.com/Gearlux/loggair.git@main" in files["ci.yml"]
 
-    def test_ci_ignores_the_configured_ref(self, ci_workspace: Path) -> None:
-        """`--ref` is a DEVELOPMENT pin. Letting it decide what a runner clones would publish a
-        personal choice to every consumer's CI and churn tracked files on every ref switch."""
-        s.write_committed_sources(ci_workspace, {"loggair": s.ProjectSource(kind="local", ref="dev/main")})
-        JenkinsService().scaffold_pipelines(project_name="confluid", force=True)
-        files = _generated(ci_workspace, "confluid")
-        assert "git+https://github.com/Gearlux/loggair.git@main" in files["Jenkinsfile"]
-        assert "git+https://github.com/Gearlux/loggair.git@main" in files["ci.yml"]
-        assert "dev/main" not in files["Jenkinsfile"] and "dev/main" not in files["ci.yml"]
-
-    def test_a_ref_change_rewrites_no_ci_file_at_all(self, ci_workspace: Path) -> None:
-        """The payoff: `aisland source set --ref` regenerates nothing, so it can no longer drag
-        17 projects' committed files (and their unrelated template drift) along with it."""
-        generated = []
-        for ref in ("main", "dev/main", "some/feature"):
-            s.write_committed_sources(ci_workspace, {"loggair": s.ProjectSource(kind="local", ref=ref)})
-            JenkinsService().scaffold_pipelines(project_name="confluid", force=True)
-            generated.append(_generated(ci_workspace, "confluid"))
-        assert generated[0] == generated[1] == generated[2]
-
-    def test_pypi_dep_is_dropped_from_the_runner_files(self, ci_workspace: Path) -> None:
-        """A published dep resolves via `.[dev]` from PyPI; a git URL would pin it instead.
-        Jenkinsfile.local is deliberately NOT included — it installs nothing at all."""
-        s.write_committed_sources(ci_workspace, {"loggair": s.ProjectSource(kind="pypi", distribution="loggair")})
+    def test_a_released_dep_is_dropped_from_the_runner_files(
+        self, ci_workspace: Path, released_packages: Set[str]
+    ) -> None:
+        """`.[dev]` resolves it from PyPI. Jenkinsfile.local is not included — it installs nothing."""
+        released_packages.add("loggair")
         JenkinsService().scaffold_pipelines(project_name="confluid", force=True)
         files = _generated(ci_workspace, "confluid")
         for name in ("Jenkinsfile", "ci.yml"):
             assert "Gearlux/loggair.git" not in files[name], f"{name} still installs loggair from git"
             assert "WORKSPACE_ROOT}/loggair" not in files[name], f"{name} still installs from the workspace"
+        assert "uv pip install -e .[dev]" in files["Jenkinsfile"]
 
-    def test_pypi_dep_still_installed_via_dev_extra(self, ci_workspace: Path) -> None:
-        s.write_committed_sources(ci_workspace, {"loggair": s.ProjectSource(kind="pypi")})
-        JenkinsService().scaffold_pipelines(project_name="confluid", force=True)
-        assert "uv pip install -e .[dev]" in _generated(ci_workspace, "confluid")["Jenkinsfile"]
-
-    def test_pypi_dep_dropped_even_when_still_checked_out(self, ci_workspace: Path) -> None:
-        """The committed registry is authoritative: a machine with a `git` override still has the
-        directory present, and discovery would otherwise classify the dep as internal."""
+    def test_a_released_dep_checked_out_locally_still_comes_from_pypi(
+        self, ci_workspace: Path, released_packages: Set[str]
+    ) -> None:
+        """The case that wrote the ruling: liquifai is released but sourced `local`, and every
+        consumer's CI installed it from GitHub `main`."""
+        released_packages.add("loggair")
+        s.write_committed_sources(ci_workspace, {"loggair": s.ProjectSource(kind="local", ref="dev/main")})
         assert (ci_workspace / "loggair" / "pyproject.toml").exists()
-        s.write_committed_sources(ci_workspace, {"loggair": s.ProjectSource(kind="pypi")})
         JenkinsService().scaffold_pipelines(project_name="confluid", force=True)
-        assert "Gearlux/loggair.git" not in _generated(ci_workspace, "confluid")["Jenkinsfile"]
+        assert "Gearlux/loggair.git" not in _generated(ci_workspace, "confluid")["ci.yml"]
 
-    def test_jenkinsfile_local_is_identical_for_every_source_kind(self, ci_workspace: Path) -> None:
-        """The local pipeline installs nothing — it tests the venv `aisland setup` provisioned, and
-        that is where every source kind is honoured — so no `aisland source` change of any kind
-        can rewrite it, including flipping to/from pypi."""
-        rendered = []
-        for source in (
-            s.ProjectSource(kind="local", ref="dev/main"),
-            s.ProjectSource(kind="github", ref="some/branch"),
-            s.ProjectSource(kind="pypi", distribution="loggair"),
-        ):
-            s.write_committed_sources(ci_workspace, {"loggair": source})
-            JenkinsService().scaffold_pipelines(project_name="confluid", force=True)
-            rendered.append(_generated(ci_workspace, "confluid")["Jenkinsfile.local"])
-        assert rendered[0] == rendered[1] == rendered[2]
+    def test_a_pypi_sourced_dep_with_no_final_release_comes_from_github(self, ci_workspace: Path) -> None:
+        """`source set … pypi` accepts a pre-release-only name (recordstream 0.1.0a1); the
+        scaffolder does not count that as released, so the runner builds from GitHub `main`."""
+        s.write_committed_sources(ci_workspace, {"loggair": s.ProjectSource(kind="pypi", distribution="loggair")})
+        JenkinsService().scaffold_pipelines(project_name="confluid", force=True)
+        assert "git+https://github.com/Gearlux/loggair.git@main" in _generated(ci_workspace, "confluid")["ci.yml"]
+
+    def test_no_source_setting_changes_a_ci_file(self, ci_workspace: Path, released_packages: Set[str]) -> None:
+        """Every kind, every ref, and unmanaged render the same three files — released or not."""
+        for released in (False, True):
+            if released:
+                released_packages.add("loggair")
+            rendered = []
+            for source in (
+                None,
+                s.ProjectSource(kind="local", ref="main"),
+                s.ProjectSource(kind="local", ref="dev/main"),
+                s.ProjectSource(kind="github", ref="some/branch", distribution="loggair"),
+                s.ProjectSource(kind="pypi", distribution="loggair"),
+            ):
+                s.write_committed_sources(ci_workspace, {} if source is None else {"loggair": source})
+                JenkinsService().scaffold_pipelines(project_name="confluid", force=True)
+                rendered.append(_generated(ci_workspace, "confluid"))
+            assert all(r == rendered[0] for r in rendered), f"released={released}"
 
     def test_github_dep_survives_its_own_empty_directory(self, ci_workspace: Path) -> None:
-        """The regression this class exists for. A detached project has NO pyproject.toml, so
-        `discover_gearlux_projects` cannot read its name from disk — without the registry
-        fallback the dep vanished from the internal set entirely and CI silently resolved the
-        PyPI release instead of the pinned ref (or failed, for an unpublished project)."""
+        """A detached project has NO pyproject.toml, so `discover_gearlux_projects` cannot read its
+        name from disk — without the registry fallback the dep vanished from the internal set
+        entirely and CI silently resolved the PyPI release (or failed, for an unpublished one)."""
         s.write_committed_sources(
             ci_workspace, {"loggair": s.ProjectSource(kind="github", ref="dev/main", distribution="loggair")}
         )
@@ -686,38 +663,121 @@ class TestScaffoldHonoursSources:
         JenkinsService().scaffold_pipelines(project_name="confluid", force=True)
         assert "git+https://github.com/Gearlux/loggair.git@main" in _generated(ci_workspace, "confluid")["ci.yml"]
 
-    def test_pypi_dep_still_dropped_when_its_directory_is_gone(self, ci_workspace: Path) -> None:
-        """The registry fallback must not resurrect a pypi dep into the git-URL loop."""
+    def test_a_released_dep_is_dropped_when_its_directory_is_gone(
+        self, ci_workspace: Path, released_packages: Set[str]
+    ) -> None:
+        released_packages.add("loggair")
         s.write_committed_sources(ci_workspace, {"loggair": s.ProjectSource(kind="pypi", distribution="loggair")})
         shutil.rmtree(ci_workspace / "loggair")
         JenkinsService().scaffold_pipelines(project_name="confluid", force=True)
         assert "Gearlux/loggair.git" not in _generated(ci_workspace, "confluid")["ci.yml"]
 
+    def test_an_unreachable_pypi_stops_the_scaffold_and_names_the_package(
+        self, ci_workspace: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Never a guess: an offline scaffold that assumed "unreleased" would flip every released
+        dependency to a GitHub line."""
 
-class TestPublishednessChanged:
-    """CI reads exactly one bit of the registry, so only that bit may trigger a regeneration."""
+        def _unreachable(distribution: str) -> bool:
+            raise s.ReleaseProbeError(distribution, "could not reach PyPI (offline)")
 
-    def test_ref_switch_is_not_a_change(self) -> None:
-        before = s.ProjectSource(kind="local", ref="main")
-        after = s.ProjectSource(kind="local", ref="dev/main")
-        assert s._publishedness_changed(before, after) is False
+        monkeypatch.setattr("aisland.services.jenkins.released_on_pypi", _unreachable)
+        with pytest.raises(click.ClickException, match="loggair.*could not reach PyPI"):
+            JenkinsService().scaffold_pipelines(project_name="confluid", force=True)
+        assert not (ci_workspace / "confluid" / ".github" / "workflows" / "ci.yml").exists()
 
-    def test_local_to_github_is_not_a_change(self) -> None:
-        """Both are git-backed; a runner clones either identically."""
-        before = s.ProjectSource(kind="local", ref="dev/main")
-        after = s.ProjectSource(kind="github", ref="dev/main")
-        assert s._publishedness_changed(before, after) is False
 
-    @pytest.mark.parametrize("other", ["local", "github"])
-    def test_crossing_the_pypi_boundary_is_a_change(self, other: str) -> None:
-        git_backed = s.ProjectSource(kind=other)  # type: ignore[arg-type]
-        published = s.ProjectSource(kind="pypi")
-        assert s._publishedness_changed(git_backed, published) is True
-        assert s._publishedness_changed(published, git_backed) is True
+class TestSourceChangesRewriteNoCI:
+    """`aisland source set/unset` decide this machine's checkout and venv — never a CI file."""
 
-    def test_unmanaged_reads_as_not_published(self) -> None:
-        assert s._publishedness_changed(None, s.ProjectSource(kind="local")) is False
-        assert s._publishedness_changed(None, s.ProjectSource(kind="pypi")) is True
+    def test_set_never_scaffolds(self, ci_workspace: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+        (ci_workspace / ".venv" / "bin").mkdir(parents=True)
+        (ci_workspace / ".venv" / "bin" / "uv").touch(mode=0o755)
+        monkeypatch.setattr(s, "local_override", lambda root, name: None)
+        monkeypatch.setattr(s, "set_local_override", lambda *a, **k: None)
+        monkeypatch.setattr(s, "apply_source", lambda *a, **k: True)
+        monkeypatch.setattr(s, "_pypi_provenance", lambda dist: (True, "0.1.0"))
+        assert s.set_project_source("loggair", "pypi", workspace_root=ci_workspace) == 0
+        assert not (ci_workspace / "confluid" / "Jenkinsfile").exists()
+        assert not (ci_workspace / "confluid" / ".github").exists()
+
+    def test_unset_never_scaffolds(self, ci_workspace: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setattr(s, "local_override", lambda root, name: None)
+        monkeypatch.setattr(s, "set_local_override", lambda *a, **k: None)
+        s.write_committed_sources(ci_workspace, {"loggair": s.ProjectSource(kind="pypi")})
+        assert s.unset_project_source("loggair", workspace_root=ci_workspace) == 0
+        assert not (ci_workspace / "confluid" / "Jenkinsfile").exists()
+
+    def test_the_cli_has_no_scaffold_switch(self) -> None:
+        from aisland.cli import main
+
+        for command in ("set", "unset"):
+            params = {p.name for p in main.commands["source"].commands[command].params}  # type: ignore[attr-defined]
+            assert "no_scaffold" not in params, command
+
+
+class TestReleasedOnPypi:
+    """The released/not question the scaffolder asks: a FINAL version on PyPI whose metadata
+    points at github.com/Gearlux/ (PyPI names are global — a stranger's release is not ours)."""
+
+    @staticmethod
+    def _payload(monkeypatch: pytest.MonkeyPatch, releases: Dict[str, Any], info: Dict[str, Any]) -> None:
+        import contextlib
+        import io
+        import urllib.request
+
+        s.released_on_pypi.cache_clear()
+
+        @contextlib.contextmanager
+        def _open(url: str, timeout: int = 5) -> Any:
+            yield io.BytesIO(json.dumps({"info": info, "releases": releases}).encode())
+
+        monkeypatch.setattr(urllib.request, "urlopen", _open)
+
+    _GEARLUX = {"project_urls": {"Repository": "https://github.com/Gearlux/liquifai.git"}}
+    _FILE = [{"filename": "x.whl", "yanked": False}]
+
+    def test_a_final_release_is_released(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        self._payload(monkeypatch, {"0.1.0": self._FILE, "0.2.0": self._FILE}, self._GEARLUX)
+        assert s.released_on_pypi("liquifai") is True
+
+    def test_only_pre_releases_is_not_released(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """recordstream: 0.1.0a1 is all PyPI has."""
+        self._payload(monkeypatch, {"0.1.0a1": self._FILE}, self._GEARLUX)
+        assert s.released_on_pypi("recordstream") is False
+
+    def test_a_fully_yanked_final_release_does_not_count(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        self._payload(monkeypatch, {"0.1.0": [{"filename": "x.whl", "yanked": True}]}, self._GEARLUX)
+        assert s.released_on_pypi("liquifai") is False
+
+    def test_a_strangers_package_is_not_released(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        self._payload(monkeypatch, {"9.9.9": self._FILE}, {"project_urls": {"Homepage": "https://example.com/x"}})
+        assert s.released_on_pypi("purifai") is False
+
+    def test_404_is_not_released(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        import urllib.error
+        import urllib.request
+
+        s.released_on_pypi.cache_clear()
+
+        def _raise(url: str, timeout: int = 5) -> Any:
+            raise urllib.error.HTTPError(url, 404, "Not Found", {}, None)  # type: ignore[arg-type]
+
+        monkeypatch.setattr(urllib.request, "urlopen", _raise)
+        assert s.released_on_pypi("matrainer") is False
+
+    def test_an_unreachable_index_raises_naming_the_package(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        import urllib.error
+        import urllib.request
+
+        s.released_on_pypi.cache_clear()
+
+        def _raise(url: str, timeout: int = 5) -> Any:
+            raise urllib.error.URLError("offline")
+
+        monkeypatch.setattr(urllib.request, "urlopen", _raise)
+        with pytest.raises(s.ReleaseProbeError, match="liquifai"):
+            s.released_on_pypi("liquifai")
 
 
 class TestRemoteRefExists:
@@ -853,15 +913,8 @@ class TestUnsetProjectSource:
         monkeypatch.setattr(s, "local_override", lambda root, name: None)
         monkeypatch.setattr(s, "set_local_override", lambda *a, **k: None)
         s.write_committed_sources(ci_workspace, {"loggair": s.ProjectSource(kind="pypi")})
-        assert s.unset_project_source("loggair", scaffold=False, workspace_root=ci_workspace) == 0
+        assert s.unset_project_source("loggair", workspace_root=ci_workspace) == 0
         assert s.read_committed_sources(ci_workspace) == {}
-
-    def test_restores_the_historical_main_ref_in_ci(self, ci_workspace: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-        monkeypatch.setattr(s, "local_override", lambda root, name: None)
-        monkeypatch.setattr(s, "set_local_override", lambda *a, **k: None)
-        s.write_committed_sources(ci_workspace, {"loggair": s.ProjectSource(kind="pypi")})
-        s.unset_project_source("loggair", workspace_root=ci_workspace)
-        assert "Gearlux/loggair.git@main" in _generated(ci_workspace, "confluid")["Jenkinsfile"]
 
     def test_re_enables_the_editor_folder_entry(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
         """A leftover `// aisland source:` block would point at configuration that is now gone."""
@@ -871,12 +924,12 @@ class TestUnsetProjectSource:
         original = (tmp_path / "acme.code-workspace").read_text()
         s.write_committed_sources(tmp_path, {"loggair": s.ProjectSource(kind="pypi")})
         s.sync_code_workspace(tmp_path, s.read_committed_sources(tmp_path))
-        s.unset_project_source("loggair", scaffold=False, workspace_root=tmp_path)
+        s.unset_project_source("loggair", workspace_root=tmp_path)
         assert (tmp_path / "acme.code-workspace").read_text() == original
 
     def test_already_unmanaged_is_a_no_op(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.setattr(s, "local_override", lambda root, name: None)
-        assert s.unset_project_source("loggair", scaffold=False, workspace_root=tmp_path) == 0
+        assert s.unset_project_source("loggair", workspace_root=tmp_path) == 0
         assert not (tmp_path / CONFIG_FILE).exists()
 
     def test_machine_only_keeps_the_committed_entry(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -887,18 +940,6 @@ class TestUnsetProjectSource:
         s.unset_project_source("loggair", machine_only=True, workspace_root=tmp_path)
         assert cleared == [("loggair", None)]
         assert set(s.read_committed_sources(tmp_path)) == {"loggair"}
-
-
-class TestDependentProjects:
-    def test_direct_and_transitive_dependents(self, ci_workspace: Path) -> None:
-        _project(ci_workspace, "liquifai", ["confluid>=0.1.0"])
-        assert s.dependent_projects(ci_workspace, "loggair", "loggair") == ["confluid", "liquifai"]
-
-    def test_the_project_itself_is_not_a_dependent(self, ci_workspace: Path) -> None:
-        assert "loggair" not in s.dependent_projects(ci_workspace, "loggair", "loggair")
-
-    def test_leaf_project_has_no_dependents(self, ci_workspace: Path) -> None:
-        assert s.dependent_projects(ci_workspace, "confluid", "confluid") == []
 
 
 class TestReconcileSkipsPypiProjects:

@@ -315,18 +315,19 @@ def source_list() -> None:
     "--machine-only",
     is_flag=True,
     help="Record only the per-machine .git/config override; leave config.toml (and the "
-    "committed build files it drives) untouched.",
+    "editor folder list it drives) untouched.",
 )
-@click.option("--no-scaffold", is_flag=True, help="Skip regenerating dependent projects' CI files.")
 def source_set(
     project: str,
     kind: str,
     ref: Optional[str],
     version: Optional[str],
     machine_only: bool,
-    no_scaffold: bool,
 ) -> None:
-    """Set PROJECT's source to KIND and apply it (checkout, venv, editor, CI).
+    """Set PROJECT's source to KIND and apply it (checkout, venv, editor folder list).
+
+    No CI file changes: a runner installs a RELEASED dependency from PyPI and an unreleased one
+    from GitHub `main`, whatever the source here (`aisland jenkins scaffold` asks PyPI).
 
     \b
     aisland source set loggair local  --ref dev/main  # develop it here, on dev/main
@@ -343,7 +344,6 @@ def source_set(
             ref=ref,
             version=version,
             machine_only=machine_only,
-            scaffold=not no_scaffold,
         )
     )
 
@@ -351,9 +351,8 @@ def source_set(
 @source.command(name="unset")
 @click.argument("project")
 @click.option("--machine-only", is_flag=True, help="Clear only this machine's override; keep the committed source.")
-@click.option("--no-scaffold", is_flag=True, help="Skip regenerating dependent projects' CI files.")
-def source_unset(project: str, machine_only: bool, no_scaffold: bool) -> None:
-    """Return PROJECT to unmanaged (historical behaviour: checkout + editable, `@main` in CI).
+def source_unset(project: str, machine_only: bool) -> None:
+    """Return PROJECT to unmanaged (historical behaviour: checkout + editable install).
 
     The checkout and the venv are left as they are — unmanaged means aisland holds no opinion,
     not that the current state is wrong. Use `aisland source set <project> local` to actively
@@ -361,7 +360,7 @@ def source_unset(project: str, machine_only: bool, no_scaffold: bool) -> None:
     """
     from aisland.sources import unset_project_source
 
-    raise SystemExit(unset_project_source(project=project, machine_only=machine_only, scaffold=not no_scaffold))
+    raise SystemExit(unset_project_source(project=project, machine_only=machine_only))
 
 
 @source.command(name="apply")
