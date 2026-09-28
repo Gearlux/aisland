@@ -9,17 +9,38 @@ import tomllib
 import urllib.request
 import xml.etree.ElementTree as ET
 from pathlib import Path
-from typing import Any, List, Optional, cast
+from typing import Any, Dict, List, Optional, cast
 
 import click
+from packaging.requirements import InvalidRequirement, Requirement
 
 from aisland.manager import BIN_DIR, BaseService
+from aisland.selection import AXES, PLAYWRIGHT_BROWSER
+from aisland.selection import declared as sel_declared
+from aisland.selection import dev_extra_names
+from aisland.selection import extras_for as sel_extras_for
+from aisland.selection import read_committed as sel_committed
+from aisland.sources import DEFAULT_REF, released_on_pypi
 
 # Match the Gearlux GitHub URL forms (SSH and HTTPS), capturing the repo name.
 # Trailing ``.git`` is optional. Anchored so a repo path like "Gearlux/x/y" can't
 # accidentally match — Gearlux repos are always top-level under the org.
 _GEARLUX_URL_RE = re.compile(r"(?:git@github\.com:|https://github\.com/)Gearlux/([^/]+?)(?:\.git)?$")
 _SUBMODULE_KEY_RE = re.compile(r"^submodule\.(.+)\.url$")
+
+#: Every GitHub Action a generated ``ci.yml`` uses — the ONE place their versions live. Each is a
+#: MAJOR tag whose ``action.yml`` declares ``using: node24`` (2026-09-26: GitHub annotated every run
+#: "Node.js 20 is deprecated … being forced to run on Node.js 24" for checkout@v4, setup-python@v5
+#: and upload-artifact@v4). ``setup-uv`` stays on ``@v7``: from v8 upstream publishes NO moving major
+#: tags (immutable ``@v8.0.0``-style pins only), and v7 is its last moving tag and already node24.
+#: Verify a bump with ``gh api repos/<owner>/<action>/contents/action.yml?ref=<tag>`` (``runs.using``).
+GH_ACTIONS: Dict[str, str] = {
+    "checkout": "actions/checkout@v7",
+    "setup-python": "actions/setup-python@v7",
+    "setup-uv": "astral-sh/setup-uv@v7",
+    "upload-artifact": "actions/upload-artifact@v7",
+    "create-github-app-token": "actions/create-github-app-token@v3",
+}
 
 
 def discover_gearlux_projects(workspace_root: Path) -> list[str]:
@@ -36,13 +57,28 @@ def discover_gearlux_projects(workspace_root: Path) -> list[str]:
     project is added (a new submodule + pyproject), CI scaffolding picks it up
     on the next ``aisland jenkins scaffold`` run with no aisland-side edit.
 
+    A DETACHED project (``github`` / ``pypi`` source, ``aisland/sources.py``) has an EMPTY
+    directory and therefore no ``pyproject.toml`` to read — so its name is taken from the
+    committed registry's ``distribution`` field instead, which exists precisely because a
+    deinit'd directory can no longer be asked. Omitting it would silently drop the dep from the
+    scaffolder's internal set: harmless for ``pypi`` (which is dropped anyway), but for
+    ``github`` it would erase the very git-URL pin the source exists to express, leaving CI to
+    resolve the PyPI release instead of the requested ref — or to fail outright when the project
+    is not published at all.
+
     Returns:
         Alphabetically sorted list. Topological ordering is computed by the
         caller from each project's own deps, not here.
     """
+    from aisland.sources import read_committed_sources
+
+    detached_names = [
+        source.distribution or project for project, source in read_committed_sources(workspace_root).items()
+    ]
+
     gitmodules = workspace_root / ".gitmodules"
     if not gitmodules.exists():
-        return []
+        return sorted(set(detached_names))
 
     try:
         cp = subprocess.run(
@@ -59,9 +95,9 @@ def discover_gearlux_projects(workspace_root: Path) -> list[str]:
             check=True,
         )
     except (FileNotFoundError, subprocess.CalledProcessError):
-        return []
+        return sorted(set(detached_names))
 
-    names: list[str] = []
+    names: list[str] = list(detached_names)
     for line in cp.stdout.splitlines():
         parts = line.strip().split(maxsplit=1)
         if len(parts) != 2:
@@ -87,7 +123,9 @@ def discover_gearlux_projects(workspace_root: Path) -> list[str]:
             # pyproject distribution is ``aisland-manager`` but the repo, and what
             # consumers actually list as a dep, is ``aisland``.
             names.append(dist_name.removesuffix("-manager"))
-    return sorted(names)
+    # Dedup: a detached project may ALSO still have a checkout on the machine running the
+    # scaffold (a `local` per-machine override), in which case both passes contribute its name.
+    return sorted(set(names))
 
 
 @functools.lru_cache(maxsize=None)
@@ -154,8 +192,8 @@ def pyproject_to_workspace_dir(pyproject_name: str, initialized_set: set) -> str
 
     Handles three conventions in use across acme:
       1. Identity (most projects): ``confluid`` -> ``confluid``.
-      2. Dashed PyPI name -> dashless dir: ``log-flow`` -> ``logflow``,
-         ``data-flux`` -> ``dataflux``.
+      2. Dashed PyPI name -> dashless dir: ``loggair`` -> ``loggair``,
+         ``recordstream`` -> ``recordstream``.
       3. ``-manager`` suffix dropped: ``aisland-manager`` -> ``aisland``.
 
     Returns the input unchanged if no rule matches (caller decides whether
@@ -447,7 +485,9 @@ class JenkinsService(BaseService):
             "PATH": f"{venv_bin}:{BIN_DIR}:{os.environ.get('PATH', '')}",
         }
 
-        self.start(cmd, env=env, background=background)
+        # /login answers 200 as soon as the Jenkins web UI is up (even while
+        # the setup wizard is pending), which is exactly "ready" for aisland.
+        self.start(cmd, env=env, background=background, readiness={"port": port, "path": "/login"})
 
     def status(self) -> None:
         """Show extended Jenkins status."""
@@ -461,8 +501,7 @@ class JenkinsService(BaseService):
         """Show detailed Jenkins configuration."""
         super().info()
         default_port = 9080
-        pid = self.get_pid()
-        ports = self._get_listening_ports(pid) if pid is not None else []
+        ports = self.get_ports()
         url_port = ports[0] if ports else default_port
         click.echo(f"  URL           : http://localhost:{url_port}")
         click.echo(f"  JENKINS_HOME  : {self.service_data_dir}")
@@ -627,8 +666,8 @@ class JenkinsService(BaseService):
         base_name = get_workspace_name()
 
         # `initialized_projects` is a list of Jenkins job dir names, which follow the
-        # workspace directory names (e.g. "logflow", "dataflux") — NOT the pyproject
-        # distribution names (which may differ: "log-flow", "data-flux"). Build a
+        # workspace directory names (e.g. "loggair", "recordstream") — NOT the pyproject
+        # distribution names (which may differ: "loggair", "recordstream"). Build a
         # lookup that maps both forms to the canonical workspace-dir form so we can
         # match either a pyproject name or a dir name against initialized_projects.
         initialized_set = set(initialized_projects)
@@ -691,12 +730,12 @@ class JenkinsService(BaseService):
                 stages_str += "                }\n"
             stages_str += "            }\n        }\n"
 
+        # `agent none`: the orchestrator only TRIGGERS jobs (`build job:` needs no node). Holding a
+        # built-in executor for the whole run left one of the node's two executors for the projects,
+        # so every "parallel" phase ran one project at a time (2026-09-13: vendorcli waited 875 s for
+        # recordstream; annotaide and purifai sat at "Waiting for next available executor").
         pipeline_script = f"""pipeline {{
-    agent {{
-        node {{
-            label 'built-in'
-        }}
-    }}
+    agent none
     options {{
         disableConcurrentBuilds()
     }}
@@ -775,8 +814,8 @@ class JenkinsService(BaseService):
         # Detect actual package directory.
         #   Step 1: try the literal distribution name (e.g. "confluid").
         #   Step 2: try the PEP 503 module form — distribution names allow dashes
-        #           but Python import names don't, so "data-flux" -> "dataflux",
-        #           "log-flow" -> "logflow", etc. Try that before the heuristic
+        #           but Python import names don't, so "recordstream" -> "recordstream",
+        #           "loggair" -> "loggair", etc. Try that before the heuristic
         #           fallback so we don't accidentally pick up "examples/".
         #   Step 3: scan for any inner dir with __init__.py, skipping known
         #           non-package dirs (tests, examples, notebooks, docs).
@@ -800,39 +839,147 @@ class JenkinsService(BaseService):
         # workspace project is now a zero-aisland-edit operation.
         gearlux_projects = discover_gearlux_projects(workspace_root)
 
-        # Collect the FULL TRANSITIVE closure of internal Gearlux deps, not just
-        # the direct ones. When CI installs a direct dep like `confluid` with
-        # --no-deps, `.[dev]` below still needs to resolve confluid's own deps
-        # (e.g. log-flow) — and Gearlux distribution names aren't on PyPI, so uv
-        # fails unless WE'VE ALSO pre-installed those transitive deps first.
+        # Selected extras this project's CI installs: what it DECLARES on each axis
+        # (`[tool.aisland] frameworks` / `trackers`) intersected with that axis's COMMITTED
+        # selection (the `frameworks` / `trackers` keys of `config.toml`). Committed-only, for the
+        # reason the source registry below is: a per-machine `.git/config aisland.frameworks`
+        # override must never reach a tracked build file, or one developer's "I only use torch"
+        # would silently stop every runner from testing the Keras backend. The same holds for
+        # trackers — a runner that stops installing mlflow silently stops running the tests that
+        # need it, and they SKIP rather than fail. A project declaring neither emits the
+        # historical `.[dev]` unchanged.
+        selected_extras: list[str] = []
+        for axis in AXES:
+            selected_extras += sel_extras_for(
+                project_name,
+                sel_declared(pyproject_path, axis),
+                sel_committed(workspace_root, axis),
+            )
+        ci_extras = ",".join(["dev"] + selected_extras)
+
+        # A project that REGISTERS a `slow` pytest marker gets its CI test invocations SPLIT:
+        # the routine run deselects the slow tests (`-m 'not slow'`) and a separate stage/job
+        # runs `-m slow`, so an 8-minute end-to-end smoke test stops sitting on every push's
+        # critical path while its dep-bump-drift coverage is preserved. The DECLARATION is the
+        # marker registration itself (`[tool.pytest.ini_options] markers`), not a new aisland
+        # knob — a project without the marker gets byte-identical output to before, so opting
+        # in never churns the other projects' committed CI files. Exit code 5 ("no tests
+        # matched the marker") is tolerated in the slow leg: a registered marker with nothing
+        # currently marked is a valid state, not a failure.
+        with open(pyproject_path, "rb") as fh:
+            _pyproject_data = tomllib.load(fh)
+        _markers = _pyproject_data.get("tool", {}).get("pytest", {}).get("ini_options", {}).get("markers", [])
+        has_slow_marker = any(str(m).split(":", 1)[0].strip() == "slow" for m in _markers)
+        pytest_deselect = " -m 'not slow'" if has_slow_marker else ""
+        # A project whose `dev` extra lists PLAYWRIGHT gets its browser fetched right after the
+        # dev install, in every artifact that runs its tests — the package alone cannot open a
+        # page, and a browser-driven test would otherwise `skip` its way into a green build that
+        # checks less. Same shape as the slow marker above: the dependency IS the declaration,
+        # there is no aisland knob, and a project without it gets byte-identical output.
+        # `--with-deps` on the GitHub runner adds the OS libraries Ubuntu lacks (sudo is available
+        # there, never assumed on a Jenkins agent, where the browser cache is per user and the
+        # download happens once). `aisland setup` runs the same install for a developer's venv
+        # (`selection.browser_install_command`), so the two never disagree on the browser.
+        needs_browser = "playwright" in dev_extra_names(_pyproject_data)
+        browser_sh = (
+            f'\n                sh "${{VENV_BIN}}/playwright install {PLAYWRIGHT_BROWSER}"' if needs_browser else ""
+        )
+        browser_gh = f"\n        playwright install --with-deps {PLAYWRIGHT_BROWSER}" if needs_browser else ""
+        if has_slow_marker:
+            slow_stage = """
+        stage('Slow Tests') {
+            steps {
+                script {
+                    // 5 = the marker is registered but nothing is currently marked — valid, not a failure.
+                    def rc = sh(script: "${VENV_BIN}/pytest tests -m slow --junitxml=slow-test-report.xml", returnStatus: true)
+                    if (rc != 0 && rc != 5) {
+                        error("Slow tests failed (exit ${rc}).")
+                    }
+                }
+            }
+            post {
+                always {
+                    script {
+                        if (fileExists('slow-test-report.xml')) {
+                            junit allowEmptyResults: true, testResults: 'slow-test-report.xml'
+                        }
+                    }
+                }
+            }
+        }
+"""
+        else:
+            slow_stage = ""
+
+        # CI asks ONE question per internal dependency — is it RELEASED on PyPI? — and nothing
+        # about the workspace's `config.toml` sources (user ruling 2026-09-26: "it should always
+        # point to released packages, and to GitHub for non-released ones").
         #
-        # Build the closure by walking each Gearlux dep's own pyproject.toml.
-        # Topologically sort so every package's deps are installed before it.
+        # Released (a final, non-yanked version whose metadata points at github.com/Gearlux/ —
+        # `sources.released_on_pypi`) -> the dep drops out of the pre-install loop and `.[dev]`
+        # resolves the release from PyPI. Not released -> the runner installs GitHub `main`
+        # (`DEFAULT_REF`). A source (`local` / `github` / `pypi`, any `ref`) describes ONE
+        # machine's checkout and venv; before this rule it also decided the runner's install line,
+        # so `aisland source set` rewrote every dependent's committed CI files and a released
+        # package developed locally (liquifai) was built from GitHub `main` by every consumer.
+        #
+        # PyPI unreachable -> `ReleaseProbeError` stops the scaffold before any file of this
+        # project is written: assuming "unreleased" would flip every released dep to a GitHub line.
+        def _dep_is_released(dep: str) -> bool:
+            return released_on_pypi(dep)
 
-        def _strip_specifier(dep_str: str) -> str:
-            return re.split(r"[>=< ]", dep_str)[0].strip()
+        # Collect the internal Gearlux deps CI must pre-install: the closure of
+        # exactly what CI's install steps resolve, nothing more. When CI installs
+        # a direct dep like `confluid` with --no-deps, `.[dev]` below still needs
+        # to resolve confluid's own BASE deps (e.g. loggair) — and Gearlux
+        # distribution names aren't on PyPI, so uv fails unless WE'VE ALSO
+        # pre-installed those transitive deps first.
+        #
+        # What each node contributes (2026-09-02, replaces "walk every extras
+        # group of every project", which pre-installed packages nothing would
+        # ever import):
+        #   - the ROOT project: its base deps PLUS the extras its CI actually
+        #     installs — `.[dev,<selected axis extras>]` plus the best-effort
+        #     `.[notebook]` step;
+        #   - a TRANSITIVE dep: its base deps PLUS only the extras the incoming
+        #     requirement named (`matrainer[keras]` walks matrainer's keras
+        #     extra). Its OTHER extras are never requested by any install step
+        #     (each dep installs bare, and `.[dev]` resolves only its base deps),
+        #     so they must not add pre-installs — the old rule made the CI of
+        #     a project depending only on signals install torpaido/matrainer/
+        #     annotaide, reachable only through signals's dev extra and
+        #     matrainer's torpaido extra.
+        # Specs are parsed with packaging.Requirement: the regex split it
+        # replaces couldn't parse `matrainer[torch]>=0.1.0` and silently dropped
+        # the spec. Topologically sorted so every package's deps install first.
 
-        def _read_internal_deps(pyproject: Path) -> list[str]:
-            """Return the direct Gearlux deps of one pyproject.toml, including all extras.
-
-            Walks both `project.dependencies` (runtime) and every extras group in
-            `project.optional-dependencies` (dev, test, notebook, ...). Reason:
-            extras like dev can list sibling workspace packages (e.g. navigaitor's
-            dev extra depends on signals-rfuav for tests). CI runs `.[dev]`, so
-            those extras ARE installed and must be pre-satisfied by the
-            --no-deps Gearlux install loop — otherwise `.[dev]` can't resolve
-            them from PyPI.
-            """
+        def _load_project_table(pyproject: Path) -> dict:
+            """The [project] table of one pyproject.toml; {} when missing/unparseable
+            (a detached submodule's directory is empty and contributes nothing)."""
             try:
                 with open(pyproject, "rb") as f:
                     data = tomllib.load(f)
             except Exception:
-                return []
-            project = data.get("project", {})
-            all_specs: list[str] = list(project.get("dependencies") or [])
-            for extra_name, extras in (project.get("optional-dependencies") or {}).items():
-                all_specs.extend(extras or [])
-            return [_strip_specifier(d) for d in all_specs if _strip_specifier(d) in gearlux_projects]
+                return {}
+            table = data.get("project", {})
+            return table if isinstance(table, dict) else {}
+
+        def _gearlux_requirements(project_table: dict, extras: frozenset[str]) -> list[Requirement]:
+            """The Gearlux requirements one node contributes: its base dependencies
+            plus the contents of exactly the requested extras groups."""
+            specs: list[str] = list(project_table.get("dependencies") or [])
+            optional = project_table.get("optional-dependencies") or {}
+            for extra in extras:
+                specs.extend(optional.get(extra) or [])
+            reqs: list[Requirement] = []
+            for spec in specs:
+                try:
+                    req = Requirement(spec)
+                except InvalidRequirement:
+                    continue
+                if req.name in gearlux_projects:
+                    reqs.append(req)
+            return reqs
 
         # Map each Gearlux project name to its workspace dir (for locating its
         # pyproject.toml). PyPI-dashed names resolve to dashless dirs.
@@ -842,34 +989,38 @@ class JenkinsService(BaseService):
             stripped = name.replace("-", "")
             return workspace_root / stripped
 
-        # BFS over Gearlux deps starting from this project, accumulating all
-        # reachable Gearlux packages. Start from BOTH runtime and extras deps
-        # (see `_read_internal_deps` rationale): CI's `.[dev]` step installs
-        # every extras group, so extras must be pre-satisfied too.
-        direct = _read_internal_deps(pyproject_path)
-
+        # BFS over (dep, requested extras) pairs — the same dep may be reached
+        # with different extras sets, and each set can name different siblings.
+        root_installed_extras = frozenset(["dev", "notebook", *selected_extras])
+        work: list[tuple[str, frozenset[str]]] = [
+            (req.name, frozenset(req.extras))
+            for req in _gearlux_requirements(_pyproject_data.get("project", {}), root_installed_extras)
+        ]
+        visited: set[tuple[str, frozenset[str]]] = set()
         seen: set[str] = set()
-        stack = list(direct)
-        while stack:
-            dep = stack.pop()
-            if dep in seen:
+        while work:
+            item = work.pop()
+            if item in visited:
                 continue
+            visited.add(item)
+            dep, dep_extras = item
             seen.add(dep)
-            sub_pyproject = _gearlux_workspace_path(dep) / "pyproject.toml"
-            if sub_pyproject.exists():
-                for sub_dep in _read_internal_deps(sub_pyproject):
-                    if sub_dep not in seen:
-                        stack.append(sub_dep)
+            sub_table = _load_project_table(_gearlux_workspace_path(dep) / "pyproject.toml")
+            work.extend((req.name, frozenset(req.extras)) for req in _gearlux_requirements(sub_table, dep_extras))
 
-        # Topological sort so log-flow is installed before confluid, etc.
-        # Build adjacency: dep -> set(prerequisites)
+        # A project never pre-installs itself: a dependency cycle back to the root
+        # (annotaide <-> signals through dev extras) would otherwise install the
+        # root's own main branch over the very checkout under test.
+        seen.discard(metadata["name"])
+
+        # Topological sort so loggair is installed before confluid, etc.
+        # Base deps suffice for ordering (every install runs --no-deps anyway).
         prereqs: dict[str, set[str]] = {name: set() for name in seen}
         for name in seen:
-            sub_pyproject = _gearlux_workspace_path(name) / "pyproject.toml"
-            if sub_pyproject.exists():
-                for sub_dep in _read_internal_deps(sub_pyproject):
-                    if sub_dep in seen:
-                        prereqs[name].add(sub_dep)
+            sub_table = _load_project_table(_gearlux_workspace_path(name) / "pyproject.toml")
+            for req in _gearlux_requirements(sub_table, frozenset()):
+                if req.name in seen and req.name != name:
+                    prereqs[name].add(req.name)
 
         # Kahn's algorithm.
         internal_deps: list[str] = []
@@ -889,10 +1040,11 @@ class JenkinsService(BaseService):
         # GH Actions — raw uv commands (valid inside `run: |` blocks).
         #
         # Install order: git-URL Gearlux deps FIRST (--no-deps), then `-e .[dev]`.
-        # Rationale: all Gearlux distribution names (log-flow, data-flux, liquifai,
-        # torpaido, confluid, ...) are intentionally NOT published on PyPI. If
-        # `.[dev]` ran first, uv would try to resolve `log-flow>=0.1.0` from PyPI,
-        # fail ("not found in the package registry"), and abort the whole install.
+        # Rationale: an UNRELEASED Gearlux distribution (recordstream, torpaido, ...)
+        # is not on PyPI (or only as a pre-release). If `.[dev]` ran first, uv would
+        # try to resolve `recordstream>=0.1.0` from PyPI, fail ("not found in the
+        # package registry"), and abort the whole install. A RELEASED one never
+        # enters this loop — `.[dev]` resolves it from PyPI (see `_dep_is_released`).
         # By installing each Gearlux dep from its git URL first (with --no-deps to
         # skip its own Gearlux transitive deps — each is handled in its own loop
         # iteration, topologically ordered), we pre-satisfy the constraints so
@@ -900,7 +1052,11 @@ class JenkinsService(BaseService):
         # --system installs into the runner's Python rather than requiring a venv.
         pip_install_cmds = []
         for dep in internal_deps:
-            pip_install_cmds.append(f"uv pip install --system --no-deps git+https://github.com/Gearlux/{dep}.git@main")
+            if _dep_is_released(dep):
+                continue  # released — `.[dev]` resolves it from PyPI, which is the point.
+            pip_install_cmds.append(
+                f"uv pip install --system --no-deps " f"git+https://github.com/Gearlux/{dep}.git@{DEFAULT_REF}"
+            )
 
         pip_install_str = "\n        ".join(pip_install_cmds)
         if pip_install_str:
@@ -915,12 +1071,17 @@ class JenkinsService(BaseService):
         # is_private_gearlux_repo() queries `gh api` with a per-process cache; it
         # falls back to False (assume public) on any error, so this is safe to call
         # in environments without gh CLI configured.
-        needs_app_token = any(is_private_gearlux_repo(dep) for dep in internal_deps)
+        # Only deps CI actually clones from GitHub need the token — a released dep is fetched
+        # from the public index, so it must not keep the step alive on its own.
+        needs_app_token = any(is_private_gearlux_repo(dep) for dep in internal_deps if not _dep_is_released(dep))
 
         if needs_app_token:
-            app_token_step = """    - name: Mint GitHub App token for private Gearlux deps
+            app_token_step = (
+                """    - name: Mint GitHub App token for private Gearlux deps
       id: app-token
-      uses: actions/create-github-app-token@v1
+      uses: """
+                + GH_ACTIONS["create-github-app-token"]
+                + """
       with:
         app-id: ${{ secrets.GEARLUX_APP_ID }}
         private-key: ${{ secrets.GEARLUX_APP_PRIVATE_KEY }}
@@ -928,66 +1089,101 @@ class JenkinsService(BaseService):
     - name: Configure git auth for Gearlux
       run: git config --global url."https://x-access-token:${{ steps.app-token.outputs.token }}@github.com/".insteadOf "https://github.com/"
 """
+            )
         else:
             app_token_step = ""
+
+        # The GitHub half of the slow-marker split (see `has_slow_marker` above): a SEPARATE job
+        # rather than a second step, so it runs in PARALLEL with unit-tests on its own runner —
+        # the routine result lands fast while the slow leg proceeds concurrently.
+        if has_slow_marker:
+            slow_job = f"""
+  slow-tests:
+    name: Slow Tests
+    needs: [quality-gates]
+    runs-on: ubuntu-latest
+    steps:
+    - uses: {GH_ACTIONS['checkout']}
+{app_token_step}    - name: Set up Python 3.12
+      uses: {GH_ACTIONS['setup-python']}
+      with:
+        python-version: "3.12"
+    - name: Install uv
+      uses: {GH_ACTIONS['setup-uv']}
+    - name: Install dependencies
+      run: |
+        {pip_install_str}
+        uv pip install --system -e ".[{ci_extras}]"{browser_gh}
+    - name: Run Slow Tests
+      run: |
+        rc=0; pytest tests -m slow --junitxml=slow-test-report.xml || rc=$?
+        # 5 = the marker is registered but nothing is currently marked — valid, not a failure.
+        if [ $rc -ne 0 ] && [ $rc -ne 5 ]; then exit $rc; fi
+    - name: Upload Slow Test Results
+      uses: {GH_ACTIONS['upload-artifact']}
+      with:
+        name: slow-test-results
+        path: slow-test-report.xml
+      if: always()
+"""
+        else:
+            slow_job = ""
 
         # Jenkinsfile (standard) — sh-wrapped, installs from GitHub via uv.
         # Install order identical to the GH Actions path: `.[dev]` first, Gearlux
         # deps LAST with --reinstall so PyPI name collisions get overwritten.
         jenkins_pip_cmds = []
         for dep in internal_deps:
+            if _dep_is_released(dep):
+                continue  # released — `.[dev]` resolves it from PyPI.
             jenkins_pip_cmds.append(
-                f'sh "${{VENV_BIN}}/uv pip install --no-deps ' f'git+https://github.com/Gearlux/{dep}.git@main"'
+                f'sh "${{VENV_BIN}}/uv pip install --no-deps '
+                f'git+https://github.com/Gearlux/{dep}.git@{DEFAULT_REF}"'
             )
         jenkins_pip_str = "\n                ".join(jenkins_pip_cmds)
         if jenkins_pip_str:
             jenkins_pip_str = (
                 "\n                // Internal Gearlux dependencies — installed FIRST with --no-deps"
                 "\n                // so .[dev] below finds them pre-satisfied instead of hitting PyPI"
-                "\n                // (Gearlux distribution names are intentionally unpublished on PyPI)."
+                "\n                // (these are not released on PyPI; a released one resolves through .[dev])."
                 "\n                " + jenkins_pip_str
             )
 
-        # Jenkinsfile.local — sh-wrapped, editable installs from local workspace via uv.
+        # Jenkinsfile.local — tests the checkout against the workspace venv exactly as `aisland setup`
+        # left it, and INSTALLS NOTHING. Every workspace project is already editable-installed from
+        # its own checkout, and which source each one comes from (local / github / pypi) is decided
+        # by `aisland source` when setup provisions the venv — so this file needs no dependency list
+        # and no source configuration, and no `aisland source` change can rewrite it.
         #
-        # Order (mirrors GH Actions): local editables FIRST with --no-deps, then
-        # `.[dev]`. Gearlux distribution names are unpublished on PyPI, so `.[dev]`
-        # alone can't resolve them. Installing each workspace editable first
-        # pre-satisfies the constraint; `.[dev]` then resolves its remaining
-        # third-party deps from PyPI without touching the Gearlux ones.
+        # Installing into the shared venv from here added nothing but time: on 2026-09-13 an
+        # Initialize stage that re-installed the project and its extras took 1430 s, re-resolving
+        # ~80 packages against the configured indexes to reinstall only torpaido itself, and every
+        # concurrent local build queued on the venv's exclusive lock behind it. A dependency missing
+        # from the venv is fixed by running `aisland setup`, never by an install step here.
         #
-        # PyPI distribution names CAN have dashes ("log-flow", "data-flux") but
-        # filesystem / workspace directory names are conventionally dashless
-        # ("logflow/", "dataflux/"). For each dep, resolve the workspace path:
-        # prefer a dir matching the pyproject name exactly, otherwise try the
-        # dash-stripped form. This lets a project carry a dashed PyPI name while
-        # keeping its Python import and workspace dir as one unbroken word.
-        def _dep_to_workspace_dir(dep_name: str) -> str:
-            if (workspace_root / dep_name).is_dir():
-                return dep_name
-            stripped = dep_name.replace("-", "")
-            if (workspace_root / stripped).is_dir():
-                return stripped
-            return dep_name  # fall through; scaffold error visible later
-
-        local_pip_cmds = []
-        for dep in internal_deps:
-            ws_dir = _dep_to_workspace_dir(dep)
-            # --no-deps is CRITICAL. Without it, uv would re-resolve this target's
-            # transitive Gearlux deps (e.g. confluid -> log-flow), and since
-            # log-flow isn't on PyPI the resolution would fail. The outer dep loop
-            # is already topologically ordered (log-flow before confluid before
-            # liquifai, etc.) so each dep's own deps are guaranteed installed by
-            # the time we get to it.
-            local_pip_cmds.append(f'sh "${{VENV_BIN}}/uv pip install --no-deps -e ${{env.WORKSPACE_ROOT}}/{ws_dir}"')
-        local_pip_str = "\n                ".join(local_pip_cmds)
-        if local_pip_str:
-            local_pip_str = (
-                "\n                // Internal Gearlux dependencies — installed FIRST with --no-deps"
-                "\n                // so .[dev] below finds them pre-satisfied instead of hitting PyPI"
-                "\n                // (Gearlux distribution names are intentionally unpublished on PyPI)."
-                "\n                " + local_pip_str
-            )
+        # What Initialize DOES check is that THIS checkout is what the venv has installed: the
+        # project's distribution must record the checkout as its editable source (`direct_url.json`,
+        # written by every PEP 660 install — uv and pip alike). It reads the distribution, never the
+        # package name: a project may ship its code inside another project's package namespace
+        # (`signals-bridge` installs `signals/bridge/`), where a package lookup would import a
+        # sibling and name the wrong checkout. `python3 -P` is load-bearing: Jenkins runs inside the
+        # checkout (customWorkspace), and without -P the working directory lands first on sys.path,
+        # so a stale `<name>.egg-info` left in the checkout shadows the venv's record and the check
+        # fails a correctly-installed project (measured on signals-bridge: exit 1 without -P,
+        # exit 0 with it).
+        dist_name = metadata["name"]
+        venv_check_sh = f'''sh """${{VENV_BIN}}/python3 -P - '{dist_name}' "${{env.WORKSPACE_ROOT}}/{project_name}" <<'PY'
+import importlib.metadata, json, pathlib, sys
+dist, checkout = sys.argv[1], pathlib.Path(sys.argv[2]).resolve()
+try:
+    raw = importlib.metadata.distribution(dist).read_text("direct_url.json")
+    found = json.loads(raw)["url"] if raw else "an install with no source URL"
+except importlib.metadata.PackageNotFoundError:
+    found = "not installed"
+if found != checkout.as_uri():
+    sys.exit(f"{{dist}} is not installed from {{checkout}} (found: {{found}}) - run `aisland setup`")
+print(f"{{dist}} -> {{checkout}}")
+PY"""'''
 
         # Helper to write file safely
         def _validate_jenkinsfile(content: str, desc: str) -> bool:
@@ -1052,9 +1248,9 @@ class JenkinsService(BaseService):
         # 1. Jenkinsfile.local
         local_content = f"""// =========================================================================
 // AUTO-GENERATED FILE — DO NOT EDIT BY HAND
-// Generated by: aisland jenkins scaffold --project {project_name}
+// Generated by: aisland jenkins scaffold {project_name}
 // Source template: aisland/services/jenkins.py (JenkinsService.scaffold_pipelines)
-// To regenerate:  aisland jenkins scaffold --project {project_name} --force
+// To regenerate:  aisland jenkins scaffold {project_name} --force
 // =========================================================================
 pipeline {{
     agent {{
@@ -1083,20 +1279,10 @@ pipeline {{
             steps {{
                 echo 'Validating Environment...'
                 sh "${{VENV_BIN}}/python3 --version"
-                // uv MUST be present in the workspace venv. It is installed by
-                // `aisland setup` (which runs on initial bootstrap) and verified/
-                // repaired on every subsequent call. Jenkins jobs deliberately do NOT
-                // install it here — that responsibility lives with aisland so the
-                // venv stays under a single owner.
-                sh "${{VENV_BIN}}/uv --version"
-                echo 'Installing Project in Editable Mode...'
-                {local_pip_str}
-                sh "${{VENV_BIN}}/uv pip install -e .[dev]"
-                // Notebook-only extras (matplotlib, jupyter kernels, etc.) live
-                // in the optional `[notebook]` extra when the project ships
-                // notebooks; absence is not an error.
-                sh "${{VENV_BIN}}/uv pip install -e .[notebook] 2>/dev/null || echo 'No [notebook] extras declared; continuing with defaults.'"
-                sh "${{VENV_BIN}}/uv pip install jupyter nbconvert"
+                // This pipeline installs nothing: it tests the checkout against the workspace venv
+                // exactly as `aisland setup` left it. A missing dependency means `aisland setup`
+                // has not run since it was added — run it, never an install step here.
+                {venv_check_sh}
             }}
         }}
 
@@ -1265,7 +1451,7 @@ with open('isort-checkstyle.xml', 'w') as f:
             steps {{
                 script {{
                     if (fileExists('tests') && sh(script: "find tests -name '*.py' | grep -q .", returnStatus: true) == 0) {{
-                        sh "${{VENV_BIN}}/pytest tests --junitxml=test-report.xml --cov={pkg_name} --cov-report=xml:coverage.xml --cov-report=term"
+                        sh "${{VENV_BIN}}/pytest tests{pytest_deselect} --junitxml=test-report.xml --cov={pkg_name} --cov-report=xml:coverage.xml --cov-report=term"
                     }} else {{
                         echo "No tests found in 'tests' directory. Skipping."
                     }}
@@ -1288,12 +1474,21 @@ with open('isort-checkstyle.xml', 'w') as f:
                 }}
             }}
         }}
-
+{slow_stage}
         stage('Verify Examples') {{
             steps {{
                 echo 'Running project examples...'
                 sh '''
                     for f in examples/*.py; do
+                        if [ -f "$f" ]; then
+                            echo "Verifying $f..."
+                            ${{VENV_BIN}}/python3 "$f"
+                        fi
+                    done
+                    # Directory examples opt in by shipping a run.py entry point;
+                    # network-dependent / install-only example apps ship no run.py
+                    # and are skipped by construction.
+                    for f in examples/*/run.py; do
                         if [ -f "$f" ]; then
                             echo "Verifying $f..."
                             ${{VENV_BIN}}/python3 "$f"
@@ -1326,22 +1521,6 @@ with open('isort-checkstyle.xml', 'w') as f:
                 '''
             }}
         }}
-
-        stage('Verify Frontend') {{
-            when {{
-                expression {{ return fileExists('frontend/package.json') }}
-            }}
-            steps {{
-                echo 'Installing frontend deps + running tests + production build...'
-                dir('frontend') {{
-                    sh '''
-                        npm ci
-                        npm run test --if-present
-                        npm run build --if-present
-                    '''
-                }}
-            }}
-        }}
     }}
 
     post {{
@@ -1362,9 +1541,9 @@ with open('isort-checkstyle.xml', 'w') as f:
         # 2. Jenkinsfile (Standard) — aligned with Jenkinsfile.local
         standard_content = f"""// =========================================================================
 // AUTO-GENERATED FILE — DO NOT EDIT BY HAND
-// Generated by: aisland jenkins scaffold --project {project_name}
+// Generated by: aisland jenkins scaffold {project_name}
 // Source template: aisland/services/jenkins.py (JenkinsService.scaffold_pipelines)
-// To regenerate:  aisland jenkins scaffold --project {project_name} --force
+// To regenerate:  aisland jenkins scaffold {project_name} --force
 // =========================================================================
 pipeline {{
     agent any
@@ -1392,7 +1571,7 @@ pipeline {{
                 sh "${{VENV_BIN}}/pip install --upgrade pip uv"
                 echo 'Installing Dependencies...'
                 {jenkins_pip_str}
-                sh "${{VENV_BIN}}/uv pip install -e .[dev]"
+                sh "${{VENV_BIN}}/uv pip install -e .[{ci_extras}]"{browser_sh}
                 // Notebook-only extras (matplotlib, jupyter kernels, etc.) live
                 // in the optional `[notebook]` extra when the project ships
                 // notebooks; absence is not an error.
@@ -1565,7 +1744,7 @@ with open('isort-checkstyle.xml', 'w') as f:
             steps {{
                 script {{
                     if (fileExists('tests') && sh(script: "find tests -name '*.py' | grep -q .", returnStatus: true) == 0) {{
-                        sh "${{VENV_BIN}}/pytest tests --junitxml=test-report.xml --cov={pkg_name} --cov-report=xml:coverage.xml --cov-report=term"
+                        sh "${{VENV_BIN}}/pytest tests{pytest_deselect} --junitxml=test-report.xml --cov={pkg_name} --cov-report=xml:coverage.xml --cov-report=term"
                     }} else {{
                         echo "No tests found in 'tests' directory. Skipping."
                     }}
@@ -1588,12 +1767,21 @@ with open('isort-checkstyle.xml', 'w') as f:
                 }}
             }}
         }}
-
+{slow_stage}
         stage('Verify Examples') {{
             steps {{
                 echo 'Running project examples...'
                 sh '''
                     for f in examples/*.py; do
+                        if [ -f "$f" ]; then
+                            echo "Verifying $f..."
+                            ${{VENV_BIN}}/python3 "$f"
+                        fi
+                    done
+                    # Directory examples opt in by shipping a run.py entry point;
+                    # network-dependent / install-only example apps ship no run.py
+                    # and are skipped by construction.
+                    for f in examples/*/run.py; do
                         if [ -f "$f" ]; then
                             echo "Verifying $f..."
                             ${{VENV_BIN}}/python3 "$f"
@@ -1626,22 +1814,6 @@ with open('isort-checkstyle.xml', 'w') as f:
                 '''
             }}
         }}
-
-        stage('Verify Frontend') {{
-            when {{
-                expression {{ return fileExists('frontend/package.json') }}
-            }}
-            steps {{
-                echo 'Installing frontend deps + running tests + production build...'
-                dir('frontend') {{
-                    sh '''
-                        npm ci
-                        npm run test --if-present
-                        npm run build --if-present
-                    '''
-                }}
-            }}
-        }}
     }}
 
     post {{
@@ -1662,15 +1834,15 @@ with open('isort-checkstyle.xml', 'w') as f:
         # 3. GitHub Actions (.github/workflows/ci.yml)
         gh_content = f"""# =========================================================================
 # AUTO-GENERATED FILE — DO NOT EDIT BY HAND
-# Generated by: aisland jenkins scaffold --project {project_name}
+# Generated by: aisland jenkins scaffold {project_name}
 # Source template: aisland/services/jenkins.py (JenkinsService.scaffold_pipelines)
-# To regenerate:  aisland jenkins scaffold --project {project_name} --force
+# To regenerate:  aisland jenkins scaffold {project_name} --force
 # =========================================================================
 name: {project_name.capitalize()} CI
 
 on:
   push:
-    branches: [ main, dev/main ]
+    branches: [ main ]
   pull_request:
     branches: [ main ]
 
@@ -1679,17 +1851,17 @@ jobs:
     name: Quality Gates
     runs-on: ubuntu-latest
     steps:
-    - uses: actions/checkout@v4
+    - uses: {GH_ACTIONS['checkout']}
 {app_token_step}    - name: Set up Python 3.12
-      uses: actions/setup-python@v5
+      uses: {GH_ACTIONS['setup-python']}
       with:
         python-version: "3.12"
     - name: Install uv
-      uses: astral-sh/setup-uv@v4
+      uses: {GH_ACTIONS['setup-uv']}
     - name: Install dependencies
       run: |
         {pip_install_str}
-        uv pip install --system -e ".[dev]"
+        uv pip install --system -e ".[{ci_extras}]"
     - name: Run Isort
       run: isort --check-only .
     - name: Run Black
@@ -1704,50 +1876,59 @@ jobs:
     needs: [quality-gates]
     runs-on: ubuntu-latest
     steps:
-    - uses: actions/checkout@v4
+    - uses: {GH_ACTIONS['checkout']}
 {app_token_step}    - name: Set up Python 3.12
-      uses: actions/setup-python@v5
+      uses: {GH_ACTIONS['setup-python']}
       with:
         python-version: "3.12"
     - name: Install uv
-      uses: astral-sh/setup-uv@v4
+      uses: {GH_ACTIONS['setup-uv']}
     - name: Install dependencies
       run: |
         {pip_install_str}
-        uv pip install --system -e ".[dev]"
+        uv pip install --system -e ".[{ci_extras}]"{browser_gh}
     - name: Run Tests
       run: |
         if [ -d tests ] && find tests -name '*.py' | grep -q .; then
-          pytest tests --junitxml=test-report.xml --cov={pkg_name} --cov-report=xml --cov-report=term
+          pytest tests{pytest_deselect} --junitxml=test-report.xml --cov={pkg_name} --cov-report=xml --cov-report=term
         else
           echo "No tests found. Skipping."
         fi
     - name: Upload Test Results
-      uses: actions/upload-artifact@v4
+      uses: {GH_ACTIONS['upload-artifact']}
       with:
         name: test-results
         path: test-report.xml
       if: always()
-
+{slow_job}
   verify-examples:
     name: Verify Examples
     needs: [unit-tests]
     runs-on: ubuntu-latest
     steps:
-    - uses: actions/checkout@v4
+    - uses: {GH_ACTIONS['checkout']}
 {app_token_step}    - name: Set up Python 3.12
-      uses: actions/setup-python@v5
+      uses: {GH_ACTIONS['setup-python']}
       with:
         python-version: "3.12"
     - name: Install uv
-      uses: astral-sh/setup-uv@v4
+      uses: {GH_ACTIONS['setup-uv']}
     - name: Install dependencies
       run: |
         {pip_install_str}
-        uv pip install --system -e ".[dev]"
+        uv pip install --system -e ".[{ci_extras}]"
     - name: Run Examples
       run: |
         for f in examples/*.py; do
+          if [ -f "$f" ]; then
+            echo "Verifying $f..."
+            python3 "$f"
+          fi
+        done
+        # Directory examples opt in by shipping a run.py entry point;
+        # network-dependent / install-only example apps ship no run.py
+        # and are skipped by construction.
+        for f in examples/*/run.py; do
           if [ -f "$f" ]; then
             echo "Verifying $f..."
             python3 "$f"
@@ -1759,17 +1940,17 @@ jobs:
     needs: [unit-tests]
     runs-on: ubuntu-latest
     steps:
-    - uses: actions/checkout@v4
+    - uses: {GH_ACTIONS['checkout']}
 {app_token_step}    - name: Set up Python 3.12
-      uses: actions/setup-python@v5
+      uses: {GH_ACTIONS['setup-python']}
       with:
         python-version: "3.12"
     - name: Install uv
-      uses: astral-sh/setup-uv@v4
+      uses: {GH_ACTIONS['setup-uv']}
     - name: Install dependencies
       run: |
         {pip_install_str}
-        uv pip install --system -e ".[dev]"
+        uv pip install --system -e ".[{ci_extras}]"
         # Notebook-only dependencies live in the optional `[notebook]` extra
         # when a project ships notebooks; absence is not an error.
         uv pip install --system -e ".[notebook]" 2>/dev/null || echo "No [notebook] extras declared; continuing with defaults."
@@ -1793,38 +1974,6 @@ jobs:
             "$nb"
         done
 
-  verify-frontend:
-    name: Verify Frontend
-    needs: [unit-tests]
-    runs-on: ubuntu-latest
-    steps:
-    - uses: actions/checkout@v4
-    - name: Detect frontend
-      id: detect
-      run: |
-        if [ -f frontend/package.json ]; then
-          echo "present=true" >> "$GITHUB_OUTPUT"
-        else
-          echo "present=false" >> "$GITHUB_OUTPUT"
-          echo "No frontend/package.json. Skipping."
-        fi
-    - name: Set up Node.js
-      if: steps.detect.outputs.present == 'true'
-      uses: actions/setup-node@v4
-      with:
-        node-version: "20"
-    - name: Install frontend dependencies
-      if: steps.detect.outputs.present == 'true'
-      working-directory: frontend
-      run: npm ci
-    - name: Run frontend tests
-      if: steps.detect.outputs.present == 'true'
-      working-directory: frontend
-      run: npm run test --if-present
-    - name: Build frontend
-      if: steps.detect.outputs.present == 'true'
-      working-directory: frontend
-      run: npm run build --if-present
 """
         _write_safe(
             project_path / ".github" / "workflows" / "ci.yml",

@@ -1,15 +1,16 @@
+import hashlib
 import json
 import os
 import platform
-import signal
 import subprocess
 import tarfile
-import time
 import urllib.request
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
 import click
+
+from aisland import supervisor
 
 # Path Configuration (relative to the file itself)
 SERVICES_DIR = Path(__file__).parent.absolute()
@@ -21,281 +22,232 @@ TOOLS_DIR = BASE_DIR / "tools"
 
 # Registry of tools aisland can install entirely in userspace (no sudo / package
 # manager required). Used on Linux where the macOS brew flow is unavailable.
-# Each entry pins a specific version; bump as new LTS / stable lines land.
-# TODO: pin sha256 checksums from upstream SHASUMS files before relying on this
-# in untrusted environments.
+# Each entry pins a specific version AND per-architecture sha256 digests taken
+# from the upstream SHASUMS / checksums files. The downloaded tarball is verified
+# against its digest BEFORE extraction (see `_install_userspace_tool`); a mismatch
+# aborts the install rather than running an unverified binary. `sha256` is keyed
+# by the same {arch} token used in the URL — node ships an x64-only asset, so it
+# is keyed "amd64". When bumping `version`, refresh the digests from upstream in
+# the SAME edit (e.g. `curl -sL <checksums-url>`), or the install will abort.
 USERSPACE_TOOLS: dict[str, dict[str, Any]] = {
     "node": {
         "version": "v22.11.0",
         "url": "https://nodejs.org/dist/{version}/node-{version}-linux-x64.tar.xz",
         "extract_subdir": "node-{version}-linux-x64",
         "binaries": ["node", "npm", "npx"],
+        # https://nodejs.org/dist/v22.11.0/SHASUMS256.txt
+        "sha256": {"amd64": "83bf07dd343002a26211cf1fcd46a9d9534219aad42ee02847816940bf610a72"},
+    },
+    # The aisland service supervisor (see aisland/supervisor.py). macOS gets it
+    # via Homebrew (f1bonacc1/tap, declared in aisland's sys-dependencies);
+    # this entry covers Linux. Flat archive: the binary sits at the tarball
+    # root (bin_subdir "" — no bin/ directory), and upstream publishes
+    # per-architecture assets ({arch} = amd64 / arm64).
+    "process-compose": {
+        "version": "v1.116.0",
+        "url": (
+            "https://github.com/F1bonacc1/process-compose/releases/download/"
+            "{version}/process-compose_linux_{arch}.tar.gz"
+        ),
+        "extract_subdir": "process-compose-{version}",
+        "bin_subdir": "",
+        "binaries": ["process-compose"],
+        # github.com/F1bonacc1/process-compose/releases/download/v1.116.0/process-compose_checksums.txt
+        "sha256": {
+            "amd64": "f3550750dd17c3d0d5e378aa6239b87ee8405dd0eeb460a83b8cc03ef48a87fb",
+            "arm64": "b82c4d6c633b4775d6f11c41dc5f7943f7b94a99ff6699298de813cb9c9ba76d",
+        },
     },
 }
 
+# platform.machine() → the architecture token used in release-asset names.
+_LINUX_ARCH_ALIASES = {"x86_64": "amd64", "amd64": "amd64", "aarch64": "arm64", "arm64": "arm64"}
+
 
 class BaseService:
-    """Standardized management logic for aisland services."""
+    """Standardized management logic for aisland services.
+
+    Process supervision (spawn, liveness, readiness, crash recovery, log
+    capture, port discovery) is delegated to the process-compose supervisor
+    (see :mod:`aisland.supervisor`). Service classes keep the domain logic:
+    building the command line, environment, and readiness probe that
+    ``launch()`` hands to :meth:`start`.
+    """
 
     def __init__(self, name: str) -> None:
         self.name = name
         self.service_data_dir = DATA_DIR / name
-        self.pid_file = DATA_DIR / f"{name}.pid"
         self.log_file = DATA_DIR / f"{name}.log"
         self.service_data_dir.mkdir(parents=True, exist_ok=True)
 
     def is_running(self) -> bool:
-        """Check if the service is currently running."""
-        # 1. Try PID file first
-        if self.pid_file.exists():
-            try:
-                pid = int(self.pid_file.read_text().strip())
-                os.kill(pid, 0)
-                return True
-            except (OSError, ValueError):
-                # Stale or unparseable PID file — drop it so we don't keep
-                # printing "already running (PID: <ghost>)".
-                try:
-                    self.pid_file.unlink()
-                except OSError:
-                    pass
-
-        # 2. Fallback: Search for process by name/pattern
-        return self._find_process_by_pattern()
-
-    def _find_process_by_pattern(self) -> bool:
-        """Search for a running process that looks like this service using pgrep.
-
-        The pattern must be specific enough that the running ``aisland <svc>``
-        command itself does not match — otherwise the CLI detects itself and
-        falsely reports the service as already running.
-        """
-        try:
-            patterns = {
-                "jenkins": "jenkins.war",
-                "mlflow": "mlflow server",
-                # The actual binary name is ``label-studio`` (with dash);
-                # ``labelstudio`` (no dash) would also match the aisland CLI's
-                # own argv, the .pid file path, etc.
-                "labelstudio": "label-studio start",
-                # FiftyOne's app subprocess shows up in ps as
-                # ``python -m fiftyone app launch ...``; match the suffix so
-                # we don't also catch unrelated python invocations.
-                "fiftyone": "fiftyone app launch",
-            }
-            pattern = patterns.get(self.name, self.name)
-
-            # Use pgrep -f to search the full command line, excluding our own
-            # process tree so the running CLI invocation isn't a self-match.
-            cmd = ["pgrep", "-f", pattern]
-            output = subprocess.check_output(cmd, text=True).strip()
-
-            if output:
-                own_pid = os.getpid()
-                own_pgid = os.getpgrp()
-                for raw in output.splitlines():
-                    try:
-                        pid = int(raw)
-                    except ValueError:
-                        continue
-                    if pid == own_pid:
-                        continue
-                    try:
-                        if os.getpgid(pid) == own_pgid:
-                            continue
-                    except OSError:
-                        continue
-                    self.pid_file.write_text(str(pid))
-                    return True
-        except (subprocess.CalledProcessError, FileNotFoundError, OSError):
-            pass
-        return False
+        """Check if the service is currently running (per the supervisor)."""
+        proc = supervisor.get_process(self.name)
+        return bool(proc and proc.get("is_running"))
 
     def get_pid(self) -> Optional[int]:
         """Return the current PID if running."""
-        if self.is_running():
-            return int(self.pid_file.read_text().strip())
+        proc = supervisor.get_process(self.name)
+        if proc and proc.get("is_running"):
+            return int(proc["pid"])
         return None
 
-    def start(self, cmd: List[str], env: Optional[dict] = None, background: bool = False) -> None:
-        """Execute the service command."""
+    def get_ports(self) -> List[int]:
+        """Return the TCP ports the service is listening on (best-effort)."""
+        if not self.is_running():
+            return []
+        return supervisor.get_ports(self.name)
+
+    def start(
+        self,
+        cmd: List[str],
+        env: Optional[dict] = None,
+        background: bool = False,
+        readiness: Optional[Dict[str, Any]] = None,
+    ) -> None:
+        """Register the service with the supervisor and bring it up.
+
+        Args:
+            cmd: argv list for the service process.
+            env: Extra environment variables (merged over the supervisor's
+                inherited environment). A caller-provided ``PATH`` wins;
+                otherwise the workspace venv is prepended so ``python3`` and
+                friends resolve to the project-standard environment.
+            background: When False, stream the service log to the terminal
+                after startup; Ctrl+C stops the service (matching the old
+                foreground semantics). The process itself always runs
+                detached under the supervisor.
+            readiness: Optional HTTP readiness probe ``{"port": int, "path": str}``.
+        """
         if self.is_running():
             click.echo(f"{self.name.capitalize()} is already running (PID: {self.get_pid()}).")
             return
 
+        # Pre-flight: a taken port means the service would crash-loop through
+        # its whole restart budget with only a log-side error. The usual
+        # culprit is an orphan instance the supervisor doesn't know about
+        # (e.g. started by a pre-supervisor aisland and never stopped).
+        if readiness is not None:
+            owner = supervisor.port_in_use(readiness["port"])
+            if owner is not None:
+                owner_hint = f"PID {owner}" if owner > 0 else "an unknown process"
+                click.echo(
+                    f"Error: port {readiness['port']} is already in use by {owner_hint} — "
+                    f"not managed by the aisland supervisor. Stop that process first "
+                    f"(it may be a {self.name} instance started by an older aisland).",
+                    err=True,
+                )
+                return
+
         click.echo(f"Starting {self.name.capitalize()}...")
 
-        # Prepare environment
-        process_env = os.environ.copy()
+        process_env = dict(env or {})
+        if "PATH" not in process_env:
+            venv_bin = get_workspace_root() / ".venv" / "bin"
+            current_path = os.environ.get("PATH", "")
+            if str(venv_bin) not in current_path:
+                current_path = f"{venv_bin}:{current_path}"
+            process_env["PATH"] = current_path
 
-        # Ensure the root workspace virtual environment is prioritized
-        # This guarantees that 'python3' and other tools point to the project-standard environment.
-        workspace_root = Path(__file__).resolve().parents[3]
-        venv_bin = workspace_root / ".venv" / "bin"
+        was_registered = supervisor.get_process(self.name) is not None
+        supervisor.register_process(
+            self.name,
+            cmd,
+            env=process_env,
+            log_file=self.log_file,
+            readiness=readiness,
+            enabled=True,
+        )
+        supervisor.apply()
+        if was_registered and not self.is_running():
+            # `project update` is a no-op when the config is byte-identical
+            # (a re-start after a failed run), so launch the process directly.
+            supervisor.start_process(self.name)
 
-        current_path = process_env.get("PATH", "")
-        if str(venv_bin) not in current_path:
-            current_path = f"{venv_bin}:{current_path}"
-        process_env["PATH"] = current_path
+        outcome, state = supervisor.wait_for_outcome(self.name)
+        if outcome == "failed":
+            status = (state or {}).get("status", "unknown")
+            exit_code = (state or {}).get("exit_code")
+            restarts = (state or {}).get("restarts", 0)
+            click.echo(
+                f"Error: {self.name.capitalize()} failed to start "
+                f"(status: {status}, exit code: {exit_code}, restarts: {restarts}). See {self.log_file}.",
+                err=True,
+            )
+            return
 
-        if env:
-            process_env.update(env)
-        if background:
-            with open(self.log_file, "w") as log:
-                process = subprocess.Popen(
-                    cmd,
-                    env=process_env,
-                    stdout=log,
-                    stderr=subprocess.STDOUT,
-                    start_new_session=True,
-                )
-                self.pid_file.write_text(str(process.pid))
-            click.echo(f"{self.name.capitalize()} started in background (PID: {process.pid})")
-            click.echo(f"Logs: {self.log_file}")
-        else:
+        assert state is not None  # ready/running/pending all carry a state
+        click.echo(f"{self.name.capitalize()} started (PID: {state.get('pid')})")
+        if outcome == "pending":
+            click.echo(f"  - Still initializing (readiness probe pending) — check 'aisland {self.name} status'.")
+        click.echo(f"Logs: {self.log_file}")
+
+        if not background:
+            click.echo(f"Following logs — press Ctrl+C to stop {self.name.capitalize()}...")
             try:
-                process = subprocess.Popen(cmd, env=process_env)
-                self.pid_file.write_text(str(process.pid))
-                process.wait()
+                supervisor.follow_logs(self.name)
             except KeyboardInterrupt:
-                click.echo(f"\nStopping {self.name.capitalize()}...")
-                process.terminate()
-                process.wait()
-            finally:
-                if self.pid_file.exists():
-                    self.pid_file.unlink()
+                pass
+            click.echo("")
+            self.stop()
 
     def stop(self) -> None:
-        """Stop the running service."""
-        pid = self.get_pid()
-        if not pid:
+        """Stop the running service (disable it in the desired state)."""
+        if not self.is_running():
             click.echo(f"{self.name.capitalize()} is not running.")
             return
 
-        click.echo(f"Stopping {self.name.capitalize()} (PID: {pid})...")
-        try:
-            if os.name == "nt":  # Windows
-                subprocess.run(["taskkill", "/F", "/T", "/PID", str(pid)], capture_output=True)
-            else:
-                os.kill(pid, signal.SIGTERM)
+        click.echo(f"Stopping {self.name.capitalize()} (PID: {self.get_pid()})...")
+        # Disable + apply (not a bare `process stop`): the desired-state
+        # document must record the stop, or the next config update would
+        # resurrect the process.
+        supervisor.set_enabled(self.name, False)
+        supervisor.apply()
+        state = supervisor.wait_for(self.name, running=False, timeout=15)
+        if state is not None and state.get("is_running"):
+            click.echo(f"Error: {self.name.capitalize()} did not stop in time.", err=True)
+            return
+        click.echo(f"{self.name.capitalize()} stopped.")
 
-            # Wait for shutdown
-            for _ in range(10):
-                if not self.is_running():
-                    break
-                time.sleep(0.5)
-
-            if self.pid_file.exists():
-                self.pid_file.unlink()
-            click.echo(f"{self.name.capitalize()} stopped.")
-        except OSError as e:
-            click.echo(f"Error stopping {self.name.capitalize()}: {e}")
+        # Post-flight: children that escaped the supervisor's process group
+        # (e.g. workers re-parented after their launcher died) can survive a
+        # stop and silently keep the port. Detect and tell the operator —
+        # the next `start` would otherwise fail its port pre-check mysteriously.
+        port = supervisor.get_registered_port(self.name)
+        if port is not None:
+            owner = supervisor.port_in_use(port)
+            if owner is not None:
+                owner_hint = f"PID {owner}" if owner and owner > 0 else "an unknown process"
+                click.echo(
+                    f"  - Warning: port {port} is still in use by {owner_hint} — "
+                    f"orphaned {self.name} child processes may have survived; stop them manually.",
+                    err=True,
+                )
 
     def status(self) -> None:
         """Display service status."""
-        running = self.is_running()
+        proc = supervisor.get_process(self.name)
+        running = bool(proc and proc.get("is_running"))
         status_str = click.style("Running", fg="green") if running else click.style("Stopped", fg="red")
         detail = ""
-        if running:
-            pid = self.get_pid()
-            ports = self._get_listening_ports(pid) if pid is not None else []
+        if running and proc is not None:
+            ports = supervisor.get_ports(self.name)
+            ready = proc.get("is_ready")
+            extras = [f"PID: {proc.get('pid')}"]
             if ports:
-                ports_str = ", ".join(str(p) for p in ports)
-                detail = f"(PID: {pid}, port: {ports_str})"
-            else:
-                detail = f"(PID: {pid})"
+                extras.append(f"port: {', '.join(str(p) for p in ports)}")
+            if ready and ready != "-":
+                extras.append(f"ready: {ready}")
+            detail = f"({', '.join(extras)})"
         click.echo(f"  {self.name.capitalize():<15} : {status_str} {detail}")
-
-    @staticmethod
-    def _get_listening_ports(pid: int) -> List[int]:
-        """Return the TCP ports the given PID (or its children) is LISTENing on.
-
-        Uses ``lsof`` on Unix and ``netstat`` on Windows. Best-effort: if the
-        underlying tool is missing or fails, returns an empty list.
-        """
-        ports: List[int] = []
-        try:
-            if os.name == "nt":
-                # Windows: netstat -ano | findstr LISTENING + filter by PID
-                result = subprocess.run(
-                    ["netstat", "-ano", "-p", "TCP"],
-                    capture_output=True,
-                    text=True,
-                    check=False,
-                )
-                for line in result.stdout.splitlines():
-                    parts = line.split()
-                    if len(parts) >= 5 and parts[3].upper() == "LISTENING" and parts[4] == str(pid):
-                        local_addr = parts[1]
-                        if ":" in local_addr:
-                            try:
-                                ports.append(int(local_addr.rsplit(":", 1)[1]))
-                            except ValueError:
-                                continue
-            else:
-                # Unix: include child processes via -R, then filter listening sockets.
-                # -F pn formats output as machine-readable: p<pid>\nn<addr>:port\n...
-                pids_to_check = [str(pid)] + BaseService._get_descendant_pids(pid)
-                result = subprocess.run(
-                    [
-                        "lsof",
-                        "-nP",
-                        "-iTCP",
-                        "-sTCP:LISTEN",
-                        "-a",
-                        "-p",
-                        ",".join(pids_to_check),
-                        "-F",
-                        "n",
-                    ],
-                    capture_output=True,
-                    text=True,
-                    check=False,
-                )
-                for line in result.stdout.splitlines():
-                    if not line.startswith("n"):
-                        continue
-                    addr = line[1:]
-                    if ":" not in addr:
-                        continue
-                    port_str = addr.rsplit(":", 1)[1]
-                    try:
-                        port = int(port_str)
-                    except ValueError:
-                        continue
-                    if port not in ports:
-                        ports.append(port)
-        except (FileNotFoundError, OSError, subprocess.SubprocessError):
-            return []
-        return sorted(ports)
-
-    @staticmethod
-    def _get_descendant_pids(pid: int) -> List[str]:
-        """Return descendant PIDs of ``pid`` using ``pgrep -P`` (Unix only)."""
-        descendants: List[str] = []
-        stack = [pid]
-        while stack:
-            parent = stack.pop()
-            try:
-                output = subprocess.check_output(["pgrep", "-P", str(parent)], text=True).strip()
-            except (subprocess.CalledProcessError, FileNotFoundError, OSError):
-                continue
-            for raw in output.splitlines():
-                try:
-                    child = int(raw)
-                except ValueError:
-                    continue
-                descendants.append(str(child))
-                stack.append(child)
-        return descendants
 
     def info(self) -> None:
         """Display detailed service information.
 
         Shows the common attributes every BaseService has: data directory,
-        log file, PID file, and the live PID/port if running. Subclasses
-        extend this to print service-specific details (URLs, credentials,
-        config paths) via ``super().info()``.
+        log file, and the live PID/port if running. Subclasses extend this to
+        print service-specific details (URLs, credentials, config paths) via
+        ``super().info()``.
         """
         click.echo(click.style(f"{self.name.capitalize()}:", bold=True))
         running = self.is_running()
@@ -304,13 +256,12 @@ class BaseService:
         if running:
             pid = self.get_pid()
             click.echo(f"  PID           : {pid}")
-            if pid is not None:
-                ports = self._get_listening_ports(pid)
-                if ports:
-                    click.echo(f"  Listening port: {', '.join(str(p) for p in ports)}")
+            ports = self.get_ports()
+            if ports:
+                click.echo(f"  Listening port: {', '.join(str(p) for p in ports)}")
         click.echo(f"  Data dir      : {self.service_data_dir}")
         click.echo(f"  Log file      : {self.log_file}")
-        click.echo(f"  PID file      : {self.pid_file}")
+        click.echo(f"  Supervisor    : process-compose ({supervisor.CONFIG_FILE})")
 
     def restart(self, **kwargs: Any) -> None:
         """Restart the service."""
@@ -324,9 +275,14 @@ class BaseService:
             click.echo(f"Error: {self.name} service does not have a launch method.")
 
     def reset(self) -> None:
-        """Stop the service and wipe its data directory, logs, and PID files."""
+        """Stop the service and wipe its data directory, logs, and registration."""
         if self.is_running():
             self.stop()
+
+        # Drop the supervisor registration too — a reset service should not
+        # linger (disabled) in the desired-state document.
+        if supervisor.remove_process(self.name) and supervisor.is_server_running():
+            supervisor.apply()
 
         if self.service_data_dir.exists():
             import shutil
@@ -337,9 +293,6 @@ class BaseService:
 
         if self.log_file.exists():
             self.log_file.unlink()
-
-        if self.pid_file.exists():
-            self.pid_file.unlink()
 
         click.echo(f"{self.name.capitalize()} data reset.")
 
@@ -355,23 +308,44 @@ def get_git_email() -> str:
 
 
 def get_workspace_root() -> Path:
-    """Resolve the absolute path to the workspace root by searching upwards for a marker."""
-    curr = Path(__file__).resolve()
-    # Search up to 6 levels up for the workspace root marker TASKS.md
-    for _ in range(6):
-        if (curr / "TASKS.md").exists():
-            return curr
-        curr = curr.parent
+    """Resolve the absolute path to the workspace root by searching upwards for a marker.
 
-    # Fallback to .git if TASKS.md not found
-    curr = Path(__file__).resolve()
-    for _ in range(6):
-        if (curr / ".git").exists():
-            return curr
-        curr = curr.parent
+    Marker choice is load-bearing. `TASKS.md` alone is NOT a workspace marker: the
+    2026-07-26 backlog restructuring made backlogs PROJECT-OWNED, so every project
+    dir carries one and an innermost-match walk stops at a PROJECT. Concretely,
+    `aisland/TASKS.md` made this return ``<root>/aisland``, which then named the
+    Jenkins orchestrator job "aisland" instead of "acme", set the global
+    ``WORKSPACE_ROOT`` env to the aisland dir (so every job's `customWorkspace`
+    pointed at ``<root>/aisland/<project>``), and looked for the workspace `.env`
+    one level too deep ("No workspace .env found; skipping injection").
 
-    # Absolute fallback
-    return Path(__file__).resolve().parents[3]
+    The workspace root is the SUPERPROJECT — the single directory carrying
+    ``.gitmodules`` (a submodule has a `.git` *file* and no `.gitmodules`). Prefer
+    that; when a checkout genuinely has no submodules, fall back to the OUTERMOST
+    `TASKS.md` — never the innermost — so a nested project can't win.
+    """
+    start = Path(__file__).resolve()
+    # start itself is a file; its parents are the candidate directories.
+    chain: List[Path] = list(start.parents)[:6]
+
+    # 1. The superproject: the one directory with .gitmodules (+ a TASKS.md, so a
+    #    stray .gitmodules elsewhere in the tree can't hijack the result).
+    for cand in chain:
+        if (cand / ".gitmodules").is_file() and (cand / "TASKS.md").exists():
+            return cand
+
+    # 2. No submodules in this checkout: OUTERMOST TASKS.md wins over a project's.
+    with_tasks = [cand for cand in chain if (cand / "TASKS.md").exists()]
+    if with_tasks:
+        return with_tasks[-1]
+
+    # 3. Outermost .git (the superproject's directory, not a submodule's file).
+    with_git = [cand for cand in chain if (cand / ".git").exists()]
+    if with_git:
+        return with_git[-1]
+
+    # 4. Absolute fallback: <root>/aisland/aisland/manager.py -> <root>.
+    return start.parents[2]
 
 
 def get_workspace_name() -> str:
@@ -498,6 +472,15 @@ def _install_brew_packages(packages: set) -> None:
             click.echo(f"  - Error: Failed to install {pkg}: {e}")
 
 
+def _sha256(path: Path) -> str:
+    """Return the hex sha256 of a file, read in chunks (constant memory)."""
+    digest = hashlib.sha256()
+    with open(path, "rb") as fh:
+        for chunk in iter(lambda: fh.read(1 << 20), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
 def _install_userspace_tool(name: str) -> None:
     """Install a tool from :data:`USERSPACE_TOOLS` entirely in userspace.
 
@@ -506,7 +489,10 @@ def _install_userspace_tool(name: str) -> None:
     ``aisland/bin/`` (which ``project.bashrc`` puts on ``PATH``). Idempotent:
     if every target binary symlink already exists, the download is skipped.
 
-    TODO: verify upstream SHASUMS before relying on this in untrusted setups.
+    Integrity: the tarball (freshly downloaded OR reused from the cache) is
+    verified against the pinned per-arch sha256 in :data:`USERSPACE_TOOLS`
+    before ANY extraction. A mismatch aborts and deletes the tarball; a tool
+    with no pinned digest for this arch installs with a loud warning.
     """
     spec = USERSPACE_TOOLS.get(name)
     if spec is None:
@@ -514,8 +500,11 @@ def _install_userspace_tool(name: str) -> None:
         return
 
     version = spec["version"]
-    url = spec["url"].format(version=version)
-    extract_subdir = spec["extract_subdir"].format(version=version)
+    arch = _LINUX_ARCH_ALIASES.get(platform.machine().lower(), "amd64")
+    url = spec["url"].format(version=version, arch=arch)
+    extract_subdir = spec["extract_subdir"].format(version=version, arch=arch)
+    # "" means a flat archive: binaries at the archive root, no bin/ subdir.
+    bin_subdir = spec.get("bin_subdir", "bin")
     binaries: list[str] = spec["binaries"]
 
     BIN_DIR.mkdir(parents=True, exist_ok=True)
@@ -540,18 +529,48 @@ def _install_userspace_tool(name: str) -> None:
     else:
         click.echo(f"  - Using cached tarball {tarball}.")
 
+    # Integrity gate: verify BEFORE extracting anything. This covers both the
+    # fresh download and a reused cache entry (a poisoned cache must not be
+    # trusted just because it is on disk). A mismatch => corrupt download or a
+    # tampered/re-uploaded asset: drop the tarball so a re-run re-fetches, and
+    # refuse to extract. A tool with no pinned digest for this arch installs
+    # UNVERIFIED with a loud warning (keeps a not-yet-pinned addition working
+    # while making the gap visible) — see the USERSPACE_TOOLS docstring.
+    expected = spec.get("sha256", {}).get(arch)
+    if expected:
+        actual = _sha256(tarball)
+        if actual.lower() != expected.lower():
+            click.echo(
+                f"  - Error: checksum mismatch for {tarball.name} "
+                f"(expected {expected}, got {actual}). Refusing to install {name}; "
+                f"deleting the tarball — re-run to re-download."
+            )
+            tarball.unlink()
+            return
+        click.echo(f"  - Verified {tarball.name} (sha256 OK).")
+    else:
+        click.echo(
+            f"  - Warning: no pinned sha256 for {name}/{arch}; installing UNVERIFIED. "
+            f"Add a digest to USERSPACE_TOOLS['{name}']['sha256']['{arch}']."
+        )
+
     extract_root = TOOLS_DIR / extract_subdir
     if not extract_root.exists():
-        click.echo(f"==> Extracting {tarball.name} into {TOOLS_DIR}...")
+        # A flat archive has no top-level directory of its own, so it must be
+        # extracted INTO extract_root; a subdir-style archive (node) brings
+        # its own top-level directory and extracts next to it in TOOLS_DIR.
+        extract_target = extract_root if not bin_subdir else TOOLS_DIR
+        extract_target.mkdir(parents=True, exist_ok=True)
+        click.echo(f"==> Extracting {tarball.name} into {extract_target}...")
         try:
             with tarfile.open(tarball, "r:*") as tf:
                 # `filter="data"` is the safe default in py3.14+ — block links/devices outside dest.
-                tf.extractall(TOOLS_DIR, filter="data")
+                tf.extractall(extract_target, filter="data")
         except Exception as e:
             click.echo(f"  - Error: Failed to extract {tarball}: {e}")
             return
 
-    tool_bin_dir = extract_root / "bin"
+    tool_bin_dir = extract_root / bin_subdir if bin_subdir else extract_root
     if not tool_bin_dir.is_dir():
         click.echo(f"  - Error: Expected {tool_bin_dir} to exist after extraction.")
         return
@@ -671,7 +690,7 @@ def get_install_order(workspace_root: Path) -> List[dict]:
     adj: dict[str, list[str]] = {p["name"]: [] for p in projects}
     for p in projects:
         for dep in p["dependencies"]:
-            # Extract package name from dependency string (e.g., 'logflow>=0.1.0' -> 'logflow')
+            # Extract package name from dependency string (e.g., 'loggair>=0.1.0' -> 'loggair')
             dep_name = dep.split(">=")[0].split("==")[0].split("<=")[0].split("[")[0].strip()
             if dep_name in project_names and dep_name != p["name"]:
                 adj[p["name"]].append(dep_name)
@@ -759,20 +778,66 @@ def _link_project_bashrc(workspace_root: Path) -> None:
     click.echo(f"==> Linked {link} -> {rel}")
 
 
+# Shared pyright exclude globs for the root and per-project configs below.
+_PYRIGHT_EXCLUDE = [
+    "**/__pycache__",
+    "**/.venv",
+    "**/.*_cache",
+    "**/node_modules",
+]
+
+
+def _ensure_gitignore_line(project_dir: Path, line: str) -> None:
+    """Append ``line`` to the project's ``.gitignore`` unless already covered (append-only, idempotent).
+
+    A generator that drops an artifact into a COMMITTED repo must also keep that
+    artifact out of git — otherwise every setup dirties the tree (the same
+    reasoning as the root ``.gitignore`` entries for ``pyrightconfig.json`` /
+    ``uv.toml``). Append-only like ``_sync_mypy_path``: existing entries are
+    never touched, and an entry with or without the leading ``/`` counts as
+    already covering the artifact.
+    """
+    gitignore = project_dir / ".gitignore"
+    covered = {line, line.lstrip("/")}
+    if gitignore.exists():
+        content = gitignore.read_text()
+        if any(entry.strip() in covered for entry in content.splitlines()):
+            return
+        sep = "" if (not content or content.endswith("\n")) else "\n"
+        gitignore.write_text(content + sep + line + "\n")
+    else:
+        gitignore.write_text(line + "\n")
+
+
 def _write_pyrightconfig(workspace_root: Path, projects: List[dict]) -> None:
-    """Generate ``<workspace>/pyrightconfig.json`` so editors resolve every workspace package.
+    """Generate ``pyrightconfig.json`` at the workspace root AND inside every project.
 
     The mono-repo lays each project out as ``<proj>/<pkg>/`` and installs them
     editable into the shared ``.venv``. Pyright / Pylance need each project root
     on ``extraPaths`` to resolve cross-project imports the same way the venv does
-    (e.g. ``import confluid`` finds ``confluid/confluid``).
+    (e.g. ``import confluid`` finds ``confluid/confluid``) — the editable-install
+    ``__editable__`` finder hooks are not statically resolvable.
 
-    Portability: every path is RELATIVE to the workspace root (where this file
-    lives) — ``venvPath: "."`` + ``venv: ".venv"`` point at ``./.venv`` without a
-    hardcoded absolute path, satisfying the workspace No-Hardcoded-Paths mandate.
-    The file is a generated artifact (gitignored, like
-    ``.project.bashrc.completion``) and is rewritten on every ``aisland setup`` so
-    it always tracks the live project set.
+    Two audiences, one generator:
+    - **Workspace root** — for editors opened on the whole mono-repo:
+      ``venvPath: "."`` + each project dir on ``extraPaths``.
+    - **Each project dir** — for editors opened on a single project as its own
+      workspace folder (pyright only reads the config at the opened root):
+      ``venvPath`` walks back to the shared workspace ``.venv`` and
+      ``extraPaths`` lists the sibling projects. This replaces the previously
+      COMMITTED per-project ``.vscode/settings.json`` ``extraPaths``, which
+      drifted (they still named pre-rename projects) and leaked
+      workspace-specific sibling paths to external consumers of a standalone
+      project. Note pyright IGNORES ``python.analysis.extraPaths`` from
+      ``settings.json`` whenever a ``pyrightconfig.json`` is present, so a
+      stale local ``settings.json`` is neutralized, not merged.
+
+    Portability: every path is RELATIVE to the file that carries it — no
+    hardcoded absolute path, satisfying the workspace No-Hardcoded-Paths
+    mandate. All copies are generated artifacts (gitignored — the root via the
+    root ``.gitignore``, each project via ``_ensure_gitignore_line``) and are
+    rewritten on every ``aisland setup`` so they always track the live project
+    set.
 
     Plain JSON (no comments): ``pyrightconfig.json`` is consumed by an external
     tool whose comment tolerance we don't control, so provenance is carried by
@@ -783,33 +848,89 @@ def _write_pyrightconfig(workspace_root: Path, projects: List[dict]) -> None:
         "venvPath": ".",
         "venv": ".venv",
         "extraPaths": extra_paths,
-        "exclude": [
-            "**/__pycache__",
-            "**/.venv",
-            "**/.*_cache",
-            "**/node_modules",
-        ],
+        "exclude": list(_PYRIGHT_EXCLUDE),
     }
     out = workspace_root / "pyrightconfig.json"
     out.write_text(json.dumps(config, indent=4) + "\n")
     click.echo(f"==> Wrote {out} ({len(extra_paths)} project paths)")
+
+    for project in projects:
+        project_dir = Path(project["path"])
+        siblings = sorted(os.path.relpath(p["path"], project_dir) for p in projects if Path(p["path"]) != project_dir)
+        project_config = {
+            "venvPath": os.path.relpath(workspace_root, project_dir),
+            "venv": ".venv",
+            "extraPaths": siblings,
+            "exclude": list(_PYRIGHT_EXCLUDE),
+        }
+        (project_dir / "pyrightconfig.json").write_text(json.dumps(project_config, indent=4) + "\n")
+        _ensure_gitignore_line(project_dir, "/pyrightconfig.json")
+    click.echo(f"==> Wrote per-project pyrightconfig.json into {len(projects)} project dir(s)")
+
+
+def _sync_mypy_path(workspace_root: Path, projects: List[dict]) -> None:
+    """Append missing project dirs to the ``mypy_path`` line of the root mypy.ini.
+
+    Unlike ``pyrightconfig.json``, the root ``mypy.ini`` is COMMITTED,
+    hand-maintained policy (dozens of per-module ``[mypy-*]`` sections) — not a
+    generated artifact. The only part that must track the live project set is
+    the ``mypy_path`` search path (the run-mypy-from-workspace-root mandate),
+    so setup keeps exactly that line complete. Append-only by design:
+
+    * entries are never removed — inactive submodules (e.g. ``vendorcli`` on a
+      non-corporate machine) stay listed, and mypy silently ignores path
+      entries that don't exist on this machine, so the committed file stays
+      identical across machines instead of churning per activation set;
+    * hand-added nested entries (``confluid/confluid``, ``aisland/aisland``)
+      are preserved untouched.
+    """
+    ini = workspace_root / "mypy.ini"
+    if not ini.exists():
+        click.echo("  - Warning: no mypy.ini at the workspace root; skipping mypy_path sync.")
+        return
+
+    lines = ini.read_text().splitlines()
+    line_no = next(
+        (i for i, line in enumerate(lines) if line.lstrip().startswith("mypy_path") and "=" in line),
+        None,
+    )
+    if line_no is None:
+        click.echo("  - Warning: mypy.ini has no 'mypy_path =' line; skipping mypy_path sync.")
+        return
+
+    key, _, value = lines[line_no].partition("=")
+    # mypy accepts ':' or ',' as the separator; preserve whichever the file uses.
+    separator = "," if "," in value else ":"
+    entries = [entry.strip() for entry in value.split(separator) if entry.strip()]
+
+    known = set(entries)
+    missing = sorted({rel for p in projects if (rel := os.path.relpath(p["path"], workspace_root)) not in known})
+    if not missing:
+        return
+
+    lines[line_no] = f"{key.rstrip()} = {separator.join(entries + missing)}"
+    ini.write_text("\n".join(lines) + "\n")
+    click.echo(f"==> mypy.ini: added {', '.join(missing)} to mypy_path")
 
 
 def _discover_mcp_servers(workspace_root: Path, venv_bin: Path) -> dict[str, dict]:
     """Discover workspace MCP servers and how to launch them.
 
     A project is treated as an MCP server when its ``[project.scripts]`` declares
-    an entry whose target is ``<pkg>.server:main`` AND that ``server.py`` actually
-    references FastMCP (``mcp.server.fastmcp``). The script name is the console
-    command installed into the venv; the server is keyed by the project name.
+    an entry whose target is ``<pkg>.server:main`` AND that ``server.py`` imports the
+    MCP SDK's server package (``mcp.server`` — ``mcp.server.mcpserver.MCPServer`` in
+    SDK 2.x, ``mcp.server.fastmcp.FastMCP`` in 1.x; the check reads the PACKAGE, not a
+    class name, because the class-name check went stale with the 2.x rename and a
+    regeneration silently listed navigaitor alone, 2026-09-05). The script name is the
+    console command installed into the venv; the server is keyed by the project name.
     Discovery (not a hand-maintained list) keeps the output tracking the live set
     — drop in a new ``*-mcp`` project and it appears automatically.
 
     Returns ``{server_name: {"command": "<venv_bin>/<script>"}}`` with ABSOLUTE
-    commands resolved against the LOCAL venv. Gemini launches each as a
+    commands resolved against the LOCAL venv. Every client launches each server as a
     subprocess from an arbitrary cwd, so the command must be absolute — which is
-    exactly why ``.gemini/settings.json`` is gitignored and regenerated per
-    machine instead of committed.
+    exactly why the client files (``.gemini/settings.json``, ``.mcp.json``) are
+    gitignored and regenerated per machine instead of committed.
     """
     import tomllib
 
@@ -834,11 +955,26 @@ def _discover_mcp_servers(workspace_root: Path, venv_bin: Path) -> dict[str, dic
                 text = server_file.read_text(encoding="utf-8")
             except OSError:
                 continue
-            if "FastMCP" not in text and "mcp.server.fastmcp" not in text:
-                continue
+            if "mcp.server" not in text:
+                continue  # a `.server:main` script that is not an MCP server (a web server, say)
             servers[name] = {"command": str(venv_bin / script_name)}
             break  # one MCP server per project
     return servers
+
+
+def _warn_missing_commands(servers: Dict[str, dict]) -> None:
+    """Name every discovered server whose console script is NOT in the venv — the tell of an
+    editable install that predates the project's ``[project.scripts]`` entry (measured
+    2026-09-05: annotaide's ``annotaide-mcp`` was discovered and written, and did not exist,
+    so the client would have spawned a missing binary). The map is still written — the
+    reinstall is the fix, and the next ``aisland setup`` performs it."""
+    for name, entry in sorted(servers.items()):
+        command = Path(entry["command"])
+        if not command.exists():
+            click.echo(
+                f"  - Warning: {name}'s MCP command {command} is not installed — refresh the editable install"
+                f" (`uv pip install -e ./{name}`) so the console script exists."
+            )
 
 
 def _write_gemini_settings(workspace_root: Path, venv_bin: Path) -> None:
@@ -851,6 +987,7 @@ def _write_gemini_settings(workspace_root: Path, venv_bin: Path) -> None:
     committed. The server set is discovered, never hand-maintained.
     """
     servers = _discover_mcp_servers(workspace_root, venv_bin)
+    _warn_missing_commands(servers)
     gemini_dir = workspace_root / ".gemini"
     gemini_dir.mkdir(exist_ok=True)
     out = gemini_dir / "settings.json"
@@ -859,14 +996,45 @@ def _write_gemini_settings(workspace_root: Path, venv_bin: Path) -> None:
     click.echo(f"==> Wrote {out} ({len(servers)} MCP server(s): {listed})")
 
 
-def generate_gemini_settings() -> None:
-    """Regenerate ``.gemini/settings.json`` for the local workspace + venv (standalone command)."""
-    workspace_root = get_workspace_root()
+def _write_mcp_json(workspace_root: Path, venv_bin: Path) -> None:
+    """Generate ``<workspace>/.mcp.json`` — Claude Code's PROJECT-scoped MCP servers.
+
+    Same discovered server map as the Gemini settings, same absolute venv commands,
+    same reason to stay gitignored. Claude Code reads the file when a session starts in
+    the workspace and asks once whether to use the project's servers; until this file
+    existed no workspace server reached a Claude Code session (``claude mcp list`` showed
+    only the user's own servers, measured 2026-09-05).
+    """
+    servers = _discover_mcp_servers(workspace_root, venv_bin)
+    _warn_missing_commands(servers)
+    out = workspace_root / ".mcp.json"
+    out.write_text(json.dumps({"mcpServers": servers}, indent=2) + "\n")
+    listed = ", ".join(sorted(servers)) or "none"
+    click.echo(f"==> Wrote {out} ({len(servers)} MCP server(s): {listed})")
+
+
+def _venv_bin_or_none(workspace_root: Path) -> Optional[Path]:
     venv_bin = workspace_root / ".venv" / "bin"
     if not venv_bin.exists():
         click.echo(f"Error: Virtual environment not found at {workspace_root / '.venv'}. Run aisland/setup.sh first.")
-        return
-    _write_gemini_settings(workspace_root, venv_bin)
+        return None
+    return venv_bin
+
+
+def generate_gemini_settings() -> None:
+    """Regenerate ``.gemini/settings.json`` for the local workspace + venv (standalone command)."""
+    workspace_root = get_workspace_root()
+    venv_bin = _venv_bin_or_none(workspace_root)
+    if venv_bin is not None:
+        _write_gemini_settings(workspace_root, venv_bin)
+
+
+def generate_mcp_json() -> None:
+    """Regenerate ``.mcp.json`` (Claude Code) for the local workspace + venv (standalone command)."""
+    workspace_root = get_workspace_root()
+    venv_bin = _venv_bin_or_none(workspace_root)
+    if venv_bin is not None:
+        _write_mcp_json(workspace_root, venv_bin)
 
 
 def submodule_active_map(workspace_root: Path) -> List[Tuple[str, str, bool]]:
@@ -912,9 +1080,17 @@ def reconcile_submodules(workspace_root: Path) -> None:
     so one inaccessible/dirty submodule never aborts ``aisland setup``. Keeps ``git submodule
     foreach`` (and tools like push-all) seeing exactly the submodules this workspace declares.
     """
+    from aisland.sources import detached_projects
+
     entries = submodule_active_map(workspace_root)
     if not entries:
         return
+    # A ``github`` or ``pypi`` source (see aisland/sources.py) means "consume it as a package;
+    # the directory stays empty" — the same working-tree state as ``active = false``. Folding it
+    # in here keeps the two mechanisms from fighting: without this, a source-driven deinit would
+    # be undone by the very next ``aisland setup``, which would re-init a submodule whose
+    # ``.gitmodules`` entry still says active.
+    detached = detached_projects(workspace_root)
     click.echo("==> Reconciling submodule checkouts with active flags...")
     for name, path, committed_active in entries:
         # Effective state = the per-machine ``.git/config`` override (set by the
@@ -923,6 +1099,8 @@ def reconcile_submodules(workspace_root: Path) -> None:
         # without committing the choice.
         local = _local_submodule_active(workspace_root, name)
         active = committed_active if local is None else local
+        if name in detached:
+            active = False
         # A submodule's ``.git`` is a gitlink file (or dir) only when it is checked out.
         initialized = (workspace_root / path / ".git").exists()
         if active and not initialized:
@@ -1020,12 +1198,28 @@ def _resolve_submodule_activation(
         _set_local_submodule_active(workspace_root, name, active)
 
 
-# Workspace-wide uv settings that are no single project's concern (the unified ``lightning``
-# package conflicts with ``pytorch-lightning`` across the workspace, so it's pinned to
-# never-install). Merged into the generated root uv.toml beneath every activated project's
-# own uv.toml.
+# Workspace-wide uv settings that are no single project's concern. Merged into the generated
+# root uv.toml beneath every activated project's own uv.toml. The never-true marker
+# (`sys_platform == 'never'`) is uv's idiom for "drop this requirement everywhere".
+#
+# * ``lightning`` — the unified package conflicts with ``pytorch-lightning`` workspace-wide.
+# * ``opencv-python`` — it and ``opencv-python-headless`` install the SAME files (both RECORDs
+#   claim ``cv2/cv2.abi3.so`` and ``cv2/.dylibs/*``) with DIFFERENT bundled native libraries, so
+#   having both installed lets any install that moves one variant leave ``cv2/.dylibs/`` mixed
+#   between two bundles — a dlopen failure at ``import cv2`` (seen: a leftover ffmpeg-6
+#   ``libavformat.60`` beside the other wheel's ``libsrt.1.5.4``). The workspace keeps HEADLESS
+#   only: nothing here needs the GUI build (ultralytics' cv2.imshow paths are all gated behind
+#   ``check_imshow``, which try/excepts; first-party code uses cv2.resize and friends).
+# * ``opencv-python-headless`` — pinned to the label-studio-sdk-compatible range because
+#   ``roboflow`` pins ``==4.10.0.84`` while ``label-studio-sdk`` needs ``>=4.12,<5``: the two are
+#   mutually unsatisfiable, so the choice is made explicitly here rather than left to install
+#   order (verified: roboflow + rfdetr import fine on 4.13).
 _ROOT_UV_BASE: Dict[str, Any] = {
-    "override-dependencies": ["lightning ; sys_platform == 'never'"],
+    "override-dependencies": [
+        "lightning ; sys_platform == 'never'",
+        "opencv-python ; sys_platform == 'never'",
+        "opencv-python-headless>=4.12,<5",
+    ],
 }
 
 
@@ -1101,9 +1295,18 @@ def _write_root_uv_toml(workspace_root: Path, activated: List[dict]) -> None:
 
 
 def setup_workspace(
-    non_interactive: bool = False, activate: Tuple[str, ...] = (), deactivate: Tuple[str, ...] = ()
+    non_interactive: bool = False,
+    activate: Tuple[str, ...] = (),
+    deactivate: Tuple[str, ...] = (),
+    framework: Tuple[str, ...] = (),
 ) -> None:
-    """Perform a full workspace setup: system provisioning followed by editable pip installs."""
+    """Perform a full workspace setup: system provisioning followed by editable pip installs.
+
+    ``framework`` names the ML frameworks to install (``--framework torch --framework keras``).
+    Passing any RECORDS the selection in ``config.toml``, so it is a one-time flag rather than
+    something to repeat on every run; omitting it uses the recorded selection, and prompts when
+    there is none. See :mod:`aisland.frameworks`.
+    """
     workspace_root = get_workspace_root()
     venv_bin = workspace_root / ".venv" / "bin"
 
@@ -1114,6 +1317,12 @@ def setup_workspace(
     # 0. Ensure uv is present in the venv — required by everything below and by
     #    every Jenkinsfile.local job that targets this workspace.
     uv_cmd = ensure_uv_in_venv(venv_bin)
+
+    # 0a. Fold any pre-2026-08-01 sources/frameworks/trackers.toml into the single config.toml.
+    #     A no-op (and byte-silent) once there is nothing left to migrate — see aisland.config.
+    from aisland.config import migrate as migrate_config
+
+    migrate_config(workspace_root)
 
     # 0b. Symlink the aisland-managed project.bashrc to the workspace root so
     #     users can `source ./project.bashrc` from the workspace as before.
@@ -1129,6 +1338,15 @@ def setup_workspace(
     _resolve_submodule_activation(workspace_root, non_interactive, activate, deactivate)
     reconcile_submodules(workspace_root)
 
+    # 1c. Per-project sources — put each managed project on its configured branch (git) or
+    #     replace it with the published wheel (pypi, which empties its directory). Runs BEFORE
+    #     discovery so a pypi-sourced project drops out of the editable-install loop below on
+    #     its own, and its wheel is already installed when a consumer's `.[dev]` resolves it.
+    from aisland.sources import apply_all, read_committed_sources, sync_code_workspace
+
+    apply_all(workspace_root, uv_cmd)
+    sync_code_workspace(workspace_root, read_committed_sources(workspace_root))
+
     # 2. Dependency Discovery (now reflects the active checkouts)
     click.echo(f"==> Resolving workspace dependency graph in {workspace_root}...")
     install_order = get_install_order(workspace_root)
@@ -1137,10 +1355,41 @@ def setup_workspace(
     #     cross-project imports against the same project set we install editable.
     _write_pyrightconfig(workspace_root, install_order)
 
+    # 2b'. Keep the COMMITTED root mypy.ini's mypy_path covering every discovered
+    #      project (append-only — see _sync_mypy_path for why nothing is removed).
+    _sync_mypy_path(workspace_root, install_order)
+
+    # 2b''. Framework selection — which ML frameworks this machine installs. Resolved AFTER
+    #       discovery (the vocabulary comes from the discovered projects' declarations) and
+    #       BEFORE the install loop, which reads it per project. Prompts once when nothing has
+    #       been chosen yet; a recorded choice is used silently.
+    from aisland.selection import (
+        AXES,
+        PLAYWRIGHT_BROWSER,
+        browser_install_command,
+        editable_target,
+        require_defined_declarations,
+        resolve_for_setup,
+    )
+
+    for axis in AXES:
+        # Only the framework axis takes a flag; the tracker axis resolves from its recorded
+        # selection (or prompts once), which is why `requested` is None for it.
+        selected, _just_chosen = resolve_for_setup(
+            workspace_root, framework if axis.plural == "frameworks" else None, non_interactive, axis
+        )
+        if selected:
+            click.echo(f"==> {axis.plural.capitalize()}: {', '.join(selected)}")
+
     # 2c. Generated root uv.toml — workspace base merged with each activated project's uv.toml,
     #     so a private index (e.g. vendorcli's Company Artifactory URLs) is present ONLY when that
     #     project is active. Written BEFORE the install loop so `uv pip install` sees the index.
     _write_root_uv_toml(workspace_root, install_order)
+
+    # 2d. Refuse while any project declares an extra it never defined. Checked over the
+    #     WHOLE workspace before ANYTHING is installed, so one run names every project to
+    #     fix rather than failing at the twelfth (user ruling 2026-08-25, option B).
+    require_defined_declarations(workspace_root)
 
     # 3. Provisioning (Git & Python)
     for project in install_order:
@@ -1153,7 +1402,11 @@ def setup_workspace(
             pass
 
         # Python Provisioning (Editable Installs)
-        target = f"{project_dir}[dev]" if project["has_dev"] else str(project_dir)
+        # Every extra this project DECLARES on either axis, narrowed to what the machine
+        # SELECTED — so a project declaring none installs exactly as it always did. Both axes
+        # go into ONE target: naming only one would describe a package nobody asked for. The
+        # helper is shared with `aisland source … local`, so the two installs cannot drift.
+        target = editable_target(workspace_root, project_dir, project["name"])
         click.echo(f"==> Installing {project['name']} ({target})...")
         try:
             # Run from the workspace root so uv reads the generated root uv.toml (the merged
@@ -1162,10 +1415,23 @@ def setup_workspace(
         except subprocess.CalledProcessError as e:
             click.echo(f"  - Error: Failed to install {project['name']}: {e}")
 
+        # A `playwright` dev dependency needs its browser fetched once the package is in — the
+        # SAME declaration the scaffolded CI reads, so a browser-driven test runs here as it
+        # runs there instead of skipping (see `selection.browser_install_command`).
+        browser = browser_install_command(project_dir / "pyproject.toml", venv_bin)
+        if browser:
+            click.echo(f"==> Installing Playwright's {PLAYWRIGHT_BROWSER} for {project['name']}...")
+            try:
+                subprocess.check_call(browser, cwd=project_dir)
+            except (subprocess.CalledProcessError, FileNotFoundError) as e:
+                click.echo(f"  - Error: Failed to install Playwright's {PLAYWRIGHT_BROWSER} for {project['name']}: {e}")
+
     # 4. MCP client config — register every workspace MCP server (navigaitor,
-    #    vendorcli, …) for Gemini CLI with locally-resolved absolute venv paths.
-    #    Written after the editable installs so the console scripts exist.
+    #    vendorcli, annotaide, …) for the Gemini CLI AND for Claude Code, with
+    #    locally-resolved absolute venv paths. Written after the editable installs
+    #    so the console scripts exist.
     _write_gemini_settings(workspace_root, venv_bin)
+    _write_mcp_json(workspace_root, venv_bin)
 
     click.echo("==> Workspace setup complete!")
 

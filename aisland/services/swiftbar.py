@@ -1,4 +1,5 @@
 import os
+import platform
 import subprocess
 from pathlib import Path
 from typing import Any, List, Optional
@@ -15,6 +16,19 @@ class SwiftBarService(BaseService):
         super().__init__("swiftbar")
         self.plugins_dir = self.service_data_dir / "plugins"
         self.plugins_dir.mkdir(parents=True, exist_ok=True)
+
+    @staticmethod
+    def _require_macos() -> bool:
+        """True on macOS; otherwise report and skip.
+
+        SwiftBar is a macOS-only menu bar app and every action here shells out
+        to macOS-only tools (``open``, ``defaults``, ``pkill``). Note that
+        ``os.name`` is NOT a valid guard — Linux is also ``"posix"``.
+        """
+        if platform.system() != "Darwin":
+            click.echo("SwiftBar is only supported on macOS — skipping.")
+            return False
+        return True
 
     def _get_github_repo(self, path: Path) -> Optional[str]:
         """Return nameWithOwner if the path is a GitHub repo."""
@@ -70,7 +84,7 @@ class SwiftBarService(BaseService):
             deps: set[str] = set()
             for raw in p["dependencies"]:
                 # Strip version specifiers, extras, and URL fragments so that
-                # 'logflow>=0.1.0', 'pkg[extra]', and 'torchsig @ git+https://...'
+                # 'loggair>=0.1.0', 'pkg[extra]', and 'torchsig @ git+https://...'
                 # all reduce to the bare distribution name.
                 dep_name = (
                     raw.split("@")[0].split(">=")[0].split("==")[0].split("<=")[0].split("[")[0].split()[0].strip()
@@ -91,6 +105,9 @@ class SwiftBarService(BaseService):
 
     def init_scripts(self) -> None:
         """Scan workspace and generate SwiftBar scripts for Jenkins and GitHub."""
+        if not self._require_macos():
+            return
+
         workspace_root = get_workspace_root()
         click.echo(f"Initializing SwiftBar scripts in {self.plugins_dir}...")
 
@@ -193,8 +210,7 @@ class SwiftBarService(BaseService):
 
     def launch(self) -> None:
         """Start the SwiftBar application."""
-        if os.name != "posix":
-            click.echo("SwiftBar is only supported on macOS.")
+        if not self._require_macos():
             return
 
         click.echo("Starting SwiftBar...")
@@ -206,8 +222,7 @@ class SwiftBarService(BaseService):
 
     def stop(self) -> None:
         """Stop the SwiftBar application."""
-        if os.name != "posix":
-            click.echo("SwiftBar is only supported on macOS.")
+        if not self._require_macos():
             return
 
         click.echo("Stopping SwiftBar...")
@@ -219,6 +234,8 @@ class SwiftBarService(BaseService):
 
     def restart(self, **kwargs: Any) -> None:
         """Restart SwiftBar."""
+        if not self._require_macos():
+            return
         self.stop()
         import time
 
@@ -227,6 +244,8 @@ class SwiftBarService(BaseService):
 
     def remove(self) -> None:
         """Clear SwiftBar configuration if it points to this workspace."""
+        if not self._require_macos():
+            return
         keys = ["PluginDirectory", "PluginsDirectory"]
         for key in keys:
             try:
@@ -248,6 +267,9 @@ class SwiftBarService(BaseService):
 
     def status(self) -> None:
         """Display SwiftBar status."""
+        if platform.system() != "Darwin":
+            click.echo(f"  Swiftbar        : {click.style('Not supported (macOS only)', fg='yellow')}")
+            return
         try:
             subprocess.check_output(["pgrep", "SwiftBar"])
             status_str = click.style("Running", fg="green")
@@ -259,6 +281,9 @@ class SwiftBarService(BaseService):
     def info(self) -> None:
         """Show detailed SwiftBar configuration."""
         click.echo(click.style("Swiftbar:", bold=True))
+        if platform.system() != "Darwin":
+            click.echo(f"  Status        : {click.style('Not supported (macOS only)', fg='yellow')}")
+            return
         try:
             subprocess.check_output(["pgrep", "SwiftBar"])
             click.echo(f"  Status        : {click.style('Running', fg='green')}")

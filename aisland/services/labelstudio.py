@@ -34,8 +34,7 @@ class LabelStudioService(BaseService):
         """Show detailed Label Studio configuration."""
         super().info()
         default_port = 9081
-        pid = self.get_pid()
-        ports = self._get_listening_ports(pid) if pid is not None else []
+        ports = self.get_ports()
         url_port = ports[0] if ports else default_port
 
         env_values = self._read_env_values()
@@ -45,9 +44,11 @@ class LabelStudioService(BaseService):
 
         from aisland.manager import get_git_email, get_workspace_name, get_workspace_root
 
+        username = env_values.get("LABELSTUDIO_USERNAME") or f"{get_git_email()} (default — git email)"
+        password = env_values.get("LABELSTUDIO_PASSWORD") or f"{get_workspace_name()} (default — workspace name)"
         click.echo(f"  URL           : {url}")
-        click.echo(f"  Username      : {get_git_email()} (default — git email)")
-        click.echo(f"  Password      : {get_workspace_name()} (default — workspace name)")
+        click.echo(f"  Username      : {username}")
+        click.echo(f"  Password      : {password}")
         click.echo(f"  API token     : {token if token else '(not yet generated — start Label Studio to create it)'}")
         click.echo(f"  Data dir      : {self.data_dir}")
         click.echo(f"  Local files   : {local_files_root}")
@@ -55,20 +56,9 @@ class LabelStudioService(BaseService):
 
     def _read_env_values(self) -> dict:
         """Return ``LABELSTUDIO_*`` entries from the workspace .env file (best-effort)."""
-        from aisland.manager import get_workspace_root
+        from aisland import supervisor
 
-        env_file = get_workspace_root() / ".env"
-        if not env_file.exists():
-            return {}
-        out: dict = {}
-        for line in env_file.read_text().splitlines():
-            line = line.strip()
-            if not line or line.startswith("#") or "=" not in line:
-                continue
-            key, _, value = line.partition("=")
-            if key.startswith("LABELSTUDIO_"):
-                out[key] = value
-        return out
+        return {k: v for k, v in supervisor.read_workspace_env().items() if k.startswith("LABELSTUDIO_")}
 
     def launch(
         self,
@@ -78,42 +68,56 @@ class LabelStudioService(BaseService):
         password: Optional[str] = None,
         user_token: Optional[str] = None,
     ) -> None:
-        """Start the Label Studio server."""
+        """Start the Label Studio server.
+
+        Credentials resolve as *explicit argument → workspace ``.env`` →
+        derived default* (git email / workspace name / generated token), and
+        the resolved values are written back to ``.env`` — the single source
+        of truth, shared with downstream clients (annotaide, signals).
+        The server process receives them ONLY through environment variables
+        (label-studio reads ``LABEL_STUDIO_*``), and those entries are stored
+        in the supervisor document as ``${LABELSTUDIO_*}`` references — so no
+        credential appears in the ``ps``-visible argv or in the generated
+        ``process-compose.yaml``. ``supervisor.apply()`` expands the
+        references from ``.env`` on every update.
+        """
         self.setup()
 
         from aisland.manager import get_workspace_name
 
+        env_values = self._read_env_values()
         ws_name = get_workspace_name()
-        if password is None:
-            password = ws_name
-        if user_token is None:
-            user_token = f"{ws_name}_token_1234567890abcdef12345678"
-
         if username is None:
-            username = get_git_email()
+            username = env_values.get("LABELSTUDIO_USERNAME") or get_git_email()
+        if password is None:
+            password = env_values.get("LABELSTUDIO_PASSWORD") or ws_name
+        if user_token is None:
+            user_token = env_values.get("LABELSTUDIO_TOKEN") or f"{ws_name}_token_1234567890abcdef12345678"
 
         # Ensure the local-files document root exists before LS opens it.
         self.local_files_root.mkdir(parents=True, exist_ok=True)
 
-        # Update .env file with the token, URL, and local-files root (so
-        # downstream pipelines like signals segmentation can write their
-        # PNGs inside it and annotaide can reference them via
-        # /data/local-files/?d=<rel>).
-        self._update_env_file(user_token, port)
+        # Publish the resolved credentials, URL, and local-files root to the
+        # workspace .env (downstream pipelines read LABELSTUDIO_TOKEN/URL and
+        # write PNGs under the local-files root for /data/local-files/?d=<rel>).
+        self._update_env_file(username, password, user_token, port)
 
         click.echo(f"Label Studio: http://localhost:{port}")
         click.echo(f"  Username: {username}")
         click.echo(f"  Password: {password}")
         click.echo(f"  Local files root: {self.local_files_root}")
 
-        # Label Studio environment variables for data persistence + local-files serving
+        # Label Studio environment variables for data persistence + local-files
+        # serving. The credential entries are ${...} REFERENCES to the .env
+        # keys published above — expanded client-side by supervisor.apply(),
+        # never stored as literals in the supervisor document.
         env = {
             "LABEL_STUDIO_BASE_DATA_DIR": str(self.data_dir),
             "LABEL_STUDIO_DISABLE_SIGNUP_WITHOUT_LINK": "true",  # Security best practice
             "LABEL_STUDIO_ENABLE_LEGACY_API_TOKEN": "true",  # Allow simple token auth
-            "LABEL_STUDIO_USERNAME": username,
-            "LABEL_STUDIO_PASSWORD": password,
-            "LABEL_STUDIO_USER_TOKEN": user_token,
+            "LABEL_STUDIO_USERNAME": "${LABELSTUDIO_USERNAME}",
+            "LABEL_STUDIO_PASSWORD": "${LABELSTUDIO_PASSWORD}",
+            "LABEL_STUDIO_USER_TOKEN": "${LABELSTUDIO_TOKEN}",
             # Enable reading PNGs / images from the local-files root so tasks
             # can use /data/local-files/?d=<rel-path> image URLs.
             "LABEL_STUDIO_LOCAL_FILES_SERVING_ENABLED": "true",
@@ -125,22 +129,21 @@ class LabelStudioService(BaseService):
             "start",
             "--port",
             str(port),
-            "--username",
-            username,
-            "--password",
-            password,
-            "--user-token",
-            user_token,
-            "--enable-legacy-api-token",
             "--no-browser",
         ]
 
-        self.start(cmd, env=env, background=background)
+        # Label Studio (Django) exposes /health for load-balancer checks.
+        self.start(cmd, env=env, background=background, readiness={"port": port, "path": "/health"})
 
-    def _update_env_file(self, token: str, port: int = 9081) -> None:
+    def _update_env_file(self, username: str, password: str, token: str, port: int = 9081) -> None:
         """Add/replace LABELSTUDIO_* entries in the root .env file.
 
-        Writes:
+        The .env file is the single source of truth for the Label Studio
+        configuration — ``launch()`` reads existing values from it first, so
+        a user edit survives restarts; this method writes the resolved values
+        back so the file always reflects the running configuration. Writes:
+          * ``LABELSTUDIO_USERNAME`` / ``LABELSTUDIO_PASSWORD`` — login
+            credentials (default: git email / workspace name).
           * ``LABELSTUDIO_TOKEN`` — legacy API token for programmatic access.
           * ``LABELSTUDIO_URL`` — base URL the client uses.
           * ``LABELSTUDIO_LOCAL_FILES_ROOT`` — absolute path to the directory
@@ -153,6 +156,8 @@ class LabelStudioService(BaseService):
         env_file = workspace_root / ".env"
         url = f"http://localhost:{port}"
         entries = {
+            "LABELSTUDIO_USERNAME": username,
+            "LABELSTUDIO_PASSWORD": password,
             "LABELSTUDIO_TOKEN": token,
             "LABELSTUDIO_URL": url,
             "LABELSTUDIO_LOCAL_FILES_ROOT": str(self.local_files_root),
@@ -161,7 +166,7 @@ class LabelStudioService(BaseService):
         if not env_file.exists():
             env_file.write_text("\n".join(f"{k}={v}" for k, v in entries.items()) + "\n")
             click.echo(
-                f"Created .env with LABELSTUDIO_TOKEN, LABELSTUDIO_URL={url}, "
+                f"Created .env with LABELSTUDIO_USERNAME/PASSWORD/TOKEN, LABELSTUDIO_URL={url}, "
                 f"LABELSTUDIO_LOCAL_FILES_ROOT={self.local_files_root}."
             )
             return
@@ -186,5 +191,6 @@ class LabelStudioService(BaseService):
 
         env_file.write_text("\n".join(new_content) + "\n")
         click.echo(
-            f"Updated .env with LABELSTUDIO_TOKEN, LABELSTUDIO_URL={url}, LABELSTUDIO_LOCAL_FILES_ROOT={self.local_files_root}."
+            f"Updated .env with LABELSTUDIO_USERNAME/PASSWORD/TOKEN, LABELSTUDIO_URL={url}, "
+            f"LABELSTUDIO_LOCAL_FILES_ROOT={self.local_files_root}."
         )

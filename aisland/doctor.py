@@ -1,0 +1,365 @@
+"""Preflight health checks for known-recurring environment skew.
+
+Some breakages in this workspace are *environment* skew, not code. The venv is shared by
+every project and built incrementally, so one `pip install` can leave a package pair
+inconsistent; the Docker layer (Colima) has its own equivalents — a client config left behind
+by an uninstalled tool, a VM whose trust store does not match the network the host is on.
+Those failures surface far from their cause — a `dlopen` error inside a pytest COLLECTION
+step, an `ImportError` three libraries deep in an unrelated import chain, a `docker pull`
+dying on credentials it does not need — and cost a long diagnosis every time they recur.
+
+Each check here encodes one such skew that `AGENTS.md` documents as recurring, together with
+the remediation recorded there. The point is to turn a twenty-minute forensic session into
+one line of output before a build starts.
+
+Adding a check: write a ``check_*`` function returning a :class:`CheckResult` and add it to
+:data:`CHECKS`. A check MUST be cheap, read-only, and specific — it reports a known-recurring
+skew with the exact command that fixes it, never a generic "something looks off".
+"""
+
+import json
+import shutil
+import subprocess
+import sys
+from dataclasses import dataclass
+from importlib.metadata import PackageNotFoundError, version
+from pathlib import Path
+from typing import Callable, List, Optional, Tuple
+
+import click
+
+from aisland.services.docker import DockerService
+
+#: The OpenCV variant the workspace keeps. Both distributions install the SAME files
+#: (`cv2/cv2.abi3.so` + `cv2/.dylibs/*` appear in BOTH RECORDs) with different bundled native
+#: libraries, so only one may be present. `manager._ROOT_UV_BASE` enforces that by dropping
+#: the GUI wheel workspace-wide (`opencv-python ; sys_platform == 'never'`).
+_OPENCV_KEPT = "opencv-python-headless"
+
+#: The variant the uv override drops. Its presence means something installed OUTSIDE the
+#: override — `pip` does not read `uv.toml`, and some libraries self-install requirements.
+_OPENCV_DROPPED = "opencv-python"
+
+
+#: The exact symbol every MCP server in the workspace imports. The 2.x SDK renamed BOTH the
+#: module and the class (`mcp.server.fastmcp.FastMCP` -> `mcp.server.mcpserver.MCPServer`) and
+#: the two spellings NEVER coexist — 1.x ships only the old one, 2.x only the new. Because the
+#: consuming projects declare an unbounded floor, either version resolves cleanly and the
+#: mismatch surfaces only when someone actually starts a server.
+_MCP_SERVER_IMPORT = "from mcp.server.mcpserver import MCPServer"
+
+
+#: The URL the VM-trust probe fetches: the registry the workspace's digest-pinned containers
+#: actually pull from (`aisland iqengine`'s image lives on ghcr.io). Any HTTP answer — even a
+#: 401 — proves the TLS handshake verified; curl exit 60 is specifically "certificate
+#: verification failed".
+_VM_TLS_PROBE_URL = "https://ghcr.io/v2/"
+
+#: Drop the `credsStore` key from the docker client config, with a backup first. Removing the
+#: key (rather than repointing it) is correct because the workspace's registries are public —
+#: with `auths` empty and no helper configured, every pull runs anonymously.
+_CREDSSTORE_REMEDY = (
+    "cp ~/.docker/config.json ~/.docker/config.json.bak && "
+    "python3 -c \"import json,pathlib; p=pathlib.Path.home()/'.docker'/'config.json'; "
+    "c=json.loads(p.read_text()); c.pop('credsStore',None); "
+    "p.write_text(json.dumps(c,indent=2)+'\\n')\""
+)
+
+#: Install the CA chain the network actually presents into the VM's trust store. Capturing it
+#: from a live handshake (rather than naming a corporate CA file) works for ANY intercepting
+#: proxy and stays correct when the proxy's chain rotates; the leaf riding along in the bundle
+#: is inert (it cannot sign, so it anchors nothing).
+_VM_CA_REMEDY = (
+    "echo | openssl s_client -connect ghcr.io:443 -servername ghcr.io -showcerts 2>/dev/null"
+    " | awk '/BEGIN CERT/,/END CERT/'"
+    " | colima ssh -- sudo tee /usr/local/share/ca-certificates/corporate-proxy-ca.crt >/dev/null"
+    " && colima ssh -- sudo update-ca-certificates"
+    " && colima ssh -- sudo systemctl restart docker"
+)
+
+
+@dataclass(frozen=True)
+class CheckResult:
+    """Outcome of one health check.
+
+    Args:
+        name: Short check identifier shown in the report.
+        ok: True when the environment is healthy for this check.
+        detail: One line describing what was found (shown pass or fail).
+        remedy: Copy-pasteable command that fixes it — required when ``ok`` is False.
+    """
+
+    name: str
+    ok: bool
+    detail: str
+    remedy: str = ""
+
+
+def _installed_version(distribution: str) -> Optional[str]:
+    """Version of ``distribution`` in the running interpreter, or None if absent."""
+    try:
+        return version(distribution)
+    except PackageNotFoundError:
+        return None
+
+
+def _import_probe(statement: str) -> Tuple[bool, str]:
+    """Run ``statement`` in a SUBPROCESS; return (succeeded, first error line).
+
+    A subprocess because these probes import libraries that can abort the interpreter on a
+    broken native bundle — a doctor that dies while diagnosing is worse than no doctor. It
+    also keeps heavy modules out of the CLI's own process.
+    """
+    completed = subprocess.run(
+        [sys.executable, "-c", statement],
+        capture_output=True,
+        text=True,
+    )
+    if completed.returncode == 0:
+        return True, completed.stdout.strip()
+    error_lines = [ln for ln in (completed.stderr or "").strip().splitlines() if ln.strip()]
+    return False, error_lines[-1] if error_lines else f"exit code {completed.returncode}"
+
+
+def check_opencv_single_variant() -> CheckResult:
+    """Exactly ONE OpenCV distribution may be installed — the two overwrite each other's files.
+
+    `opencv-python` and `opencv-python-headless` ship the same `cv2/` package with DIFFERENT
+    bundled native libraries, and both claim `cv2/cv2.abi3.so` + `cv2/.dylibs/*` in their
+    RECORD. Several projects pull each one (ultralytics / torchsig / supervision want the GUI
+    wheel; albumentations / fiftyone / label-studio-sdk want headless), so
+    `manager._ROOT_UV_BASE` resolves the conflict workspace-wide by dropping the GUI wheel
+    (`opencv-python ; sys_platform == 'never'`) and keeping `opencv-python-headless>=4.12,<5`.
+
+    The GUI wheel coming back means something installed outside that override — plain `pip`
+    ignores `uv.toml`, and libraries like ultralytics self-install their requirements at
+    runtime. Once both are present, the next install of either rewrites the other's bundled
+    libs and `cv2/.dylibs/` ends up mixed between two wheels: ``Library not loaded:
+    @loader_path/libsrt.1.5.3.dylib`` from a leftover `libavformat.60.*` — surfacing as a
+    pytest COLLECTION error in every suite that imports cv2.
+    """
+    dropped = _installed_version(_OPENCV_DROPPED)
+    kept = _installed_version(_OPENCV_KEPT)
+
+    if dropped is not None:
+        detail = f"{_OPENCV_DROPPED}={dropped} is installed; the workspace override drops it"
+        if kept is not None:
+            detail += f" and keeps {_OPENCV_KEPT}={kept} — both own cv2/, so .dylibs will mix"
+        return CheckResult(
+            "opencv",
+            False,
+            detail,
+            f"uv pip uninstall {_OPENCV_DROPPED} && uv pip install --force-reinstall {_OPENCV_KEPT}"
+            "   # use `uv pip`, not `pip` — pip does not read uv.toml's overrides",
+        )
+
+    if kept is None:
+        return CheckResult("opencv", True, "no OpenCV installed — nothing to skew")
+
+    ok, output = _import_probe("import cv2; print(cv2.__version__)")
+    if not ok:
+        return CheckResult(
+            "opencv",
+            False,
+            f"`import cv2` fails: {output}",
+            f"uv pip install --force-reinstall {_OPENCV_KEPT}",
+        )
+    return CheckResult("opencv", True, f"cv2 {output} imports; only {_OPENCV_KEPT}={kept} installed")
+
+
+def check_huggingface_hub_floor() -> CheckResult:
+    """`huggingface_hub` must not sit below the floor `transformers` imports against.
+
+    `transformers` (5.x) imports `is_offline_mode`, which exists only in `huggingface_hub`
+    1.x, but an incrementally-built venv can leave the 0.x that satisfied `datasets` /
+    `tokenizers` when they were first installed. The failure surfaces while importing
+    `pytorch_lightning` (via `torchmetrics` -> `transformers`), nowhere near its cause.
+    """
+    if _installed_version("transformers") is None:
+        return CheckResult("huggingface_hub", True, "transformers not installed — floor does not apply")
+
+    ok, output = _import_probe(
+        "from huggingface_hub import is_offline_mode; import huggingface_hub as h; print(h.__version__)"
+    )
+    if not ok:
+        return CheckResult(
+            "huggingface_hub",
+            False,
+            f"transformers' import surface is missing: {output}",
+            "uv pip install 'huggingface_hub>=1.5.0,<2.0'",
+        )
+    return CheckResult("huggingface_hub", True, f"huggingface_hub {output} satisfies transformers' import surface")
+
+
+def check_mcp_server_api() -> CheckResult:
+    """The installed `mcp` must expose the server class the workspace's MCP servers import.
+
+    `mcp` 2.0 renamed `mcp.server.fastmcp.FastMCP` to `mcp.server.mcpserver.MCPServer`. The
+    names do not overlap, so a venv holding either version satisfies an unbounded
+    `mcp>=1.9.0` floor while breaking whichever side the code is not written against. The
+    failure is invisible until an MCP server is launched — a CLI built on the same package
+    keeps working, because it never imports the server module.
+    """
+    if _installed_version("mcp") is None:
+        return CheckResult("mcp", True, "mcp not installed — no MCP server surface in play")
+
+    ok, output = _import_probe(f"{_MCP_SERVER_IMPORT}; import importlib.metadata as m; print(m.version('mcp'))")
+    if not ok:
+        return CheckResult(
+            "mcp",
+            False,
+            f"the MCP server class is missing — servers cannot start: {output}",
+            "uv pip install 'mcp>=2.0'",
+        )
+    return CheckResult("mcp", True, f"mcp {output} exposes MCPServer — MCP servers can start")
+
+
+def check_docker_credsstore() -> CheckResult:
+    """`~/.docker/config.json` must not name a credential helper that does not exist.
+
+    Docker Desktop writes ``"credsStore": "desktop"`` into the client config and ships the
+    `docker-credential-desktop` binary; uninstalling it in favour of Colima leaves the config
+    behind with the binary gone, and the docker CLI then consults the dead helper on EVERY
+    pull — ``exec: "docker-credential-desktop": executable file not found in $PATH`` — even
+    for public images that need no credentials at all (hit 2026-08-31 by `aisland iqengine
+    start`; documented in the root AGENTS.md alongside the other recurring skews). The remedy
+    removes the key rather than repointing it: with ``auths`` empty, anonymous pulls are the
+    correct state for this workspace's public registries.
+    """
+    config_path = Path.home() / ".docker" / "config.json"
+    if not config_path.exists():
+        return CheckResult("docker-creds", True, "no ~/.docker/config.json — nothing to skew")
+
+    try:
+        document = json.loads(config_path.read_text())
+    except (OSError, json.JSONDecodeError) as error:
+        # An inconclusive probe must never cry wolf (same principle as
+        # `supervisor._preflight_full_disk_access`): a mangled config is docker's to report.
+        return CheckResult("docker-creds", True, f"~/.docker/config.json did not parse ({error}) — inconclusive")
+    if not isinstance(document, dict) or not document.get("credsStore"):
+        detail = (
+            "no credsStore configured — public pulls run anonymously"
+            if isinstance(document, dict)
+            else "~/.docker/config.json is not a JSON object — inconclusive"
+        )
+        return CheckResult("docker-creds", True, detail)
+
+    store = document["credsStore"]
+    helper = f"docker-credential-{store}"
+    if shutil.which(helper) is None:
+        return CheckResult(
+            "docker-creds",
+            False,
+            f'credsStore "{store}" needs {helper}, which is not on PATH — '
+            "every docker pull dies before contacting the registry",
+            _CREDSSTORE_REMEDY,
+        )
+    return CheckResult("docker-creds", True, f'credsStore "{store}" resolves — {helper} is on PATH')
+
+
+def _colima_running() -> bool:
+    """Whether the Colima VM is up — the docker service's exit-code judgement, reused.
+
+    `DockerService.is_running` judges by `colima status`'s EXIT CODE, never its text (see the
+    mandate in aisland's AGENTS.md); this seam exists so tests can control the answer.
+    """
+    return DockerService().is_running()
+
+
+def _vm_curl_exit(url: str) -> int:
+    """Exit code of ``curl -sI <url>`` run INSIDE the Colima VM.
+
+    In a subprocess for the same reason as :func:`_import_probe` — and inside the VM because
+    that is where the docker daemon verifies TLS: the HOST succeeding proves nothing about the
+    VM's trust store, which is the thing that breaks.
+    """
+    completed = subprocess.run(
+        ["colima", "ssh", "--", "curl", "-sI", "-o", "/dev/null", "--max-time", "10", url],
+        capture_output=True,
+    )
+    return completed.returncode
+
+
+def check_colima_vm_trust() -> CheckResult:
+    """The Colima VM must be able to verify TLS on the network the host is on.
+
+    A TLS-intercepting corporate firewall re-signs all traffic with a private CA that macOS
+    trusts (System keychain) but the Ubuntu VM inside Colima does not, so every `docker pull`
+    dies with ``tls: failed to verify certificate: x509: certificate signed by unknown
+    authority`` while the same URL works on the host (hit 2026-08-31; documented in the root
+    AGENTS.md). The remedy installs the CA into the VM — which does NOT survive
+    ``colima delete``, so this check is what turns the post-recreation re-diagnosis into one
+    line. Judged by curl's exit code: 60 is specifically "certificate verification failed";
+    any HTTP answer means the handshake verified; other network errors are inconclusive, not
+    failures. A stopped VM passes with a note — the doctor never boots a VM, and a laptop not
+    running Docker must pass preflight.
+    """
+    if shutil.which("colima") is None:
+        return CheckResult("colima-tls", True, "colima not installed — no VM trust store in play")
+    if not _colima_running():
+        return CheckResult("colima-tls", True, "Colima is not running — VM trust store not probed")
+
+    exit_code = _vm_curl_exit(_VM_TLS_PROBE_URL)
+    if exit_code == 60:
+        return CheckResult(
+            "colima-tls",
+            False,
+            f"the VM cannot verify TLS to {_VM_TLS_PROBE_URL} (curl exit 60) — an intercepting "
+            "proxy's CA is trusted by macOS but not by the VM, so every docker pull fails",
+            _VM_CA_REMEDY,
+        )
+    if exit_code != 0:
+        return CheckResult(
+            "colima-tls", True, f"probe inconclusive (curl exit {exit_code}) — a network error, not a trust failure"
+        )
+    return CheckResult("colima-tls", True, f"the VM verifies TLS to {_VM_TLS_PROBE_URL} — pulls can download")
+
+
+#: Every check the doctor runs, in report order.
+CHECKS: Tuple[Callable[[], CheckResult], ...] = (
+    check_opencv_single_variant,
+    check_huggingface_hub_floor,
+    check_mcp_server_api,
+    check_docker_credsstore,
+    check_colima_vm_trust,
+)
+
+
+def run_checks() -> List[CheckResult]:
+    """Run every registered check and return the results (no output)."""
+    return [check() for check in CHECKS]
+
+
+def run_doctor() -> int:
+    """Run every check, print a report, and return a process exit code.
+
+    Returns:
+        0 when every check passed, 1 otherwise — so a CI step can gate on it.
+    """
+    results = run_checks()
+    click.echo(f"Environment doctor — {sys.executable}")
+    for result in results:
+        mark = "✓" if result.ok else "✗"
+        click.echo(f"  {mark} {result.name:16} {result.detail}")
+        if not result.ok and result.remedy:
+            click.echo(f"      fix: {result.remedy}")
+
+    failed = [result for result in results if not result.ok]
+    if failed:
+        click.echo(f"\n{len(failed)} of {len(results)} checks failed.")
+        return 1
+    click.echo(f"\nAll {len(results)} checks passed.")
+    return 0
+
+
+__all__ = [
+    "CHECKS",
+    "CheckResult",
+    "check_colima_vm_trust",
+    "check_docker_credsstore",
+    "check_huggingface_hub_floor",
+    "check_mcp_server_api",
+    "check_opencv_single_variant",
+    "run_checks",
+    "run_doctor",
+]

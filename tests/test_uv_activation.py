@@ -18,7 +18,14 @@ import pytest
 
 from aisland import manager as m
 
-_OVERRIDE = ["lightning ; sys_platform == 'never'"]
+# The workspace-wide override policy (manager._ROOT_UV_BASE), restated so a change to it is a
+# deliberate edit here too: the unified `lightning` and the GUI `opencv-python` are dropped
+# workspace-wide, and headless opencv is pinned to the one range every consumer can share.
+_OVERRIDE = [
+    "lightning ; sys_platform == 'never'",
+    "opencv-python ; sys_platform == 'never'",
+    "opencv-python-headless>=4.12,<5",
+]
 
 
 # --- root uv.toml generation --------------------------------------------------

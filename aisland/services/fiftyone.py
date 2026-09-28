@@ -29,8 +29,7 @@ class FiftyOneService(BaseService):
         """Show detailed FiftyOne configuration."""
         super().info()
         default_port = 5151
-        pid = self.get_pid()
-        ports = self._get_listening_ports(pid) if pid is not None else []
+        ports = self.get_ports()
         url_port = ports[0] if ports else default_port
 
         env_values = self._read_env_values()
@@ -107,7 +106,9 @@ class FiftyOneService(BaseService):
             "--remote",
         ]
 
-        self.start(cmd, env=env, background=background)
+        # FiftyOne has no dedicated health endpoint; the app root serving
+        # HTTP 200 is the readiness signal.
+        self.start(cmd, env=env, background=background, readiness={"port": port, "path": "/"})
 
     def _update_env_file(self, port: int = 5151) -> None:
         """Add/replace FIFTYONE_* entries in the root .env file.

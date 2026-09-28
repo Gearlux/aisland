@@ -15,16 +15,16 @@ from aisland.services.jenkins import pyproject_to_workspace_dir
 
 def test_pyproject_to_workspace_dir_identity() -> None:
     """Most projects: pyproject name == workspace dir name."""
-    initialized = {"confluid", "logflow", "marainer"}
+    initialized = {"confluid", "loggair", "matrainer"}
     assert pyproject_to_workspace_dir("confluid", initialized) == "confluid"
-    assert pyproject_to_workspace_dir("marainer", initialized) == "marainer"
+    assert pyproject_to_workspace_dir("matrainer", initialized) == "matrainer"
 
 
 def test_pyproject_to_workspace_dir_dashed_pypi_name() -> None:
-    """Dashed PyPI name -> dashless dir (the log-flow / data-flux convention)."""
-    initialized = {"logflow", "dataflux"}
-    assert pyproject_to_workspace_dir("log-flow", initialized) == "logflow"
-    assert pyproject_to_workspace_dir("data-flux", initialized) == "dataflux"
+    """Dashed PyPI name -> dashless dir (the loggair / recordstream convention)."""
+    initialized = {"loggair", "recordstream"}
+    assert pyproject_to_workspace_dir("loggair", initialized) == "loggair"
+    assert pyproject_to_workspace_dir("recordstream", initialized) == "recordstream"
 
 
 def test_pyproject_to_workspace_dir_handles_aisland_manager_suffix() -> None:
@@ -33,13 +33,13 @@ def test_pyproject_to_workspace_dir_handles_aisland_manager_suffix() -> None:
     Without this mapping, the orchestrator silently skipped aisland's own
     job, leaving its test suite out of the workspace-wide CI gate.
     """
-    initialized = {"aisland", "logflow"}
+    initialized = {"aisland", "loggair"}
     assert pyproject_to_workspace_dir("aisland-manager", initialized) == "aisland"
 
 
 def test_pyproject_to_workspace_dir_unknown_passes_through() -> None:
     """An unknown name (e.g. an external dep) is returned as-is — the caller decides what to do."""
-    initialized = {"logflow", "marainer"}
+    initialized = {"loggair", "matrainer"}
     assert pyproject_to_workspace_dir("requests", initialized) == "requests"
 
 
@@ -49,7 +49,7 @@ def test_pyproject_to_workspace_dir_unknown_passes_through() -> None:
         # Pre-trim takes priority over dashless rewrite.
         ("aisland-manager", {"aisland", "aisland-manager"}, "aisland-manager"),
         # Dashless only kicks in when the identity check fails.
-        ("signals-rfuav", {"signals-rfuav"}, "signals-rfuav"),
+        ("raidar-ultralytics", {"raidar-ultralytics"}, "raidar-ultralytics"),
     ],
 )
 def test_pyproject_to_workspace_dir_priority(pyproject_name: str, initialized: set, expected: str) -> None:

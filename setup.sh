@@ -1,6 +1,13 @@
 #!/bin/bash
 # Gearlux Workspace Bootstrap Script
 # This script creates the project virtual environment and installs the aisland manager.
+
+# Re-exec under bash when launched as `sh setup.sh` (dash on Debian/Ubuntu): the script uses
+# `[[ ]]`, `source` and `&>`, and under dash it half-runs — `&>` forks a background job, the
+# rest prints "not found" (hit 2026-08-17). Only POSIX syntax may appear above this line.
+if [ -z "$BASH_VERSION" ]; then
+    exec bash "$0" "$@"
+fi
 set -e
 
 # Resolve the project root (one level up from this script)
@@ -9,20 +16,46 @@ VENV_DIR="$WORKSPACE_ROOT/.venv"
 
 echo "==> Gearlux Bootstrap: Initializing environment at $WORKSPACE_ROOT"
 
-# 1. Ensure Python 3.12+ is available
-if python3 -c "import sys; sys.exit(0 if sys.version_info >= (3, 12) else 1)" 2>/dev/null; then
-    PYTHON_BIN=$(command -v python3)
-elif command -v python3.12 &> /dev/null; then
-    PYTHON_BIN=$(command -v python3.12)
+# 1. Ensure a SUPPORTED Python is available.
+#
+# The workspace pins a MAXIMUM, not just a minimum, and the reason is wheels rather than
+# language features: TensorFlow 2.21 (the latest) publishes cp310-cp313 only, so a venv built
+# on 3.14 cannot install it AT ALL — `uv pip install tensorflow` fails with "we only found
+# wheels ... cp310, cp311, cp312, cp313". That is not a size or policy decision; it is a wall.
+# Measured 2026-07-31 on a 3.14.6 venv, which is why this pin exists.
+#
+# `WORKSPACE_PYTHON` picks the interpreter. Raise it when the frameworks this workspace
+# installs all publish wheels for the next version — check TensorFlow first, it lags most.
+WORKSPACE_PYTHON="${WORKSPACE_PYTHON:-3.13}"
+
+# The markers delimit the block tests/test_setup_sh.py runs in a real bash against stub tools.
+# --- python-provisioning ---
+if command -v "python$WORKSPACE_PYTHON" &> /dev/null; then
+    PYTHON_BIN=$(command -v "python$WORKSPACE_PYTHON")
 else
-    echo "==> Python 3.12+ not found. Installing Python 3.12 via Homebrew..."
-    if ! command -v brew &> /dev/null; then
-        echo "Error: Homebrew is not installed. Please install Homebrew or Python 3.12 manually."
-        exit 1
+    # No system interpreter at the pinned version. uv provisions one into its own store
+    # (~/.local/share/uv/python) with no root and on every platform — the historical branch
+    # ran `brew install python@X`, which is macOS-only and left every Linux/WSL machine dead
+    # here (hit 2026-08-17 on Ubuntu 24.04, whose apt carries no python3.13 at all). A machine
+    # that already has the interpreter (e.g. a Homebrew Mac) never reaches this branch.
+    echo "==> Python $WORKSPACE_PYTHON not found. Provisioning it via uv..."
+    # ~/.local/bin is where the uv installer puts the binary, and a fresh non-login shell often
+    # lacks it on PATH — without this, every re-run re-fetched the installer (seen on the second
+    # run of this script). For THIS shell only; the installer edits the rc files for future ones.
+    export PATH="$HOME/.local/bin:$PATH"
+    if ! command -v uv &> /dev/null; then
+        echo "==> uv not found. Installing it into ~/.local/bin..."
+        curl -LsSf https://astral.sh/uv/install.sh | sh
     fi
-    brew install python@3.12
-    PYTHON_BIN=$(command -v python3.12)
+    uv python install "$WORKSPACE_PYTHON"
+    # `uv python find` returns the store path directly, so PATH shims / `--default` are not needed.
+    # `--system` is load-bearing: without it uv prefers a `.venv` in the cwd (measured: it
+    # returned `<root>/.venv/bin/python3`), and step 2 may `rm -rf` that venv when its version
+    # mismatches — leaving PYTHON_BIN pointing at a deleted interpreter.
+    PYTHON_BIN=$(uv python find --system "$WORKSPACE_PYTHON")
 fi
+# --- /python-provisioning ---
+echo "==> Using $PYTHON_BIN ($("$PYTHON_BIN" -V 2>&1))"
 
 # 2. Create/Verify Virtual Environment
 # Try to get the git project name for the prompt
@@ -59,10 +92,12 @@ if [ ! -d "$VENV_DIR" ]; then
         fi
     fi
 else
-    # Check version of existing venv
+    # Check version of existing venv. Matched against WORKSPACE_PYTHON exactly rather than a
+    # ">= 3.12" range: the pin has an upper bound too (see above), so a venv on a NEWER
+    # interpreter is just as wrong as one on an older, and a range check would silently keep it.
     VENV_PYTHON_VERSION=$("$VENV_DIR/bin/python" --version 2>/dev/null | cut -d' ' -f2 || echo "0.0.0")
-    if [[ ! "$VENV_PYTHON_VERSION" =~ ^3\.1[2-9] ]]; then
-         echo "==> Existing virtual environment is version $VENV_PYTHON_VERSION. Recreating with 3.12+..."
+    if [[ ! "$VENV_PYTHON_VERSION" == "$WORKSPACE_PYTHON".* ]]; then
+         echo "==> Existing virtual environment is $VENV_PYTHON_VERSION, not $WORKSPACE_PYTHON. Recreating..."
          rm -rf "$VENV_DIR"
          if command -v uv &> /dev/null; then
              uv venv --prompt "$PROMPT_NAME" --python "$PYTHON_BIN" "$VENV_DIR"
@@ -92,11 +127,18 @@ fi
 # 3. Activate and upgrade core tools
 source "$VENV_DIR/bin/activate"
 echo "==> Upgrading core build tools..."
+# `uv venv` does NOT seed pip (unlike `python -m venv`), so a freshly uv-created venv has no
+# `pip` on PATH at all and this step used to die with "pip: command not found" — hit for real
+# while moving the workspace to 3.13. Seed it explicitly rather than assuming.
+if ! "$VENV_DIR/bin/python" -m pip --version &> /dev/null; then
+    echo "==> Seeding pip (uv venv does not create one)..."
+    "$VENV_DIR/bin/python" -m ensurepip --upgrade
+fi
 # torch 2.11.0 pins `setuptools<82`; unconstrained upgrades pull 82.0.1
 # and break the next torch install. Cap the upgrade until torch lifts it.
-pip install --upgrade pip "setuptools<82" wheel
+"$VENV_DIR/bin/python" -m pip install --upgrade pip "setuptools<82" wheel
 echo "==> Installing uv for fast dependency resolution..."
-pip install uv
+"$VENV_DIR/bin/python" -m pip install uv
 
 # 3. Install Aisland Manager in editable mode
 echo "==> Installing aisland manager..."
@@ -105,21 +147,24 @@ uv pip install -e "$WORKSPACE_ROOT/aisland"
 # 4. Hand off to 'aisland setup' for full project provisioning
 echo "==> Handing off to 'aisland setup' for full project provisioning..."
 cd "$WORKSPACE_ROOT"
-# We call it from the root so Path.glob("**/*.toml") works correctly
-"$VENV_DIR/bin/aisland" setup
+# We call it from the root so Path.glob("**/*.toml") works correctly.
+#
+# `-y` REUSES the activation decisions already recorded in .git/config instead of re-asking
+# about every optional submodule. Without it this script cannot finish anywhere there is no
+# TTY — a background shell, CI, or an agent — because the prompt blocks forever on stdin
+# (hit for real: `Activate 'raidar-ultralytics'? [y/N]:` with no terminal to answer it).
+# A genuinely NEW optional module still prompts even under `-y`, which is deliberate: a
+# machine must consciously opt into a private project before cloning its remote.
+"$VENV_DIR/bin/aisland" setup -y
 
-# 5. Install liquifai shell completion into a workspace-local rc file.
-# The generated file is sourced by project.bashrc and is gitignored, so
-# this step keeps the user's global ~/.bashrc clean and leaves no diff
-# in the tracked tree. Auto-discovers every Liquifai app in the venv.
-COMPLETION_RC="$WORKSPACE_ROOT/.project.bashrc.completion"
-echo "==> Installing liquifai shell completion → $COMPLETION_RC"
-if command -v liquifai-install-completions >/dev/null 2>&1; then
-    liquifai-install-completions --target-rc "$COMPLETION_RC" \
-        || echo "    (completion install failed; non-fatal — re-run setup.sh after fixing)"
-else
-    echo "    skip: liquifai-install-completions not found (liquifai not installed yet?)"
-fi
+# 5. Install shell completion for every workspace CLI.
+# One command, owned by `aisland/aisland/completion.py`. This used to be ~70 lines of inline
+# shell right here (three CLI families + a stale-block pruner), which meant a completion fix
+# could only reach a machine by re-running this whole provisioning script — so it silently
+# rotted. `aisland completion install` is re-runnable in a second and is unit-tested.
+echo "==> Installing shell completion"
+"$VENV_DIR/bin/aisland" completion install \
+    || echo "    (completion install failed; non-fatal — re-run 'aisland completion install')"
 
 # 6. Initialize Git Configuration
 echo "==> Setting up Git configurations..."

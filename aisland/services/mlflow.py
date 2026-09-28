@@ -14,21 +14,30 @@ class MLflowService(BaseService):
         self.artifacts_path = self.service_data_dir / "artifacts"
 
     def setup(self) -> None:
-        """Ensure mlflow is installed in the current environment."""
+        """Fail with the selection command when mlflow is absent — never install it here.
+
+        Installing it ad hoc would contradict the very layer this service depends on: which
+        tracking backends a machine has is decided by ``aisland tracker`` and recorded in
+        ``config.toml`` / ``.git/config``, and a silent ``pip install`` behind the
+        operator's back leaves the venv holding something no selection asked for (and gone
+        again after the next ``aisland setup``). Point at the command that makes it stick.
+        """
         import importlib.util
 
         if importlib.util.find_spec("mlflow") is None:
-            click.echo("MLflow is not installed. Installing via pip...")
-            import subprocess
-
-            subprocess.run([sys.executable, "-m", "pip", "install", "mlflow"], check=True)
+            raise click.ClickException(
+                "MLflow is not installed in this environment.\n"
+                "  Select it, so the choice is recorded and survives the next setup:\n"
+                "      aisland tracker set mlflow\n"
+                "  Or, for this machine only:\n"
+                "      aisland tracker set mlflow --machine-only"
+            )
 
     def info(self) -> None:
         """Show detailed MLflow configuration."""
         super().info()
         default_port = 5005
-        pid = self.get_pid()
-        ports = self._get_listening_ports(pid) if pid is not None else []
+        ports = self.get_ports()
         url_port = ports[0] if ports else default_port
         click.echo(f"  URL           : http://localhost:{url_port}")
         click.echo(f"  Backend store : sqlite:///{self.db_path}")
@@ -55,7 +64,8 @@ class MLflowService(BaseService):
             str(self.artifacts_path),
         ]
 
-        self.start(cmd, background=background)
+        # MLflow's tracking server exposes a dedicated /health endpoint.
+        self.start(cmd, background=background, readiness={"port": port, "path": "/health"})
 
     def ui(self, db_path: str, port: int = 5000) -> None:
         """Run MLflow UI with a specific database file."""

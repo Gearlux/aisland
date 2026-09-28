@@ -53,7 +53,7 @@ This command performs the following automated workflow:
 
 #### Initialize a Single Project:
 ```bash
-aisland jenkins init logflow
+aisland jenkins init loggair
 ```
 
 ---

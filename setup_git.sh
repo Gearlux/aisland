@@ -40,13 +40,48 @@ if [ -f "$WORKSPACE_ROOT/.gitmodules" ]; then
 fi
 
 echo "==> Configuring Git Aliases..."
-git config --global alias.pull-all '!PARENT_BRANCH=$(git branch --show-current) && git submodule foreach "git pull origin \$PARENT_BRANCH" && git pull --no-recurse-submodules'
+# The aliases below assume the acme mono-repo layout and Python toolchain
+# (submodule fan-out, .venv, isort/black/flake8/mypy/pytest), so they are
+# written to LOCAL config only — a global alias would leak workspace-specific
+# behavior into every unrelated repo on this machine. Because each submodule
+# has its own .git config (and e.g. `git safe` is invoked from INSIDE a
+# project submodule), the aliases are registered on the root repo AND every
+# active submodule — the same propagation the ipynb-cleaner filter uses.
+# Re-run this script after activating a new submodule.
 
-git config --global alias.push-all '!git push origin $(git branch --show-current) && git submodule foreach "git push origin \$(git branch --show-current)"'
+# Active submodule worktree paths, resolved once. Registration uses
+# `git -C <path> config` instead of `git submodule foreach "git config ..."`
+# so the alias bodies don't need a second layer of shell quoting.
+ACTIVE_SUBMODULE_PATHS=()
+while IFS= read -r sm_path; do
+    ACTIVE_SUBMODULE_PATHS+=("$sm_path")
+done < <(git submodule --quiet foreach 'echo "$sm_path"' 2>/dev/null)
 
-git config --global alias.switch-all '!f() { git checkout "$1" && git submodule foreach "branch=\$(git config -f \"\$toplevel/.gitmodules\" submodule.\$name.branch); [ \"\$branch\" = \".\" ] && branch=\"$1\"; git checkout \${branch:-main}"; }; f'
+set_alias() {
+    local name="$1" value="$2"
+    git config --local "alias.$name" "$value"
+    local sm
+    for sm in "${ACTIVE_SUBMODULE_PATHS[@]}"; do
+        git -C "$sm" config --local "alias.$name" "$value"
+    done
+    # Migration: earlier versions of this script wrote these aliases to the
+    # GLOBAL config. The names are this workspace's invention, so any global
+    # copy is ours — drop it now that local definitions cover every repo the
+    # aliases are meant for (locals also shadow globals, so a leftover would
+    # only ever fire in UNrelated repos, which is exactly the pollution).
+    if git config --global --get "alias.$name" >/dev/null 2>&1; then
+        git config --global --unset-all "alias.$name"
+        echo "    - removed stale GLOBAL alias.$name (now configured per-repo)"
+    fi
+}
 
-git config --global alias.merge-all '!f() { git merge "$1" && git submodule foreach "git merge $1"; }; f'
+set_alias pull-all '!PARENT_BRANCH=$(git branch --show-current) && git submodule foreach "git pull origin \$PARENT_BRANCH" && git pull --no-recurse-submodules'
+
+set_alias push-all '!git push origin $(git branch --show-current) && git submodule foreach "git push origin \$(git branch --show-current)"'
+
+set_alias switch-all '!f() { git checkout "$1" && git submodule foreach "branch=\$(git config -f \"\$toplevel/.gitmodules\" submodule.\$name.branch); [ \"\$branch\" = \".\" ] && branch=\"$1\"; git checkout \${branch:-main}"; }; f'
+
+set_alias merge-all '!f() { git merge "$1" && git submodule foreach "git merge $1"; }; f'
 
 # tag-all: stamp the SAME annotated tag on the parent + every active submodule at
 # their current HEAD, then push it to each remote — the cross-repo analogue of a
@@ -54,14 +89,14 @@ git config --global alias.merge-all '!f() { git merge "$1" && git submodule fore
 # push, so an unreachable remote (e.g. an off-VPN private host) leaves every local
 # tag intact and you just re-run the push. Message defaults to the tag name.
 # Usage: git tag-all <tag> [message]
-git config --global alias.tag-all '!f() {
+set_alias tag-all '!f() {
     if [ -z "$1" ]; then echo "Usage: git tag-all <tag> [message]"; exit 1; fi;
     msg="${2:-$1}";
     git tag -a "$1" -m "$msg" && git submodule foreach --quiet "git tag -a \"$1\" -m \"$msg\"";
     git push origin "$1" && git submodule foreach --quiet "git push origin \"$1\"";
 }; f'
 
-git config --global alias.status-all '!f() {
+set_alias status-all '!f() {
     printf "%-25s (@%s" "ROOT" "$(git branch --show-current)";
     git rev-list --left-right --count HEAD...@{u} 2>/dev/null | while read a b; do
         if [ -n "$a" ] && ([ "$a" -gt 0 ] || [ "$b" -gt 0 ]); then
@@ -84,7 +119,27 @@ git config --global alias.status-all '!f() {
     '\''; 
 }; f'
 
-git config --global alias.safe '!f() { if [ -z "$1" ]; then echo "Error: Please provide a commit message. Example: git safe \"feat: my message\""; exit 1; fi; if [ -d ".venv" ]; then echo "Activating virtual environment..."; source .venv/bin/activate; fi; echo "Running formatting (isort, black)..."; isort . && black . || { echo "Formatting failed!"; exit 1; }; echo "Running linting (flake8)..."; flake8 . || { echo "Flake8 linting failed!"; exit 1; }; echo "Running type checking (mypy)..."; mypy . || { echo "Mypy type checking failed!"; exit 1; }; echo "Running tests (pytest)..."; pytest || { echo "Tests failed!"; exit 1; }; echo "All checks passed! Committing and pushing..."; git add . && git commit -m "$1"; CURRENT_BRANCH=$(git branch --show-current); if [ -z "$CURRENT_BRANCH" ]; then git push origin HEAD:dev/main || git push origin HEAD:main; else git push origin "$CURRENT_BRANCH" || { echo "Falling back to dev/main push..."; git push origin HEAD:dev/main; }; fi; }; f'
+# safe: quality-gate + commit + push. Runs from the repo toplevel (git `!`
+# alias semantics). The workspace root is resolved via the superproject (the
+# alias usually runs inside a project submodule): the shared .venv lives at
+# the root, and mypy MUST run from the root so the root mypy.ini's mypy_path
+# is honored (a project-local `mypy .` yields spurious import-not-found).
+set_alias safe '!f() {
+    if [ -z "$1" ]; then echo "Error: Please provide a commit message. Example: git safe \"feat: my message\""; exit 1; fi;
+    WS_ROOT=$(git rev-parse --show-superproject-working-tree);
+    PROJECT=$(basename "$(git rev-parse --show-toplevel)");
+    if [ -z "$WS_ROOT" ]; then WS_ROOT=$(git rev-parse --show-toplevel); PROJECT=.; fi;
+    if [ -d "$WS_ROOT/.venv" ]; then echo "Activating virtual environment..."; . "$WS_ROOT/.venv/bin/activate"; fi;
+    echo "Running formatting (isort, black)..."; isort . && black . || { echo "Formatting failed!"; exit 1; };
+    echo "Running linting (flake8)..."; flake8 . || { echo "Flake8 linting failed!"; exit 1; };
+    echo "Running type checking (mypy from workspace root)..."; (cd "$WS_ROOT" && mypy "$PROJECT") || { echo "Mypy type checking failed!"; exit 1; };
+    echo "Running tests (pytest)..."; pytest || { echo "Tests failed!"; exit 1; };
+    echo "All checks passed! Committing and pushing...";
+    git add . && git commit -m "$1";
+    CURRENT_BRANCH=$(git branch --show-current);
+    if [ -z "$CURRENT_BRANCH" ]; then git push origin HEAD:dev/main || git push origin HEAD:main;
+    else git push origin "$CURRENT_BRANCH" || { echo "Falling back to dev/main push..."; git push origin HEAD:dev/main; }; fi;
+}; f'
 
 echo "==> Configuring Notebook Clean Filter..."
 # Only configure locally if inside a git repository
