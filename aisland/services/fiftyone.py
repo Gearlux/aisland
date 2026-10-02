@@ -16,14 +16,20 @@ class FiftyOneService(BaseService):
         self.database_dir = self.service_data_dir
 
     def setup(self) -> None:
-        """Ensure fiftyone is installed in the current environment."""
+        """Fail with the install command when fiftyone is absent — never install it here.
+
+        A plain ``pip`` install into the shared venv ignores the workspace ``uv.toml``
+        overrides (the ones that keep ``opencv-python`` and ``lightning`` out), so the
+        service names the ``uv`` command and leaves the install to the user.
+        """
         import importlib.util
 
         if importlib.util.find_spec("fiftyone") is None:
-            click.echo("FiftyOne is not installed. Installing via pip...")
-            import subprocess
-
-            subprocess.run([sys.executable, "-m", "pip", "install", "fiftyone"], check=True)
+            raise click.ClickException(
+                "FiftyOne is not installed in this environment.\n"
+                "  Install it into the workspace venv (uv honours the workspace overrides; plain pip does not):\n"
+                "      uv pip install fiftyone"
+            )
 
     def info(self) -> None:
         """Show detailed FiftyOne configuration."""

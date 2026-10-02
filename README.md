@@ -296,6 +296,10 @@ single-binary, native-process orchestrator with docker-compose semantics. The
 - **Port pre-flight**: `start` refuses to launch when the service's port is
   already taken and names the owning PID — typically an instance started
   outside the supervisor.
+- **No installs at start**: a service whose package is missing stops and names
+  the command that installs it — `aisland tracker set <name>` for MLflow, Aim and
+  ClearML, `uv pip install fiftyone` for FiftyOne. It never installs into the
+  shared venv itself.
 - **Foreground semantics**: `aisland <service> start` without `--background`
   streams the service log; Ctrl+C stops the service (as before). The process
   itself always runs detached under the supervisor, so a dropped terminal

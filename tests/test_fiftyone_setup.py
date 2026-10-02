@@ -1,9 +1,8 @@
 """Tests for ``FiftyOneService.setup`` and supervisor registration.
 
-``setup`` is the lazy-install hook that pulls ``fiftyone`` into the venv on the
-first launch. We only want pip to run when fiftyone is genuinely missing —
-re-installing on every ``aisland fiftyone start`` would block startup for
-~30s while pip resolves a fully-installed package.
+``setup`` checks that ``fiftyone`` is importable before a launch and, when it is not,
+stops with the install command — it never installs anything itself (a plain ``pip``
+install ignores the workspace ``uv.toml`` overrides).
 
 Process identity/liveness is owned by the process-compose supervisor
 (:mod:`aisland.supervisor`); what ``launch()`` must guarantee is that the
@@ -14,22 +13,24 @@ from __future__ import annotations
 
 from unittest.mock import MagicMock, patch
 
+import click
+import pytest
+
 from aisland.services.fiftyone import FiftyOneService
 
 
-def test_setup_installs_when_fiftyone_missing() -> None:
+def test_setup_stops_with_the_uv_install_command_when_fiftyone_is_missing() -> None:
     svc = FiftyOneService()
     with patch("importlib.util.find_spec", return_value=None) as find_spec_mock:
         with patch("subprocess.run") as run_mock:
-            svc.setup()
+            with pytest.raises(click.ClickException) as excinfo:
+                svc.setup()
     find_spec_mock.assert_called_once_with("fiftyone")
-    run_mock.assert_called_once()
-    # The first positional arg is the command list; assert it ends with pip install fiftyone.
-    cmd = run_mock.call_args.args[0]
-    assert cmd[-3:] == ["-m", "pip", "install"] or cmd[-1] == "fiftyone"
+    run_mock.assert_not_called()
+    assert "uv pip install fiftyone" in excinfo.value.message
 
 
-def test_setup_skips_install_when_fiftyone_present() -> None:
+def test_setup_passes_when_fiftyone_present() -> None:
     svc = FiftyOneService()
     with patch("importlib.util.find_spec", return_value=MagicMock()):
         with patch("subprocess.run") as run_mock:
