@@ -249,10 +249,11 @@ target = f"{project_dir}[dev]" if project["has_dev"] else str(project_dir)
 
 so immediately after the extras split, a fresh setup produced a sonair with no training backend
 at all. The decision had to live somewhere, and the obvious somewhere — "just install every
-extra" — is wrong twice over: sonair declares `jax` / `mlx` / `tensorflow` extras that exist only
-so its CLI templates can print a real install command, and `dev` / `http` / `viz` / `notebook` /
-`all` sit in the same table as `torch` and `keras`, so no name-based rule can tell a training
-engine from a documentation extra.
+extra" — is wrong twice over: sonair declares eight engine extras (`lightning`, `torch`, `keras`,
+`tensorflow`, `fastai`, `huggingface`, `jax`, `mlx`) that are alternatives to one another, and no
+machine works with all of them, and `dev` / `http` / `viz` / `notebook` / `all` sit in the same
+table as `torch` and `keras`, so no name-based rule can tell a training engine from a
+documentation extra.
 
 ### Decision
 
@@ -302,19 +303,20 @@ engine from a documentation extra.
 - **`--non-interactive` selects everything** when nothing is recorded. A headless setup must
   neither hang on the prompt nor hand back a workspace that cannot train.
 - **Scope is deliberately limited to projects that OFFER a choice** (decided 2026-07-30 after
-  reading each project, not counting its imports). `recordstream`, `matrainer` and `sonair` declare
-  frameworks because a genuine alternative exists. Four others keep `torch` as a plain hard
-  dependency and are NOT declarable:
+  reading each project, not counting its imports). `recordstream`, `matrainer`, `sonair`,
+  `deltaid`, `distilaide` and `raidar` declare frameworks because a genuine alternative exists:
+  each keeps its core install free of torch and puts every engine behind an extra. Two others
+  keep `torch` as a plain hard dependency and are NOT declarable:
 
   | project | why it requires torch |
   | --- | --- |
   | `signals` | `schema.py` — "THE builder for the record model" — enforces `torch.complex64` IQ. Torch is the canonical representation, not a peripheral op. |
-  | `deltaid` | its own docstring: "a standard PyTorch-Lightning semantic segmenter". |
-  | `raidar`, `raidar-ultralytics` | torch/ultralytics detection trainers; `__init__.py` imports them eagerly. |
+  | `raidar-ultralytics` | the ultralytics detection trainer; `__init__.py` imports its torch/ultralytics classes eagerly. |
 
-  Moving their deps behind a `[torch]` extra was considered and REJECTED: `pip install raidar`
-  would then yield a package whose `__init__` raises `ImportError`, which is dishonest packaging
-  for a project that genuinely needs torch. The consequence to accept is that selecting `keras` on
+  Moving their deps behind a `[torch]` extra was considered and REJECTED: `pip install
+  raidar-ultralytics` would then yield a package whose `__init__` raises `ImportError`, and a
+  plain `signals` install would fail at the first record it builds, which is dishonest
+  packaging for a project that genuinely needs torch. The consequence to accept is that selecting `keras` on
   a FULL workspace still installs torch — the selection narrows multi-backend projects, and does
   not promise a framework-free venv. (`torpaido` was a third case and is fixed rather than
   excepted: it declared `torch` while referencing it *zero* times, so the dependency was simply
@@ -423,7 +425,7 @@ aisland completion install --target-rc ~/.bashrc # or your own rc
 ```python
 # setup.sh's whole share of the job:
 #   "$VENV_DIR/bin/aisland" completion install
-NON_LIQUIFAI_CLIS = (NonLiquifaiCli("aisland", "click"), NonLiquifaiCli("hydraide", "click"), NonLiquifaiCli("streamstudio", "argcomplete"))
+NON_LIQUIFAI_CLIS = (NonLiquifaiCli("aisland", "click"), NonLiquifaiCli("hydraide", "click"))
 ```
 
 **What you may change.** Add a CLI as a row in `NON_LIQUIFAI_CLIS`. A fourth

@@ -43,9 +43,9 @@ _OPENCV_DROPPED = "opencv-python"
 
 #: The exact symbol every MCP server in the workspace imports. The 2.x SDK renamed BOTH the
 #: module and the class (`mcp.server.fastmcp.FastMCP` -> `mcp.server.mcpserver.MCPServer`) and
-#: the two spellings NEVER coexist — 1.x ships only the old one, 2.x only the new. Because the
-#: consuming projects declare an unbounded floor, either version resolves cleanly and the
-#: mismatch surfaces only when someone actually starts a server.
+#: the two spellings NEVER coexist — 1.x ships only the old one, 2.x only the new. The consuming
+#: projects declare `mcp>=2.0`, so a venv that still holds 1.x is stale (an incremental install
+#: that never moved it) and the mismatch surfaces only when someone actually starts a server.
 _MCP_SERVER_IMPORT = "from mcp.server.mcpserver import MCPServer"
 
 

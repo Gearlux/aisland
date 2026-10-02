@@ -99,7 +99,7 @@ def reconcile() -> None:
 
 @main.command()
 def doctor() -> None:
-    """Check the shared .venv for known recurring dependency skew (exit 1 if any check fails)."""
+    """Check the shared .venv and the Docker/Colima setup for known recurring skew (exit 1 if any check fails)."""
     from aisland.doctor import run_doctor
 
     raise SystemExit(run_doctor())
