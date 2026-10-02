@@ -962,3 +962,82 @@ torpaido is not installed from /Users/you/acme/torpaido (found: file:///Users/yo
   the emitted shell from inside a checkout carrying a stale `egg-info` for exactly that reason.
 - The orchestrator's phase layout. What must not change: it holds no executor
   (`tests/test_orchestrator_executor.py`), and `Jenkinsfile.local` gains no install step.
+
+## A recurring environment skew becomes a doctor check, not a note
+
+*2026-07-27; widened to the Docker layer 2026-08-31*
+
+### Context
+
+The workspace `.venv` is shared and built incrementally, so one install can leave a package
+pair inconsistent: both OpenCV wheels installed (they own the same `cv2/` files, so their native
+libraries mix), `huggingface_hub` left below what `transformers` imports, an MCP SDK whose server
+module was renamed between majors. The Docker layer drifts the same way: a `credsStore` entry
+naming a credential helper that was uninstalled, and a Colima VM whose trust store lacks the CA
+of a TLS-intercepting proxy the host already trusts. Each failure surfaces far from its cause — a
+`dlopen` error during pytest collection, an `ImportError` three libraries deep, every
+`docker pull` dying on credentials it does not need — and each had been written up as a note in
+an `AGENTS.md`. A note does not run, so every recurrence was diagnosed again from the start.
+
+### Decision
+
+`aisland doctor` runs the tuple `CHECKS` of `check_*` functions. Each returns
+`CheckResult(name, ok, detail, remedy)`; the command exits 1 when any check failed, so a CI step
+can gate on it.
+
+- **A check is specific.** It names one known skew and carries the copy-pasteable command that
+  fixes it; the test suite asserts every failing result has a remedy.
+- **Imports run in a subprocess** (`_import_probe`). A broken native bundle can abort the
+  interpreter, and a doctor that dies while diagnosing is worse than none.
+- **A check mirrors an invariant enforced elsewhere, and names it.** The OpenCV check mirrors the
+  `opencv-python ; sys_platform == 'never'` override in `manager._ROOT_UV_BASE`, so the doctor
+  cannot grow a second policy that drifts from the first.
+- **A probe that cannot run passes with a note**: no Colima installed, a stopped VM (the doctor
+  never boots one), an unparseable config, a network error. This is the rule
+  `supervisor._preflight_full_disk_access` already follows: an inconclusive probe must never cry
+  wolf, or the operator learns to ignore the tool.
+- **VM state is `DockerService.is_running()`** (the exit code of `colima status`), never a second
+  parse of colima's output.
+
+Rejected: a generic venv linter. `pip check` already lists lines that are expected here — a
+library pinning one exact OpenCV build, libraries asking for the GUI wheel the workspace drops on
+purpose — and a doctor that reported them would fail on every healthy machine.
+
+### Consequences
+
+- A recurrence costs one command and one fix line instead of a forensic session.
+- A laptop that does not run Docker passes the preflight.
+- The `colima-tls` remedy stays manual (user ruling 2026-08-31). Installing the network's CA
+  automatically at `aisland docker start` would silently trust whatever intercepts TLS on any
+  network the machine joins, to save a rare one-command fix. The CA install does not survive
+  `colima delete`, which is why the check exists at all.
+- Each check costs a subprocess or a file read, so the whole run stays a preflight rather than a
+  build step.
+
+### Example
+
+```python
+# aisland/doctor.py — a new check is one function plus one tuple entry
+CHECKS: Tuple[Callable[[], CheckResult], ...] = (
+    check_opencv_single_variant,
+    check_huggingface_hub_floor,
+    check_mcp_server_api,
+    check_docker_credsstore,
+    check_colima_vm_trust,
+)
+```
+
+```text
+# the opencv check's report when both OpenCV wheels are installed (exit 1)
+  ✗ opencv           opencv-python=4.12.0.88 is installed; the workspace override drops it and keeps opencv-python-headless=4.13.0.92 — both own cv2/, so .dylibs will mix
+      fix: uv pip uninstall opencv-python && uv pip install --force-reinstall opencv-python-headless   # use `uv pip`, not `pip` — pip does not read uv.toml's overrides
+```
+
+### What you may change
+
+- Add a check: a `check_*` returning `CheckResult`, appended to `CHECKS`, with tests for its
+  failing, passing and inconclusive branches in `tests/test_doctor.py`.
+- The report's wording and order.
+- What must not change: a failing result carries a remedy; imports stay out of process; an
+  inconclusive probe passes; the doctor only reads — it never changes the environment and never
+  boots a VM.
