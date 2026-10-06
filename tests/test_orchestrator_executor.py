@@ -10,14 +10,22 @@ and purifai sat at "Waiting for next available executor" behind torpaido.
 from __future__ import annotations
 
 from pathlib import Path
+from typing import Sequence
 
 import pytest
 
-from aisland.services.jenkins import JenkinsService
+from aisland.services.jenkins import NIGHTLY_CRON, JenkinsService
 
 
-def _orchestrator_script(monkeypatch: pytest.MonkeyPatch, tmp_path: Path, local: bool) -> str:
+def _orchestrator_script(monkeypatch: pytest.MonkeyPatch, tmp_path: Path, local: bool, slow: Sequence[str] = ()) -> str:
+    """The orchestrator's config.xml for three projects; those named in `slow` register the `slow` marker."""
     from aisland import manager
+
+    for name in slow:
+        (tmp_path / name).mkdir()
+        (tmp_path / name / "pyproject.toml").write_text(
+            f'[project]\nname = "{name}"\n\n[tool.pytest.ini_options]\nmarkers = ["slow: the slow run"]\n'
+        )
 
     monkeypatch.setattr(manager, "get_workspace_root", lambda: tmp_path)
     monkeypatch.setattr(manager, "get_workspace_name", lambda: "ws")
@@ -51,3 +59,80 @@ def test_a_phase_still_triggers_its_projects_in_parallel(monkeypatch: pytest.Mon
     assert "parallel {" in phase_1
     assert "build job: 'app_a.local'" in phase_1
     assert "build job: 'app_b.local'" in phase_1
+
+
+# --- the nightly run (user ruling 2026-10-06) ----------------------------------------------------
+# The LOCAL orchestrator runs every night at 01:00, so every project's slow run happens and the test-run statistics
+# fill (`aisland tests report`). Its timer sits where Jenkins reads one at each moment: the job's properties arm it
+# when the job is seeded, before any run; the pipeline's `triggers` directive re-applies it at every run (a pipeline
+# without one would clear the job's timer on its first run).
+
+
+def test_the_local_orchestrator_runs_every_night_at_one(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    config = _orchestrator_script(monkeypatch, tmp_path, local=True)
+    assert NIGHTLY_CRON == "0 1 * * *"
+    assert f"triggers {{\n        cron('{NIGHTLY_CRON}')\n    }}" in config
+    assert "<org.jenkinsci.plugins.workflow.job.properties.PipelineTriggersJobProperty>" in config
+    timer = config[config.index("<hudson.triggers.TimerTrigger>") : config.index("</hudson.triggers.TimerTrigger>")]
+    assert f"<spec>{NIGHTLY_CRON}</spec>" in timer
+
+
+def test_the_ci_orchestrator_keeps_no_timer(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    """The CON pin: the GitHub-backed orchestrator builds what is pushed; it gains no schedule."""
+    config = _orchestrator_script(monkeypatch, tmp_path, local=False)
+    assert "cron(" not in config
+    assert "TimerTrigger" not in config
+
+
+# --- a manual run is the fast one, the nightly run the slow one too (user ruling 2026-10-06) ---------------
+# A manual Build Now runs every project's fast tests; the 01:00 timer (or a tick on the orchestrator's SLOW_TESTS) passes
+# SLOW_TESTS=true to each project that has slow tests, whose local pipeline runs its Slow Tests stage only then.
+
+_SLOW_TESTS_DECIDED = (
+    "def slowTests() {\n"
+    "    return params.SLOW_TESTS || !currentBuild.getBuildCauses('hudson.triggers.TimerTrigger$TimerTriggerCause')"
+    ".isEmpty()\n}"
+)
+
+
+def test_the_nightly_run_asks_for_the_slow_tests_and_a_manual_one_does_not(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    config = _orchestrator_script(monkeypatch, tmp_path, local=True, slow=("app_a",))
+    assert _SLOW_TESTS_DECIDED in config
+    declared = config[config.index("name: 'SLOW_TESTS'") :]
+    assert declared[: declared.index(")")].count("defaultValue: false") == 1
+    assert (
+        "build job: 'app_a.local', wait: true, propagate: true, "
+        "parameters: [booleanParam(name: 'SLOW_TESTS', value: slowTests())]"
+    ) in config
+    # Defined at seeding too, so Build with Parameters offers the tick before the job's first run.
+    defined = config[config.index("<hudson.model.ParametersDefinitionProperty>") :]
+    assert "<name>SLOW_TESTS</name>" in defined and "<defaultValue>false</defaultValue>" in defined
+
+
+def test_a_project_without_slow_tests_is_built_as_before(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    """The CON pin: a project with no `slow` marker gets no switch it would not read."""
+    config = _orchestrator_script(monkeypatch, tmp_path, local=True, slow=("app_a",))
+    assert "build job: 'app_b.local', wait: true, propagate: true\n" in config
+    assert "build job: 'libcore.local', wait: true, propagate: true\n" in config
+
+
+def test_the_ci_orchestrator_passes_no_slow_switch(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    config = _orchestrator_script(monkeypatch, tmp_path, local=False, slow=("app_a",))
+    assert "SLOW_TESTS" not in config
+
+
+def test_a_seeded_local_job_accepts_the_slow_switch_before_its_first_run(tmp_path: Path) -> None:
+    """Jenkins drops a parameter the job does not define yet; a pipeline's `parameters` are defined by its first run.
+    So the seeded job carries SLOW_TESTS from the start, or the first nightly run would run the fast tests only."""
+    script = "pipeline {\n    parameters {\n        booleanParam(name: 'SLOW_TESTS', defaultValue: false)\n    }\n}"
+    config = JenkinsService.local_job_config("p", script, tmp_path / "p")
+    definition = config[config.index("<hudson.model.BooleanParameterDefinition>") :]
+    assert "<name>SLOW_TESTS</name>" in definition and "<defaultValue>false</defaultValue>" in definition
+    assert f"<customWorkspace>{(tmp_path / 'p').absolute()}</customWorkspace>" in config
+
+
+def test_a_seeded_job_without_the_switch_defines_no_parameter(tmp_path: Path) -> None:
+    config = JenkinsService.local_job_config("p", "pipeline {\n}", tmp_path / "p")
+    assert "ParametersDefinitionProperty" not in config

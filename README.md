@@ -151,6 +151,50 @@ Add a check by writing a `check_*` function in `aisland/doctor.py` and listing i
 `CHECKS`. A check must be cheap, read-only, and specific: it reports a known-recurring skew
 with the command that fixes it, never a vague "something looks off".
 
+### Test-run statistics (`aisland tests report`)
+
+Every project has two test runs: plain `pytest` is the **fast run** (within 5 minutes — what
+you run before and after a change), `pytest -m slow` the **slow run** (CI's), `pytest -m ''`
+both. Which tests belong in which run is read from statistics, never guessed — so every run is
+recorded:
+
+- **Local runs.** aisland installs a pytest plugin (`aisland_test_stats`, loaded by every
+  `pytest` in the workspace `.venv`). Each run of a workspace project appends to
+  `aisland/data/test-stats/<project>/<date>.jsonl` (git-ignored; kept 90 days): one line for the
+  run — which run it was (`fast`, `slow`, `all`, `other`), whether it was the whole run or a
+  file / `-k` / `-x` part of it, its seconds, exit status and commit — and one line per test —
+  its seconds, `passed` / `failed` / `error` / `skipped`, and whether it is marked `slow`.
+- **CI.** The local Jenkins keeps every build's JUnit results; the report reads them beside the
+  local runs.
+
+```bash
+aisland tests report aisland                  # the last 30 days
+aisland tests report signals-wlan --days 90
+aisland tests report raidar --json            # the same report as data
+pytest -p no:aisland_test_stats               # one run left out of the record
+```
+
+```text
+aisland - the last 30 days: 2 local runs, 3 Jenkins builds
+Fast run: 1m 00s (median of 1 whole run; last 1m 00s) - budget 5m 00s, within
+
+Slowest fast-run tests:
+       1.8 s  0 of 4 failed  tests/test_doctor.py::TestReporting::test_every_registered_check_returns_a_result
+       1.7 s  0 of 4 failed  tests/test_setup_git_aliases.py::test_rerun_is_idempotent
+       ...
+
+Tests that failed:
+    2 of 4    last 2026-09-12  fast  tests/test_workspace_dependency_specs.py::test_the_real_workspace_has_no_unsatisfiable_internal_specs
+```
+
+A fast run over 5 minutes adds a list headed `Move to the slow run (never failed, slowest
+first) to fit 5m 00s:` — the tests whose seconds cover the overrun; and a slow test that failed
+is listed under `Slow tests that failed - move into the fast run:`. Moving one is an edit: add
+or remove its `@pytest.mark.slow` (or, in a signal project, its file name in `FAST_SAMPLE`).
+The fast run's time counts only complete runs of the whole fast run. Why it is built this way:
+[`docs/architecture.md`](docs/architecture.md) → "Every pytest run of a workspace project is
+recorded".
+
 ### Reclaiming disk space (`aisland clean`)
 
 A checkout accumulates gigabytes that git never sees: `.venv/`, `build/`, `.mypy_cache/`,
@@ -375,6 +419,28 @@ aisland jenkins stop
 aisland jenkins status
 ```
 Default: [http://localhost:9080](http://localhost:9080)
+
+**The nightly run.** The local orchestrator job (`<workspace>.local`, seeded by
+`aisland jenkins init --local`) builds every project at **01:00 every night** — each project's
+fast run and slow run — so the slow tests run and their results land in Jenkins' record, which
+`aisland tests report <project>` reads. It needs Jenkins running and the machine awake at that
+minute: Jenkins does not make up a night it missed.
+
+**A manual run is the fast one.** **Build Now** on the orchestrator (or on one project's
+`<project>.local` job) runs the fast tests only — the quality gates, the fast run, the examples
+and notebooks. To run the slow tests too, use **Build with Parameters** and tick **SLOW_TESTS**:
+
+| how the orchestrator is started | each project with slow tests runs |
+|---|---|
+| its 01:00 timer | the fast run and the slow run |
+| Build Now | the fast run only |
+| Build with Parameters, SLOW_TESTS ticked | the fast run and the slow run |
+
+**The morning check.** Each weekday at 09:30 a scheduled task of the Claude app,
+`acme-nightly-check`, reads every nightly run since its last report, writes the failed
+projects, stages and tests to `aisland/data/nightly/<date>.md`, sends a notification when a run
+failed or did not happen, and moves tests between the fast and slow runs by the workspace rule
+(its edits stay uncommitted for review). It runs while the app is open, or at the next launch.
 
 ### 3. Manage MLflow
 ```bash

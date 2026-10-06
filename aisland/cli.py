@@ -1,8 +1,10 @@
+import json
 from pathlib import Path
 from typing import Optional, Tuple
 
 import click
 
+from aisland import pytest_stats
 from aisland import supervisor as supervisor_mod
 from aisland.clean import DEFAULT_KEEP_DAYS
 from aisland.manager import (
@@ -14,6 +16,7 @@ from aisland.manager import (
     run_quality_gates,
     setup_workspace,
 )
+from aisland.pytest_stats import DEFAULT_WINDOW_DAYS
 from aisland.services.aim import DEFAULT_PORT as AIM_PORT
 from aisland.services.aim import AimService
 from aisland.services.clearml import DEFAULT_WEB_PORT as CLEARML_WEB_PORT
@@ -219,6 +222,47 @@ def backups_restore(
     from aisland.clean import restore_backup
 
     raise SystemExit(restore_backup(project, stamp=stamp, only=entries, force=force, dry_run=dry_run, assume_yes=yes))
+
+
+# --- Test-Run Statistics ---
+#
+# Root AGENTS.md "Two Test Runs": the fast/slow split is decided from these records, never by
+# guess. The pytest plugin in `aisland/pytest_stats.py` writes them; this group reads them.
+
+
+@main.group()
+def tests() -> None:
+    """Every pytest run in the workspace, recorded — read back per project."""
+
+
+@tests.command(name="report")
+@click.argument("project")
+@click.option(
+    "--days",
+    type=click.IntRange(min=1),
+    default=DEFAULT_WINDOW_DAYS,
+    show_default=True,
+    help="How far back to read the local runs and the Jenkins builds.",
+)
+@click.option("--json", "as_json", is_flag=True, help="Print the report as JSON (what an MCP tool would return).")
+def tests_report(project: str, days: int, as_json: bool) -> None:
+    """PROJECT's fast run against its 5-minute budget, its slowest tests, the tests that failed, and what to move.
+
+    Reads the local runs (`aisland/data/test-stats/PROJECT/`) and the local Jenkins builds'
+    JUnit results. A fast run over budget lists the never-failed tests to mark `slow`; a slow
+    test that failed is listed for the fast run.
+
+    \b
+    aisland tests report streamstudio
+    aisland tests report signals-wlan --days 90
+    aisland tests report raidar --json
+    """
+    if not (pytest_stats.WORKSPACE_ROOT / project / "pyproject.toml").is_file():
+        raise click.BadParameter(
+            f"no project {project!r} in the workspace {pytest_stats.WORKSPACE_ROOT}", param_hint="PROJECT"
+        )
+    report = pytest_stats.build_report(project, days=days)
+    click.echo(json.dumps(report.to_dict(), indent=2) if as_json else pytest_stats.render_report(report))
 
 
 # --- Workspace Configuration Commands ---

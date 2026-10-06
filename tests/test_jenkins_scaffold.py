@@ -193,6 +193,28 @@ class TestTheSlowMarkerSplitsTheTestInvocations:
         for name, content in files.items():
             assert "not slow" not in content, f"{name}: an unmarked project must not deselect anything"
             assert "Slow Tests" not in content and "slow-tests:" not in content, name
+            assert "SLOW_TESTS" not in content, name
+
+    def test_the_local_pipeline_runs_its_slow_tests_only_when_asked(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ) -> None:
+        """User ruling 2026-10-06: a manual build runs the fast tests; the nightly orchestrator run passes
+        `SLOW_TESTS=true` (its timer, `NIGHTLY_CRON`), and that run gathers the slow statistics."""
+        local = _scaffolded(monkeypatch, tmp_path, _make_pyproject_with_slow_marker)["Jenkinsfile.local"]
+        declared = local[local.index("name: 'SLOW_TESTS'") :]
+        assert declared[: declared.index(")")].count("defaultValue: false") == 1
+        stage = local[local.index("stage('Slow Tests')") :]
+        assert stage.index(
+            "when {\n                expression { return params.SLOW_TESTS }\n            }"
+        ) < stage.index("steps {")
+
+    def test_the_push_pipelines_keep_running_their_slow_tests(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ) -> None:
+        """The CON pin: a push to GitHub still runs the slow leg — only the local pipeline waits for the night."""
+        files = _scaffolded(monkeypatch, tmp_path, _make_pyproject_with_slow_marker)
+        for name in ("Jenkinsfile", "ci.yml"):
+            assert "SLOW_TESTS" not in files[name], name
 
 
 class TestAPlaywrightDevDependencyInstallsItsBrowser:

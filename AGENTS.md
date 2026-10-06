@@ -8,7 +8,7 @@ Records: [sources] project sources · [folders] the `folders` list · [framework
 selection · [completion] completion install · [config] one config file · [clean] reclaiming
 disk · [containers] containerised services · [closure] the pre-install closure ·
 [playwright] dev dependencies needing more than pip · [local-pipeline] the local pipeline ·
-[doctor] the environment doctor.
+[doctor] the environment doctor · [test-stats] every pytest run recorded.
 
 ## Current state
 
@@ -20,6 +20,9 @@ The workspace's dev-infrastructure CLI, `aisland` (click, `aisland/cli.py`):
   facade over it).
 - `supervisor.py` (process-compose), `doctor.py` (`aisland doctor`), `completion.py`
   (`aisland completion install`), `clean.py` (`aisland clean`, `aisland backups`).
+- `pytest_stats.py`: the `aisland_test_stats` pytest plugin (entry point `pytest11`) that
+  records every run of a workspace project, and `aisland tests report` reading it beside the
+  Jenkins builds' JUnit results.
 - `services/`: `jenkins` (incl. `aisland jenkins scaffold`), `mlflow`, `labelstudio`,
   `fiftyone`, `aim`, `swiftbar` run under the supervisor; `docker` (Colima), `clearml`,
   `iqengine` run under Docker.
@@ -91,6 +94,28 @@ start-time port pre-flight naming the PID is the only signal). All service state
   (`tests/test_iqengine_service.py`) [containers]
 - Aim: `start` publishes `AIM_REPO` to `.env` (run and UI must share it), passes `--yes`, and
   finds `aim` venv-first. (`tests/test_aim_service.py`)
+
+## Test-run statistics (`pytest_stats.py`)
+
+Root `AGENTS.md` "Two Test Runs" (user ruling 2026-10-05). [test-stats]
+(`tests/test_pytest_stats.py`, `tests/test_workspace_fast_run_default.py`)
+- The plugin records a run only when pytest's rootdir is `<workspace>/<project>` (a
+  `.gitmodules` beside it); never a `pytester` tmp project
+  (`::test_a_run_outside_the_workspace_records_nothing`), and never a Jenkins build (`JENKINS_URL`
+  set — the local Jenkins builds in the project folder itself, and its JUnit record is the CI half
+  the report reads; `::test_a_jenkins_build_is_left_to_jenkins_own_record`).
+- It never costs a run its result: standard library only (no `aisland.manager` import — it
+  loads in every pytest start), one append per run, a failed write is one printed line
+  (`::test_a_stats_folder_that_cannot_be_written_costs_one_line_never_the_runs_result`).
+- The data folder is resolved like `manager.DATA_DIR`
+  (`::test_the_records_live_in_aislands_data_folder`); after touching the entry point,
+  `uv pip install -e ./aisland --no-deps` (`::test_the_plugin_is_declared_as_a_pytest11_entry_point`).
+- A nodeid and CI's JUnit `classname::name` meet through `junit_address`, pytest's own
+  mapping (`::test_the_junit_address_is_the_one_pytests_own_junit_report_writes`).
+- The report proposes moves; nothing moves a test between legs but an edit to its
+  `@pytest.mark.slow` (or a `FAST_SAMPLE`). Never deselect by history at collection time.
+- A project that registers `slow` sets `addopts = "-m 'not slow'"`
+  (`tests/test_workspace_fast_run_default.py::test_the_real_workspace_runs_the_fast_run_by_default`).
 
 ## Doctor
 
@@ -210,6 +235,22 @@ A bare `::` pin in this section is in `tests/test_jenkins_scaffold.py`.
   stops naming `aisland setup`. A new dependency fails until `aisland setup`; never add an
   install back. The orchestrator is `agent none`.
   (`::TestTheLocalPipelineInstallsNothing`, `tests/test_orchestrator_executor.py`) [local-pipeline]
+- **The local orchestrator runs every night at 01:00 (`NIGHTLY_CRON`, user ruling 2026-10-06)**, so
+  every project's slow run lands in Jenkins' record for `aisland tests report`. The timer is in
+  BOTH the job's properties (armed at seeding) and the pipeline's `triggers` (a pipeline without
+  one clears the job's timer on its first run); the GitHub-backed orchestrator gets none.
+  (`tests/test_orchestrator_executor.py::test_the_local_orchestrator_runs_every_night_at_one`,
+  `::test_the_ci_orchestrator_keeps_no_timer`) [test-stats]
+- **A manual build is the fast run; the nightly one adds the slow tests (user ruling 2026-10-06).**
+  A project with a `slow` marker gets a `SLOW_TESTS` parameter (default false) in
+  `Jenkinsfile.local`, and its Slow Tests stage runs only `when` it is true; `Jenkinsfile` and
+  `ci.yml` keep the slow leg on every push. The orchestrator passes
+  `SLOW_TESTS: slowTests()` — true for its timer's run (`TimerTrigger$TimerTriggerCause`) or a
+  tick on its own `SLOW_TESTS` — to the projects with the marker only. Jenkins drops a parameter
+  a job does not define, so a seeded job (`local_job_config`) and the orchestrator define it
+  before their first run. (`tests/test_jenkins_scaffold.py::TestTheSlowMarkerSplitsTheTestInvocations`,
+  `tests/test_orchestrator_executor.py::test_the_nightly_run_asks_for_the_slow_tests_and_a_manual_one_does_not`,
+  `::test_a_seeded_local_job_accepts_the_slow_switch_before_its_first_run`)
 - Deploying a template change to a running Jenkins: `aisland jenkins scaffold --force`, then
   POST each job's `/job/<name>/config.xml` with a crumb and
   `Content-Type: application/xml; charset=utf-8` (no charset → HTTP 500). A running build

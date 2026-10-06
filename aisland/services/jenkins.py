@@ -9,7 +9,7 @@ import tomllib
 import urllib.request
 import xml.etree.ElementTree as ET
 from pathlib import Path
-from typing import Any, Dict, List, Optional, cast
+from typing import Any, Dict, List, Mapping, Optional, cast
 
 import click
 from packaging.requirements import InvalidRequirement, Requirement
@@ -41,6 +41,27 @@ GH_ACTIONS: Dict[str, str] = {
     "upload-artifact": "actions/upload-artifact@v7",
     "create-github-app-token": "actions/create-github-app-token@v3",
 }
+
+#: When the LOCAL orchestrator (`<workspace>.local`) builds every project on its own: 01:00 every night (user
+#: ruling 2026-10-06), so each project's slow run happens and the test-run statistics fill (`aisland tests report`).
+#: Jenkins reads it in the server's time zone; a machine asleep at that minute misses the night (Jenkins does not catch
+#: up a missed timer). The GitHub-backed orchestrator gets none: it builds what is pushed.
+NIGHTLY_CRON = "0 1 * * *"
+
+
+def registers_slow_marker(pyproject_data: Mapping[str, Any]) -> bool:
+    """True when the project registers the `slow` pytest marker — its declaration that it has a slow run."""
+    markers = pyproject_data.get("tool", {}).get("pytest", {}).get("ini_options", {}).get("markers", [])
+    return any(str(m).split(":", 1)[0].strip() == "slow" for m in markers)
+
+
+def _project_has_slow_tests(project_dir: Path) -> bool:
+    """`registers_slow_marker` of the project's `pyproject.toml`; False for a folder without one (a detached project)."""
+    pyproject = project_dir / "pyproject.toml"
+    if not pyproject.is_file():
+        return False
+    with open(pyproject, "rb") as handle:
+        return registers_slow_marker(tomllib.load(handle))
 
 
 def discover_gearlux_projects(workspace_root: Path) -> list[str]:
@@ -720,7 +741,14 @@ class JenkinsService(BaseService):
                     stages_str += (
                         "                        catchError(buildResult: 'SUCCESS', stageResult: 'FAILURE') {\n"
                     )
-                    stages_str += f"                            build job: '{job_name}', wait: true, propagate: true\n"
+                    # A project with slow tests gets the nightly run's switch (`slowTests()` below); one without has
+                    # no Slow Tests stage, and Jenkins would only drop a parameter it does not define.
+                    slow_switch = (
+                        ", parameters: [booleanParam(name: 'SLOW_TESTS', value: slowTests())]"
+                        if _project_has_slow_tests(workspace_root / proj)
+                        else ""
+                    )
+                    stages_str += f"                            build job: '{job_name}', wait: true, propagate: true{slow_switch}\n"
                     stages_str += "                        }\n"
                     stages_str += "                    }\n"
                 else:
@@ -734,12 +762,39 @@ class JenkinsService(BaseService):
         # built-in executor for the whole run left one of the node's two executors for the projects,
         # so every "parallel" phase ran one project at a time (2026-09-13: vendorcli waited 875 s for
         # recordstream; annotaide and purifai sat at "Waiting for next available executor").
-        pipeline_script = f"""pipeline {{
+        # The LOCAL orchestrator runs every night (`NIGHTLY_CRON`). The `triggers` directive re-applies the timer at
+        # every run — a pipeline without one clears the job's timer on its first run — and the job's properties below
+        # arm it as soon as the job is seeded, before any run.
+        triggers_block = f"    triggers {{\n        cron('{NIGHTLY_CRON}')\n    }}\n" if local else ""
+        # A manual Build Now is the FAST run of every project; the nightly timer — or a tick on SLOW_TESTS — asks
+        # every project with slow tests for them too (user ruling 2026-10-06), and that run gathers the statistics.
+        slow_tests_head = (
+            "// The nightly timer, or a tick on SLOW_TESTS, runs every project's slow tests too; Build Now the fast ones.\n"
+            "def slowTests() {\n"
+            "    return params.SLOW_TESTS || "
+            "!currentBuild.getBuildCauses('hudson.triggers.TimerTrigger$TimerTriggerCause').isEmpty()\n"
+            "}\n\n"
+            if local
+            else ""
+        )
+        slow_tests_param = (
+            """    parameters {
+        booleanParam(
+            name: 'SLOW_TESTS',
+            defaultValue: false,
+            description: 'If true, run the slow tests of every project too. The nightly run (01:00) does; a manual build runs the fast tests only.'
+        )
+    }
+"""
+            if local
+            else ""
+        )
+        pipeline_script = f"""{slow_tests_head}pipeline {{
     agent none
     options {{
         disableConcurrentBuilds()
     }}
-    stages {{
+{slow_tests_param}{triggers_block}    stages {{
 {stages_str}    }}
 }}"""
 
@@ -754,13 +809,39 @@ class JenkinsService(BaseService):
             else f"Orchestrates the build of all {base_name} workspace projects based on dependencies."
         )
 
+        timer_property = (
+            f"""
+    <org.jenkinsci.plugins.workflow.job.properties.PipelineTriggersJobProperty>
+      <triggers>
+        <hudson.triggers.TimerTrigger>
+          <spec>{NIGHTLY_CRON}</spec>
+        </hudson.triggers.TimerTrigger>
+      </triggers>
+    </org.jenkinsci.plugins.workflow.job.properties.PipelineTriggersJobProperty>"""
+            if local
+            else ""
+        )
+        # SLOW_TESTS defined at seeding too, so Build with Parameters offers the tick before the job's first run.
+        slow_switch_property = (
+            """
+    <hudson.model.ParametersDefinitionProperty>
+      <parameterDefinitions>
+        <hudson.model.BooleanParameterDefinition>
+          <name>SLOW_TESTS</name>
+          <defaultValue>false</defaultValue>
+        </hudson.model.BooleanParameterDefinition>
+      </parameterDefinitions>
+    </hudson.model.ParametersDefinitionProperty>"""
+            if local
+            else ""
+        )
         config_xml = f"""<?xml version='1.1' encoding='UTF-8'?>
 <flow-definition plugin="workflow-job">
   <actions/>
   <description>{description}</description>
   <keepDependencies>false</keepDependencies>
   <properties>
-    <org.jenkinsci.plugins.workflow.job.properties.DisableConcurrentBuildsJobProperty/>
+    <org.jenkinsci.plugins.workflow.job.properties.DisableConcurrentBuildsJobProperty/>{timer_property}{slow_switch_property}
   </properties>
   <definition class="org.jenkinsci.plugins.workflow.cps.CpsFlowDefinition" plugin="workflow-cps">
     <script>{escaped_script}</script>
@@ -868,8 +949,7 @@ class JenkinsService(BaseService):
         # currently marked is a valid state, not a failure.
         with open(pyproject_path, "rb") as fh:
             _pyproject_data = tomllib.load(fh)
-        _markers = _pyproject_data.get("tool", {}).get("pytest", {}).get("ini_options", {}).get("markers", [])
-        has_slow_marker = any(str(m).split(":", 1)[0].strip() == "slow" for m in _markers)
+        has_slow_marker = registers_slow_marker(_pyproject_data)
         pytest_deselect = " -m 'not slow'" if has_slow_marker else ""
         # A project whose `dev` extra lists PLAYWRIGHT gets its browser fetched right after the
         # dev install, in every artifact that runs its tests — the package alone cannot open a
@@ -910,6 +990,25 @@ class JenkinsService(BaseService):
 """
         else:
             slow_stage = ""
+        # The LOCAL pipeline runs its slow stage only when asked (user ruling 2026-10-06): a manual build is the fast
+        # run; the nightly orchestrator run (`NIGHTLY_CRON`) passes SLOW_TESTS=true, and that run gathers the slow
+        # statistics. The push pipelines (`Jenkinsfile`, `ci.yml`) keep running it on every push.
+        local_slow_stage = slow_stage.replace(
+            "        stage('Slow Tests') {\n            steps {",
+            "        stage('Slow Tests') {\n            when {\n                expression { return params.SLOW_TESTS }\n"
+            "            }\n            steps {",
+            1,
+        )
+        local_slow_param = (
+            """
+        booleanParam(
+            name: 'SLOW_TESTS',
+            defaultValue: false,
+            description: 'If true, run the slow tests too. The nightly run of the orchestrator sets it; a manual build runs the fast tests only.'
+        )"""
+            if has_slow_marker
+            else ""
+        )
 
         # CI asks ONE question per internal dependency — is it RELEASED on PyPI? — and nothing
         # about the workspace's `config.toml` sources (user ruling 2026-09-26: "it should always
@@ -1265,7 +1364,7 @@ pipeline {{
             name: 'REPORT_ALL_WARNINGS',
             defaultValue: false,
             description: 'If true, run every quality gate to completion and report all issues. Default (false) fails fast on the first failing gate.'
-        )
+        ){local_slow_param}
     }}
 
     environment {{
@@ -1474,7 +1573,7 @@ with open('isort-checkstyle.xml', 'w') as f:
                 }}
             }}
         }}
-{slow_stage}
+{local_slow_stage}
         stage('Verify Examples') {{
             steps {{
                 echo 'Running project examples...'
@@ -1981,6 +2080,47 @@ jobs:
             "GitHub CI Workflow",
         )
 
+    @staticmethod
+    def local_job_config(project_base_name: str, script_content: str, project_path: Path) -> str:
+        """The config.xml of a local job (`<project>.local`): its `Jenkinsfile.local` embedded, no commit needed.
+
+        A pipeline's `parameters` are defined by its FIRST run, and Jenkins drops a parameter a job does not define —
+        so a pipeline declaring SLOW_TESTS gets it defined here already, or the orchestrator's first nightly run would
+        ask a new job for its slow tests in vain.
+        """
+        from xml.sax.saxutils import escape
+
+        slow_switch = (
+            """
+    <hudson.model.ParametersDefinitionProperty>
+      <parameterDefinitions>
+        <hudson.model.BooleanParameterDefinition>
+          <name>SLOW_TESTS</name>
+          <defaultValue>false</defaultValue>
+        </hudson.model.BooleanParameterDefinition>
+      </parameterDefinitions>
+    </hudson.model.ParametersDefinitionProperty>"""
+            if "name: 'SLOW_TESTS'" in script_content
+            else ""
+        )
+        return f"""<?xml version='1.1' encoding='UTF-8'?>
+<flow-definition plugin="workflow-job">
+  <actions/>
+  <description>Local development pipeline for {project_base_name}</description>
+  <keepDependencies>false</keepDependencies>
+  <properties>
+    <org.jenkinsci.plugins.workflow.job.properties.DisableConcurrentBuildsJobProperty/>{slow_switch}
+  </properties>
+  <definition class="org.jenkinsci.plugins.workflow.cps.CpsFlowDefinition" plugin="workflow-cps">
+    <script>{escape(script_content)}</script>
+    <sandbox>true</sandbox>
+  </definition>
+  <triggers/>
+  <disabled>false</disabled>
+  <customWorkspace>{project_path.absolute()}</customWorkspace>
+</flow-definition>
+"""
+
     def init_pipelines(self, project_name: Optional[str] = None, local: bool = False) -> None:
         """Seed Jenkins with Multi-branch pipelines for projects discovered in the workspace."""
         self.setup()
@@ -2038,29 +2178,7 @@ jobs:
                 # For local jobs, embed the Jenkinsfile.local content directly to avoid needing commits
                 jenkinsfile_path = project_path / "Jenkinsfile.local"
                 if jenkinsfile_path.exists():
-                    script_content = jenkinsfile_path.read_text()
-                    # Escape XML entities in the script
-                    from xml.sax.saxutils import escape
-
-                    escaped_script = escape(script_content)
-
-                    config_xml = f"""<?xml version='1.1' encoding='UTF-8'?>
-<flow-definition plugin="workflow-job">
-  <actions/>
-  <description>Local development pipeline for {project_base_name}</description>
-  <keepDependencies>false</keepDependencies>
-  <properties>
-    <org.jenkinsci.plugins.workflow.job.properties.DisableConcurrentBuildsJobProperty/>
-  </properties>
-  <definition class="org.jenkinsci.plugins.workflow.cps.CpsFlowDefinition" plugin="workflow-cps">
-    <script>{escaped_script}</script>
-    <sandbox>true</sandbox>
-  </definition>
-  <triggers/>
-  <disabled>false</disabled>
-  <customWorkspace>{project_path.absolute()}</customWorkspace>
-</flow-definition>
-"""
+                    config_xml = self.local_job_config(project_base_name, jenkinsfile_path.read_text(), project_path)
                     config_file = project_job_dir / "config.xml"
                     config_file.write_text(config_xml)
                     click.echo(f"  - Seeded local job (embedded script): {project}")

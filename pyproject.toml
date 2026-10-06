@@ -22,6 +22,12 @@ requires-python = ">=3.12"
 [project.scripts]
 aisland = "aisland.cli:main"
 
+# Every pytest run in the workspace `.venv` loads this plugin, which records each run of a
+# workspace project to `aisland/data/test-stats/` (root AGENTS.md "Two Test Runs"; read back by
+# `aisland tests report`). Disable it for one run with `-p no:aisland_test_stats`.
+[project.entry-points.pytest11]
+aisland_test_stats = "aisland.pytest_stats"
+
 [tool.setuptools.packages.find]
 where = ["."]
 include = ["aisland*"]
