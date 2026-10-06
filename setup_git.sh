@@ -75,9 +75,15 @@ set_alias() {
     fi
 }
 
-set_alias pull-all '!PARENT_BRANCH=$(git branch --show-current) && git submodule foreach "git pull origin \$PARENT_BRANCH" && git pull --no-recurse-submodules'
+# pull-all: fetch + merge every submodule, then the root, settling submodule-pointer
+# conflicts and recording what came in — see git_pull_all.sh. The script lives in the
+# workspace root's aisland/, found from the root or from inside any submodule.
+# Usage: git pull-all [--autostash]
+set_alias pull-all '!bash "$(git rev-parse --show-superproject-working-tree --show-toplevel | head -n 1)/aisland/git_pull_all.sh"'
 
-set_alias push-all '!git push origin $(git branch --show-current) && git submodule foreach "git push origin \$(git branch --show-current)"'
+# push-all: the submodules first, the root last and only when they all pushed, so the root
+# on origin never records a submodule commit origin does not have.
+set_alias push-all '!git submodule foreach "git push origin \$(git branch --show-current)" && git push origin $(git branch --show-current)'
 
 set_alias switch-all '!f() { git checkout "$1" && git submodule foreach "branch=\$(git config -f \"\$toplevel/.gitmodules\" submodule.\$name.branch); [ \"\$branch\" = \".\" ] && branch=\"$1\"; git checkout \${branch:-main}"; }; f'
 

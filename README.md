@@ -1279,31 +1279,62 @@ git config submodule.recurse true
 
 ### Workspace Git Aliases
 
-The aliases below (`pull-all`, `push-all`, `switch-all`, `merge-all`, `tag-all`, `status-all`, `safe`) are installed by `aisland/setup_git.sh` into the **local** config of the root repository *and* every active submodule. They assume the acme mono-repo layout and toolchain, so they are deliberately not written to the global config — that would leak workspace-specific behavior into unrelated repositories (the script also removes any global copies left by earlier versions of itself). The definitions live in `setup_git.sh`; to (re)install them — including after activating a new submodule — run:
+The aliases below (`pull-all`, `push-all`, `switch-all`, `merge-all`, `tag-all`, `status-all`, `safe`) are installed by `aisland/setup_git.sh` into the **local** config of the root repository *and* every active submodule. They assume the acme mono-repo layout and toolchain, so they are deliberately not written to the global config — that would leak workspace-specific behavior into unrelated repositories (the script also removes any global copies left by earlier versions of itself). The definitions live in `setup_git.sh` (`pull-all` calls [`git_pull_all.sh`](git_pull_all.sh) beside it); to (re)install them — including after activating a new submodule — run:
 
 ```bash
 bash aisland/setup_git.sh
 ```
 
-### Pulling Unrecorded Submodule Changes (`pull-all`)
+### Pulling Everything (`pull-all`)
 
-If `submodule.recurse` keeps things in sync, why do you need `pull-all`? 
-
-Because a standard `git pull` only syncs submodules to the exact snapshots recorded in the **parent repository**. If a teammate pushes a brand new commit directly to the `recordstream` submodule's remote branch, but *nobody* has updated the parent repository to point to it yet, a standard `git pull` will completely ignore that new `recordstream` commit.
-
-The `pull-all` alias is for **eagerly fetching unrecorded changes**. It reaches out directly to all submodule remote repositories, bypasses the parent's locked hashes, and forces your submodules to fast-forward to the absolute latest commits on their tracked branches.
-
-To use it (e.g., to grab everything latest before starting a new feature):
+`git pull-all` brings the whole workspace up to date with origin: every active submodule, then the root, on the root's branch. Type it in the root or inside any submodule — it always pulls the whole workspace.
 
 ```bash
-git pull-all
+git pull-all                # merge what came in; list what needs you
+git pull-all --autostash    # also set aside uncommitted edits that are in the way, and put them back
 ```
 
-### Pushing All Submodule Changes (`push-all`)
+A plain `git pull` (even with `submodule.recurse`) only moves each submodule to the commit the root *records*; a commit pushed to a submodule that nobody recorded in the root is never pulled. And when two machines both commit in a submodule and record it, the root's merge stops on the pointer even though the submodule merges cleanly:
 
-When you have committed changes across multiple submodules and the parent repository, you can use `push-all` to push the current branch of every project to its respective remote in one command.
+```
+CONFLICT (submodule): Merge conflict in signals
+Automatic merge failed; fix conflicts and then commit the result.
+```
 
-To use it:
+`git pull-all` handles both. In order, it:
+
+1. **fetches** the root and every submodule from `origin`, in parallel, before anything merges;
+2. **merges** `origin/<branch>` into each submodule that is on the root's branch;
+3. **merges** `origin/<branch>` into the root. A pointer conflict is settled to the submodule's checked-out commit **only when that commit contains both sides** (the commit git itself names as "a possible merge resolution"), and the merge is committed;
+4. **records** the submodules that hold commits from origin the root does not record yet, in one commit — `chore: sync submodule pointers after pull-all (<submodules>)` — leaving anything else you staged staged. A pointer never moves backwards, and a submodule whose only unrecorded commits are your own local ones is left for you (`/commit-all` records it).
+
+The same situation as above, with `git pull-all`:
+
+```
+fetching the root and 25 submodules…
+signals             merged origin/dev/main (1 commit)
+root                   pointer conflict signals → 6cb3d7f (holds both sides)
+root                   merged origin/dev/main (1 commit)
+```
+
+What it cannot do is listed under `needs you:` and it exits 1; fix the item and run it again — it continues where it stopped (it also finishes a root merge a plain `git pull` left on a pointer conflict):
+
+| listed as | what happened | what to do |
+| --- | --- | --- |
+| `CONFLICT in <files>` | both sides changed the same lines; that repository is left mid-merge (a submodule's conflict also holds back the root, whose pointers depend on it) | resolve, `git add`, `git commit`, run `git pull-all` again |
+| `not merged: uncommitted edits to <files> would be overwritten` | the merge changes files you are editing; nothing was touched | commit them, or run `git pull-all --autostash` |
+| `your uncommitted edits to <files> clash with the pulled changes` | `--autostash` put your edits back over lines the pull changed; the file has conflict markers, and a copy is in `git stash list` as `git pull-all autostash (applied with conflicts)` | fix the markers, `git reset -q -- <file>`, then `git stash drop` that copy |
+| `detached HEAD — not pulled` / `on <branch>, the root is on <branch> — not pulled` | that submodule is checked out elsewhere on purpose | `git switch <branch>` in it to have it pulled |
+| `not fetched: …` | its remote could not be reached (e.g. off VPN); the others still pull | reconnect and run again |
+| `the root records <sha>, which <submodule>'s <branch> does not contain` | the root points at a commit outside that branch; the pointer is left as recorded | check the submodule's branch |
+
+`--autostash` sets aside only the files the merge needs, in a stash named `git pull-all autostash`, merges, and puts them back. If the merge itself conflicts, your edits stay aside until you commit the merge; the next `git pull-all` puts them back.
+
+The merges are explicit (`git fetch` + `git merge`, never `git pull`), so the result does not depend on a machine's `pull.rebase` setting. The logic lives in [`git_pull_all.sh`](git_pull_all.sh) (why it is shaped this way: [docs/architecture.md](docs/architecture.md), "`pull-all` settles a submodule pointer only to a commit holding both sides"). In Claude Code, `/pull-all` runs it and finishes the listed conflicts for you; `/push-all` runs `/pull-all`, the quality gates of each project with commits to push, and pushes.
+
+### Pushing Everything (`push-all`)
+
+`git push-all` pushes the current branch of every submodule, then the root's — the root only when every submodule push succeeded, so the root on origin never records a submodule commit origin does not have.
 
 ```bash
 git push-all

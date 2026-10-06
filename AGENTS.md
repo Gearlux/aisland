@@ -8,7 +8,8 @@ Records: [sources] project sources · [folders] the `folders` list · [framework
 selection · [completion] completion install · [config] one config file · [clean] reclaiming
 disk · [containers] containerised services · [closure] the pre-install closure ·
 [playwright] dev dependencies needing more than pip · [local-pipeline] the local pipeline ·
-[doctor] the environment doctor · [test-stats] every pytest run recorded.
+[doctor] the environment doctor · [test-stats] every pytest run recorded · [pull-all]
+`pull-all` settles a pointer only to a commit holding both sides.
 
 ## Current state
 
@@ -30,6 +31,8 @@ The workspace's dev-infrastructure CLI, `aisland` (click, `aisland/cli.py`):
   `fiftyone`, `aim`, `swiftbar` run under the supervisor; `docker` (Colima), `clearml`,
   `iqengine` run under Docker.
 - `setup.sh`: interpreter + venv, then `aisland setup -y` and `aisland completion install`.
+- `setup_git.sh`: the workspace git aliases, local config of the root and every active
+  submodule; `pull-all` runs `git_pull_all.sh`.
 
 Invariants: only supervisor-started services exist (one started elsewhere is invisible; the
 start-time port pre-flight naming the PID is the only signal). All service state lives under
@@ -307,3 +310,24 @@ A bare `::` pin in this section is in `tests/test_jenkins_scaffold.py`.
   asks), an identical one is reported `already` and dropped. `_same_content` compares bytes,
   never size+mtime (`::test_a_hand_copied_tree_is_recognised_despite_new_mtimes`). Manifest
   paths are validated (`_safe_rel`). `backups prune` confirms first.
+
+## Workspace git aliases (`setup_git.sh`, `git_pull_all.sh`)
+
+- Aliases live in LOCAL config (root + every active submodule), never global.
+  (`tests/test_setup_git_aliases.py`)
+- `git pull-all` is `git_pull_all.sh`, run from the workspace root wherever it is typed; the
+  root `/pull-all` and `/push-all` workflows call it — change its `needs you:` wording and those
+  workflows together. (`tests/test_git_pull_push_all.py`) [pull-all]
+  - A pointer conflict is settled only to the submodule's checkout when it contains BOTH sides
+    (`::test_a_pointer_conflict_is_settled_to_the_submodule_merge_holding_both_sides`,
+    `::test_a_pointer_whose_submodule_does_not_hold_both_sides_is_left_and_listed`).
+  - A pointer is recorded only for commits that came from origin, never backwards
+    (`::test_a_pointer_is_never_moved_backwards`,
+    `::test_unrecorded_local_commits_with_nothing_incoming_are_left_alone`); the record commit
+    takes only its pointers (`::test_recording_pointers_leaves_other_staged_changes_staged_and_out`).
+  - `git fetch` + `git merge`, never `git pull` (`pull.*` settings, `submodule.recurse`).
+  - Uncommitted edits are touched only under `--autostash`, only the files the merge needs.
+  - bash 3.2 (`/bin/bash` on macOS): no `wait -n`, associative arrays, `mapfile`; the tests run
+    it under `/bin/bash`.
+- `git push-all` pushes every submodule before the root, and the root only when they all pushed
+  (`::test_the_push_all_alias_pushes_the_submodules_before_the_root`).
