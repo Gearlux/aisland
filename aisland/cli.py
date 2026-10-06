@@ -4,7 +4,7 @@ from typing import Optional, Tuple
 
 import click
 
-from aisland import pytest_stats
+from aisland import nightly, pytest_stats
 from aisland import supervisor as supervisor_mod
 from aisland.clean import DEFAULT_KEEP_DAYS
 from aisland.manager import (
@@ -263,6 +263,26 @@ def tests_report(project: str, days: int, as_json: bool) -> None:
         )
     report = pytest_stats.build_report(project, days=days)
     click.echo(json.dumps(report.to_dict(), indent=2) if as_json else pytest_stats.render_report(report))
+
+
+@tests.command(name="nightly")
+@click.option("--json", "as_json", is_flag=True, help="Print the report as JSON (what an MCP tool would return).")
+@click.option("--no-notify", "no_notify", is_flag=True, help="Write the report but show no desktop notification.")
+def tests_nightly(as_json: bool, no_notify: bool) -> None:
+    """Report the local Jenkins' nightly runs since the previous report; exit 1 when one failed or none ran.
+
+    Reads every 01:00 run of the orchestrator (`<workspace>.local`) started since the previous
+    report, writes `aisland/data/nightly/<date>.md` — each project's result, a failed one's stage,
+    tests and error lines — and shows a desktop notification when a night failed, had no run, or
+    is still building. The `<workspace>.nightly-check` Jenkins job runs it each weekday at 09:30.
+
+    \b
+    aisland tests nightly
+    aisland tests nightly --json --no-notify
+    """
+    report, status = nightly.run_nightly(notify=not no_notify)
+    click.echo(json.dumps(report.to_dict(), indent=2) if as_json else nightly.render_markdown(report))
+    raise SystemExit(status)
 
 
 # --- Workspace Configuration Commands ---

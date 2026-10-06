@@ -1111,6 +1111,14 @@ happen in the runs nobody kept: the ones agents and developers make while they w
   `SLOW_TESTS` parameter the orchestrator passes — true when its build cause is the timer —
   because a downstream job cannot see its upstream's cause; rejected: a second, nightly-only
   orchestrator job (two lists of projects to keep in step).
+- A night's failure is reported by Jenkins, and the tests are moved by Claude (user choice
+  2026-10-06). `aisland tests nightly` (`aisland/nightly.py`), run by the
+  `<workspace>.nightly-check` job at 09:30 on weekdays, writes `aisland/data/nightly/<date>.md`,
+  notifies and turns red when a night failed or had no run — it runs whether or not the Claude
+  app is open, and its result shows in Jenkins beside the night it judges. Moving a test between
+  the runs needs judgment (a timeout under load is no caught break), so the Claude app's
+  scheduled task does that at 09:45 from the report. Rejected: the Claude task alone (it runs only
+  while the app is open, and Jenkins showed nothing); Jenkins alone (no judgment for the moves).
 - One run is disabled with `-p no:aisland_test_stats`.
 
 ### Example

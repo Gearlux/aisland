@@ -23,6 +23,9 @@ The workspace's dev-infrastructure CLI, `aisland` (click, `aisland/cli.py`):
 - `pytest_stats.py`: the `aisland_test_stats` pytest plugin (entry point `pytest11`) that
   records every run of a workspace project, and `aisland tests report` reading it beside the
   Jenkins builds' JUnit results.
+- `nightly.py`: `aisland tests nightly`, the morning report of the orchestrator's nightly runs
+  (`aisland/data/nightly/<date>.md`, a desktop notification, exit 1 on a bad night), run by the
+  `<workspace>.nightly-check` Jenkins job.
 - `services/`: `jenkins` (incl. `aisland jenkins scaffold`), `mlflow`, `labelstudio`,
   `fiftyone`, `aim`, `swiftbar` run under the supervisor; `docker` (Colima), `clearml`,
   `iqengine` run under Docker.
@@ -241,6 +244,15 @@ A bare `::` pin in this section is in `tests/test_jenkins_scaffold.py`.
   one clears the job's timer on its first run); the GitHub-backed orchestrator gets none.
   (`tests/test_orchestrator_executor.py::test_the_local_orchestrator_runs_every_night_at_one`,
   `::test_the_ci_orchestrator_keeps_no_timer`) [test-stats]
+- **The nightly runs are reported by Jenkins, the test moves made by Claude (user choice 2026-10-06).**
+  `<workspace>.nightly-check` (seeded by a local init only; `NIGHTLY_CHECK_CRON`, weekdays 09:30,
+  timer in properties and `triggers`) runs `aisland tests nightly`: every TIMER run of the
+  orchestrator since the previous report (the newest `aisland/data/nightly/<date>.md` dated before
+  today) — a manual run is never a night — written down with each failed project's stage, tests
+  and gate lines; a notification and exit 1 when a night failed, had no run, is still building or
+  Jenkins did not answer. The report states what it found, never a guessed cause. Moving tests
+  needs judgment and stays with the Claude app's scheduled task `acme-nightly-check` (09:45),
+  which reads the report. (`tests/test_nightly.py`)
 - **A manual build is the fast run; the nightly one adds the slow tests (user ruling 2026-10-06).**
   A project with a `slow` marker gets a `SLOW_TESTS` parameter (default false) in
   `Jenkinsfile.local`, and its Slow Tests stage runs only `when` it is true; `Jenkinsfile` and

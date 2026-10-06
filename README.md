@@ -436,11 +436,30 @@ and notebooks. To run the slow tests too, use **Build with Parameters** and tick
 | Build Now | the fast run only |
 | Build with Parameters, SLOW_TESTS ticked | the fast run and the slow run |
 
-**The morning check.** Each weekday at 09:30 a scheduled task of the Claude app,
-`acme-nightly-check`, reads every nightly run since its last report, writes the failed
-projects, stages and tests to `aisland/data/nightly/<date>.md`, sends a notification when a run
-failed or did not happen, and moves tests between the fast and slow runs by the workspace rule
-(its edits stay uncommitted for review). It runs while the app is open, or at the next launch.
+**The morning check.** Each weekday at 09:30 the Jenkins job `<workspace>.nightly-check`
+(seeded by `aisland jenkins init --local`) runs `aisland tests nightly`. It reads every 01:00 run
+since the previous report, writes `aisland/data/nightly/<date>.md` — each project's result, and
+for a failed one its stage, its failing tests with their first error line, a quality gate's
+offending lines — and, when a night failed, had no run, is still building or Jenkins did not
+answer, shows a desktop notification and ends red. A manual run of the orchestrator is never
+reported as a night.
+
+```bash
+aisland tests nightly                     # what the job runs
+aisland tests nightly --json --no-notify  # the same report as data, no banner
+```
+
+```text
+# Nightly runs — 2026-10-06
+
+Jenkins http://localhost:9080/ · acme.local timer runs since 2026-10-05T11:50+02:00
+
+**No 01:00 run** of acme.local started in that window.
+```
+
+At 09:45 a scheduled task of the Claude app, `acme-nightly-check`, reads that report and moves
+tests between the fast and slow runs by the workspace rule; its edits stay uncommitted for
+review. It runs while the app is open, or at its next launch.
 
 ### 3. Manage MLflow
 ```bash

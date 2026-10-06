@@ -47,6 +47,9 @@ GH_ACTIONS: Dict[str, str] = {
 #: Jenkins reads it in the server's time zone; a machine asleep at that minute misses the night (Jenkins does not catch
 #: up a missed timer). The GitHub-backed orchestrator gets none: it builds what is pushed.
 NIGHTLY_CRON = "0 1 * * *"
+#: When the `<workspace>.nightly-check` job reports the nightly runs (`aisland tests nightly`): 09:30 on weekdays (user
+#: choice 2026-10-06), so a Monday's report covers Saturday's, Sunday's and Monday's nights.
+NIGHTLY_CHECK_CRON = "30 9 * * 1-5"
 
 
 def registers_slow_marker(pyproject_data: Mapping[str, Any]) -> bool:
@@ -857,6 +860,68 @@ class JenkinsService(BaseService):
         config_file = project_job_dir / "config.xml"
         config_file.write_text(config_xml)
         click.echo(f"  - Seeded orchestrator job: {job_name}")
+
+    def _create_nightly_check_job(self) -> None:
+        """Seed `<workspace>.nightly-check`: `aisland tests nightly` each weekday morning (`NIGHTLY_CHECK_CRON`).
+
+        It reports the orchestrator's nightly runs to `aisland/data/nightly/<date>.md`, notifies on a failure, and
+        exits 1 then, so the job is red on the mornings that need a look (user choice 2026-10-06). The timer sits in
+        the job's properties (armed at seeding) and in the pipeline's `triggers` (re-applied at each run).
+        """
+        from xml.sax.saxutils import escape
+
+        from aisland.manager import get_workspace_name
+
+        job_name = f"{get_workspace_name()}.nightly-check"
+        pipeline_script = f"""// The morning report of the nightly runs (aisland/nightly.py): written to aisland/data/nightly/<date>.md,
+// a desktop notification and a red build when a night failed, had no run, or is still building.
+pipeline {{
+    agent {{
+        node {{
+            label 'built-in'
+        }}
+    }}
+    options {{
+        disableConcurrentBuilds()
+    }}
+    triggers {{
+        cron('{NIGHTLY_CHECK_CRON}')
+    }}
+    stages {{
+        stage('Report the nightly runs') {{
+            steps {{
+                sh "${{env.WORKSPACE_ROOT}}/.venv/bin/aisland tests nightly"
+            }}
+        }}
+    }}
+}}"""
+        config_xml = f"""<?xml version='1.1' encoding='UTF-8'?>
+<flow-definition plugin="workflow-job">
+  <actions/>
+  <description>Reports the nightly runs of {get_workspace_name()}.local each weekday morning.</description>
+  <keepDependencies>false</keepDependencies>
+  <properties>
+    <org.jenkinsci.plugins.workflow.job.properties.DisableConcurrentBuildsJobProperty/>
+    <org.jenkinsci.plugins.workflow.job.properties.PipelineTriggersJobProperty>
+      <triggers>
+        <hudson.triggers.TimerTrigger>
+          <spec>{NIGHTLY_CHECK_CRON}</spec>
+        </hudson.triggers.TimerTrigger>
+      </triggers>
+    </org.jenkinsci.plugins.workflow.job.properties.PipelineTriggersJobProperty>
+  </properties>
+  <definition class="org.jenkinsci.plugins.workflow.cps.CpsFlowDefinition" plugin="workflow-cps">
+    <script>{escape(pipeline_script)}</script>
+    <sandbox>true</sandbox>
+  </definition>
+  <triggers/>
+  <disabled>false</disabled>
+</flow-definition>
+"""
+        job_dir = self.service_data_dir / "jobs" / job_name
+        job_dir.mkdir(parents=True, exist_ok=True)
+        (job_dir / "config.xml").write_text(config_xml)
+        click.echo(f"  - Seeded nightly check job: {job_name}")
 
     def scaffold_pipelines(self, project_name: Optional[str] = None, force: bool = False) -> None:
         """Generate standard Jenkinsfile, Jenkinsfile.local, and GitHub Actions for a project or all projects."""
@@ -2251,6 +2316,8 @@ jobs:
         # Create the orchestrator job
         initialized_names = [p.name for p in projects if p.name]
         self._create_orchestrator_job(local, initialized_names)
+        if local:
+            self._create_nightly_check_job()
 
         # Two failure modes to avoid when injecting globalProperties:
         #   1. Jenkins is running → our config.xml edits get clobbered by
