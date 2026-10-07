@@ -399,7 +399,8 @@ def provision_system() -> None:
         userspace = ["tool", ...]  # Linux: installed via aisland's userspace registry
 
     Behaviour by platform:
-      * Darwin: install ``brew`` deps via Homebrew; ``userspace`` is ignored.
+      * Darwin: install ``brew`` deps via Homebrew; ``userspace`` is ignored. Then install
+        the Java the Jenkins WAR accepts (:meth:`JenkinsService.provision_java`).
       * Linux:  install ``userspace`` deps via :data:`USERSPACE_TOOLS`; ``brew`` is ignored.
       * Other:  log and skip — no provisioning implemented yet.
     """
@@ -437,6 +438,11 @@ def provision_system() -> None:
             _maybe_offer_shell_switch(brew_packages)
         else:
             click.echo("  - No brew packages declared; nothing to install on macOS.")
+        # Jenkins' Java is no declared formula: the WAR names the Java it runs on (see
+        # services/jenkins_java.py). Imported here because services.jenkins imports this module.
+        from aisland.services.jenkins import JenkinsService
+
+        JenkinsService().provision_java()
     elif system == "Linux":
         if userspace_tools:
             click.echo(f"  - Found required userspace tools: {', '.join(sorted(userspace_tools))}")

@@ -80,6 +80,13 @@ start-time port pre-flight naming the PID is the only signal). All service state
   `log stream`. (README "macOS: Full Disk Access for the supervisor")
 - `aisland jenkins init` seeds a multibranch job per `Jenkinsfile`; `--local` seeds
   `<project>.local` with `Jenkinsfile.local` embedded.
+- Jenkins (and its plugin manager) runs on the Java its WAR accepts, by FULL path — never the
+  bare `java` on PATH, which a shell profile points at the newest JDK (26 broke Jenkins on
+  2026-10-06). `services/jenkins_java.py` probes each installed JDK, newest first, with
+  `java -jar jenkins.war --version`; no Java version is written into aisland, and the bare
+  `openjdk` formula is never a sys-dependency. On macOS `provision_system` installs the
+  `openjdk@N` the WAR names. (`tests/test_jenkins_java.py`,
+  `::test_aisland_never_declares_the_floating_openjdk_formula`)
 
 ## Docker, containers, trackers
 
@@ -127,7 +134,8 @@ Root `AGENTS.md` "Two Test Runs" (user ruling 2026-10-05). [test-stats]
 
 - A recurring environment skew becomes a `check_*` in `doctor.py`, listed in `CHECKS`, not
   just a note. Current checks: `opencv`, `huggingface_hub`, `mcp`, `docker-creds`,
-  `colima-tls` (rules for project authors: root `AGENTS.md` "Known Environment Skews").
+  `colima-tls`, `jenkins-java` (rules for project authors: root `AGENTS.md` "Known Environment
+  Skews").
   [doctor]
   - Cheap, read-only, specific; a failure carries a copy-pasteable remedy
     (`tests/test_doctor.py::test_every_registered_check_returns_a_result`).

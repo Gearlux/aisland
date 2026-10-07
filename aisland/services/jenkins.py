@@ -14,12 +14,13 @@ from typing import Any, Dict, List, Mapping, Optional, cast
 import click
 from packaging.requirements import InvalidRequirement, Requirement
 
-from aisland.manager import BIN_DIR, BaseService
+from aisland.manager import BIN_DIR, BaseService, _install_brew_packages
 from aisland.selection import AXES, PLAYWRIGHT_BROWSER
 from aisland.selection import declared as sel_declared
 from aisland.selection import dev_extra_names
 from aisland.selection import extras_for as sel_extras_for
 from aisland.selection import read_committed as sel_committed
+from aisland.services.jenkins_java import JenkinsJava, choose_java, find_runtimes, newest_versioned_formula
 from aisland.sources import DEFAULT_REF, released_on_pypi
 
 # Match the Gearlux GitHub URL forms (SSH and HTTPS), capturing the repo name.
@@ -291,18 +292,70 @@ class JenkinsService(BaseService):
                 )
             return {}
 
+    def ensure_war(self) -> bool:
+        """Download the Jenkins WAR unless it is already in the bin dir; return whether it is there now."""
+        self.war_file.parent.mkdir(exist_ok=True)
+        if self.war_file.exists():
+            return True
+        click.echo(f"Downloading Jenkins from {self.URL}...")
+        try:
+            urllib.request.urlretrieve(self.URL, self.war_file)
+        except Exception as e:
+            click.echo(f"Error downloading Jenkins: {e}", err=True)
+            return False
+        click.echo("  - Jenkins download complete.")
+        return True
+
+    def resolve_java(self) -> JenkinsJava:
+        """Ask the downloaded WAR which installed JDK it runs on (see :mod:`aisland.services.jenkins_java`)."""
+        return choose_java(self.war_file, find_runtimes())
+
+    def _java_or_exit(self) -> Path:
+        """The `java` Jenkins runs on, by full path — or print why there is none and exit 1.
+
+        Never the bare `java` on PATH: a shell profile puts the newest JDK there, and Jenkins
+        refuses any Java its launcher does not name — a refusal the supervisor would only
+        retry three times and record in its log.
+        """
+        choice = self.resolve_java()
+        if choice.runtime is None:
+            click.echo(choice.refusal(), err=True)
+            sys.exit(1)
+        click.echo(choice.describe())
+        return choice.runtime.java
+
+    def provision_java(self) -> None:
+        """Install, through Homebrew, the newest Java this Jenkins accepts — unless one already is.
+
+        The WAR names what it supports only when a JDK runs its launcher, so on a machine with
+        no JDK that can (none at all, or only Java 8) the newest `openjdk@N` formula is
+        installed first to ask with; when the WAR refuses that one too, the formula it names is
+        installed next. Never exits: a failed WAR download or a machine left without an
+        accepted Java is reported, and the rest of setup goes on.
+        """
+        click.echo("==> Choosing the Java Jenkins runs on...")
+        if not self.ensure_war():
+            click.echo("  - Skipped: without the Jenkins WAR there is no asking which Java it runs on.")
+            return
+        choice = self.resolve_java()
+        installed: set = set()
+        while choice.runtime is None:
+            formula = choice.formula or newest_versioned_formula()
+            if formula is None or formula in installed:
+                break
+            click.echo(f"  - {choice.problem()}.")
+            _install_brew_packages({formula})
+            installed.add(formula)
+            choice = self.resolve_java()
+        if choice.runtime is None:
+            click.echo(choice.refusal())
+            return
+        click.echo(f"  - {choice.describe()}.")
+
     def setup(self) -> None:
         """Download Jenkins binary and the latest plugin manager."""
-        BIN_DIR.mkdir(exist_ok=True)
-
-        if not self.war_file.exists():
-            click.echo(f"Downloading Jenkins from {self.URL}...")
-            try:
-                urllib.request.urlretrieve(self.URL, self.war_file)
-                click.echo("  - Jenkins download complete.")
-            except Exception as e:
-                click.echo(f"Error downloading Jenkins: {e}", err=True)
-                sys.exit(1)
+        if not self.ensure_war():
+            sys.exit(1)
 
         # Check for latest manager version
         info = self._get_latest_manager_info()
@@ -380,7 +433,7 @@ class JenkinsService(BaseService):
         import subprocess
 
         cmd = [
-            "java",
+            str(self._java_or_exit()),
             "-jar",
             str(self.manager_jar),
             "--war",
@@ -480,6 +533,7 @@ class JenkinsService(BaseService):
     def launch(self, port: int = 9080, background: bool = False) -> None:
         """Start the Jenkins server."""
         self.setup()
+        java = self._java_or_exit()
         click.echo(f"Jenkins: http://localhost:{port}")
         self.check_credentials_and_print_instructions(port)
 
@@ -496,7 +550,7 @@ class JenkinsService(BaseService):
         ]
 
         # Start Jenkins without skipping the setup wizard to ensure security is enabled
-        cmd = ["java", *jvm_args, "-jar", str(self.war_file), f"--httpPort={port}"]
+        cmd = [str(java), *jvm_args, "-jar", str(self.war_file), f"--httpPort={port}"]
         workspace_root = Path(__file__).resolve().parents[3]
         venv_bin = workspace_root / ".venv" / "bin"
         # BIN_DIR (aisland/bin) hosts symlinks to userspace-installed tools like
@@ -530,6 +584,8 @@ class JenkinsService(BaseService):
         click.echo(f"  URL           : http://localhost:{url_port}")
         click.echo(f"  JENKINS_HOME  : {self.service_data_dir}")
         click.echo(f"  WAR file      : {self.war_file}")
+        if self.war_file.exists():
+            click.echo(f"  Java          : {self.resolve_java().describe()}")
         click.echo(f"  Plugin manager: {self.manager_jar}")
         click.echo(f"  Plugins dir   : {self.service_data_dir / 'plugins'}")
         click.echo(f"  Jobs dir      : {self.service_data_dir / 'jobs'}")

@@ -135,6 +135,7 @@ def test_provision_dispatches_to_brew_on_darwin(monkeypatch: pytest.MonkeyPatch,
     monkeypatch.setattr(manager, "_install_brew_packages", lambda pkgs: brew_calls.append(set(pkgs)))
     monkeypatch.setattr(manager, "_install_userspace_tool", lambda name: user_calls.append(name))
     monkeypatch.setattr(manager, "_maybe_offer_shell_switch", lambda pkgs: None)
+    monkeypatch.setattr("aisland.services.jenkins.JenkinsService.provision_java", lambda self: None)
 
     manager.provision_system()
 

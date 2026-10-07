@@ -50,5 +50,7 @@ norecursedirs = ["data", ".venv"]
 # f1bonacc1/tap/process-compose: the service supervisor (aisland/supervisor.py)
 # — tap-qualified because homebrew-core has no process-compose formula.
 # Linux gets it from the userspace registry (manager.USERSPACE_TOOLS) instead.
-brew = ["openjdk", "swiftbar", "act", "docker", "colima", "f1bonacc1/tap/process-compose"]
+# No `openjdk`: that formula follows the newest Java, which Jenkins refuses. Setup installs the
+# `openjdk@N` the Jenkins WAR names instead (aisland/services/jenkins_java.py).
+brew = ["swiftbar", "act", "docker", "colima", "f1bonacc1/tap/process-compose"]
 userspace = ["process-compose"]

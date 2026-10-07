@@ -29,6 +29,8 @@ from typing import Callable, List, Optional, Tuple
 import click
 
 from aisland.services.docker import DockerService
+from aisland.services.jenkins import JenkinsService
+from aisland.services.jenkins_java import JenkinsJava
 
 #: The OpenCV variant the workspace keeps. Both distributions install the SAME files
 #: (`cv2/cv2.abi3.so` + `cv2/.dylibs/*` appear in BOTH RECORDs) with different bundled native
@@ -315,6 +317,34 @@ def check_colima_vm_trust() -> CheckResult:
     return CheckResult("colima-tls", True, f"the VM verifies TLS to {_VM_TLS_PROBE_URL} — pulls can download")
 
 
+def _jenkins_java() -> Optional[JenkinsJava]:
+    """What the downloaded Jenkins WAR says about the installed JDKs; None before it is downloaded.
+
+    The doctor never downloads it — that is `aisland jenkins start`'s and `aisland provision`'s.
+    """
+    service = JenkinsService()
+    if not service.war_file.exists():
+        return None
+    return service.resolve_java()
+
+
+def check_jenkins_java() -> CheckResult:
+    """An installed JDK must be one the Jenkins WAR accepts — `java` on PATH is not enough.
+
+    Homebrew's `openjdk` formula follows the newest Java, and a shell profile usually puts it
+    first on PATH; Jenkins refuses every Java its launcher does not name ("Supported Java
+    versions are: [21, 25]"), so when Java 26 arrived on 2026-10-06 Jenkins exited 1 three
+    times under the supervisor and stayed down, with the reason only in its log. The probe
+    runs `java -jar jenkins.war --version` per JDK, newest first (about 0.1 s each).
+    """
+    choice = _jenkins_java()
+    if choice is None:
+        return CheckResult("jenkins-java", True, "Jenkins not downloaded yet — no Java to check")
+    if choice.runtime is None:
+        return CheckResult("jenkins-java", False, choice.problem(), choice.remedy())
+    return CheckResult("jenkins-java", True, choice.describe())
+
+
 #: Every check the doctor runs, in report order.
 CHECKS: Tuple[Callable[[], CheckResult], ...] = (
     check_opencv_single_variant,
@@ -322,6 +352,7 @@ CHECKS: Tuple[Callable[[], CheckResult], ...] = (
     check_mcp_server_api,
     check_docker_credsstore,
     check_colima_vm_trust,
+    check_jenkins_java,
 )
 
 
@@ -358,6 +389,7 @@ __all__ = [
     "check_colima_vm_trust",
     "check_docker_credsstore",
     "check_huggingface_hub_floor",
+    "check_jenkins_java",
     "check_mcp_server_api",
     "check_opencv_single_variant",
     "run_checks",

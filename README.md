@@ -9,7 +9,9 @@ This directory contains the infrastructure and server management tools for the d
   [uv](https://docs.astral.sh/uv/) (`uv python install 3.13`, no root, works the
   same on Linux, WSL and macOS), installing `uv` into `~/.local/bin` first when
   it is missing. A machine that already has the interpreter is left alone.
-- **Java OpenJDK 17 or higher** (Required for Jenkins)
+- **A Java the Jenkins WAR supports** — only the long-term releases it names (Jenkins 2.555.2:
+  21 or 25). On macOS `aisland setup` installs it through Homebrew; see
+  [Which Java runs Jenkins](#which-java-runs-jenkins).
 - **process-compose** (service supervisor — installed automatically by `aisland setup` / `setup.sh`; see [Service Supervision](#service-supervision-process-compose))
 
 ## Default Ports
@@ -122,7 +124,8 @@ package pair inconsistent — and those failures surface far from their cause (a
 error inside a *pytest collection* step, an `ImportError` three libraries deep in an
 unrelated chain). The Docker layer (Colima) has its own equivalents: a client config left
 behind by an uninstalled tool, a VM whose trust store does not match the network the host is
-on. `aisland doctor` checks for the skews that have actually recurred here and prints the
+on. Homebrew drifts too: its newest Java can be one Jenkins refuses. `aisland doctor` checks for
+the skews that have actually recurred here and prints the
 exact command that fixes each one:
 
 ```bash
@@ -133,8 +136,9 @@ aisland doctor
 #   ✓ mcp              mcp 2.0.0 exposes MCPServer — MCP servers can start
 #   ✓ docker-creds     no credsStore configured — public pulls run anonymously
 #   ✓ colima-tls       the VM verifies TLS to https://ghcr.io/v2/ — pulls can download
+#   ✓ jenkins-java     Jenkins 2.555.2 runs on Java 25.0.3 (/opt/homebrew/opt/openjdk@25/bin/java)
 #
-# All 5 checks passed.
+# All 6 checks passed.
 ```
 
 It exits non-zero when a check fails, so it works as a CI preflight step. Current checks:
@@ -146,6 +150,7 @@ It exits non-zero when a check fails, so it works as a CI preflight step. Curren
 | `mcp` | The installed SDK exposes `mcp.server.mcpserver.MCPServer` | An MCP server entry point dies on import (`No module named 'mcp.server.fastmcp'`) while the CLI built on the same package keeps working |
 | `docker-creds` | `~/.docker/config.json` names no credential helper that is missing from PATH (Docker Desktop's `credsStore: "desktop"` outlives its uninstall) | `exec: "docker-credential-desktop": executable file not found in $PATH` on **every** `docker pull`, even of public images |
 | `colima-tls` | The Colima VM verifies TLS on the host's network (a TLS-intercepting proxy's CA must be in the VM's trust store, not just the macOS keychain) | `tls: failed to verify certificate: x509: certificate signed by unknown authority` during `docker pull`, while the same URL works on the host |
+| `jenkins-java` | An installed JDK is one the downloaded Jenkins WAR accepts ([Which Java runs Jenkins](#which-java-runs-jenkins)); passes with a note before Jenkins is downloaded | `aisland jenkins start` stops with `Jenkins 2.555.2 runs on Java 21 or 25, and none is installed (found 26.0.2.1)` |
 
 Add a check by writing a `check_*` function in `aisland/doctor.py` and listing it in
 `CHECKS`. A check must be cheap, read-only, and specific: it reports a known-recurring skew
@@ -419,6 +424,41 @@ aisland jenkins stop
 aisland jenkins status
 ```
 Default: [http://localhost:9080](http://localhost:9080)
+
+#### Which Java runs Jenkins
+
+Jenkins runs only on the long-term Java releases its launcher names, and refuses any other
+before it starts. Homebrew's `openjdk` formula follows the newest Java, and a shell profile
+usually puts it first on `PATH`, so aisland never starts Jenkins with the bare `java`. It asks
+the downloaded WAR file instead: every installed JDK is tried with `java -jar jenkins.war
+--version`, newest first, and Jenkins starts on the first one the WAR accepts, by its full path:
+
+```text
+$ java -version                        # the shell's java: Homebrew openjdk, first on PATH
+openjdk version "26.0.2.1" 2026-08-18
+$ aisland jenkins start --background
+Jenkins 2.555.2 runs on Java 25.0.3 (/opt/homebrew/opt/openjdk@25/bin/java)
+Jenkins: http://localhost:9080
+```
+
+The JDKs it looks at, in this order: `$JAVA_HOME`, the `java` on `PATH`, each Homebrew
+`openjdk*` keg, `/Library/Java/JavaVirtualMachines/*` (macOS) and `/usr/lib/jvm/*` (Linux).
+`aisland jenkins info` prints the same line. When none is accepted, `aisland jenkins start`
+stops before starting anything and names the fix:
+
+```text
+Error: Jenkins 2.555.2 runs on Java 21 or 25, and none is installed (found 26.0.2.1, 11.0.29).
+  Java 26.0.2.1: /opt/homebrew/opt/openjdk/bin/java
+  Java 11.0.29: /Library/Java/JavaVirtualMachines/amazon-corretto-11.jdk/Contents/Home/bin/java
+Fix: brew install openjdk@25
+```
+
+On macOS, `aisland setup` (and `aisland provision`) installs that Java for you. It downloads the
+WAR if it is missing, asks it, and installs the `openjdk@N` formula for the newest release
+named. A machine with no Java that can ask (none at all, or only Java 8) first gets the newest
+`openjdk@N` to ask with. Setup never installs or upgrades the bare `openjdk` formula, and
+never changes the `java` on your `PATH`. On Linux, install the JDK the message names and set
+`JAVA_HOME` to it. `aisland doctor` reports the same problem as the `jenkins-java` check.
 
 **The nightly run.** The local orchestrator job (`<workspace>.local`, seeded by
 `aisland jenkins init --local`) builds every project at **01:00 every night** — each project's
