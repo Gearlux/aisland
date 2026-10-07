@@ -686,20 +686,103 @@ def get_project_metadata(pyproject_path: Path) -> dict:
         }
 
 
-def get_install_order(workspace_root: Path) -> List[dict]:
-    """Determine the correct installation order using topological sort based on workspace dependencies."""
-    pyprojects = discover_projects(workspace_root)
-    projects = [get_project_metadata(p) for p in pyprojects]
+def _internal_dependencies(projects: List[dict]) -> Dict[str, List[str]]:
+    """Map each project name to the names of the workspace projects it depends on."""
     project_names = {p["name"] for p in projects}
-
-    # Build adjacency list
-    adj: dict[str, list[str]] = {p["name"]: [] for p in projects}
+    adj: Dict[str, List[str]] = {p["name"]: [] for p in projects}
     for p in projects:
         for dep in p["dependencies"]:
             # Extract package name from dependency string (e.g., 'loggair>=0.1.0' -> 'loggair')
             dep_name = dep.split(">=")[0].split("==")[0].split("<=")[0].split("[")[0].strip()
             if dep_name in project_names and dep_name != p["name"]:
                 adj[p["name"]].append(dep_name)
+    return adj
+
+
+def install_groups(projects: List[dict]) -> List[List[dict]]:
+    """Group projects into install units, dependencies first; a dependency CYCLE is one unit.
+
+    Tarjan's strongly-connected-components: a cycle (``signals[dev]`` requires ``annotaide``
+    and ``annotaide`` requires ``signals``) cannot be installed one project at a time — uv
+    resolves the missing half from the package index and fails — so its members must go through
+    ONE ``uv pip install -e A -e B``. Every acyclic project is a singleton unit. Tarjan emits a
+    component only after everything it depends on, which is exactly install order.
+    """
+    adj = _internal_dependencies(projects)
+    by_name = {p["name"]: p for p in projects}
+    index: Dict[str, int] = {}
+    low: Dict[str, int] = {}
+    stack: List[str] = []
+    on_stack: set[str] = set()
+    groups: List[List[dict]] = []
+
+    def visit(name: str) -> None:
+        index[name] = low[name] = len(index)
+        stack.append(name)
+        on_stack.add(name)
+        for dep in adj[name]:
+            if dep not in index:
+                visit(dep)
+                low[name] = min(low[name], low[dep])
+            elif dep in on_stack:
+                low[name] = min(low[name], index[dep])
+        if low[name] == index[name]:
+            members: List[str] = []
+            while True:
+                member = stack.pop()
+                on_stack.discard(member)
+                members.append(member)
+                if member == name:
+                    break
+            groups.append([by_name[n] for n in reversed(members)])
+
+    for p in projects:
+        if p["name"] not in index:
+            visit(p["name"])
+    return groups
+
+
+def _run_installs(workspace_root: Path, uv_cmd: str, projects: List[dict]) -> Tuple[List[str], List[str]]:
+    """Editable-install every project, one unit per :func:`install_groups` group.
+
+    Returns ``(failed, skipped)``. A project whose dependency failed (or was itself skipped) is
+    SKIPPED and named, never attempted: it would fail against the stale index copy of what just
+    failed, and a dozen such repeats buried the one real error. Unrelated projects still install.
+    """
+    from aisland.selection import editable_target  # local: selection imports this module
+
+    adj = _internal_dependencies(projects)
+    failed: List[str] = []
+    skipped: List[str] = []
+    for group in install_groups(projects):
+        names = [p["name"] for p in group]
+        blocked = sorted({dep for n in names for dep in adj[n] if dep in failed or dep in skipped} - set(names))
+        if blocked:
+            for n in names:
+                click.echo(f"==> Skipping {n}: its dependency {', '.join(blocked)} did not install.")
+            skipped.extend(names)
+            continue
+        # Each target carries every extra the project DECLARES, narrowed to what the machine SELECTED
+        # (shared with `aisland source … local`, so the two installs cannot drift).
+        targets = [editable_target(workspace_root, p["path"], p["name"]) for p in group]
+        suffix = " — a dependency cycle, installed together" if len(group) > 1 else ""
+        click.echo(f"==> Installing {', '.join(names)} ({' '.join(targets)}){suffix}...")
+        cmd = [uv_cmd, "pip", "install"] + [arg for t in targets for arg in ("-e", t)]
+        try:
+            # Run from the workspace root so uv reads the generated root uv.toml (the merged
+            # private indexes); the editable target is absolute, so cwd doesn't change WHAT installs.
+            subprocess.check_call(cmd, cwd=workspace_root)
+        except subprocess.CalledProcessError as e:
+            click.echo(f"  - Error: Failed to install {', '.join(names)}: {e}")
+            failed.extend(names)
+    return failed, skipped
+
+
+def get_install_order(workspace_root: Path) -> List[dict]:
+    """Determine the correct installation order using topological sort based on workspace dependencies."""
+    pyprojects = discover_projects(workspace_root)
+    projects = [get_project_metadata(p) for p in pyprojects]
+    adj = _internal_dependencies(projects)
 
     # Topological sort (Kahn's algorithm or DFS)
     visited = set()
@@ -1373,7 +1456,6 @@ def setup_workspace(
         AXES,
         PLAYWRIGHT_BROWSER,
         browser_install_command,
-        editable_target,
         require_defined_declarations,
         resolve_for_setup,
     )
@@ -1407,23 +1489,20 @@ def setup_workspace(
         except (subprocess.CalledProcessError, FileNotFoundError):
             pass
 
-        # Python Provisioning (Editable Installs)
-        # Every extra this project DECLARES on either axis, narrowed to what the machine
-        # SELECTED — so a project declaring none installs exactly as it always did. Both axes
-        # go into ONE target: naming only one would describe a package nobody asked for. The
-        # helper is shared with `aisland source … local`, so the two installs cannot drift.
-        target = editable_target(workspace_root, project_dir, project["name"])
-        click.echo(f"==> Installing {project['name']} ({target})...")
-        try:
-            # Run from the workspace root so uv reads the generated root uv.toml (the merged
-            # private indexes); the editable target is absolute, so cwd doesn't change WHAT installs.
-            subprocess.check_call([uv_cmd, "pip", "install", "-e", target], cwd=workspace_root)
-        except subprocess.CalledProcessError as e:
-            click.echo(f"  - Error: Failed to install {project['name']}: {e}")
+    # Python provisioning (editable installs): cycles together, dependents of a failure skipped.
+    failed, skipped = _run_installs(workspace_root, uv_cmd, install_order)
+    if failed or skipped:
+        click.echo(f"==> {len(failed)} project(s) failed to install: {', '.join(failed) or '-'}")
+        if skipped:
+            click.echo(f"==> {len(skipped)} skipped because a dependency failed: {', '.join(skipped)}")
 
+    for project in install_order:
+        if project["name"] in failed or project["name"] in skipped:
+            continue
         # A `playwright` dev dependency needs its browser fetched once the package is in — the
         # SAME declaration the scaffolded CI reads, so a browser-driven test runs here as it
         # runs there instead of skipping (see `selection.browser_install_command`).
+        project_dir = project["path"]
         browser = browser_install_command(project_dir / "pyproject.toml", venv_bin)
         if browser:
             click.echo(f"==> Installing Playwright's {PLAYWRIGHT_BROWSER} for {project['name']}...")

@@ -39,6 +39,20 @@ class TestWriteRootUvToml:
         assert data["override-dependencies"] == _OVERRIDE
         assert data["extra-index-url"] == ["https://idx/simple"]
 
+    def test_carries_a_project_constraint_through_to_the_root(self, tmp_path: Path) -> None:
+        # A project that depends on a package whose own metadata names a direct URL must be able to
+        # constrain that URL (uv refuses a transitive URL otherwise). The merge is key-agnostic, so
+        # `constraint-dependencies` reaches the root exactly like `extra-index-url` — and only when
+        # the project is activated.
+        pin = "pkg @ https://idx/pkg-0.0.0%2Balpha.1-py3-none-any.whl"
+        vendorcli = tmp_path / "vendorcli"
+        vendorcli.mkdir()
+        (vendorcli / "uv.toml").write_text(f'constraint-dependencies = ["{pin}"]\n')
+        m._write_root_uv_toml(tmp_path, [{"name": "vendorcli", "path": vendorcli}])
+        assert tomllib.loads((tmp_path / "uv.toml").read_text())["constraint-dependencies"] == [pin]
+        m._write_root_uv_toml(tmp_path, [])
+        assert "constraint-dependencies" not in tomllib.loads((tmp_path / "uv.toml").read_text())
+
     def test_base_only_when_no_uv_toml(self, tmp_path: Path) -> None:
         ordinary = tmp_path / "confluid"
         ordinary.mkdir()
