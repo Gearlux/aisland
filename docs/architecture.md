@@ -1330,3 +1330,97 @@ Fix: brew install openjdk@25
 - What must not change: Jenkins starts by full path on a JDK the WAR accepted; the WAR is the only
   source of the supported releases; the bare `openjdk` formula is not declared; provisioning never
   exits setup.
+
+## A project installed outside the workspace gets its unpublished dependencies as wheels
+
+*2026-10-08*
+
+### Context
+
+A private project (signals-bridge) has to be installable on a machine that has neither the
+workspace nor access to the workspace's GitHub repositories. Its dependencies are workspace
+projects of two kinds: some are on PyPI (confluid, recordstream), some are not (signals and
+its generators, annotaide). The second kind has to travel with the project. And because those
+wheels are built from this checkout, they can use code that the PyPI releases of the first kind
+do not hold yet — measured on 2026-10-08: `signals.lte` imports `recordstream.draws`, which
+recordstream 0.1.0a2 on PyPI lacks, so an install that resolves fine fails at `import`.
+
+### Decision
+
+`aisland wheels <project>` (`aisland/wheels.py`, user choice 2026-10-08: an aisland command
+rather than a root script; only what the project needs; both checks below):
+
+- **What it needs** is the closure of its `[project] dependencies` over the workspace's
+  projects: base dependencies, plus an extra only when a requirement names it. Every marker is
+  followed, because the target machine's platform is not this one's.
+- **On PyPI** means a version, pre-releases included, whose metadata points at
+  `github.com/Gearlux/`, with a file that is not yanked. This differs on purpose from
+  `sources.released_on_pypi` (final releases only): that one decides what CI installs, while this
+  one asks what pip on another machine will find, and pip takes a pre-release when no final
+  release exists.
+- **Each wheel is built from `git archive HEAD`**, with `SOURCE_DATE_EPOCH` set to the commit's
+  time. Building from the folder put a file that only lived in a stale `build/lib` into the
+  wheel (measured), and without the timestamp an unchanged project rebuilt into a different
+  file, so git saw every wheel change on every run (measured). A dirty project is refused,
+  because its wheel would silently lack the change.
+- **The PyPI half is checked twice.** First, each PyPI wheel is compared with the wheel its
+  checkout builds, file by file plus `Requires-Dist`; a difference is reported as *behind*.
+  Second, the project is installed editable in an empty venv from its wheels plus PyPI, and every
+  outermost package of the project and of its wheels is imported. A failed import names the
+  project that owns the missing module, which is the one to *release first*. Only the second
+  check decides the exit status: being behind is normal between releases, while a failed import
+  means the project cannot be used.
+
+Rejected:
+- **Direct `file:` references in the project's dependencies.** PEP 508 has no relative path, so
+  they would carry this machine's absolute path into a committed file.
+- **A local version label per build** (`0.1.0+<n>.g<sha>`) to make reinstalls automatic. It
+  would put a second version into the files, against the rule that the version lives once, in
+  `pyproject.toml`. A reinstall is one documented command instead.
+- **Every unpublished workspace project.** Wheels the project never imports (aisland,
+  navigaitor, torpaido) would be shipped and committed on every rebuild.
+
+### Consequences
+
+- A run needs PyPI (an unreachable PyPI stops it before anything is built, because a guess would
+  ship a wheel too many or one too few) and takes about 35 s with uv's cache warm.
+- The import check imports only the outermost packages. A module that only a deeper import
+  reaches is not checked, because importing every module would also import the optional extras'
+  modules, whose dependencies the empty venv does not have.
+- A child project that ships inside its parent package (the `extend_path` shim) is imported by
+  its dotted name. Its wheel is detected as a child either by the missing parent `__init__.py`
+  or by a parent `__init__.py` that only extends `__path__`.
+- The editable install in the empty venv writes the target's own `*.egg-info`, which is
+  git-ignored like the workspace's own install of it.
+
+### Example
+
+```text
+$ aisland wheels signals-analysis          # exit 1
+...
+Installed signals-analysis in an empty venv (its wheels + PyPI) and imported its 4 packages:
+  signals.fivegnr  ModuleNotFoundError: No module named 'recordstream.draws'  (recordstream)
+  signals.lte      ModuleNotFoundError: No module named 'recordstream.draws'  (recordstream)
+  2 others imported
+
+Release first: recordstream
+Behind, nothing breaks: confluid, liquifai, loggair
+```
+
+```python
+from aisland import wheels
+from aisland.manager import get_workspace_root
+
+report = wheels.vendor_wheels(get_workspace_root(), "signals-analysis")
+report.release_first      # ['recordstream']
+report.to_dict()["ok"]    # False: what an MCP tool would return
+```
+
+### What you may change
+
+- The report's wording and layout, with `tests/test_wheels.py::TestReport`.
+- How packages to import are found (`wheel_modules`), for example importing every module, only
+  together with a way to skip the optional extras' modules.
+- What must not change: wheels are built from the commit, never from the folder; their
+  timestamp is the commit's time; a dirty project is refused; the empty venv never reads the
+  workspace's root `uv.toml`; the exit status follows the install and the imports, not *behind*.

@@ -6,6 +6,7 @@ import click
 
 from aisland import nightly, pytest_stats
 from aisland import supervisor as supervisor_mod
+from aisland import wheels
 from aisland.clean import DEFAULT_KEEP_DAYS
 from aisland.manager import (
     generate_gemini_settings,
@@ -283,6 +284,30 @@ def tests_nightly(as_json: bool, no_notify: bool) -> None:
     report, status = nightly.run_nightly(notify=not no_notify)
     click.echo(json.dumps(report.to_dict(), indent=2) if as_json else nightly.render_markdown(report))
     raise SystemExit(status)
+
+
+# --- Wheels For A Project Installed Outside The Workspace ---
+
+
+@main.command(name="wheels")
+@click.argument("project")
+@click.option("--json", "as_json", is_flag=True, help="Print the report as JSON (what an MCP tool would return).")
+def wheels_cmd(project: str, as_json: bool) -> None:
+    """Build the wheels PROJECT needs that are not on PyPI into PROJECT/wheels; check what it takes from PyPI.
+
+    Each wheel is built from its project's last commit (a project with uncommitted changes is
+    refused). Each dependency PROJECT takes from PyPI is compared with its checkout, file by
+    file; then PROJECT is installed in an empty venv from its wheels plus PyPI and every package
+    imported. Exit 1 when that install or an import fails: the report names the project to
+    release first. Nothing is committed.
+
+    \b
+    aisland wheels signals-bridge
+    aisland wheels signals-bridge --json
+    """
+    report = wheels.vendor_wheels(get_workspace_root(), project)
+    click.echo(json.dumps(report.to_dict(), indent=2) if as_json else wheels.render_report(report), nl=as_json)
+    raise SystemExit(0 if report.ok else 1)
 
 
 # --- Workspace Configuration Commands ---

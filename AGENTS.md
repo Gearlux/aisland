@@ -9,7 +9,8 @@ selection · [completion] completion install · [config] one config file · [cle
 disk · [containers] containerised services · [closure] the pre-install closure ·
 [playwright] dev dependencies needing more than pip · [local-pipeline] the local pipeline ·
 [doctor] the environment doctor · [test-stats] every pytest run recorded · [pull-all]
-`pull-all` settles a pointer only to a commit holding both sides.
+`pull-all` settles a pointer only to a commit holding both sides · [wheels] a project
+installed outside the workspace gets its unpublished dependencies as wheels.
 
 ## Current state
 
@@ -24,6 +25,8 @@ The workspace's dev-infrastructure CLI, `aisland` (click, `aisland/cli.py`):
 - `pytest_stats.py`: the `aisland_test_stats` pytest plugin (entry point `pytest11`) that
   records every run of a workspace project, and `aisland tests report` reading it beside the
   Jenkins builds' JUnit results.
+- `wheels.py`: `aisland wheels <project>`, the wheels of the workspace projects it needs that
+  are not on PyPI, written into `<project>/wheels/`, and the check of what it takes from PyPI.
 - `nightly.py`: `aisland tests nightly`, the morning report of the orchestrator's nightly runs
   (`aisland/data/nightly/<date>.md`, a desktop notification, exit 1 on a bad night), run by the
   `<workspace>.nightly-check` Jenkins job.
@@ -318,6 +321,27 @@ A bare `::` pin in this section is in `tests/test_jenkins_scaffold.py`.
   asks), an identical one is reported `already` and dropped. `_same_content` compares bytes,
   never size+mtime (`::test_a_hand_copied_tree_is_recognised_despite_new_mtimes`). Manifest
   paths are validated (`_safe_rel`). `backups prune` confirms first.
+
+## `aisland wheels` (`wheels.py`)
+
+User choice 2026-10-08: an aisland command, only the named project's closure, both checks.
+[wheels] (`tests/test_wheels.py`)
+- A wheel is built from `git archive HEAD` with `SOURCE_DATE_EPOCH` = the commit's time, never
+  from the checkout: a stale `build/lib` leaks deleted files into it, and the build's clock makes
+  every rebuild a new file (`TestEndToEnd::test_a_stale_pypi_release_breaks_the_import_and_is_named`,
+  `::test_once_pypi_has_the_release_everything_imports`).
+- A project to ship with uncommitted changes is refused, naming its files; one with no checkout,
+  naming `aisland source set <project> local` (`TestRefusals`). Nothing is built after a refusal.
+- "On PyPI" = `pypi_state`: Gearlux metadata and a file not yanked, pre-releases INCLUDED. Never
+  replace it with `released_on_pypi` (final only, CI's question). An unreachable PyPI stops the
+  run (`TestPypiState`).
+- The empty venv runs from a scratch folder, so the root `uv.toml` is never read; the target's
+  own `uv.toml` is passed with `--config-file` (`TestInstallAndImport`).
+- The exit status follows the install and the imports only; *behind* (a file differs from PyPI's
+  wheel) is reported, never an exit 1 (`TestCli`).
+- Tests reach no network: the end-to-end tests run the real uv with `UV_OFFLINE=1`, a fresh
+  cache, and `_PYPI_INDEX_ARGS` pointed at a local folder holding this interpreter's setuptools,
+  repackaged (`offline_uv`).
 
 ## Workspace git aliases (`setup_git.sh`, `git_pull_all.sh`)
 

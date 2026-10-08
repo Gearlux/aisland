@@ -322,6 +322,75 @@ and cleaning any project removes caches that the next `pytest` / `mypy` run rebu
 That is the point of the backup — `aisland backups restore <project>` puts it back, until the
 retention window closes.
 
+### Wheels for a project installed outside the workspace (`aisland wheels`)
+
+A project can be installed on a machine without the workspace only when everything it needs can
+be found there. The workspace projects on PyPI can be found; the others cannot. `aisland wheels`
+builds a wheel of each workspace project the named project needs that is not on PyPI, writes the
+wheels into that project's `wheels/` folder, and checks the projects it takes from PyPI against
+this checkout:
+
+```bash
+aisland wheels signals-bridge
+aisland wheels signals-bridge --json      # the same report as data
+```
+
+What it printed for signals-analysis on 2026-10-08 (35 s; exit 1):
+
+```text
+signals-analysis needs 3 workspace projects that are not on PyPI. Their wheels are in signals-analysis/wheels (756 kB):
+  signals       0.1.0  dev/main 38ba9a9
+  signals-5gnr  0.1.0  dev/main abe8d10
+  signals-lte   0.1.0  dev/main d63b739
+
+It takes 4 workspace projects from PyPI, compared with this checkout:
+  confluid      PyPI 0.4.0    behind: 6 files differ (confluid/configurator.py, confluid/decorators.py, confluid/engine.py, …)
+  liquifai      PyPI 0.3.0    behind: 13 files differ (liquifai/bridge/__init__.py, liquifai/bridge/group.py, liquifai/bridge/policies.py, …)
+  loggair       PyPI 0.2.0    behind: 1 file differs (loggair/core.py)
+  recordstream  PyPI 0.1.0a2  behind: 18 files differ (recordstream/__init__.py, recordstream/core/stream.py, recordstream/draws.py, …)
+
+Installed signals-analysis in an empty venv (its wheels + PyPI) and imported its 4 packages:
+  signals.fivegnr  ModuleNotFoundError: No module named 'recordstream.draws'  (recordstream)
+  signals.lte      ModuleNotFoundError: No module named 'recordstream.draws'  (recordstream)
+  2 others imported
+
+Release first: recordstream
+Behind, nothing breaks: confluid, liquifai, loggair
+```
+
+- **Behind**: the wheel this checkout builds differs from the one on PyPI, file by file. The
+  wheels were built against this checkout, so they may use what no release has yet.
+- **Release first**: a package failed to import in an empty venv, and the module it missed
+  belongs to that project. Release it, then run `aisland wheels` again. Exit status 1 means the
+  install or an import failed; 0 means everything imported, even if some projects are behind.
+
+On the other machine, from the project's own folder (the folder's `README.md` says the same):
+
+```bash
+pip install --find-links wheels -e .
+```
+
+How each wheel is made, and what is refused:
+
+| Rule | Why |
+|---|---|
+| Each wheel is built from the project's last **commit**, never from its folder | A `build/lib` that setuptools leaves in a checkout puts files the project deleted long ago into the wheel |
+| A project with uncommitted changes is refused, naming its files | Its wheel would not contain them |
+| A needed project that is not on PyPI and has no checkout here is refused | There is nothing to build it from; the message names `aisland source set <project> local` |
+| "On PyPI" counts pre-releases | pip installs `recordstream 0.1.0a2` when no final release exists — unlike `aisland jenkins scaffold`, which asks about final releases only |
+| A PyPI name owned by someone else is reported | pip takes the higher version of the two; the report says when that is theirs |
+| Every environment marker is followed | The wheels serve another machine, whose platform is not this one's |
+| The old `*.whl` in `wheels/` go, the folder's other files stay | |
+| An unchanged project rebuilds byte for byte | Its wheel carries its commit's time, so git sees no change |
+| The empty venv uses the project's own `uv.toml` when it has one | A private index it needs; the workspace's root `uv.toml` is never read |
+
+A rebuild keeps each wheel's version (an unreleased project stays at `0.1.0`), so an
+environment that already has the wheels takes new ones with
+`pip install --find-links wheels --force-reinstall --no-deps wheels/*.whl`. Nothing is
+committed; review `git status` in the project and commit `wheels/` yourself. Why it is built
+this way: [`docs/architecture.md`](docs/architecture.md) → "A project installed outside the
+workspace gets its unpublished dependencies as wheels".
+
 ## Service Supervision (process-compose)
 
 Aisland delegates process supervision (spawn, liveness, readiness, crash
