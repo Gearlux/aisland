@@ -7,7 +7,7 @@ The Jenkins API is replaced by a stand-in answering the same paths, so no test n
 
 import json
 import os
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, tzinfo
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
@@ -281,9 +281,19 @@ def test_elsewhere_without_a_notifier_nothing_is_run(monkeypatch: pytest.MonkeyP
     assert calls == []
 
 
+class _ClockAtNow(datetime):
+    """The clock `aisland tests nightly` reads, stopped at NOW: on the real one, the fixture's 01:00 run of 2026-10-07
+    left the 24-hour window from 2026-10-08 01:00 on and the report came back empty."""
+
+    @classmethod
+    def now(cls, tz: Optional[tzinfo] = None) -> "_ClockAtNow":
+        return cls.fromtimestamp(NOW.timestamp(), tz)
+
+
 def test_the_cli_prints_the_report_as_json_and_exits_one_on_a_failure(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
+    monkeypatch.setattr(nightly, "datetime", _ClockAtNow)
     monkeypatch.setattr(nightly, "NIGHTLY_DIR", tmp_path)
     monkeypatch.setattr(nightly, "jenkins_url", lambda: "http://jenkins.test/")
     monkeypatch.setattr(nightly, "JenkinsApi", lambda url: _night())
@@ -292,9 +302,7 @@ def test_the_cli_prints_the_report_as_json_and_exits_one_on_a_failure(
     result = CliRunner().invoke(main, ["tests", "nightly", "--json", "--no-notify"])
     assert result.exit_code == 1, result.output
     data = json.loads(result.output)
-    assert [r["number"] for r in data["runs"]] == [26] and data["path"] == str(
-        tmp_path / f"{datetime.now():%Y-%m-%d}.md"
-    )
+    assert [r["number"] for r in data["runs"]] == [26] and data["path"] == str(tmp_path / "2026-10-07.md")
 
 
 # --------------------------------------------------------------------------
