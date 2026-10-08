@@ -1366,8 +1366,9 @@ rather than a root script; only what the project needs; both checks below):
 - **The PyPI half is checked twice.** First, each PyPI wheel is compared with the wheel its
   checkout builds, file by file plus `Requires-Dist`; a difference is reported as *behind*.
   Second, the project is installed editable in an empty venv from its wheels plus PyPI, and every
-  outermost package of the project and of its wheels is imported. A failed import names the
-  project that owns the missing module, which is the one to *release first*. Only the second
+  module of the project and of its wheels is imported (`__main__` excepted: importing it runs the
+  program). A failed import names the project that owns the missing module, which is the one to
+  *release first*. Only the second
   check decides the exit status: being behind is normal between releases, while a failed import
   means the project cannot be used.
 
@@ -1384,9 +1385,16 @@ Rejected:
 
 - A run needs PyPI (an unreachable PyPI stops it before anything is built, because a guess would
   ship a wheel too many or one too few) and takes about 35 s with uv's cache warm.
-- The import check imports only the outermost packages. A module that only a deeper import
-  reaches is not checked, because importing every module would also import the optional extras'
-  modules, whose dependencies the empty venv does not have.
+- The import check imports every module, because a module no package imports is otherwise
+  never checked (measured 2026-10-08: importing only the outermost packages of signals-bridge
+  found 2 modules missing `recordstream.draws`; importing every module found 9, among them
+  `signals.bridge.labelling` and `signals.sources`). The optional extras' modules, whose
+  dependencies the empty venv does not install, are kept from failing the run by one rule: a
+  package that fails, or any module missing a workspace project's module, is a break (exit 1);
+  a deeper module missing something no workspace project ships is listed under "Not imported"
+  and breaks nothing. The cost of that rule: a deeper module missing an undeclared third-party
+  dependency is only listed, never a failure. A package that fails is reported alone, since the
+  modules under it cannot be reached.
 - A child project that ships inside its parent package (the `extend_path` shim) is imported by
   its dotted name. Its wheel is detected as a child either by the missing parent `__init__.py`
   or by a parent `__init__.py` that only extends `__path__`.
@@ -1396,22 +1404,25 @@ Rejected:
 ### Example
 
 ```text
-$ aisland wheels signals-analysis          # exit 1
+$ aisland wheels signals-bridge            # exit 1
 ...
-Installed signals-analysis in an empty venv (its wheels + PyPI) and imported its 4 packages:
-  signals.fivegnr  ModuleNotFoundError: No module named 'recordstream.draws'  (recordstream)
-  signals.lte      ModuleNotFoundError: No module named 'recordstream.draws'  (recordstream)
-  2 others imported
+Installed signals-bridge in an empty venv (its wheels + PyPI) and imported every module of its 5 packages:
+  signals.analysis.fivegnr  ModuleNotFoundError: No module named 'recordstream.draws'  (recordstream)
+  ...
+  signals.bridge.labelling  ModuleNotFoundError: No module named 'recordstream.draws'  (recordstream)
+  ...
+  signals.sources           ModuleNotFoundError: No module named 'recordstream.draws'  (recordstream)
+  149 other modules imported
 
 Release first: recordstream
-Behind, nothing breaks: confluid, liquifai, loggair
+Behind, nothing breaks: confluid, liquifai
 ```
 
 ```python
 from aisland import wheels
 from aisland.manager import get_workspace_root
 
-report = wheels.vendor_wheels(get_workspace_root(), "signals-analysis")
+report = wheels.vendor_wheels(get_workspace_root(), "signals-bridge")
 report.release_first      # ['recordstream']
 report.to_dict()["ok"]    # False: what an MCP tool would return
 ```
@@ -1419,8 +1430,8 @@ report.to_dict()["ok"]    # False: what an MCP tool would return
 ### What you may change
 
 - The report's wording and layout, with `tests/test_wheels.py::TestReport`.
-- How packages to import are found (`wheel_modules`), for example importing every module, only
-  together with a way to skip the optional extras' modules.
+- How packages to import are found (`wheel_modules`) and how their modules are walked, keeping
+  the rule that a module missing what no workspace project ships breaks nothing.
 - What must not change: wheels are built from the commit, never from the folder; their
   timestamp is the commit's time; a dirty project is refused; the empty venv never reads the
   workspace's root `uv.toml`; the exit status follows the install and the imports, not *behind*.

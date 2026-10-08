@@ -26,9 +26,11 @@ The run, in order:
    sees no change.
 4. **The PyPI half, twice** (:func:`wheel_differences`, :func:`install_and_import`): each
    published dependency's PyPI wheel against the one its checkout builds, file by file ("behind");
-   then the project installed in an EMPTY venv from its wheels plus PyPI, and every package of
-   the project and of its wheels imported. A failed import names the project whose module is
-   missing — the one to release first (measured 2026-10-08: ``signals.lte`` needs
+   then the project installed in an EMPTY venv from its wheels plus PyPI, and every module of
+   the project and of its wheels imported — not only the packages: a module no package imports
+   is checked too (``signals.bridge.labelling`` needs ``recordstream.draws``, and
+   ``import signals.bridge`` never reaches it). A failed import names the project whose module
+   is missing — the one to release first (measured 2026-10-08: ``signals.lte`` needs
    ``recordstream.draws``, which recordstream 0.1.0a2 lacks).
 
 The report is JSON-serializable (:meth:`WheelsReport.to_dict`, ``aisland wheels --json``): the
@@ -76,19 +78,35 @@ _PYPI_INDEX_ARGS: Tuple[str, ...] = ()
 _DEPENDENCIES = "(its dependencies)"
 _ENTRY_POINTS = "(its entry points)"
 
-#: Run inside the empty venv: imports each module named after the output path and writes
-#: ``{module: {"error", "missing"}}`` for the ones that fail. ``missing`` is the module an
-#: ``ImportError`` names (``recordstream.draws``), which says whose release lacks it.
+#: Run inside the empty venv: imports each package named after the output path and, when it
+#: imports, every module under it (``__main__`` excepted: importing it runs the program), then
+#: writes ``{"failures": {module: {"error", "missing"}}, "imported": [module, ...]}``. ``missing``
+#: is the module an ``ImportError`` names (``recordstream.draws``), which says whose release lacks
+#: it. A package that fails is reported alone; the modules under it cannot be reached.
 _IMPORT_SCRIPT = """\
-import importlib, json, sys
-failures = {}
-for name in sys.argv[2:]:
+import importlib, json, pkgutil, sys
+failures, imported, seen = {}, [], set()
+def attempt(name):
+    seen.add(name)
     try:
-        importlib.import_module(name)
+        module = importlib.import_module(name)
     except BaseException as error:  # an import may raise anything, SystemExit included
         failures[name] = {"error": f"{type(error).__name__}: {error}", "missing": getattr(error, "name", None)}
+        return None
+    imported.append(name)
+    return module
+for root in sys.argv[2:]:
+    if root in seen:
+        continue
+    package = attempt(root)
+    if package is None or not hasattr(package, "__path__"):
+        continue
+    found = [m.name for m in pkgutil.walk_packages(package.__path__, root + ".", onerror=lambda name: None)]
+    for name in sorted(set(found)):
+        if name not in seen and name.rsplit(".", 1)[-1] != "__main__":
+            attempt(name)
 with open(sys.argv[1], "w") as handle:
-    json.dump(failures, handle)
+    json.dump({"failures": failures, "imported": sorted(imported)}, handle)
 """
 
 PypiState = Literal["published", "absent", "foreign"]
@@ -148,7 +166,7 @@ class PublishedDependency:
 
 @dataclass
 class ImportFailure:
-    """A package that did not import in the empty venv.
+    """A module that did not import in the empty venv.
 
     ``missing`` is the module the error names; ``distribution`` the project that owns it.
     """
@@ -172,10 +190,15 @@ class WheelsReport:
     install_error: Optional[str]
     import_failures: List[ImportFailure]
     imported: List[str] = field(default_factory=list)
+    #: The packages whose modules were imported: the target's and its wheels' outermost ones.
+    packages: List[str] = field(default_factory=list)
+    #: Modules below those packages that miss something no workspace project ships — most often an
+    #: optional extra's dependency, which the empty venv does not install. Reported; never an exit 1.
+    import_warnings: List[ImportFailure] = field(default_factory=list)
 
     @property
     def ok(self) -> bool:
-        """The target installed in an empty venv and every package imported."""
+        """The target installed in an empty venv, every package imported, and no module missed a workspace project."""
         return self.install_error is None and not self.import_failures
 
     @property
@@ -430,11 +453,12 @@ def _pure_wheel(payload: Dict[str, Any]) -> Optional[Dict[str, Any]]:
 
 
 def install_and_import(
-    uv: str, target_dir: Path, wheels_dir: Path, modules: List[str], scratch: Path
-) -> Tuple[Optional[str], Dict[str, Dict[str, Optional[str]]]]:
-    """Install ``target_dir`` the way its wheels' README says, in an empty venv, and import ``modules``.
+    uv: str, target_dir: Path, wheels_dir: Path, packages: List[str], scratch: Path
+) -> Tuple[Optional[str], Dict[str, Dict[str, Optional[str]]], List[str]]:
+    """Install ``target_dir`` the way its wheels' README says, in an empty venv, and import every
+    module of ``packages``.
 
-    Returns ``(install_error, failures)``. The venv is made in ``scratch``, and uv runs there so
+    Returns ``(install_error, failures, imported)``. The venv is made in ``scratch``, and uv runs there so
     the workspace's own ``uv.toml`` (its overrides) is not found; the target's own ``uv.toml``
     (a private index it may need) is used when it has one. ``PYTHONPATH`` is dropped, so nothing
     of the workspace leaks into the imports.
@@ -445,23 +469,28 @@ def install_and_import(
         [uv, "venv", "--quiet", "--python", sys.executable, str(venv)], cwd=scratch, capture_output=True, text=True
     )
     if created.returncode != 0:
-        return f"creating the venv failed:\n{created.stderr.strip()}", {}
+        return f"creating the venv failed:\n{created.stderr.strip()}", {}, []
     config = ["--config-file", str(target_dir / "uv.toml")] if (target_dir / "uv.toml").is_file() else []
     install = [uv, "pip", "install", "--quiet", "--python", str(python), *config, *_PYPI_INDEX_ARGS]
     installed = subprocess.run(
         [*install, "--find-links", str(wheels_dir), "-e", str(target_dir)], cwd=scratch, capture_output=True, text=True
     )
     if installed.returncode != 0:
-        return installed.stderr.strip(), {}
+        return installed.stderr.strip(), {}, []
     result = scratch / "imports.json"
     env = {k: v for k, v in os.environ.items() if k != "PYTHONPATH"}
     imported = subprocess.run(
-        [str(python), "-c", _IMPORT_SCRIPT, str(result), *modules], cwd=scratch, env=env, capture_output=True, text=True
+        [str(python), "-c", _IMPORT_SCRIPT, str(result), *packages],
+        cwd=scratch,
+        env=env,
+        capture_output=True,
+        text=True,
     )
     if not result.is_file():
-        return f"the import run ended without a result (exit {imported.returncode}):\n{imported.stderr.strip()}", {}
-    failures: Dict[str, Dict[str, Optional[str]]] = json.loads(result.read_text())
-    return None, failures
+        return f"the import run ended without a result (exit {imported.returncode}):\n{imported.stderr.strip()}", {}, []
+    outcome = json.loads(result.read_text())
+    failures: Dict[str, Dict[str, Optional[str]]] = outcome["failures"]
+    return None, failures, list(outcome["imported"])
 
 
 def _owner(module: Optional[str], owners: Dict[str, str]) -> Optional[str]:
@@ -569,18 +598,23 @@ def vendor_wheels(workspace_root: Path, project_name: str) -> WheelsReport:
 
         compared = [_compare(uv, project, states[project.name][1] or {}, scratch, owners) for project in published]
 
-        click.echo(f"==> Installing {target.name} in an empty venv and importing its packages", err=True)
+        click.echo(f"==> Installing {target.name} in an empty venv and importing every module", err=True)
         export_head(target.path, scratch / "src" / target.name)
         target_wheel = build_wheel(uv, scratch / "src" / target.name, scratch / "target")
         own = wheel_modules(target_wheel)
         owners.update({module: target.distribution for module in own})
-        modules = sorted(set(own) | {m for w in staged for m in wheel_modules(w)})
-        install_error, failures = install_and_import(uv, target.path, folder, modules, scratch)
+        packages = sorted(set(own) | {m for w in staged for m in wheel_modules(w)})
+        install_error, failures, imported = install_and_import(uv, target.path, folder, packages, scratch)
 
-    import_failures = [
+    every_failure = [
         ImportFailure(module, str(f.get("error")), f.get("missing"), _owner(f.get("missing"), owners))
         for module, f in sorted(failures.items())
     ]
+    # A package that fails, or any module that misses a workspace project's module, is a break. A
+    # deeper module that misses something no workspace project ships is most often an optional
+    # extra's (the empty venv installs none), so it is reported without failing the run.
+    import_failures = [f for f in every_failure if f.module in packages or f.distribution is not None]
+    import_warnings = [f for f in every_failure if f not in import_failures]
     return WheelsReport(
         target=target.name,
         wheels_dir=str(folder.relative_to(workspace_root)),
@@ -590,7 +624,9 @@ def vendor_wheels(workspace_root: Path, project_name: str) -> WheelsReport:
         name_clashes=name_clashes,
         install_error=install_error,
         import_failures=import_failures,
-        imported=[] if install_error else [m for m in modules if m not in failures],
+        imported=imported,
+        packages=packages,
+        import_warnings=import_warnings,
     )
 
 
@@ -695,18 +731,28 @@ def render_report(report: WheelsReport) -> str:
         lines.append(f"Installing {target} in an empty venv failed:")
         lines += [f"    {line}" for line in report.install_error.splitlines()]
     else:
-        total = len(report.imported) + len(report.import_failures)
-        lines.append(f"Installed {target} in an empty venv (its wheels + PyPI) and imported its {total} packages:")
+        n_packages = len(report.packages)
+        lines.append(
+            f"Installed {target} in an empty venv (its wheels + PyPI) and imported every module of its "
+            f"{n_packages} package{'s' if n_packages != 1 else ''}:"
+        )
+        n_imported = len(report.imported)
+        modules = f"module{'s' if n_imported != 1 else ''}"
         if report.import_failures:
             rows = [
                 [f.module, f.error + (f"  ({f.distribution})" if f.distribution else "")]
                 for f in report.import_failures
             ]
             lines += _table(rows)
-            others = len(report.imported)
-            lines.append(f"  {others} other{'s' if others != 1 else ''} imported")
+            lines.append(f"  {n_imported} other {modules} imported")
+        elif report.import_warnings:
+            lines.append(f"  {n_imported} {modules} imported")
         else:
-            lines.append(f"  all {total} imported")
+            lines.append(f"  all {n_imported} {modules} imported")
+        if report.import_warnings:
+            lines.append("")
+            lines.append("Not imported, missing what no workspace project ships (an optional extra's?):")
+            lines += _table([[f.module, f.error] for f in report.import_warnings])
     lines.append("")
 
     if report.install_error is not None:

@@ -443,6 +443,7 @@ def _report(**overrides: Any) -> w.WheelsReport:
         install_error=None,
         import_failures=failures,
         imported=["signals", "signals.bridge"],
+        packages=["signals", "signals.bridge", "signals.lte"],
     )
     values.update(overrides)
     return w.WheelsReport(**values)
@@ -469,7 +470,8 @@ class TestReport:
             "(recordstream/draws.py, recordstream/x.py, recordstream/y.py, …)" in text
         )
         assert "signals.lte  ModuleNotFoundError: No module named 'recordstream.draws'  (recordstream)" in text
-        assert "2 others imported" in text
+        assert "imported every module of its 3 packages:" in text
+        assert "2 other modules imported" in text
         assert text.rstrip().endswith("Release first: recordstream\nBehind, nothing breaks: confluid")
 
     def test_all_imported_and_nothing_behind_says_so(self) -> None:
@@ -479,7 +481,7 @@ class TestReport:
         )
         assert report.ok is True
         text = w.render_report(report)
-        assert "all 2 imported" in text
+        assert "all 2 modules imported" in text
         assert text.rstrip().endswith("PyPI is up to date for signals-bridge.")
 
     def test_a_failed_install_shows_uvs_own_words_and_cannot_clear_anything_behind(self) -> None:
@@ -505,6 +507,7 @@ class TestReport:
                 published=[w.PublishedDependency("loggair", "loggair", "0.2.0", "0.2.0", ["loggair/core.py"])],
                 import_failures=[],
                 imported=["signals.bridge"],
+                packages=["signals.bridge"],
             )
         )
         assert (
@@ -512,7 +515,8 @@ class TestReport:
         )
         assert "It takes 1 workspace project from PyPI" in text
         assert "behind: 1 file differs (loggair/core.py)" in text
-        assert "all 1 imported" in text
+        assert "imported every module of its 1 package:" in text
+        assert "all 1 module imported" in text
         assert text.rstrip().endswith("Behind, nothing breaks: loggair")
 
     def test_a_failure_no_published_project_explains_is_said_so(self) -> None:
@@ -522,6 +526,25 @@ class TestReport:
         text = w.render_report(report)
         assert "signals.bridge  ModuleNotFoundError: No module named 'torch'\n" in text
         assert "signals-bridge does not import, and no project it takes from PyPI is the cause." in text
+
+    def test_a_module_missing_what_no_workspace_project_ships_is_listed_and_breaks_nothing(self) -> None:
+        warning = w.ImportFailure(
+            "signals.bridge.ops", "ModuleNotFoundError: No module named 'company'", "company", None
+        )
+        report = _report(
+            published=[w.PublishedDependency("loggair", "loggair", "0.2.0", "0.2.0", [])],
+            import_failures=[],
+            import_warnings=[warning],
+        )
+        assert report.ok is True
+        text = w.render_report(report)
+        assert "  2 modules imported\n" in text
+        assert "all 2" not in text
+        assert (
+            "Not imported, missing what no workspace project ships (an optional extra's?):\n"
+            "  signals.bridge.ops  ModuleNotFoundError: No module named 'company'\n" in text
+        )
+        assert text.rstrip().endswith("PyPI is up to date for signals-bridge.")
 
     def test_a_name_clash_is_reported(self) -> None:
         clash = "purifai: PyPI's purifai 0.1.3 is another project's — pip takes it over this wheel (0.1.0)"
@@ -579,7 +602,11 @@ class TestTheRunWithFakedBuilds:
     """What vendor_wheels decides, without uv: each build hands back a wheel written by hand."""
 
     @staticmethod
-    def _fake_builds(monkeypatch: pytest.MonkeyPatch, versions: Dict[str, str]) -> List[Tuple[str, ...]]:
+    def _fake_builds(
+        monkeypatch: pytest.MonkeyPatch,
+        versions: Dict[str, str],
+        failures: Optional[Dict[str, Dict[str, Optional[str]]]] = None,
+    ) -> List[Tuple[str, ...]]:
         installs: List[Tuple[str, ...]] = []
 
         def _build(uv: str, source: Path, out: Path, timestamp: Optional[int] = None) -> Path:
@@ -587,9 +614,11 @@ class TestTheRunWithFakedBuilds:
             out.mkdir(parents=True, exist_ok=True)
             return _wheel(out / f"{name}-{versions.get(name, '0.1.0')}-py3-none-any.whl", {f"{name}/__init__.py": ""})
 
-        def _install(uv: str, target: Path, wheels: Path, modules: List[str], scratch: Path) -> Tuple[None, Dict]:
-            installs.append(tuple(modules))
-            return None, {}
+        def _install(
+            uv: str, target: Path, wheels: Path, packages: List[str], scratch: Path
+        ) -> Tuple[None, Dict, List[str]]:
+            installs.append(tuple(packages))
+            return None, failures or {}, list(packages)
 
         monkeypatch.setattr(w, "_uv", lambda root: "uv")
         monkeypatch.setattr(w, "build_wheel", _build)
@@ -624,6 +653,32 @@ class TestTheRunWithFakedBuilds:
             "purifai: PyPI's purifai 0.1.3 is another project's — pip takes it over this wheel (0.1.0)",
         ]
         assert installs == [("app", "odd", "older", "purifai")]
+
+    def test_a_package_or_a_module_missing_a_workspace_projects_module_breaks_any_other_module_warns(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        root = _workspace(tmp_path, "app", "libx")
+        _project(root, "app", deps=["libx"])
+        _project(root, "libx")
+        _commit(root / "app")
+        _commit(root / "libx")
+        _pypi(monkeypatch, {})
+        failures: Dict[str, Dict[str, Optional[str]]] = {
+            "libx": {"error": "ModuleNotFoundError: No module named 'torch'", "missing": "torch"},
+            "app.labelling": {"error": "ModuleNotFoundError: No module named 'libx.new'", "missing": "libx.new"},
+            "app.extra": {"error": "ModuleNotFoundError: No module named 'company'", "missing": "company"},
+        }
+        self._fake_builds(monkeypatch, {}, failures)
+
+        report = w.vendor_wheels(root, "app")
+
+        assert report.packages == ["app", "libx"]
+        assert [(f.module, f.distribution) for f in report.import_failures] == [
+            ("app.labelling", "libx"),  # a deeper module, but what it misses is a workspace project's
+            ("libx", None),  # a package that does not import is a break, whatever it misses
+        ]
+        assert [f.module for f in report.import_warnings] == ["app.extra"]
+        assert report.ok is False
 
     def test_a_published_dependency_without_a_checkout_or_a_pure_wheel_is_not_compared(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
@@ -706,18 +761,18 @@ fi
 class TestInstallAndImport:
     def test_a_venv_that_cannot_be_made_is_the_install_error(self, tmp_path: Path) -> None:
         uv = _fake_uv(tmp_path, venv=2)
-        error, failures = w.install_and_import(str(uv), tmp_path, tmp_path / "wheels", ["app"], tmp_path)
+        error, failures, imported = w.install_and_import(str(uv), tmp_path, tmp_path / "wheels", ["app"], tmp_path)
         assert error == "creating the venv failed:\nvenv: no interpreter"
-        assert failures == {}
+        assert failures == {} and imported == []
 
     def test_uvs_resolution_error_is_the_install_error(self, tmp_path: Path) -> None:
         uv = _fake_uv(tmp_path, install=1)
-        error, _ = w.install_and_import(str(uv), tmp_path, tmp_path / "wheels", ["app"], tmp_path)
+        error, _, _ = w.install_and_import(str(uv), tmp_path, tmp_path / "wheels", ["app"], tmp_path)
         assert error == "× No solution found when resolving dependencies"
 
     def test_an_import_run_that_dies_without_a_result_says_so(self, tmp_path: Path) -> None:
         uv = _fake_uv(tmp_path)
-        error, _ = w.install_and_import(str(uv), tmp_path, tmp_path / "wheels", ["app"], tmp_path)
+        error, _, _ = w.install_and_import(str(uv), tmp_path, tmp_path / "wheels", ["app"], tmp_path)
         assert error == "the import run ended without a result (exit 3):\nboom"
 
     def test_the_targets_own_uv_toml_configures_the_install(self, tmp_path: Path) -> None:
@@ -769,7 +824,17 @@ def _end_to_end_workspace(root: Path, pypi: Path, monkeypatch: pytest.MonkeyPatc
     `pubdep/newer.py`, which libx imports; PyPI's pubdep 1.0 has it only when `released_new`."""
     _workspace(root / "ws", "app", "libx", "pubdep", "unrelated")
     ws = root / "ws"
-    _project(ws, "app", deps=["libx>=0.1.0"], modules={"app/__init__.py": "import libx\n"})
+    app_modules = {
+        "app/__init__.py": "",
+        "app/core.py": "import libx\n",
+        # Only a deeper import reaches it: `import app` never does (signals.bridge.labelling).
+        "app/labelling.py": "from pubdep.newer import VALUE\n",
+        # An optional extra's module: what it misses no workspace project ships.
+        "app/extra.py": "import some_optional_extra\n",
+        # Importing it would run the program.
+        "app/__main__.py": "raise SystemExit('ran the program')\n",
+    }
+    _project(ws, "app", deps=["libx>=0.1.0"], modules=app_modules)
     _project(ws, "libx", deps=["pubdep>=1.0"], modules={"libx/__init__.py": "from pubdep.newer import VALUE\n"})
     pubdep_modules = {"pubdep/__init__.py": "", "pubdep/newer.py": "VALUE = 1\n"}
     _project(ws, "pubdep", version="1.0", modules=pubdep_modules)
@@ -832,9 +897,12 @@ class TestEndToEnd:
         ]
         assert report.install_error is None
         assert [(f.module, f.missing, f.distribution) for f in report.import_failures] == [
-            ("app", "pubdep.newer", "pubdep"),
+            ("app.core", "pubdep.newer", "pubdep"),
+            ("app.labelling", "pubdep.newer", "pubdep"),
             ("libx", "pubdep.newer", "pubdep"),
         ]
+        assert [(f.module, f.missing) for f in report.import_warnings] == [("app.extra", "some_optional_extra")]
+        assert report.imported == ["app"]
         assert report.release_first == ["pubdep"]
         assert report.ok is False
 
@@ -849,6 +917,7 @@ class TestEndToEnd:
 
         assert first.ok and second.ok
         assert [(p.project, p.differing_files) for p in second.published] == [("pubdep", [])]
-        assert second.imported == ["app", "libx"]
+        assert second.imported == ["app", "app.core", "app.labelling", "libx"]
+        assert [f.module for f in second.import_warnings] == ["app.extra"]
         rebuilt = hashlib.sha256((ws / "app" / "wheels" / "libx-0.1.0-py3-none-any.whl").read_bytes()).hexdigest()
         assert rebuilt == digest, "an unchanged project must rebuild byte for byte, or git sees a change"

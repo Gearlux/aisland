@@ -339,6 +339,11 @@ User choice 2026-10-08: an aisland command, only the named project's closure, bo
   own `uv.toml` is passed with `--config-file` (`TestInstallAndImport`).
 - The exit status follows the install and the imports only; *behind* (a file differs from PyPI's
   wheel) is reported, never an exit 1 (`TestCli`).
+- Every module is imported, not only the packages (`__main__` skipped). A package that fails, or a
+  module missing a workspace project's module, is a break; a deeper module missing what no
+  workspace project ships (an optional extra's) is a warning, never an exit 1
+  (`TestTheRunWithFakedBuilds::test_a_package_or_a_module_missing_a_workspace_projects_module_breaks_any_other_module_warns`,
+  `TestEndToEnd`).
 - Tests reach no network: the end-to-end tests run the real uv with `UV_OFFLINE=1`, a fresh
   cache, and `_PYPI_INDEX_ARGS` pointed at a local folder holding this interpreter's setuptools,
   repackaged (`offline_uv`).

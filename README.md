@@ -335,34 +335,48 @@ aisland wheels signals-bridge
 aisland wheels signals-bridge --json      # the same report as data
 ```
 
-What it printed for signals-analysis on 2026-10-08 (35 s; exit 1):
+What it printed for signals-bridge on 2026-10-08 (53 s; exit 1):
 
 ```text
-signals-analysis needs 3 workspace projects that are not on PyPI. Their wheels are in signals-analysis/wheels (756 kB):
-  signals       0.1.0  dev/main 38ba9a9
-  signals-5gnr  0.1.0  dev/main abe8d10
-  signals-lte   0.1.0  dev/main d63b739
+signals-bridge needs 4 workspace projects that are not on PyPI. Their wheels are in signals-bridge/wheels (1.3 MB):
+  signals           0.1.0  dev/main 75e9dee
+  signals-5gnr      0.1.0  dev/main abe8d10
+  signals-analysis  0.1.0  dev/main d544812
+  signals-lte       0.1.0  dev/main d63b739
 
 It takes 4 workspace projects from PyPI, compared with this checkout:
   confluid      PyPI 0.4.0    behind: 6 files differ (confluid/configurator.py, confluid/decorators.py, confluid/engine.py, …)
   liquifai      PyPI 0.3.0    behind: 13 files differ (liquifai/bridge/__init__.py, liquifai/bridge/group.py, liquifai/bridge/policies.py, …)
-  loggair       PyPI 0.2.0    behind: 1 file differs (loggair/core.py)
+  loggair       PyPI 0.2.0    not compared: no checkout here
   recordstream  PyPI 0.1.0a2  behind: 18 files differ (recordstream/__init__.py, recordstream/core/stream.py, recordstream/draws.py, …)
 
-Installed signals-analysis in an empty venv (its wheels + PyPI) and imported its 4 packages:
-  signals.fivegnr  ModuleNotFoundError: No module named 'recordstream.draws'  (recordstream)
-  signals.lte      ModuleNotFoundError: No module named 'recordstream.draws'  (recordstream)
-  2 others imported
+Installed signals-bridge in an empty venv (its wheels + PyPI) and imported every module of its 5 packages:
+  signals.analysis.fivegnr  ModuleNotFoundError: No module named 'recordstream.draws'  (recordstream)
+  signals.analysis.lte      ModuleNotFoundError: No module named 'recordstream.draws'  (recordstream)
+  signals.fivegnr           ModuleNotFoundError: No module named 'recordstream.draws'  (recordstream)
+  signals.generators        ModuleNotFoundError: No module named 'recordstream.draws'  (recordstream)
+  signals.bridge.labelling  ModuleNotFoundError: No module named 'recordstream.draws'  (recordstream)
+  signals.lte               ModuleNotFoundError: No module named 'recordstream.draws'  (recordstream)
+  signals.occupancy         ModuleNotFoundError: No module named 'recordstream.draws'  (recordstream)
+  signals.rfuav.ops         ModuleNotFoundError: No module named 'recordstream.draws'  (recordstream)
+  signals.sources           ModuleNotFoundError: No module named 'recordstream.draws'  (recordstream)
+  149 other modules imported
 
 Release first: recordstream
-Behind, nothing breaks: confluid, liquifai, loggair
+Behind, nothing breaks: confluid, liquifai
 ```
 
 - **Behind**: the wheel this checkout builds differs from the one on PyPI, file by file. The
   wheels were built against this checkout, so they may use what no release has yet.
-- **Release first**: a package failed to import in an empty venv, and the module it missed
-  belongs to that project. Release it, then run `aisland wheels` again. Exit status 1 means the
-  install or an import failed; 0 means everything imported, even if some projects are behind.
+- **Release first**: a module failed to import in an empty venv, and the module it missed
+  belongs to that project. Release it, then run `aisland wheels` again. Every module is
+  imported, not only the packages: `signals.bridge.labelling` above is reached by no package's
+  own import. Exit status 1 means the install failed, a package failed to import, or a module
+  missed a workspace project's module; 0 means none of that, even if some projects are behind.
+- **Not imported, missing what no workspace project ships**: a module below a package that
+  imported, missing something no workspace project ships — most often an optional extra's
+  dependency, which the empty venv does not install. It is listed and does not change the exit
+  status.
 
 On the other machine, from the project's own folder (the folder's `README.md` says the same):
 
