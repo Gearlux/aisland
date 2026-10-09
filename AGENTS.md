@@ -26,7 +26,9 @@ The workspace's dev-infrastructure CLI, `aisland` (click, `aisland/cli.py`):
   records every run of a workspace project, and `aisland tests report` reading it beside the
   Jenkins builds' JUnit results.
 - `wheels.py`: `aisland wheels <project>`, the wheels of the workspace projects it needs that
-  are not on PyPI, written into `<project>/wheels/`, and the check of what it takes from PyPI.
+  are not on PyPI (or, by flag, every needed or every workspace project), written into
+  `<project>/wheels/` with `wheels.yaml` and `install.py` (`wheels_install.py`), and the check of what it
+  takes from PyPI.
 - `nightly.py`: `aisland tests nightly`, the morning report of the orchestrator's nightly runs
   (`aisland/data/nightly/<date>.md`, a desktop notification, exit 1 on a bad night), run by the
   `<workspace>.nightly-check` Jenkins job.
@@ -344,9 +346,22 @@ User choice 2026-10-08: an aisland command, only the named project's closure, bo
   workspace project ships (an optional extra's) is a warning, never an exit 1
   (`TestTheRunWithFakedBuilds::test_a_package_or_a_module_missing_a_workspace_projects_module_breaks_any_other_module_warns`,
   `TestEndToEnd`).
+- What is built is a scope (`WheelsScope`): the default ships what PyPI lacks, `--include-published`
+  every needed project with a checkout, `--all` every workspace project with one; a covered project
+  without a checkout is reported as not built, a dirty one refused in every scope
+  (`TestTheRunWithFakedBuilds`, `TestRefusals::test_all_refuses_a_project_the_target_does_not_need_with_uncommitted_changes`).
+- `install.py` (a copy of `wheels_install.py`, one template for every project) names each chosen
+  wheel by its FILE — pip takes PyPI's same-version wheel over one it only finds through
+  `--find-links` (`tests/test_wheels_install.py::test_pip_takes_the_indexs_wheel_over_one_it_finds_only_through_find_links`,
+  `::test_the_script_installs_the_folders_wheel_over_the_indexs_of_the_same_version`). The empty-venv
+  check runs that script (`TestInstallAndImport`). Never go back to `--find-links` alone.
+- `wheels.yaml`'s `install:` values are the user's: a rerun keeps them, an unreadable file stops the
+  run at its line before any build (`TestWheelsYaml`, `TestRefusals`). `wheels_install.read_wheels` is
+  the one reader of that file, for both sides.
 - Tests reach no network: the end-to-end tests run the real uv with `UV_OFFLINE=1`, a fresh
-  cache, and `_PYPI_INDEX_ARGS` pointed at a local folder holding this interpreter's setuptools,
-  repackaged (`offline_uv`).
+  cache, and `_PYPI_INDEX_ARGS` pointed at a local folder holding this interpreter's setuptools and
+  PyYAML, repackaged (`offline_uv`); the pip tests run with `PIP_CONFIG_FILE=/dev/null` against a
+  local PEP 503 index.
 
 ## Workspace git aliases (`setup_git.sh`, `git_pull_all.sh`)
 

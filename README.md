@@ -332,8 +332,19 @@ this checkout:
 
 ```bash
 aisland wheels signals-bridge
-aisland wheels signals-bridge --json      # the same report as data
+aisland wheels signals-bridge --include-published   # also the projects it needs that ARE on PyPI
+aisland wheels signals-bridge --all                 # every workspace project with a checkout here
+aisland wheels signals-bridge --json                # the same report as data
 ```
+
+| Flag | Built | Installed by default |
+|---|---|---|
+| *(none)* | the projects it needs that are not on PyPI | all of them |
+| `--include-published` | every project it needs that has a checkout here — the commit, not the release | all of them |
+| `--all` | every workspace project that has a checkout here | the ones it needs |
+
+A project the flag covers that has no checkout on this machine is not built: the report says so
+(`Not built: loggair (no checkout here — taken from PyPI 0.2.0)`) and it comes from PyPI.
 
 What it printed for signals-bridge on 2026-10-08 (53 s; exit 1):
 
@@ -378,18 +389,74 @@ Behind, nothing breaks: confluid, liquifai
   dependency, which the empty venv does not install. It is listed and does not change the exit
   status.
 
-On the other machine, from the project's own folder (the folder's `README.md` says the same):
+What `--include-published` printed for signals-bridge on 2026-10-09 (1 min 46 s; exit 0):
+
+```text
+signals-bridge needs 8 workspace projects; 7 are built from this checkout into signals-bridge/wheels (1.9 MB):
+  confluid             0.4.0    dev/main 302e2ed  on PyPI 0.4.0
+  liquifai             0.3.0    dev/main 0cb9dd7  on PyPI 0.3.0
+  recordstream         0.1.0a2  dev/main 73b9772  on PyPI 0.1.0a2
+  signals           0.1.0    dev/main 75e9dee
+  signals-5gnr      0.1.0    dev/main ba9e6f0
+  signals-analysis  0.1.0    dev/main 17991b2
+  signals-lte       0.1.0    dev/main 1eb1815
+Not built: loggair (no checkout here — taken from PyPI 0.2.0)
+
+It takes 1 workspace project from PyPI, compared with this checkout:
+  loggair  PyPI 0.2.0  not compared: no checkout here
+
+Installed signals-bridge in an empty venv (its wheels + PyPI) and imported every module of its 8 packages:
+  351 modules imported
+
+Not imported, missing what no workspace project ships (an optional extra's?):
+  recordstream.keras  ModuleNotFoundError: No module named 'keras'
+
+PyPI is up to date for signals-bridge.
+```
+
+#### Installing on the other machine: `wheels/install.py` and `wheels/wheels.yaml`
+
+Beside the wheels, `aisland wheels` writes `wheels.yaml` — each wheel, the commit it was built
+from, whether the project needs it, the version PyPI has, and `install:` — and `install.py`, one
+generic installer that reads it. `install:` is yours: set it to choose what installs; a rerun of
+`aisland wheels` keeps every value you set (a wheel no longer built drops out).
+
+```yaml
+  - wheel: "confluid-0.4.0-py3-none-any.whl"
+    project: "confluid"
+    commit: "dev/main 302e2ed"
+    needed: true
+    on_pypi: "0.4.0"
+    install: true
+```
+
+From the project's own folder (the folder's `README.md` says the same):
 
 ```bash
-pip install --find-links wheels -e .
+python wheels/install.py                 # the wheels marked install: true, then the project, editable
+python wheels/install.py --all           # every wheel listed
+python wheels/install.py --needed        # the wheels the project needs
+python wheels/install.py --only recordstream,signals
+python wheels/install.py --no-project    # the chosen wheels only
+python wheels/install.py --reinstall     # take rebuilt wheels that kept their version
+python wheels/install.py --dry-run       # print the command, run nothing
+python wheels/install.py --installer uv  # uv pip instead of pip
+python wheels/install.py -- --index-url https://…   # everything after -- goes to pip / uv
 ```
+
+It installs into the interpreter that runs it, and installs PyYAML first when it is missing.
+It names each chosen wheel by its FILE. That is what makes a wheel built from a checkout win over
+PyPI's wheel of the same version: given only `--find-links wheels`, pip takes PyPI's
+recordstream 0.1.0a2 and the module the checkout added is missing; named by its file, the
+checkout's is installed (both measured 2026-10-09). The empty-venv check runs this same script.
 
 How each wheel is made, and what is refused:
 
 | Rule | Why |
 |---|---|
 | Each wheel is built from the project's last **commit**, never from its folder | A `build/lib` that setuptools leaves in a checkout puts files the project deleted long ago into the wheel |
-| A project with uncommitted changes is refused, naming its files | Its wheel would not contain them |
+| A project with uncommitted changes is refused, naming its files — with `--all`, also one the project does not need | Its wheel would not contain them |
+| An unreadable `wheels.yaml` stops the run at its line, before anything is built | Rewriting it would drop the `install:` values it holds |
 | A needed project that is not on PyPI and has no checkout here is refused | There is nothing to build it from; the message names `aisland source set <project> local` |
 | "On PyPI" counts pre-releases | pip installs `recordstream 0.1.0a2` when no final release exists — unlike `aisland jenkins scaffold`, which asks about final releases only |
 | A PyPI name owned by someone else is reported | pip takes the higher version of the two; the report says when that is theirs |
@@ -399,9 +466,8 @@ How each wheel is made, and what is refused:
 | The empty venv uses the project's own `uv.toml` when it has one | A private index it needs; the workspace's root `uv.toml` is never read |
 
 A rebuild keeps each wheel's version (an unreleased project stays at `0.1.0`), so an
-environment that already has the wheels takes new ones with
-`pip install --find-links wheels --force-reinstall --no-deps wheels/*.whl`. Nothing is
-committed; review `git status` in the project and commit `wheels/` yourself. Why it is built
+environment that already has the wheels takes new ones with `python wheels/install.py --reinstall`.
+Nothing is committed; review `git status` in the project and commit `wheels/` yourself. Why it is built
 this way: [`docs/architecture.md`](docs/architecture.md) → "A project installed outside the
 workspace gets its unpublished dependencies as wheels".
 

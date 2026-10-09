@@ -33,6 +33,16 @@ The run, in order:
    is missing — the one to release first (measured 2026-10-08: ``signals.lte`` needs
    ``recordstream.draws``, which recordstream 0.1.0a2 lacks).
 
+What is built is the run's SCOPE (:data:`WheelsScope`): by default the projects above that PyPI
+lacks; ``--include-published`` every project the target needs that has a checkout here, those on
+PyPI too (the wheel holds the commit, not the release); ``--all`` every workspace project that has a
+checkout here, needed or not. Beside the wheels go ``wheels.yaml`` — each wheel, its commit, whether
+the target needs it, and ``install:``, the user's choice, kept across reruns — and ``install.py``,
+the one generic installer (:mod:`aisland.wheels_install`, copied under a generated header) that
+reads it and names each chosen wheel by its FILE: pip takes a wheel it finds only through
+``--find-links`` from PyPI instead when both have the version (measured 2026-10-09), and takes a
+wheel named by its file over PyPI's. The empty-venv check runs that script.
+
 The report is JSON-serializable (:meth:`WheelsReport.to_dict`, ``aisland wheels --json``): the
 shape an MCP tool returns.
 """
@@ -61,14 +71,32 @@ from packaging.requirements import InvalidRequirement, Requirement
 from packaging.utils import canonicalize_name
 from packaging.version import InvalidVersion, Version
 
+from aisland import wheels_install
 from aisland.manager import ensure_uv_in_venv, submodule_active_map
 from aisland.sources import _points_at_gearlux, _pypi_json, read_committed_sources
+from aisland.wheels_install import WheelsFileError, read_wheels
 
 #: The folder inside the project that receives the wheels; the install line names it.
 WHEELS_DIR = "wheels"
 
 #: The file written beside the wheels: what each one was built from and how to install.
 README_NAME = "README.md"
+
+#: The list of the wheels install.py reads; its ``install:`` values are the user's.
+WHEELS_YAML = wheels_install.WHEELS_FILE
+
+#: The generic installer written beside the wheels (a copy of :mod:`aisland.wheels_install`).
+INSTALL_SCRIPT = "install.py"
+
+#: What a run builds: the needed projects PyPI lacks (the default), every needed project with a
+#: checkout (``--include-published``), or every workspace project with a checkout (``--all``).
+WheelsScope = Literal["unpublished", "needed", "all"]
+
+#: Each scope's flag, as the command line spells it.
+_SCOPE_FLAGS: Dict[str, str] = {"unpublished": "", "needed": " --include-published", "all": " --all"}
+
+#: The line that frames a generated header (and the template's own) in the files written.
+_HEADER_RULE = "# =========================================================================\n"
 
 #: Where uv finds PyPI, for the builds and the empty-venv install. Empty = uv's own default
 #: (pypi.org, or the index the user's uv configuration names). A test points it at a local folder.
@@ -146,6 +174,18 @@ class BuiltWheel:
     branch: str
     commit: str
     wheel: str
+    #: Whether the target depends on it (``--all`` also builds what it does not).
+    needed: bool = True
+    #: The version PyPI has, when the project is published there.
+    on_pypi: Optional[str] = None
+
+
+@dataclass
+class NotBuilt:
+    """A workspace project the scope covers that this machine cannot build (no checkout here)."""
+
+    project: str
+    reason: str
 
 
 @dataclass
@@ -195,6 +235,11 @@ class WheelsReport:
     #: Modules below those packages that miss something no workspace project ships — most often an
     #: optional extra's dependency, which the empty venv does not install. Reported; never an exit 1.
     import_warnings: List[ImportFailure] = field(default_factory=list)
+    scope: WheelsScope = "unpublished"
+    #: The projects the scope covers that were not built, and why.
+    not_built: List[NotBuilt] = field(default_factory=list)
+    #: Every workspace project the target needs, built or not.
+    needed_projects: List[str] = field(default_factory=list)
 
     @property
     def ok(self) -> bool:
@@ -455,13 +500,14 @@ def _pure_wheel(payload: Dict[str, Any]) -> Optional[Dict[str, Any]]:
 def install_and_import(
     uv: str, target_dir: Path, wheels_dir: Path, packages: List[str], scratch: Path
 ) -> Tuple[Optional[str], Dict[str, Dict[str, Optional[str]]], List[str]]:
-    """Install ``target_dir`` the way its wheels' README says, in an empty venv, and import every
-    module of ``packages``.
+    """Install ``target_dir`` in an empty venv with the shipped ``install.py`` (the wheels it needs, through
+    uv), and import every module of ``packages``.
 
     Returns ``(install_error, failures, imported)``. The venv is made in ``scratch``, and uv runs there so
     the workspace's own ``uv.toml`` (its overrides) is not found; the target's own ``uv.toml``
-    (a private index it may need) is used when it has one. ``PYTHONPATH`` is dropped, so nothing
-    of the workspace leaks into the imports.
+    (a private index it may need) is passed through the script when it has one. ``PYTHONPATH`` is dropped,
+    so nothing of the workspace leaks into the imports; ``uv``'s folder leads ``PATH``, where the script
+    looks for it.
     """
     venv = scratch / "venv"
     python = venv / "bin" / "python"
@@ -471,14 +517,15 @@ def install_and_import(
     if created.returncode != 0:
         return f"creating the venv failed:\n{created.stderr.strip()}", {}, []
     config = ["--config-file", str(target_dir / "uv.toml")] if (target_dir / "uv.toml").is_file() else []
-    install = [uv, "pip", "install", "--quiet", "--python", str(python), *config, *_PYPI_INDEX_ARGS]
+    env = {k: v for k, v in os.environ.items() if k != "PYTHONPATH"}
+    env["PATH"] = os.pathsep.join([str(Path(uv).parent), env.get("PATH", "")])
+    script = [str(python), str(wheels_dir / INSTALL_SCRIPT), "--installer", "uv", "--needed"]
     installed = subprocess.run(
-        [*install, "--find-links", str(wheels_dir), "-e", str(target_dir)], cwd=scratch, capture_output=True, text=True
+        [*script, "--", "--quiet", *config, *_PYPI_INDEX_ARGS], cwd=scratch, env=env, capture_output=True, text=True
     )
     if installed.returncode != 0:
-        return installed.stderr.strip(), {}, []
+        return (installed.stderr.strip() or installed.stdout.strip()), {}, []
     result = scratch / "imports.json"
-    env = {k: v for k, v in os.environ.items() if k != "PYTHONPATH"}
     imported = subprocess.run(
         [str(python), "-c", _IMPORT_SCRIPT, str(result), *packages],
         cwd=scratch,
@@ -541,27 +588,53 @@ def _refuse_uncommitted(projects: List[WorkspaceProject]) -> None:
         raise click.ClickException("\n".join(problems + ["Commit or stash them, then run this again."]))
 
 
-def _write_wheels(folder: Path, staged: List[Path], readme: str) -> None:
-    """Replace the folder's ``*.whl`` with ``staged`` and write its README; other files stay."""
+def _write_wheels(folder: Path, staged: List[Path], files: Dict[str, str]) -> None:
+    """Replace the folder's ``*.whl`` with ``staged`` and write ``files`` (name: text); other files stay."""
     folder.mkdir(parents=True, exist_ok=True)
     for old in folder.glob("*.whl"):
         old.unlink()
     for wheel in staged:
         shutil.copy2(wheel, folder / wheel.name)
-    (folder / README_NAME).write_text(readme)
+    for name, text in files.items():
+        (folder / name).write_text(text, encoding="utf-8")
 
 
-def vendor_wheels(workspace_root: Path, project_name: str) -> WheelsReport:
+def read_install_choices(path: Path) -> Dict[str, bool]:
+    """The ``install:`` value of each project in an existing ``wheels.yaml`` (none when there is no file).
+
+    A file that cannot be read stops the run at its line, before anything is built: rewriting it would
+    silently drop the choices it holds.
+    """
+    if not path.is_file():
+        return {}
+    try:
+        _project, entries = read_wheels(path)
+    except WheelsFileError as error:
+        raise click.ClickException(str(error)) from error
+    return {entry.project: entry.install for entry in entries}
+
+
+def _pypi_version(payload: Optional[Dict[str, Any]]) -> str:
+    return str(((payload or {}).get("info") or {}).get("version") or "")
+
+
+def vendor_wheels(workspace_root: Path, project_name: str, scope: WheelsScope = "unpublished") -> WheelsReport:
     """``aisland wheels <project_name>``: build, write, compare, install, import. See the module docstring."""
     projects = workspace_projects(workspace_root)
     target = _find_target(projects, workspace_root, project_name)
     needed = dependency_closure(projects, target)
+    needed_names = {p.name for p in needed}
+    if scope == "all":
+        covered = sorted((p for p in projects.values() if p.name != target.name), key=lambda p: p.name)
+    else:
+        covered = needed
 
-    states = {p.name: pypi_state(p.distribution) for p in needed}
-    to_build = [p for p in needed if states[p.name][0] != "published"]
-    published = [p for p in needed if states[p.name][0] == "published"]
+    states = {p.name: pypi_state(p.distribution) for p in covered if p.checked_out or p.name in needed_names}
 
-    missing = [p for p in to_build if not p.checked_out]
+    def _published(project: WorkspaceProject) -> bool:
+        return project.name in states and states[project.name][0] == "published"
+
+    missing = [p for p in needed if not _published(p) and not p.checked_out]
     if missing:
         raise click.ClickException(
             "\n".join(
@@ -570,10 +643,29 @@ def vendor_wheels(workspace_root: Path, project_name: str) -> WheelsReport:
                 for p in missing
             )
         )
+    if scope == "unpublished":
+        to_build = [p for p in needed if not _published(p)]
+        not_built: List[NotBuilt] = []
+    else:
+        to_build = [p for p in covered if p.checked_out]
+        not_built = [
+            NotBuilt(
+                p.name,
+                (
+                    f"no checkout here — taken from PyPI {_pypi_version(states[p.name][1])}"
+                    if p.name in needed_names
+                    else "no checkout here"
+                ),
+            )
+            for p in covered
+            if not p.checked_out
+        ]
+    published = [p for p in needed if _published(p) and p not in to_build]
     _refuse_uncommitted(to_build)
 
-    uv = _uv(workspace_root)
     folder = target.path / WHEELS_DIR
+    choices = read_install_choices(folder / WHEELS_YAML)
+    uv = _uv(workspace_root)
     with tempfile.TemporaryDirectory() as tmp:
         scratch = Path(tmp)
         built: List[BuiltWheel] = []
@@ -588,13 +680,29 @@ def vendor_wheels(workspace_root: Path, project_name: str) -> WheelsReport:
             wheel = build_wheel(uv, scratch / "src" / project.name, scratch / "wheels", timestamp)
             staged.append(wheel)
             version = _wheel_version(wheel)
-            built.append(BuiltWheel(project.name, project.distribution, version, branch, commit, wheel.name))
+            state, payload = states.get(project.name, ("absent", None))
+            built.append(
+                BuiltWheel(
+                    project.name,
+                    project.distribution,
+                    version,
+                    branch,
+                    commit,
+                    wheel.name,
+                    needed=project.name in needed_names,
+                    on_pypi=_pypi_version(payload) if state == "published" else None,
+                )
+            )
             owners.update({module: project.distribution for module in wheel_modules(wheel)})
-            state, payload = states[project.name]
             if state == "foreign" and payload is not None:
                 name_clashes.extend(_clash(project, payload, version))
 
-        _write_wheels(folder, staged, render_readme(target.name, built))
+        files = {
+            README_NAME: render_readme(target.name, scope, built),
+            WHEELS_YAML: render_wheels_yaml(target.name, scope, built, not_built, choices),
+            INSTALL_SCRIPT: render_install_script(target.name, scope),
+        }
+        _write_wheels(folder, staged, files)
 
         compared = [_compare(uv, project, states[project.name][1] or {}, scratch, owners) for project in published]
 
@@ -603,7 +711,8 @@ def vendor_wheels(workspace_root: Path, project_name: str) -> WheelsReport:
         target_wheel = build_wheel(uv, scratch / "src" / target.name, scratch / "target")
         own = wheel_modules(target_wheel)
         owners.update({module: target.distribution for module in own})
-        packages = sorted(set(own) | {m for w in staged for m in wheel_modules(w)})
+        installed = [wheel for wheel, b in zip(staged, built) if b.needed]
+        packages = sorted(set(own) | {m for wheel in installed for m in wheel_modules(wheel)})
         install_error, failures, imported = install_and_import(uv, target.path, folder, packages, scratch)
 
     every_failure = [
@@ -627,6 +736,9 @@ def vendor_wheels(workspace_root: Path, project_name: str) -> WheelsReport:
         imported=imported,
         packages=packages,
         import_warnings=import_warnings,
+        scope=scope,
+        not_built=not_built,
+        needed_projects=sorted(needed_names),
     )
 
 
@@ -680,24 +792,43 @@ def _files(files: List[str]) -> str:
 def _table(rows: List[List[str]]) -> List[str]:
     """Rows as two-space-indented, left-aligned columns (the last column unpadded)."""
     widths = [max(len(row[i]) for row in rows) for i in range(len(rows[0]) - 1)]
-    return ["  " + "  ".join([c.ljust(w) for c, w in zip(row, widths)] + [row[-1]]) for row in rows]
+    return ["  " + "  ".join([c.ljust(w) for c, w in zip(row, widths)] + [row[-1]]).rstrip() for row in rows]
+
+
+def _built_lines(report: WheelsReport) -> List[str]:
+    """The report's first block: what was built, for the scope it ran with."""
+    target, n = report.target, len(report.built)
+    where = f"{report.wheels_dir} ({_size(report.wheels_bytes)})"
+    if report.scope == "unpublished":
+        if not n:
+            return [f"{target} needs no workspace project that is not on PyPI; {report.wheels_dir} holds no wheel."]
+        noun = (
+            "1 workspace project that is not on PyPI. Its wheel is"
+            if n == 1
+            else f"{n} workspace projects that are not on PyPI. Their wheels are"
+        )
+        lines = [f"{target} needs {noun} in {where}:"]
+        return lines + _table([[b.project, b.version, f"{b.branch} {b.commit}"] for b in report.built])
+    count = len(report.needed_projects)
+    needs = f"{target} needs {count} workspace project{'s' if count != 1 else ''}"
+    if report.scope == "needed":
+        lines = [f"{needs}; {n} {'is' if n == 1 else 'are'} built from this checkout into {where}:"]
+    else:
+        lines = [f"Every workspace project with a checkout here is built into {where}; {needs}:"]
+    rows = []
+    for b in report.built:
+        notes = ([f"on PyPI {b.on_pypi}"] if b.on_pypi else []) + ([] if b.needed else ["not needed"])
+        rows.append([b.project, b.version, f"{b.branch} {b.commit}", ", ".join(notes)])
+    lines += _table(rows) if rows else ["  (no wheel)"]
+    if report.not_built:
+        lines.append("Not built: " + ", ".join(f"{nb.project} ({nb.reason})" for nb in report.not_built))
+    return lines
 
 
 def render_report(report: WheelsReport) -> str:
     """The text ``aisland wheels`` prints."""
     target = report.target
-    lines: List[str] = []
-    n = len(report.built)
-    if n:
-        noun = (
-            "1 workspace project that is not on PyPI. Its wheel is"
-            if n == 1
-            else (f"{n} workspace projects that are not on PyPI. Their wheels are")
-        )
-        lines.append(f"{target} needs {noun} in {report.wheels_dir} ({_size(report.wheels_bytes)}):")
-        lines += _table([[b.project, b.version, f"{b.branch} {b.commit}"] for b in report.built])
-    else:
-        lines.append(f"{target} needs no workspace project that is not on PyPI; {report.wheels_dir} holds no wheel.")
+    lines = _built_lines(report)
     lines.append("")
 
     if report.published:
@@ -770,37 +901,129 @@ def render_report(report: WheelsReport) -> str:
     return "\n".join(lines).rstrip() + "\n"
 
 
-def render_readme(target: str, built: List[BuiltWheel]) -> str:
+def regenerate_command(target: str, scope: WheelsScope) -> str:
+    """The command that wrote a generated file — its header's ``Generated by:`` and ``To regenerate:``."""
+    return f"aisland wheels {target}{_SCOPE_FLAGS[scope]}"
+
+
+def _header(prefix: str, command: str, source: str) -> List[str]:
+    """The generator-provenance lines every generated file carries, each behind ``prefix``."""
+    return [
+        f"{prefix}AUTO-GENERATED FILE — DO NOT EDIT BY HAND",
+        f"{prefix}Generated by: {command}",
+        f"{prefix}Source: {source}",
+        f"{prefix}To regenerate: {command}",
+    ]
+
+
+def render_readme(target: str, scope: WheelsScope, built: List[BuiltWheel]) -> str:
     """``wheels/README.md``: its generator, the install command, and each wheel's commit.
 
     No date and no PyPI verdict, so a rebuild of unchanged projects changes no file.
     """
-    rows = "\n".join(f"| {b.wheel} | {b.project} | {b.branch} | {b.commit} |" for b in built)
-    table = (
-        f"| Wheel | Project | Branch | Commit |\n| --- | --- | --- | --- |\n{rows}" if built else "No wheel is needed."
+    command = regenerate_command(target, scope)
+    rows = "\n".join(
+        f"| {b.wheel} | {b.project} | {b.branch} | {b.commit} | {'yes' if b.needed else 'no'} |" for b in built
     )
+    table = (
+        f"| Wheel | Project | Branch | Commit | Needed |\n| --- | --- | --- | --- | --- |\n{rows}"
+        if built
+        else "No wheel is needed."
+    )
+    title, intro = {
+        "unpublished": (
+            f"The wheels {target} needs",
+            f"The workspace projects {target} depends on that are not on PyPI, each built from the commit\n"
+            "below. Everything else it needs comes from PyPI.",
+        ),
+        "needed": (
+            f"The wheels {target} needs",
+            f"Every workspace project {target} depends on that had a checkout where these were built, each\n"
+            "built from the commit below — those on PyPI too, so the commit, not the release, is what\n"
+            "installs. Everything else it needs comes from PyPI.",
+        ),
+        "all": (
+            f"The workspace's wheels, for {target}",
+            "Every workspace project that had a checkout where these were built, each built from the commit\n"
+            f"below. *Needed* marks the ones {target} depends on; everything else it needs comes from PyPI.",
+        ),
+    }[scope]
+    header = "\n".join(_header("", command, "aisland/aisland/wheels.py (render_readme)"))
     return f"""\
 <!--
 =========================================================================
-AUTO-GENERATED FILE — DO NOT EDIT BY HAND
-Generated by: aisland wheels {target}
-Source: aisland/aisland/wheels.py (render_readme)
-To regenerate: aisland wheels {target}
+{header}
 =========================================================================
 -->
-# The wheels {target} needs
+# {title}
 
-The workspace projects {target} depends on that are not on PyPI, each built from the commit
-below. Everything else it needs comes from PyPI.
+{intro}
 
-Install {target} from its own folder, editable:
+Install {target} from its own folder, editable, with the wheels marked `install: true` in
+`wheels/{WHEELS_YAML}` (by default the ones it needs):
 
-    pip install --find-links wheels -e .
+    python wheels/{INSTALL_SCRIPT}
 
-A rebuild keeps each wheel's version, so an environment that already has them takes the new
-ones with:
+`python wheels/{INSTALL_SCRIPT} --help` lists the choices: `--all`, `--needed`, `--only <projects>`,
+`--no-project`, `--dry-run`, `--installer uv`, and pip's own options after `--`. The script names each
+wheel by its file, so pip takes it over PyPI's wheel of the same version. A rebuild keeps each wheel's
+version, so an environment that already has them takes the new ones with:
 
-    pip install --find-links wheels --force-reinstall --no-deps wheels/*.whl
+    python wheels/{INSTALL_SCRIPT} --reinstall
 
 {table}
 """
+
+
+def render_wheels_yaml(
+    target: str, scope: WheelsScope, built: List[BuiltWheel], not_built: List[NotBuilt], keep: Dict[str, bool]
+) -> str:
+    """``wheels/wheels.yaml``: each wheel, its commit, whether ``target`` needs it, and ``install:``.
+
+    ``install:`` is the value in ``keep`` (the user's, read from the file this one replaces) for a project
+    listed there, else whether it is needed. Strings are written as JSON strings, which YAML reads as
+    they are (a version such as ``1.0`` would otherwise read as a number).
+    """
+    command = regenerate_command(target, scope)
+    lines = [_HEADER_RULE.rstrip("\n")]
+    # The header's first line, said for this one generated file the user DOES edit: its `install:` values.
+    lines += ["# AUTO-GENERATED FILE — edit only the `install:` values (a rerun keeps them)"]
+    lines += _header("# ", command, "aisland/aisland/wheels.py (render_wheels_yaml)")[1:]
+    lines += [
+        _HEADER_RULE.rstrip("\n"),
+        "# install.py installs the wheels marked `install: true`, then",
+        f"# {target} editable. `needed: true` marks what {target} depends on.",
+        f"project: {json.dumps(target)}",
+    ]
+
+    def _string(value: Optional[str]) -> str:
+        return "null" if value is None else json.dumps(value, ensure_ascii=False)
+
+    lines.append("wheels:" if built else "wheels: []")
+    for b in built:
+        install = keep.get(b.project, b.needed)
+        lines += [
+            f"  - wheel: {_string(b.wheel)}",
+            f"    project: {_string(b.project)}",
+            f"    commit: {_string(f'{b.branch} {b.commit}')}",
+            f"    needed: {'true' if b.needed else 'false'}",
+            f"    on_pypi: {_string(b.on_pypi)}",
+            f"    install: {'true' if install else 'false'}",
+        ]
+    lines.append("not_built:" if not_built else "not_built: []")
+    for nb in not_built:
+        lines += [f"  - project: {_string(nb.project)}", f"    reason: {_string(nb.reason)}"]
+    return "\n".join(lines) + "\n"
+
+
+def render_install_script(target: str, scope: WheelsScope) -> str:
+    """``wheels/install.py``: :mod:`aisland.wheels_install` unchanged, under a generated header.
+
+    The template's own header (between its first two rule lines) says it is the template; the copy's
+    names the command that wrote it.
+    """
+    template = Path(wheels_install.__file__).read_text(encoding="utf-8")
+    shebang, _template_header, rest = template.split(_HEADER_RULE, 2)
+    command = regenerate_command(target, scope)
+    header = _header("# ", command, "aisland/aisland/wheels_install.py (copied unchanged below this header)")
+    return shebang + _HEADER_RULE + "\n".join(header) + "\n" + _HEADER_RULE + rest

@@ -291,21 +291,34 @@ def tests_nightly(as_json: bool, no_notify: bool) -> None:
 
 @main.command(name="wheels")
 @click.argument("project")
+@click.option(
+    "--include-published",
+    is_flag=True,
+    help="Also build the projects PROJECT needs that are on PyPI, from their checkouts (the commit, not the release).",
+)
+@click.option(
+    "--all", "include_all", is_flag=True, help="Build every workspace project that has a checkout here, needed or not."
+)
 @click.option("--json", "as_json", is_flag=True, help="Print the report as JSON (what an MCP tool would return).")
-def wheels_cmd(project: str, as_json: bool) -> None:
-    """Build the wheels PROJECT needs that are not on PyPI into PROJECT/wheels; check what it takes from PyPI.
+def wheels_cmd(project: str, include_published: bool, include_all: bool, as_json: bool) -> None:
+    """Build the wheels PROJECT needs into PROJECT/wheels, with wheels.yaml and install.py; check the install.
 
-    Each wheel is built from its project's last commit (a project with uncommitted changes is
-    refused). Each dependency PROJECT takes from PyPI is compared with its checkout, file by
-    file; then PROJECT is installed in an empty venv from its wheels plus PyPI and every package
-    imported. Exit 1 when that install or an import fails: the report names the project to
-    release first. Nothing is committed.
+    By default only the projects PROJECT needs that are not on PyPI are built; --include-published
+    builds every project it needs that has a checkout here, --all every workspace project that has
+    one. Each wheel is built from its project's last commit (a project with uncommitted changes is
+    refused). wheels.yaml lists the wheels and which to install (yours to edit; a rerun keeps it);
+    install.py installs them, naming each by its file, then PROJECT editable. Each dependency PROJECT
+    still takes from PyPI is compared with its checkout, file by file; then install.py installs
+    PROJECT in an empty venv and every module is imported. Exit 1 when that install or an import
+    fails: the report names the project to release first. Nothing is committed.
 
     \b
     aisland wheels signals-bridge
-    aisland wheels signals-bridge --json
+    aisland wheels signals-bridge --include-published
+    aisland wheels signals-bridge --all --json
     """
-    report = wheels.vendor_wheels(get_workspace_root(), project)
+    scope: wheels.WheelsScope = "all" if include_all else "needed" if include_published else "unpublished"
+    report = wheels.vendor_wheels(get_workspace_root(), project, scope=scope)
     click.echo(json.dumps(report.to_dict(), indent=2) if as_json else wheels.render_report(report), nl=as_json)
     raise SystemExit(0 if report.ok else 1)
 
