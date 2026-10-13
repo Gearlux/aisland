@@ -137,8 +137,9 @@ aisland doctor
 #   ✓ docker-creds     no credsStore configured — public pulls run anonymously
 #   ✓ colima-tls       the VM verifies TLS to https://ghcr.io/v2/ — pulls can download
 #   ✓ jenkins-java     Jenkins 2.555.2 runs on Java 25.0.3 (/opt/homebrew/opt/openjdk@25/bin/java)
+#   ✓ torch-ext-lock   no torch extension build lock left behind under /Users/you/Library/Caches/torch_extensions
 #
-# All 6 checks passed.
+# All 7 checks passed.
 ```
 
 It exits non-zero when a check fails, so it works as a CI preflight step. Current checks:
@@ -151,6 +152,7 @@ It exits non-zero when a check fails, so it works as a CI preflight step. Curren
 | `docker-creds` | `~/.docker/config.json` names no credential helper that is missing from PATH (Docker Desktop's `credsStore: "desktop"` outlives its uninstall) | `exec: "docker-credential-desktop": executable file not found in $PATH` on **every** `docker pull`, even of public images |
 | `colima-tls` | The Colima VM verifies TLS on the host's network (a TLS-intercepting proxy's CA must be in the VM's trust store, not just the macOS keychain) | `tls: failed to verify certificate: x509: certificate signed by unknown authority` during `docker pull`, while the same URL works on the host |
 | `jenkins-java` | An installed JDK is one the downloaded Jenkins WAR accepts ([Which Java runs Jenkins](#which-java-runs-jenkins)); passes with a note before Jenkins is downloaded | `aisland jenkins start` stops with `Jenkins 2.555.2 runs on Java 21 or 25, and none is installed (found 26.0.2.1)` |
+| `torch-ext-lock` | No torch JIT-extension build lock (`<torch extensions root>/<py>_<accelerator>/<ext>/lock`, the root `$TORCH_EXTENSIONS_DIR` or torch's per-user cache) is older than two minutes — a build takes seconds, and torch waits on an existing lock without a timeout, deleting it only when the compiling process lives through the build; a younger lock is a build in progress and passes | An import that compiles the extension sleeps forever with no error (about 8 s of CPU, then nothing) — a server's first request that loads such a graph, a catalogue helper that never answers; the fix line is the `rm` of the file |
 
 Add a check by writing a `check_*` function in `aisland/doctor.py` and listing it in
 `CHECKS`. A check must be cheap, read-only, and specific: it reports a known-recurring skew

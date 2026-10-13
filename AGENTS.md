@@ -139,7 +139,7 @@ Root `AGENTS.md` "Two Test Runs" (user ruling 2026-10-05). [test-stats]
 
 - A recurring environment skew becomes a `check_*` in `doctor.py`, listed in `CHECKS`, not
   just a note. Current checks: `opencv`, `huggingface_hub`, `mcp`, `docker-creds`,
-  `colima-tls`, `jenkins-java` (rules for project authors: root `AGENTS.md` "Known Environment
+  `colima-tls`, `jenkins-java`, `torch-ext-lock` (rules for project authors: root `AGENTS.md` "Known Environment
   Skews").
   [doctor]
   - Cheap, read-only, specific; a failure carries a copy-pasteable remedy

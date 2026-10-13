@@ -18,9 +18,11 @@ skew with the exact command that fixes it, never a generic "something looks off"
 """
 
 import json
+import os
 import shutil
 import subprocess
 import sys
+import time
 from dataclasses import dataclass
 from importlib.metadata import PackageNotFoundError, version
 from pathlib import Path
@@ -78,6 +80,14 @@ _VM_CA_REMEDY = (
     " && colima ssh -- sudo update-ca-certificates"
     " && colima ssh -- sudo systemctl restart docker"
 )
+
+
+#: How old a torch extension build lock may be before it is a killed build's leftover. torch serialises
+#: a JIT build with an empty `lock` file and waits on an existing one WITHOUT a timeout, deleting it only
+#: when the compiling process lives through the build; the workspace's one such extension compiles in
+#: about ten seconds (measured 2026-10-13), so two minutes is an order of magnitude over a live build.
+#: The same bound the bridge bridge applies before it imports the package that compiles.
+_TORCH_LOCK_STALE_SECONDS = 120.0
 
 
 @dataclass(frozen=True)
@@ -345,6 +355,65 @@ def check_jenkins_java() -> CheckResult:
     return CheckResult("jenkins-java", True, choice.describe())
 
 
+def _torch_extensions_root() -> Path:
+    """Where torch builds JIT extensions, without importing torch: `$TORCH_EXTENSIONS_DIR`, else torch's
+    per-user cache (`torch._appdirs.user_cache_dir("torch_extensions")`: `~/Library/Caches` on macOS,
+    `$XDG_CACHE_HOME` or `~/.cache` elsewhere, `%LOCALAPPDATA%` on Windows)."""
+    configured = os.environ.get("TORCH_EXTENSIONS_DIR")
+    if configured:
+        return Path(configured).expanduser()
+    if sys.platform == "darwin":
+        return Path.home() / "Library" / "Caches" / "torch_extensions"
+    if sys.platform == "win32":
+        local = os.environ.get("LOCALAPPDATA")
+        base = Path(local) if local else Path.home() / "AppData" / "Local"
+        return base / "torch_extensions" / "torch_extensions" / "Cache"
+    xdg = os.environ.get("XDG_CACHE_HOME")
+    return (Path(xdg) if xdg else Path.home() / ".cache") / "torch_extensions"
+
+
+def _torch_build_locks(root: Path) -> List[Path]:
+    """Every build lock under the root — `<root>/<ext>/lock` with `TORCH_EXTENSIONS_DIR` set, else
+    `<root>/py<ver>_<accelerator>/<ext>/lock` — oldest first."""
+    if not root.is_dir():
+        return []
+    found = [path for pattern in ("*/lock", "*/*/lock") for path in root.glob(pattern) if path.is_file()]
+    return sorted(found, key=lambda path: path.stat().st_mtime)
+
+
+def check_torch_extension_lock() -> CheckResult:
+    """No torch JIT-extension build lock is left behind by a killed compile.
+
+    `torch.utils.cpp_extension.load` takes an empty `lock` file in the extension's build directory and,
+    when one exists, polls until it disappears — forever. Only the process that compiles removes it, so a
+    process killed mid-compile (a `pytest` stopped by hand, a server killed from its terminal) leaves it,
+    and from then on every process importing the package that compiles sleeps with no error: an
+    annotation server's first tool-graph load, a class catalogue's helper process (2026-10-13: one lock
+    hung every start for an afternoon, 8 s of CPU then nothing). A lock younger than the bound is a build
+    that may still be running and is reported as such, not as a failure.
+    """
+    root = _torch_extensions_root()
+    locks = _torch_build_locks(root)
+    if not locks:
+        return CheckResult("torch-ext-lock", True, f"no torch extension build lock left behind under {root}")
+    now = time.time()
+    stale = [lock for lock in locks if now - lock.stat().st_mtime > _TORCH_LOCK_STALE_SECONDS]
+    if not stale:
+        building = ", ".join(f"{lock.parent.name} ({now - lock.stat().st_mtime:.0f} s)" for lock in locks)
+        return CheckResult("torch-ext-lock", True, f"torch is building an extension right now: {building}")
+    oldest = stale[0]
+    age_minutes = (now - oldest.stat().st_mtime) / 60
+    names = ", ".join(lock.parent.name for lock in stale)
+    remedy = "rm " + " ".join(f"'{lock}'" for lock in stale)
+    return CheckResult(
+        "torch-ext-lock",
+        False,
+        f"a torch extension build lock is {age_minutes:.0f} min old with no build to hold it ({names}: {oldest}) — "
+        "every import that compiles that extension waits on it forever",
+        remedy,
+    )
+
+
 #: Every check the doctor runs, in report order.
 CHECKS: Tuple[Callable[[], CheckResult], ...] = (
     check_opencv_single_variant,
@@ -353,6 +422,7 @@ CHECKS: Tuple[Callable[[], CheckResult], ...] = (
     check_docker_credsstore,
     check_colima_vm_trust,
     check_jenkins_java,
+    check_torch_extension_lock,
 )
 
 
@@ -392,6 +462,7 @@ __all__ = [
     "check_jenkins_java",
     "check_mcp_server_api",
     "check_opencv_single_variant",
+    "check_torch_extension_lock",
     "run_checks",
     "run_doctor",
 ]
