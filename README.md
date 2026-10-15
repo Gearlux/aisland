@@ -631,7 +631,7 @@ and notebooks. To run the slow tests too, use **Build with Parameters** and tick
 (seeded by `aisland jenkins init --local`) runs `aisland tests nightly`. It reads every 01:00 run
 since the previous report, writes `aisland/data/nightly/<date>.md` — each project's result, and
 for a failed one its stage, its failing tests with their first error line, a quality gate's
-offending lines — and, when a night failed, had no run, is still building or Jenkins did not
+offending lines, the line a stage past its time limit wrote — and, when a night failed, had no run, is still building or Jenkins did not
 answer, shows a desktop notification and ends red. A manual run of the orchestrator is never
 reported as a night.
 
@@ -651,6 +651,40 @@ Jenkins http://localhost:9080/ · acme.local timer runs since 2026-10-05T11:50+0
 At 09:45 a scheduled task of the Claude app, `acme-nightly-check`, reads that report and moves
 tests between the fast and slow runs by the workspace rule; its edits stay uncommitted for
 review. It runs while the app is open, or at its next launch.
+
+**A long stage has a time limit.** Each stage of `Jenkinsfile.local` that runs the project's own
+code is held to a limit. Past it the stage fails, the build fails, and the orchestrator moves on to
+the next project, so one hung test cannot hold the nightly run (on 2026-10-15 one did, from 01:00
+into the afternoon). Initialize and the quality gates run tools, not the project's code, and have
+none. Waiting for an executor is not counted: the node is held before the first stage.
+
+| stage | limit | longest healthy run (01:00 runs of 2026-10-10 to 2026-10-15) |
+|---|---|---|
+| Unit Tests | 15 min | 6.0 min |
+| Slow Tests | 60 min | 29.6 min |
+| Verify Examples | 15 min | 0.5 min |
+| Verify Notebooks | 15 min | 1.4 min |
+
+A timed-out stage ends the build's console with the line the morning report quotes:
+
+```text
+Cancelling nested steps due to timeout
+Sending interrupt signal to process
+After 20s process did not stop
+...
+ERROR: Slow Tests timed out after 60 min - its limit in Jenkinsfile.local (STAGE_LIMITS in aisland/services/jenkins.py)
+Finished: FAILURE
+```
+
+The limits are one table, `STAGE_LIMITS` in `aisland/services/jenkins.py`, the same for every
+project. When a project's healthy run approaches its limit, raise the number there, regenerate
+with `aisland jenkins scaffold --force`, and update each `<project>.local` job's configuration
+(post its `config.xml`, or re-seed with `aisland jenkins init --local`). Abort clicked before the
+limit stays an abort. The process the stage was waiting on may outlive it: Jenkins gives it 20 s
+and goes on without it. A pytest killed this way writes no report, and each pytest step removes
+the previous build's report and coverage files before it runs, so Jenkins never records
+yesterday's tests for a build that ran out of time. The push pipelines (`Jenkinsfile`, `ci.yml`)
+carry no limit; a GitHub job is bounded at six hours by GitHub.
 
 ### 3. Manage MLflow
 ```bash

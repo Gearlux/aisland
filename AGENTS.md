@@ -8,7 +8,8 @@ Records: [sources] project sources · [folders] the `folders` list · [framework
 selection · [completion] completion install · [config] one config file · [clean] reclaiming
 disk · [containers] containerised services · [closure] the pre-install closure ·
 [playwright] dev dependencies needing more than pip · [local-pipeline] the local pipeline ·
-[doctor] the environment doctor · [test-stats] every pytest run recorded · [pull-all]
+[stage-limits] a long stage's time limit · [doctor] the environment doctor · [test-stats] every
+pytest run recorded · [pull-all]
 `pull-all` settles a pointer only to a commit holding both sides · [wheels] a project
 installed outside the workspace gets its unpublished dependencies as wheels.
 
@@ -279,6 +280,19 @@ A bare `::` pin in this section is in `tests/test_jenkins_scaffold.py`.
   before their first run. (`tests/test_jenkins_scaffold.py::TestTheSlowMarkerSplitsTheTestInvocations`,
   `tests/test_orchestrator_executor.py::test_the_nightly_run_asks_for_the_slow_tests_and_a_manual_one_does_not`,
   `::test_a_seeded_local_job_accepts_the_slow_switch_before_its_first_run`)
+- **A long stage of `Jenkinsfile.local` has a time limit (user choice 2026-10-15).** `STAGE_LIMITS`
+  (Unit Tests 15, Slow Tests 60, Verify Examples 15, Verify Notebooks 15 min — about twice the
+  longest healthy run of 2026-10-10..15) is the ONE table; each such stage's steps run inside the
+  `limited` helper the file defines (`_LIMITED_HELPER`), which past the limit FAILS the stage with
+  `TIMED_OUT_MESSAGE` — the stage and the limit named — and rethrows an abort clicked before it.
+  Initialize and the quality gates get none; the push pipelines get none (a runner's limits are
+  measured on the runner: `TASKS.md`). Each pytest step first removes the files it writes
+  (`rm -f test-report.xml coverage.xml`, `rm -f slow-test-report.xml`, both Jenkins templates): a
+  pytest killed before its report leaves the previous build's for the `junit` step
+  (annotaide.local #37 recorded #36's 2 859 cases). `aisland tests nightly` quotes the timed-out
+  line (`nightly._TIMED_OUT`). Raise a limit in the table, never in a generated file.
+  (`::TestALongStageHasATimeLimit`,
+  `tests/test_nightly.py::test_a_timed_out_stage_is_reported_with_its_limit`) [stage-limits]
 - Deploying a template change to a running Jenkins: `aisland jenkins scaffold --force`, then
   POST each job's `/job/<name>/config.xml` with a crumb and
   `Content-Type: application/xml; charset=utf-8` (no charset → HTTP 500). A running build

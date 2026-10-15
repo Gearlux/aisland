@@ -52,6 +52,48 @@ NIGHTLY_CRON = "0 1 * * *"
 #: choice 2026-10-06), so a Monday's report covers Saturday's, Sunday's and Monday's nights.
 NIGHTLY_CHECK_CRON = "30 9 * * 1-5"
 
+#: A long stage's time limit in minutes in `Jenkinsfile.local` (user choice 2026-10-15): past it the stage FAILS naming
+#: itself and the limit (`TIMED_OUT_MESSAGE`), so one hung test never holds the nightly orchestrator — annotaide.local
+#: #37's Unit Tests waited 109 min on a test ignoring SIGINT, signals-5gnr.local #13's Slow Tests ran 519 min the
+#: night before, and acme.local #36 waited on both with no limit anywhere. Each limit is about twice the longest
+#: healthy stage of the 01:00 runs of 2026-10-10..15 (Unit Tests 6.0 min, Slow Tests 29.6 min, Verify Examples 0.5 min,
+#: Verify Notebooks 1.4 min); Initialize and the quality gates run tools, not the project's code, and get none. Waiting
+#: for an executor does not count: the node is held before the first stage. Raise a limit HERE when a project's healthy
+#: run approaches it (the morning report names a timed-out stage), then re-scaffold every project. The push pipelines
+#: carry none: a runner's limits are measured on the runner (aisland/TASKS.md).
+STAGE_LIMITS: Dict[str, int] = {
+    "Unit Tests": 15,
+    "Slow Tests": 60,
+    "Verify Examples": 15,
+    "Verify Notebooks": 15,
+}
+#: The one line a stage past its limit writes (Groovy interpolation); `nightly._TIMED_OUT` reads it from the console.
+TIMED_OUT_MESSAGE = "${stage} timed out after ${minutes} min - its limit in Jenkinsfile.local (STAGE_LIMITS in aisland/services/jenkins.py)"
+#: The helper `Jenkinsfile.local` defines above `pipeline {`; each long stage's steps run inside it. Measured 2026-10-15
+#: on a probe job (a 1 min limit around a shell ignoring SIGINT): the stage FAILED at 80 s, the build FAILURE, the
+#: stage's post block ran, the next stages were skipped, the console ended with the ERROR line; Jenkins printed
+#: `After 20s process did not stop` and the hung process lingered — the stage ends anyway, and the orchestrator sees
+#: `<job> completed: FAILURE`, the path every failing project takes. Abort clicked before the limit is rethrown and
+#: stays an abort. Sandbox: `System.currentTimeMillis` and `Closure.call` are in script-security's generic whitelist,
+#: and a catch clause's class name is never checked by it.
+_LIMITED_HELPER = f"""// A long stage's time limit, in minutes: past it the stage fails naming itself and the limit, so one hung test
+// never holds the nightly orchestrator (2026-10-15: annotaide.local #37 waited 109 min on a test ignoring SIGINT).
+// An abort by hand before the limit stays an abort. The limits: STAGE_LIMITS in aisland/services/jenkins.py.
+def limited(String stage, int minutes, Closure body) {{
+    long started = System.currentTimeMillis()
+    try {{
+        timeout(time: minutes, unit: 'MINUTES') {{
+            body()
+        }}
+    }} catch (org.jenkinsci.plugins.workflow.steps.FlowInterruptedException interrupted) {{
+        if (System.currentTimeMillis() - started < minutes * 60000L) {{
+            throw interrupted
+        }}
+        error("{TIMED_OUT_MESSAGE}")
+    }}
+}}
+"""
+
 
 def registers_slow_marker(pyproject_data: Mapping[str, Any]) -> bool:
     """True when the project registers the `slow` pytest marker — its declaration that it has a slow run."""
@@ -1086,18 +1128,10 @@ pipeline {{
             f'\n                sh "${{VENV_BIN}}/playwright install {PLAYWRIGHT_BROWSER}"' if needs_browser else ""
         )
         browser_gh = f"\n        playwright install --with-deps {PLAYWRIGHT_BROWSER}" if needs_browser else ""
-        if has_slow_marker:
-            slow_stage = """
-        stage('Slow Tests') {
-            steps {
-                script {
-                    // 5 = the marker is registered but nothing is currently marked — valid, not a failure.
-                    def rc = sh(script: "${VENV_BIN}/pytest tests -m slow --junitxml=slow-test-report.xml", returnStatus: true)
-                    if (rc != 0 && rc != 5) {
-                        error("Slow tests failed (exit ${rc}).")
-                    }
-                }
-            }
+        # Both Jenkins workspaces persist between builds (the local one IS the checkout), and a pytest killed before it
+        # writes its report leaves the previous build's file for the `junit` post step: annotaide.local #37 (killed
+        # after 109 min) recorded #36's 2 859 cases. So each pytest call first removes the files it writes.
+        slow_post = """
             post {
                 always {
                     script {
@@ -1109,16 +1143,49 @@ pipeline {{
             }
         }
 """
+        if has_slow_marker:
+            slow_stage = (
+                """
+        stage('Slow Tests') {
+            steps {
+                sh 'rm -f slow-test-report.xml'
+                script {
+                    // 5 = the marker is registered but nothing is currently marked — valid, not a failure.
+                    def rc = sh(script: "${VENV_BIN}/pytest tests -m slow --junitxml=slow-test-report.xml", returnStatus: true)
+                    if (rc != 0 && rc != 5) {
+                        error("Slow tests failed (exit ${rc}).")
+                    }
+                }
+            }"""
+                + slow_post
+            )
         else:
             slow_stage = ""
         # The LOCAL pipeline runs its slow stage only when asked (user ruling 2026-10-06): a manual build is the fast
         # run; the nightly orchestrator run (`NIGHTLY_CRON`) passes SLOW_TESTS=true, and that run gathers the slow
-        # statistics. The push pipelines (`Jenkinsfile`, `ci.yml`) keep running it on every push.
-        local_slow_stage = slow_stage.replace(
-            "        stage('Slow Tests') {\n            steps {",
-            "        stage('Slow Tests') {\n            when {\n                expression { return params.SLOW_TESTS }\n"
-            "            }\n            steps {",
-            1,
+        # statistics. The push pipelines (`Jenkinsfile`, `ci.yml`) keep running it on every push. It also runs inside
+        # its time limit (`STAGE_LIMITS`, `_LIMITED_HELPER`), as every long stage of the local pipeline does.
+        local_slow_stage = (
+            f"""
+        stage('Slow Tests') {{
+            when {{
+                expression {{ return params.SLOW_TESTS }}
+            }}
+            steps {{
+                limited('Slow Tests', {STAGE_LIMITS['Slow Tests']}) {{
+                    sh 'rm -f slow-test-report.xml'
+                    script {{
+                        // 5 = the marker is registered but nothing is currently marked — valid, not a failure.
+                        def rc = sh(script: "${{VENV_BIN}}/pytest tests -m slow --junitxml=slow-test-report.xml", returnStatus: true)
+                        if (rc != 0 && rc != 5) {{
+                            error("Slow tests failed (exit ${{rc}}).")
+                        }}
+                    }}
+                }}
+            }}"""
+            + slow_post
+            if has_slow_marker
+            else ""
         )
         local_slow_param = (
             """
@@ -1472,6 +1539,8 @@ PY"""'''
 // Source template: aisland/services/jenkins.py (JenkinsService.scaffold_pipelines)
 // To regenerate:  aisland jenkins scaffold {project_name} --force
 // =========================================================================
+
+{_LIMITED_HELPER}
 pipeline {{
     agent {{
         node {{
@@ -1669,11 +1738,14 @@ with open('isort-checkstyle.xml', 'w') as f:
 
         stage('Unit Tests') {{
             steps {{
-                script {{
-                    if (fileExists('tests') && sh(script: "find tests -name '*.py' | grep -q .", returnStatus: true) == 0) {{
-                        sh "${{VENV_BIN}}/pytest tests{pytest_deselect} --junitxml=test-report.xml --cov={pkg_name} --cov-report=xml:coverage.xml --cov-report=term"
-                    }} else {{
-                        echo "No tests found in 'tests' directory. Skipping."
+                limited('Unit Tests', {STAGE_LIMITS['Unit Tests']}) {{
+                    sh 'rm -f test-report.xml coverage.xml'
+                    script {{
+                        if (fileExists('tests') && sh(script: "find tests -name '*.py' | grep -q .", returnStatus: true) == 0) {{
+                            sh "${{VENV_BIN}}/pytest tests{pytest_deselect} --junitxml=test-report.xml --cov={pkg_name} --cov-report=xml:coverage.xml --cov-report=term"
+                        }} else {{
+                            echo "No tests found in 'tests' directory. Skipping."
+                        }}
                     }}
                 }}
             }}
@@ -1697,24 +1769,26 @@ with open('isort-checkstyle.xml', 'w') as f:
 {local_slow_stage}
         stage('Verify Examples') {{
             steps {{
-                echo 'Running project examples...'
-                sh '''
-                    for f in examples/*.py; do
-                        if [ -f "$f" ]; then
-                            echo "Verifying $f..."
-                            ${{VENV_BIN}}/python3 "$f"
-                        fi
-                    done
-                    # Directory examples opt in by shipping a run.py entry point;
-                    # network-dependent / install-only example apps ship no run.py
-                    # and are skipped by construction.
-                    for f in examples/*/run.py; do
-                        if [ -f "$f" ]; then
-                            echo "Verifying $f..."
-                            ${{VENV_BIN}}/python3 "$f"
-                        fi
-                    done
-                '''
+                limited('Verify Examples', {STAGE_LIMITS['Verify Examples']}) {{
+                    echo 'Running project examples...'
+                    sh '''
+                        for f in examples/*.py; do
+                            if [ -f "$f" ]; then
+                                echo "Verifying $f..."
+                                ${{VENV_BIN}}/python3 "$f"
+                            fi
+                        done
+                        # Directory examples opt in by shipping a run.py entry point;
+                        # network-dependent / install-only example apps ship no run.py
+                        # and are skipped by construction.
+                        for f in examples/*/run.py; do
+                            if [ -f "$f" ]; then
+                                echo "Verifying $f..."
+                                ${{VENV_BIN}}/python3 "$f"
+                            fi
+                        done
+                    '''
+                }}
             }}
         }}
 
@@ -1723,22 +1797,24 @@ with open('isort-checkstyle.xml', 'w') as f:
                 expression {{ return fileExists('notebooks') }}
             }}
             steps {{
-                echo 'Executing project notebooks...'
-                sh '''
-                    # POSIX-clean: dash (typical /bin/sh on Linux) has no shopt/arrays.
-                    # Loop runs zero times when no .ipynb matches (we check found at the end).
-                    found=0
-                    for nb in notebooks/*.ipynb; do
-                        [ -f "$nb" ] || continue
-                        found=1
-                        echo "Executing $nb..."
-                        ${{VENV_BIN}}/jupyter nbconvert --to notebook --execute \\
-                            --output "/tmp/$(basename "$nb" .ipynb)-ci.ipynb" \\
-                            "$nb"
-                    done
-                    [ "$found" -eq 0 ] && echo "No notebooks to verify."
-                    exit 0
-                '''
+                limited('Verify Notebooks', {STAGE_LIMITS['Verify Notebooks']}) {{
+                    echo 'Executing project notebooks...'
+                    sh '''
+                        # POSIX-clean: dash (typical /bin/sh on Linux) has no shopt/arrays.
+                        # Loop runs zero times when no .ipynb matches (we check found at the end).
+                        found=0
+                        for nb in notebooks/*.ipynb; do
+                            [ -f "$nb" ] || continue
+                            found=1
+                            echo "Executing $nb..."
+                            ${{VENV_BIN}}/jupyter nbconvert --to notebook --execute \\
+                                --output "/tmp/$(basename "$nb" .ipynb)-ci.ipynb" \\
+                                "$nb"
+                        done
+                        [ "$found" -eq 0 ] && echo "No notebooks to verify."
+                        exit 0
+                    '''
+                }}
             }}
         }}
     }}
@@ -1962,6 +2038,7 @@ with open('isort-checkstyle.xml', 'w') as f:
 
         stage('Unit Tests') {{
             steps {{
+                sh 'rm -f test-report.xml coverage.xml'
                 script {{
                     if (fileExists('tests') && sh(script: "find tests -name '*.py' | grep -q .", returnStatus: true) == 0) {{
                         sh "${{VENV_BIN}}/pytest tests{pytest_deselect} --junitxml=test-report.xml --cov={pkg_name} --cov-report=xml:coverage.xml --cov-report=term"

@@ -16,7 +16,7 @@ from typing import Any, List
 
 import pytest
 
-from aisland.services.jenkins import JenkinsService
+from aisland.services.jenkins import STAGE_LIMITS, TIMED_OUT_MESSAGE, JenkinsService
 
 
 def _make_pyproject(dir_: Path, name: str) -> None:
@@ -599,3 +599,76 @@ class TestTheWorkflowActionsRunOnNode24:
             "upload-artifact": "actions/upload-artifact@v7",
             "create-github-app-token": "actions/create-github-app-token@v3",
         }
+
+
+class TestALongStageHasATimeLimit:
+    """A stage that runs the project's code gets a time limit in `Jenkinsfile.local` (user choice 2026-10-15): past
+    it the stage FAILS naming itself and the limit, so one hung test never holds the nightly orchestrator again
+    (annotaide.local #37's Unit Tests waited 109 min on a test ignoring SIGINT, signals-5gnr.local #13's Slow
+    Tests ran 519 min, and acme.local #36 waited on both). The limits live in ONE table, `STAGE_LIMITS`, and every
+    project gets the same; Initialize and the quality gates run tools, not the project's code, and get none; the
+    push pipelines get none here. A timed-out pytest writes no report, and Jenkins would record the previous build's
+    file in its place (annotaide.local #37 recorded #36's 2 859 cases), so each pytest call first removes the files
+    it writes. Measured on a probe job with a 1 min limit around a shell ignoring SIGINT: the stage FAILED at 80 s,
+    the build FAILURE, the console ending `ERROR: Unit Tests timed out after 1 min - its limit in …`."""
+
+    def test_every_long_stage_runs_inside_its_limit_from_the_one_table(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ) -> None:
+        local = _scaffolded(monkeypatch, tmp_path, _make_pyproject_with_slow_marker)["Jenkinsfile.local"]
+        assert set(STAGE_LIMITS) == {"Unit Tests", "Slow Tests", "Verify Examples", "Verify Notebooks"}
+        for stage, minutes in STAGE_LIMITS.items():
+            assert isinstance(minutes, int) and minutes > 0, stage
+            wrapper = f"limited('{stage}', {minutes}) {{"
+            assert local.count(wrapper) == 1, stage
+            opened = local.index(f"stage('{stage}')")
+            assert opened < local.index("steps {", opened) < local.index(wrapper, opened), stage
+        assert local.count("limited(") == len(STAGE_LIMITS) + 1, "the four calls and the definition, nothing else"
+        assert "limited('Initialize'" not in local and "limited('Quality Gates'" not in local
+
+    def test_the_helper_fails_the_stage_naming_it_and_its_limit_and_keeps_an_early_abort(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ) -> None:
+        local = _scaffolded(monkeypatch, tmp_path, _make_pyproject)["Jenkinsfile.local"]
+        helper = local[local.index("def limited(String stage, int minutes, Closure body)") : local.index("pipeline {")]
+        assert "timeout(time: minutes, unit: 'MINUTES')" in helper
+        assert "catch (org.jenkinsci.plugins.workflow.steps.FlowInterruptedException" in helper
+        # Abort clicked before the limit is rethrown and stays an abort; only the limit's own interruption fails.
+        assert "if (System.currentTimeMillis() - started < minutes * 60000L)" in helper
+        assert helper.index("throw interrupted") < helper.index("error(")
+        assert f'error("{TIMED_OUT_MESSAGE}")' in helper
+        assert TIMED_OUT_MESSAGE.startswith("${stage} timed out after ${minutes} min")
+        # The provenance header stays the first thing in the file (root Generator Provenance rule).
+        assert local.index("To regenerate:") < local.index("def limited(")
+
+    def test_a_project_without_slow_tests_gets_no_slow_limit(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ) -> None:
+        local = _scaffolded(monkeypatch, tmp_path, _make_pyproject)["Jenkinsfile.local"]
+        assert "limited('Slow Tests'" not in local
+        assert local.count("limited(") == len(STAGE_LIMITS), "three calls and the definition"
+
+    def test_the_push_pipelines_carry_no_limit(self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+        """The CON pin: a runner's build is bounded by the runner (GitHub: six hours a job); limits measured on a
+        runner are a follow-up (aisland/TASKS.md), never this machine's numbers."""
+        files = _scaffolded(monkeypatch, tmp_path, _make_pyproject_with_slow_marker)
+        for name in ("Jenkinsfile", "ci.yml"):
+            content = files[name]
+            assert "limited(" not in content and "timeout(" not in content, name
+            assert "timeout-minutes" not in content, name
+
+    def test_each_pytest_call_first_removes_the_files_it_writes(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ) -> None:
+        """Both Jenkins workspaces persist between builds (the local one IS the checkout); a GitHub runner starts
+        empty."""
+        files = _scaffolded(monkeypatch, tmp_path, _make_pyproject_with_slow_marker)
+        for name in ("Jenkinsfile", "Jenkinsfile.local"):
+            content = files[name]
+            unit = content.index("stage('Unit Tests')")
+            cleared = content.index("sh 'rm -f test-report.xml coverage.xml'", unit)
+            assert cleared < content.index("pytest tests", unit), name
+            slow = content.index("stage('Slow Tests')")
+            cleared = content.index("sh 'rm -f slow-test-report.xml'", slow)
+            assert cleared < content.index("pytest tests -m slow", slow), name
+        assert "rm -f" not in files["ci.yml"]

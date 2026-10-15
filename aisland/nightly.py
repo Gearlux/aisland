@@ -5,7 +5,8 @@ project at 01:00 with its slow tests; a manual build runs the fast tests only. A
 somebody to open Jenkins, so the `<workspace>.nightly-check` job runs `aisland tests nightly` each weekday at 09:30
 (`NIGHTLY_CHECK_CRON`): it reads every timer run of the orchestrator since the previous report from the Jenkins API,
 writes `aisland/data/nightly/<date>.md` — each project's result, and for a failed one its failing stage, its failing
-tests with their first error line, a quality gate's offending lines — shows a desktop notification when a night failed,
+tests with their first error line, a quality gate's offending lines, the line a stage past its time limit wrote — shows
+a desktop notification when a night failed,
 had no run or is still building, and exits 1 then, which turns the check job red. Moving tests between the fast and the
 slow run is not done here: it needs judgment, and the Claude app's scheduled task does it from this report.
 """
@@ -38,6 +39,10 @@ NOTIFICATION_LIMIT = 200
 GATE_LINES = 5
 #: A quality gate's offending lines in a console: black, isort, flake8 (`path:line:col: CODE`), mypy.
 _GATE_LINE = re.compile(r"^(would reformat |ERROR: .*(sorted|formatted)|\S+:\d+:\d+: [A-Z]+\d+ |\S+:\d+: error: )")
+#: The line a stage past its time limit writes (`Jenkinsfile.local`'s `limited` helper: `jenkins.TIMED_OUT_MESSAGE`,
+#: the limits in `jenkins.STAGE_LIMITS`), as the `error` step prints it at the end of the console. pytest wrote no
+#: report then — its files are removed before the call — so this line is what the morning says.
+_TIMED_OUT = re.compile(r"^ERROR: (?P<stage>.+?) timed out after (?P<minutes>\d+) min\b")
 
 
 class JenkinsUnreachable(Exception):
@@ -112,6 +117,7 @@ class ProjectBuild:
     failed_stage: Optional[str] = None
     failed_tests: List[FailedTest] = field(default_factory=list)
     gate_lines: List[str] = field(default_factory=list)
+    timed_out: Optional[str] = None  # the line a stage past its time limit wrote, without its `ERROR: `
 
     @property
     def passed(self) -> bool:
@@ -191,6 +197,9 @@ def _nightly_time() -> str:
 def _what_failed(build: ProjectBuild) -> str:
     if build.failed_tests:
         return f"{len(build.failed_tests)} test{'s' if len(build.failed_tests) != 1 else ''}"
+    if build.timed_out:
+        match = _TIMED_OUT.match("ERROR: " + build.timed_out)
+        return f"timed out after {match.group('minutes')} min" if match else "timed out"
     return (build.failed_stage or build.result or "failed").lower()
 
 
@@ -266,6 +275,7 @@ def _project(api: Api, job: str, build: Dict[str, Any]) -> ProjectBuild:
                 )
     if not project.failed_tests:
         console = api.text(f"job/{job}/{number}/consoleText").splitlines()
+        project.timed_out = next((line[len("ERROR: ") :] for line in console if _TIMED_OUT.match(line)), None)
         project.gate_lines = [line for line in console if _GATE_LINE.match(line)][:GATE_LINES]
     return project
 
@@ -313,6 +323,8 @@ def render_markdown(report: NightlyReport) -> str:
                 continue
             where = f" in {project.failed_stage}" if project.failed_stage else ""
             lines += ["", f"### {project.job} #{project.number} — {project.result}{where}", "", project.url]
+            if project.timed_out:
+                lines += ["", project.timed_out]
             if project.failed_tests:
                 lines += [""] + [f"- `{t.name}` — {t.error}" for t in project.failed_tests]
             if project.gate_lines:

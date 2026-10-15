@@ -16,7 +16,7 @@ from click.testing import CliRunner
 
 from aisland import nightly
 from aisland.cli import main
-from aisland.services.jenkins import NIGHTLY_CHECK_CRON, JenkinsService
+from aisland.services.jenkins import NIGHTLY_CHECK_CRON, TIMED_OUT_MESSAGE, JenkinsService
 
 TIMER = "hudson.triggers.TimerTrigger$TimerTriggerCause"
 USER = "hudson.model.Cause$UserIdCause"
@@ -331,3 +331,57 @@ def test_only_a_local_setup_seeds_the_check_job() -> None:
 
     source = inspect.getsource(JenkinsService.init_pipelines)
     assert "if local:\n            self._create_nightly_check_job()" in source
+
+
+# --------------------------------------------------------------------------
+# A stage past its time limit (user choice 2026-10-15)
+# --------------------------------------------------------------------------
+# `Jenkinsfile.local` holds each long stage to a limit (`STAGE_LIMITS`); past it the stage fails with ONE console line
+# naming the stage and the limit. pytest wrote no report (its files are removed before the call), so that line is what
+# the morning says — never yesterday's tests as passed, and never a bare "unit tests".
+
+
+def _timed_out_line(stage: str, minutes: int) -> str:
+    """The line the pipeline's `limited` helper writes, as Groovy renders it."""
+    return TIMED_OUT_MESSAGE.replace("${stage}", stage).replace("${minutes}", str(minutes))
+
+
+def test_a_timed_out_stage_is_reported_with_its_limit() -> None:
+    line = _timed_out_line("Slow Tests", 60)
+    api = FakeJenkins(
+        {
+            "api/json": {"jobs": [{"name": n} for n in ("ws.local", "beta.local")]},
+            "job/ws.local/api/json": {"builds": [_orchestrator_build(26, NIGHT, TIMER, result="FAILURE")]},
+            "job/beta.local/api/json": {"builds": [_project_build("beta.local", 5, 26, "FAILURE")]},
+            "job/beta.local/5/wfapi/describe": {
+                "stages": [{"name": "Unit Tests", "status": "SUCCESS"}, {"name": "Slow Tests", "status": "FAILED"}]
+            },
+        },
+        {
+            "job/beta.local/5/consoleText": "+ pytest tests -m slow --junitxml=slow-test-report.xml\n"
+            "tests/test_reference.py ......\nCancelling nested steps due to timeout\n"
+            "Sending interrupt signal to process\nAfter 20s process did not stop\n[Pipeline] error\n"
+            f"[Pipeline] End of Pipeline\nERROR: {line}\nFinished: FAILURE\n"
+        },
+    )
+    report = _report(api)
+    (beta,) = report.runs[0].projects
+    assert beta.failed_stage == "Slow Tests" and beta.failed_tests == [] and beta.gate_lines == []
+    assert beta.timed_out == line
+    assert report.notification("x.md") == "nightly 10-07: 1 of 1 failed — beta (timed out after 60 min) — x.md"
+    text = nightly.render_markdown(report)
+    assert "### beta.local #5 — FAILURE in Slow Tests" in text and f"\n{line}\n" in text
+
+
+def test_a_build_failing_any_other_way_reads_as_before() -> None:
+    """The CON pin: failed tests and a quality gate's lines are reported as they were; nothing is called a timeout."""
+    report = _report(_night())
+    assert all(p.timed_out is None for run in report.runs for p in run.projects)
+    assert "timed out" not in nightly.render_markdown(report)
+
+
+def test_the_line_the_pipeline_writes_is_the_line_the_report_reads() -> None:
+    """One wording, two readers: the scaffold's helper and this report's pattern."""
+    match = nightly._TIMED_OUT.match("ERROR: " + _timed_out_line("Unit Tests", 15))
+    assert match is not None and match.group("stage") == "Unit Tests" and match.group("minutes") == "15"
+    assert nightly._TIMED_OUT.match("ERROR: script returned exit code 143") is None
