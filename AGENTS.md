@@ -11,7 +11,8 @@ disk · [containers] containerised services · [closure] the pre-install closure
 [stage-limits] a long stage's time limit · [doctor] the environment doctor · [test-stats] every
 pytest run recorded · [pull-all]
 `pull-all` settles a pointer only to a commit holding both sides · [wheels] a project
-installed outside the workspace gets its unpublished dependencies as wheels.
+installed outside the workspace gets its unpublished dependencies as wheels · [mirror] a mirror
+is push-only, fast-forward-only, and copies the primary.
 
 ## Current state
 
@@ -19,8 +20,8 @@ The workspace's dev-infrastructure CLI, `aisland` (click, `aisland/cli.py`):
 - `manager.py`: workspace root, `aisland setup` (provisioning, submodule activation, editable
   installs, generated workspace files), `BaseService`.
 - `config.py`: the one committed `config.toml`, written through `sources.py`
-  (`aisland source`) and `selection.py` (`aisland framework|tracker`; `frameworks.py` is a
-  facade over it).
+  (`aisland source`), `mirrors.py` (`aisland mirror`) and `selection.py`
+  (`aisland framework|tracker`; `frameworks.py` is a facade over it).
 - `supervisor.py` (process-compose), `doctor.py` (`aisland doctor`), `completion.py`
   (`aisland completion install`), `clean.py` (`aisland clean`, `aisland backups`).
 - `pytest_stats.py`: the `aisland_test_stats` pytest plugin (entry point `pytest11`) that
@@ -221,6 +222,25 @@ Root `AGENTS.md` "Two Test Runs" (user ruling 2026-10-05). [test-stats]
   from the registry's `distribution`
   (`::TestScaffoldAsksPypiNotTheSource::test_github_dep_survives_its_own_empty_directory`).
 - The remote comes from `.gitmodules`; `pip_vcs_url` rewrites `git@host:org/repo`.
+
+## Project mirrors (`aisland mirror`)
+
+User choice 2026-10-16: an aisland command, submodules only, run by `/push-all` and `/ship`.
+[mirror] (`tests/test_mirrors.py`)
+- The primary is the `.gitmodules` remote; the mirror (remote `mirror`) only receives. A sync
+  copies the PRIMARY's `dev/main`, `main` and tags (`ls-remote origin`), never local branches
+  (`TestSync::test_the_mirror_follows_the_primary_not_unpushed_local_commits`).
+- Never force, never delete, never overwrite a tag: a moved branch and a differing tag are
+  REFUSED with the remedy, a mirror-only ref is left (`TestSync::test_a_branch_the_mirror_moved_is_refused_and_left_alone`,
+  `::test_a_tag_that_differs_on_the_mirror_is_refused_not_overwritten`,
+  `::test_a_branch_or_tag_only_on_the_mirror_is_never_deleted`). Never add a `--force`.
+- Committed `[mirrors.<project>] url` + per-machine `aisland.mirror.<project>`; setup re-applies
+  the remote. Only a remote marked `remote.mirror.aislandManaged` is changed or removed
+  (`TestSetAndUnset::test_set_refuses_to_take_over_a_remote_it_did_not_create`).
+- Network calls run with `GIT_TERMINAL_PROMPT=0` (`TestSync::test_network_calls_never_wait_on_a_password_prompt`);
+  a project without a mirror is never contacted.
+- `/push-all` and `/ship` call `aisland mirror sync` last; change its exit status or wording and
+  those workflows together.
 
 ## Selection axes (`aisland framework` / `aisland tracker`)
 

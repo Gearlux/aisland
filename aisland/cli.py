@@ -474,6 +474,75 @@ def source_apply(project: Optional[str]) -> None:
     raise SystemExit(apply_configured(project))
 
 
+# --- Project Mirror Commands ---
+
+
+@main.group()
+def mirror() -> None:
+    """Keep a copy of a submodule on a second host (a GitHub and a Bitbucket repository).
+
+    \b
+    The primary is the remote .gitmodules names: you pull from it and push to it as before.
+    The mirror only receives: `aisland mirror sync` pushes the primary's dev/main, main and
+    tags to it, fast-forward only. A branch the mirror moved is refused, a tag that differs is
+    never overwritten, and nothing on the mirror is ever deleted.
+
+    Two layers, like `aisland source`: the committed `[mirrors.*]` tables of `config.toml`,
+    and a per-machine `.git/config` override (`--machine-only`).
+    """
+    pass
+
+
+@mirror.command(name="list")
+def mirror_list() -> None:
+    """Show each mirror, both layers, and what a sync would push (pushes nothing)."""
+    from aisland.mirrors import run_list
+
+    raise SystemExit(run_list())
+
+
+@mirror.command(name="set")
+@click.argument("project")
+@click.argument("url")
+@click.option(
+    "--machine-only",
+    is_flag=True,
+    help="Record only the per-machine .git/config override; leave config.toml untouched.",
+)
+def mirror_set(project: str, url: str, machine_only: bool) -> None:
+    """Record URL as PROJECT's mirror and add the `mirror` remote to its checkout.
+
+    \b
+    aisland mirror set signals-bridge git@github.com:Org/signals-bridge.git
+    aisland mirror set loggair https://bitbucket.example.com/scm/team/loggair.git --machine-only
+    """
+    from aisland.mirrors import set_mirror
+
+    raise SystemExit(set_mirror(project, url, machine_only=machine_only))
+
+
+@mirror.command(name="unset")
+@click.argument("project")
+@click.option("--machine-only", is_flag=True, help="Clear only this machine's override; keep the committed mirror.")
+def mirror_unset(project: str, machine_only: bool) -> None:
+    """Drop PROJECT's mirror and the `mirror` remote aisland added. The mirror host is not touched."""
+    from aisland.mirrors import unset_mirror
+
+    raise SystemExit(unset_mirror(project, machine_only=machine_only))
+
+
+@mirror.command(name="sync")
+@click.argument("project", required=False)
+def mirror_sync(project: Optional[str]) -> None:
+    """Push the primary's dev/main, main and tags to PROJECT's mirror (default: every mirror).
+
+    Exit 1 when a branch or tag was refused or a host could not be reached.
+    """
+    from aisland.mirrors import run_sync
+
+    raise SystemExit(run_sync(project))
+
+
 # --- Framework Selection Commands ---
 
 

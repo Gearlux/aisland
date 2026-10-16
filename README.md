@@ -856,10 +856,13 @@ ref = "main"
 [sources.loggair]
 source = "pypi"
 distribution = "loggair"
+
+[mirrors.signals-bridge]
+url = "git@github.com:Org/signals-bridge.git"
 ```
 
 You never edit it by hand: `aisland framework set` / `aisland tracker set` / `aisland source set`
-each rewrite their own section and leave the others alone. Two commands exist for the file
+/ `aisland mirror set` each rewrite their own section and leave the others alone. Two commands exist for the file
 itself:
 
 ```bash
@@ -868,7 +871,7 @@ aisland config migrate   # fold a pre-2026-08 sources/frameworks/trackers.toml i
 ```
 
 **Per-machine deviations never land here.** They go to `.git/config` (`aisland.frameworks`,
-`aisland.trackers`, `aisland.source.<project>`), because this file is tracked and drives every
+`aisland.trackers`, `aisland.source.<project>`, `aisland.mirror.<project>`), because this file is tracked and drives every
 generated CI pipeline — one developer's local narrowing must not decide what a runner installs.
 
 > The workspace-root **`uv.toml` is a different file and stays separate.** uv reads only a file
@@ -1079,6 +1082,71 @@ ref = "dev/main"          # local/github only; omitted => "main"
   [What CI does with all this](#what-ci-does-with-all-this).
 - `aisland setup` applies the configuration on every run, so a fresh clone converges without any
   manual step.
+
+## Project Mirrors (`aisland mirror`)
+
+A submodule can be kept on a second host — a GitHub repository and a Bitbucket one, say. The
+remote `.gitmodules` names stays the **primary**: you clone, pull and push it exactly as before.
+The **mirror** only receives a copy.
+
+```bash
+aisland mirror set signals-bridge git@github.com:Org/signals-bridge.git
+```
+```
+==> signals-bridge: mirror → git@github.com:Org/signals-bridge.git
+    recorded in config.toml (commit it); remote `mirror` added to signals-bridge
+    Note: each sync copies signals-bridge's dev/main, main and tags from bitbucket.example.com to github.com — make sure its code may live there.
+    Push to it with: aisland mirror sync signals-bridge
+```
+
+`aisland mirror sync` pushes the primary's `dev/main`, `main` and tags to every mirror (or to
+the one project named). `/push-all` and `/ship` run it as their last step, so after the first
+`set` you rarely type it.
+
+```
+$ aisland mirror sync
+==> signals-bridge → git@github.com:Org/signals-bridge.git
+    dev/main  pushed (3 commits)
+    main      in sync
+    tags      pushed v0.4.0, v0.4.1
+```
+
+| command | effect |
+| --- | --- |
+| `aisland mirror list` | each mirror, its committed URL, this machine's override, and what a sync would push (`dev/main 3 behind · main in sync · 2 tags missing`) — pushes nothing |
+| `aisland mirror set <project> <url>` | record the mirror in `config.toml` and add the remote `mirror` to the checkout |
+| `aisland mirror set <project> <url> --machine-only` | this machine only (`.git/config aisland.mirror.<project>`); nothing committed |
+| `aisland mirror unset <project> [--machine-only]` | drop the mirror (or only the override) and the remote aisland added; the mirror host is not touched |
+| `aisland mirror sync [<project>]` | push; exit 1 when anything was refused or a host could not be reached |
+
+**What a sync never does.** It never forces and never deletes:
+
+- a branch the mirror has commits on that the primary does not (someone pushed to the mirror) is
+  **refused**, naming the commit and the merge that brings it to the primary:
+  ```
+  ==> vendorcli → git@github.com:Org/vendorcli.git
+      dev/main  REFUSED: the mirror has 1 commit the primary does not (a1b2c3d "fix: …")
+                merge it first: git -C vendorcli fetch mirror && git -C vendorcli merge mirror/dev/main
+  ```
+- a tag of the same name pointing elsewhere is refused, never overwritten;
+- a branch or tag that exists only on the mirror is left alone.
+
+**What is copied is the primary, not your checkout.** A commit you have not pushed to the primary
+does not reach the mirror either, so the two hosts can only differ by the mirror being behind.
+
+**Credentials.** Every fetch, `ls-remote` and push runs with `GIT_TERMINAL_PROMPT=0`: a host
+whose credentials are missing fails the sync with git's message rather than waiting on a
+password prompt. Use an SSH key, or an HTTPS token in `~/.netrc`, for both hosts.
+
+**Notes**
+
+- Only submodules are mirrored; the root repository is not.
+- A project with no checkout here (its source is `github` or `pypi`) is skipped.
+- `aisland mirror set` refuses a project whose checkout already has a remote named `mirror` that
+  aisland did not create, and prints the `git remote rename` that frees the name.
+- `aisland setup` adds the remote for every committed mirror and removes the one aisland added
+  for a mirror unset on another machine. Why the mirror is push-only: [docs/architecture.md](docs/architecture.md),
+  "A mirror is push-only, fast-forward-only, and copies the primary".
 
 ## Optional extras: two selection axes
 
@@ -1555,7 +1623,7 @@ What it cannot do is listed under `needs you:` and it exits 1; fix the item and 
 
 `--autostash` sets aside only the files the merge needs, in a stash named `git pull-all autostash`, merges, and puts them back. If the merge itself conflicts, your edits stay aside until you commit the merge; the next `git pull-all` puts them back.
 
-The merges are explicit (`git fetch` + `git merge`, never `git pull`), so the result does not depend on a machine's `pull.rebase` setting. The logic lives in [`git_pull_all.sh`](git_pull_all.sh) (why it is shaped this way: [docs/architecture.md](docs/architecture.md), "`pull-all` settles a submodule pointer only to a commit holding both sides"). In Claude Code, `/pull-all` runs it and finishes the listed conflicts for you; `/push-all` runs `/pull-all`, the quality gates of each project with commits to push, and pushes.
+The merges are explicit (`git fetch` + `git merge`, never `git pull`), so the result does not depend on a machine's `pull.rebase` setting. The logic lives in [`git_pull_all.sh`](git_pull_all.sh) (why it is shaped this way: [docs/architecture.md](docs/architecture.md), "`pull-all` settles a submodule pointer only to a commit holding both sides"). In Claude Code, `/pull-all` runs it and finishes the listed conflicts for you; `/push-all` runs `/pull-all`, pushes, and ends with `aisland mirror sync` (see [Project Mirrors](#project-mirrors-aisland-mirror)).
 
 ### Pushing Everything (`push-all`)
 
