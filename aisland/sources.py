@@ -34,24 +34,24 @@ Two configuration layers, mirroring the existing ``.gitmodules active`` +
   workspace's single config file (tracked, shared between machines; see :mod:`aisland.config`);
 * **per-machine** — ``git config --local aisland.source.<project>`` (never committed).
 
-Which layer drives what is load-bearing, because the editor folder list is committed — a
-machine-local choice must never reach it:
+Which layer drives what is load-bearing, because a machine-local choice must never reach a
+tracked file:
 
-* *committed source only* -> the ``*.code-workspace`` ``folders`` list (via
-  :func:`sync_code_workspace`); the registry's ``distribution`` field also lets the CI scaffolder
+* *committed source only* -> the registry's ``distribution`` field, which lets the CI scaffolder
   DISCOVER a detached project whose directory is empty (never to choose its install line);
 * *effective source* (override, else committed) -> submodule init/deinit + branch switch and the
-  editable/PyPI install into the shared ``.venv`` (via :func:`apply_source`).
+  editable/PyPI install into the shared ``.venv`` (via :func:`apply_source`) — and, through the
+  checkout, the folder list of the generated, gitignored ``*.code-workspace`` file
+  (:func:`aisland.manager.write_code_workspace`, rewritten after every source change).
 """
 
 from __future__ import annotations
 
 import functools
 import json
-import re
 import subprocess
 import tomllib
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Dict, List, Literal, Optional, Tuple, cast, get_args
 
@@ -488,233 +488,6 @@ def detached_projects(workspace_root: Path) -> set[str]:
     return result
 
 
-# --- *.code-workspace `folders` synchronisation --------------------------------------------
-#
-# The workspace file is JSONC, not JSON: `settings` carries trailing commas, so `json.load`
-# fails on it outright. Rather than reformat a hand-maintained committed file, the `folders`
-# array is edited LINE-WISE and a removed project is COMMENTED OUT in place rather than
-# deleted. That buys two properties nothing else does: the entry keeps its original position
-# in the (dependency-ordered, not alphabetical) list, and commenting then uncommenting is
-# byte-for-byte lossless — so flipping a project to `pypi` and back leaves `git diff` clean.
-
-_MARKER = "// aisland source:"
-_COMMENT_PREFIX_RE = re.compile(r"^(\s*)//\s?(.*)$")
-_MARKER_RE = re.compile(r"^\s*//\s*aisland source:")
-_NAME_RE = re.compile(r'"name"\s*:\s*"([^"]*)"')
-_PATH_RE = re.compile(r'"path"\s*:\s*"([^"]*)"')
-_STRING_RE = re.compile(r'"(?:[^"\\]|\\.)*"')
-
-
-@dataclass
-class _FolderEntry:
-    """One ``folders`` element: its canonical (uncommented) lines plus whether it is disabled."""
-
-    name: Optional[str]
-    path: Optional[str]
-    lines: List[str]
-    commented: bool
-    lead: List[str] = field(default_factory=list)
-
-
-def _uncomment(line: str) -> Tuple[str, bool]:
-    """``"    // {"`` -> ``("    {", True)``; a non-comment line is returned unchanged."""
-    m = _COMMENT_PREFIX_RE.match(line)
-    if m:
-        return m.group(1) + m.group(2), True
-    return line, False
-
-
-def _comment(line: str, base_indent: str) -> str:
-    """Inverse of :func:`_uncomment`.
-
-    ``base_indent`` is the block's OUTER indent, so every ``//`` in a commented-out entry lines
-    up while the relative indentation of the inner lines is carried after the marker — which is
-    what makes uncommenting recover the original bytes.
-    """
-    rest = line[len(base_indent) :] if line.startswith(base_indent) else line.lstrip(" ")
-    return f"{base_indent}// {rest}" if rest else f"{base_indent}//"
-
-
-def _brace_delta(payload: str) -> int:
-    """Net brace depth of a line, ignoring anything inside a JSON string."""
-    bare = _STRING_RE.sub("", payload)
-    return bare.count("{") - bare.count("}")
-
-
-def _find_folders_span(text: str) -> Optional[Tuple[int, int]]:
-    """Character span of the ``"folders": [ … ]`` array, inclusive of both brackets.
-
-    A hand-rolled scanner rather than a JSON parse: the surrounding document is JSONC and
-    already contains ``//`` comments and trailing commas that no strict parser accepts.
-    """
-    key = re.search(r'"folders"\s*:\s*\[', text)
-    if not key:
-        return None
-    start = key.end() - 1
-    depth = 0
-    in_string = False
-    in_comment = False
-    i = start
-    while i < len(text):
-        ch = text[i]
-        if in_comment:
-            if ch == "\n":
-                in_comment = False
-        elif in_string:
-            if ch == "\\":
-                i += 1
-            elif ch == '"':
-                in_string = False
-        elif ch == '"':
-            in_string = True
-        elif ch == "/" and text[i + 1 : i + 2] == "/":
-            in_comment = True
-            i += 1
-        elif ch == "[":
-            depth += 1
-        elif ch == "]":
-            depth -= 1
-            if depth == 0:
-                return start, i + 1
-        i += 1
-    return None
-
-
-def _parse_entries(body: str) -> Tuple[List[_FolderEntry], List[str]]:
-    """Split the array body into entries (plus any trailing filler lines).
-
-    Commented-out entries are recognised by uncommenting each line before counting braces, so a
-    disabled entry has exactly the same structure as an enabled one.
-    """
-    entries: List[_FolderEntry] = []
-    lead: List[str] = []
-    current: List[str] = []
-    all_commented = True
-    depth = 0
-    for line in body.splitlines():
-        payload, was_comment = _uncomment(line)
-        if depth == 0 and not current and (not payload.strip() or _MARKER_RE.match(line)):
-            lead.append(line)
-            continue
-        current.append(payload)
-        all_commented = all_commented and was_comment
-        depth += _brace_delta(payload)
-        if depth == 0:
-            joined = "\n".join(current)
-            name_m = _NAME_RE.search(joined)
-            path_m = _PATH_RE.search(joined)
-            entries.append(
-                _FolderEntry(
-                    name=name_m.group(1) if name_m else None,
-                    path=path_m.group(1) if path_m else None,
-                    lines=current,
-                    commented=all_commented,
-                    lead=[ln for ln in lead if not _MARKER_RE.match(ln)],
-                )
-            )
-            lead, current, all_commented = [], [], True
-    return entries, lead
-
-
-def _render_entries(entries: List[_FolderEntry]) -> str:
-    """Re-emit the array body, normalising trailing commas over the ENABLED entries only."""
-    active = [e for e in entries if not e.commented]
-    last_active = active[-1] if active else None
-    out: List[str] = []
-    for entry in entries:
-        out.extend(entry.lead)
-        base = _leading_indent(entry.lines[0])
-        if entry.commented and entry.name:
-            out.append(
-                f"{base}{_MARKER} '{entry.name}' is consumed as a package (no checkout); "
-                f"restore it with `aisland source set {entry.name} local`."
-            )
-        lines = list(entry.lines)
-        # The closing brace carries the separator: every enabled entry but the last needs one.
-        closing = lines[-1].rstrip()
-        want_comma = entry is not last_active
-        if closing.endswith("},"):
-            lines[-1] = closing if want_comma else closing[:-1]
-        elif closing.endswith("}"):
-            lines[-1] = closing + "," if want_comma else closing
-        out.extend(_comment(ln, base) if entry.commented else ln for ln in lines)
-    return "\n".join(out)
-
-
-def _leading_indent(line: str) -> str:
-    return line[: len(line) - len(line.lstrip(" "))]
-
-
-def _new_entry(template: Optional[_FolderEntry], project: str) -> _FolderEntry:
-    """Build a fresh ``{"name": …, "path": …}`` element indented like its neighbours."""
-    outer = _leading_indent(template.lines[0]) if template and template.lines else " " * 8
-    inner = outer + " " * 4
-    return _FolderEntry(
-        name=project,
-        path=project,
-        lines=[f"{outer}{{", f'{inner}"name": "{project}",', f'{inner}"path": "{project}"', f"{outer}}}"],
-        commented=False,
-    )
-
-
-def find_code_workspace(workspace_root: Path) -> Optional[Path]:
-    """The single ``*.code-workspace`` file at the workspace root, if there is exactly one."""
-    matches = sorted(workspace_root.glob("*.code-workspace"))
-    if len(matches) != 1:
-        return None
-    return matches[0]
-
-
-def sync_code_workspace(workspace_root: Path, committed: Dict[str, ProjectSource]) -> Optional[Path]:
-    """Enable/disable ``folders`` entries to match the COMMITTED sources. Returns the file if changed.
-
-    Driven by the committed layer, never the per-machine override: the workspace file is
-    tracked, so honouring an override here would dirty the tree differently on every machine.
-    Entries for projects that are NOT in the registry (``vendorcli``, ``signals-bridge``, …)
-    are left exactly as they are.
-    """
-    path = find_code_workspace(workspace_root)
-    if path is None:
-        return None
-    text = path.read_text()
-    span = _find_folders_span(text)
-    if span is None:
-        click.echo(f"  - Warning: no `folders` array found in {path.name}; skipping folder sync.")
-        return None
-
-    start, end = span
-    body = text[start + 1 : end - 1]
-    entries, trailing = _parse_entries(body)
-    by_name = {e.name: e for e in entries if e.name}
-
-    for project, source in committed.items():
-        want_enabled = not source.detached
-        entry = by_name.get(project)
-        if entry is None:
-            if want_enabled:
-                # Keep out-of-tree entries (e.g. {"path": "../logs"}) last.
-                template = next((e for e in entries if e.path and not e.path.startswith("..")), None)
-                insert_at = next(
-                    (i for i, e in enumerate(entries) if e.path and e.path.startswith("..")),
-                    len(entries),
-                )
-                entries.insert(insert_at, _new_entry(template, project))
-            continue
-        entry.commented = not want_enabled
-
-    # `body` starts with the newline after `[`, so splitlines() already yielded a leading ""
-    # element that `_render_entries` re-emits — no extra newline is prepended here.
-    rendered = _render_entries(entries)
-    if trailing:
-        rendered += "\n" + "\n".join(trailing)
-    new_text = text[: start + 1] + rendered + text[end - 1 :]
-    if new_text == text:
-        return None
-    path.write_text(new_text)
-    click.echo(f"==> Updated {path.name} folders ({sum(1 for e in entries if not e.commented)} enabled)")
-    return path
-
-
 # --- reporting ----------------------------------------------------------------------------
 
 
@@ -885,13 +658,13 @@ def set_project_source(
     """Record and apply a project's source. Returns a process exit code (0 = success).
 
     Order matters: validate first, then write configuration, then apply to the checkout + venv,
-    then sync the one committed artifact the COMMITTED layer drives (the editor folder list).
+    then rewrite this machine's workspace file, whose folder list follows the checkouts.
     No CI file is touched: CI installs what is RELEASED, never what this machine checked out
     (see :func:`released_on_pypi`).
     A failed apply ROLLS THE CONFIGURATION BACK — a registry claiming a state the working tree
     does not have is worse than no change at all (and `aisland setup` would keep retrying it).
     """
-    from aisland.manager import ensure_uv_in_venv
+    from aisland.manager import ensure_uv_in_venv, write_code_workspace
 
     root = workspace_root or get_workspace_root()
     if project not in known_projects(root):
@@ -959,12 +732,8 @@ def set_project_source(
         click.echo(f"  - {project}: source change reverted; configuration is unchanged.", err=True)
         return 1
 
-    # The committed layer drives the editor folder list — a --machine-only change must not dirty it.
-    if machine_only:
-        click.echo("  - Skipped editor regeneration (--machine-only affects this machine's venv only).")
-        return 0
-
-    sync_code_workspace(root, committed)
+    # The workspace file is per machine and gitignored, so a --machine-only change rewrites it too.
+    write_code_workspace(root)
     return 0
 
 
@@ -981,6 +750,8 @@ def unset_project_source(
     :func:`aisland.manager.reconcile_submodules` re-inits it) — set an explicit ``git`` source
     instead if you want the checkout back now.
     """
+    from aisland.manager import write_code_workspace
+
     root = workspace_root or get_workspace_root()
     committed = read_committed_sources(root)
 
@@ -1001,16 +772,13 @@ def unset_project_source(
     path = write_committed_sources(root, committed)
     click.echo(f"==> {project}: removed from {path.name} — now unmanaged.")
 
-    # Re-enable the editor folder entry: "unmanaged" means the historical default, and a
-    # lingering `// aisland source:` block would point at configuration that no longer exists.
-    # Nothing is recorded — the synthetic entry only tells the sync which state to restore.
-    sync_code_workspace(root, {**committed, project: ProjectSource(kind="local")})
+    write_code_workspace(root)
     return 0
 
 
 def apply_configured(project: Optional[str] = None, workspace_root: Optional[Path] = None) -> int:
     """Re-apply configured source(s) without changing configuration. Returns an exit code."""
-    from aisland.manager import ensure_uv_in_venv
+    from aisland.manager import ensure_uv_in_venv, write_code_workspace
 
     root = workspace_root or get_workspace_root()
     venv_bin = root / ".venv" / "bin"
@@ -1021,14 +789,16 @@ def apply_configured(project: Optional[str] = None, workspace_root: Optional[Pat
 
     if project is None:
         apply_all(root, uv_cmd)
-        sync_code_workspace(root, read_committed_sources(root))
+        write_code_workspace(root)
         return 0
 
     source = effective_source(root, project)
     if source is None:
         click.echo(f"'{project}' has no configured source — it is unmanaged. Nothing to apply.")
         return 0
-    return 0 if apply_source(root, project, source, uv_cmd) else 1
+    applied = apply_source(root, project, source, uv_cmd)
+    write_code_workspace(root)
+    return 0 if applied else 1
 
 
 def describe(workspace_root: Optional[Path] = None) -> List[Dict[str, str]]:

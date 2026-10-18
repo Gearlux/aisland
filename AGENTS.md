@@ -4,7 +4,7 @@ Rules only. The reasons are in [`docs/architecture.md`](docs/architecture.md), c
 short names below; usage is in the [README](README.md). Root `AGENTS.md` rules are not
 repeated here.
 
-Records: [sources] project sources · [folders] the `folders` list · [frameworks] framework
+Records: [sources] project sources · [folders] the generated workspace file · [frameworks] framework
 selection · [completion] completion install · [config] one config file · [clean] reclaiming
 disk · [containers] containerised services · [closure] the pre-install closure ·
 [playwright] dev dependencies needing more than pip · [local-pipeline] the local pipeline ·
@@ -180,8 +180,9 @@ Root `AGENTS.md` "Two Test Runs" (user ruling 2026-10-05). [test-stats]
 
 - Generated, gitignored, rewritten from discovery (never a hand list): root and per-project
   `pyrightconfig.json` (relative paths; each project's `.gitignore` gains the entry),
-  `project.bashrc`, `.gemini/settings.json`, `.mcp.json`, root `uv.toml`, and
-  `.project.bashrc.completion` (`aisland completion install`). Never commit editor
+  `project.bashrc`, `.gemini/settings.json`, `.mcp.json`, root `uv.toml`,
+  `<workspace>.code-workspace`, and `.project.bashrc.completion` (`aisland completion
+  install`). Never commit editor
   `extraPaths`. (`tests/test_pyrightconfig.py`, `tests/test_mcp_config.py`)
 - `.gemini/settings.json` and `.mcp.json` keep ABSOLUTE venv paths (clients launch from any
   cwd). MCP discovery matches a `<pkg>.server:main` whose module imports `mcp.server`, never a
@@ -198,17 +199,26 @@ Root `AGENTS.md` "Two Test Runs" (user ruling 2026-10-05). [test-stats]
   - Writes are whole-file, keyed; scalars before tables (`::test_scalars_are_emitted_before_tables`).
   - An absent key = unset; an empty document deletes the file.
   - `uv.toml` never joins it; never re-split it.
-- The `*.code-workspace` `folders` list is edited line-wise and disabled entries commented
-  out in place: never a JSON round trip. Only projects named in `[sources]` are touched.
-  (`tests/test_sources.py::TestSyncCodeWorkspace::test_round_trip_is_byte_identical`) [folders]
+- `<workspace>.code-workspace` is GENERATED and gitignored (user choice 2026-10-18), written by
+  `manager.write_code_workspace` on every `aisland setup` and `aisland source set|unset|apply`
+  (`--machine-only` included). Folders: the workspace, each project with a checkout in
+  dependency order (sorted by folder name first), then loggair's log folder when it exists.
+  Settings and extensions come from `aisland/code-workspace.json` (strict JSON, no `folders`, no
+  `python.analysis.extraPaths`): a shared setting changes there, never in the file.
+  (`tests/test_code_workspace.py`) [folders]
+  - The log folder is loggair's answer, asked out of process (`python -P -m loggair --json`,
+    from the root, `.env` over the environment): never a path typed into aisland, never an
+    import of loggair. (`::test_the_real_loggair_report_names_its_log_folder`)
+  - The real workspace ignores it and does not track it
+    (`::test_the_real_workspace_keeps_the_file_out_of_git`).
 
 ## Project Sources Are Two-Layered
 
 - Kinds `local` / `github` / `pypi`; branch on `REF_KINDS` / `DETACHED_KINDS`, never on a
   kind name. No `git`/`github` renaming: one word apart, and one deletes a checkout. [sources]
 - Committed `[sources.<project>]` + per-machine `git config --local aisland.source.<project>`.
-  The committed layer alone drives the `folders` list; the effective one drives only the
-  checkout and `.venv`. No CI file reads either. An override never reaches a tracked file.
+  The effective one drives the checkout, the `.venv` and, through the checkout, the generated
+  workspace file's folders. No CI file reads either. An override never reaches a tracked file.
 - `local` installs `selection.editable_target`, the same target as setup.
   (`tests/test_sources.py::TestApplySource::test_local_installs_the_dev_extra_and_the_selected_frameworks`)
 - Before a deinit: `pypi` resolves and persists `distribution`; `_pypi_provenance` requires

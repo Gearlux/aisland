@@ -3,7 +3,6 @@
 Covers the four things a source change has to keep consistent:
 - the source model (local / github / pypi) + its two configuration layers (committed file,
   per-machine .git/config);
-- the `*.code-workspace` `folders` sync (comment-out in place, byte-lossless round trip);
 - `apply_source`'s git/uv command sequence for each of the three kinds;
 - the CI scaffolder's emission (pypi deps dropped, refs honoured, the uniform
   `[ -f <dep>/pyproject.toml ]` guard — both its text and its BEHAVIOUR against a real deinit'd
@@ -26,46 +25,6 @@ from aisland import config
 from aisland import sources as s
 from aisland.config import CONFIG_FILE
 from aisland.services.jenkins import JenkinsService
-
-# The real workspace file, condensed to the structure that matters: JSONC (trailing commas and
-# comments in `settings`) around a strict-JSON `folders` array, with an out-of-tree entry last.
-_WORKSPACE = """\
-{
-    "folders": [
-        {
-            "name": "acme",
-            "path": "."
-        },
-        {
-            "name": "loggair",
-            "path": "loggair"
-        },
-        {
-            "name": "confluid",
-            "path": "confluid"
-        },
-        {
-            "name": "vendorcli",
-            "path": "vendorcli"
-        },
-        {
-            "name": "logs",
-            "path": "../logs"
-        }
-    ],
-    "settings": {
-        // A comment, and a trailing comma below: this file is JSONC, not JSON.
-        "python.analysis.typeCheckingMode": "strict",
-    },
-}
-"""
-
-
-@pytest.fixture
-def workspace(tmp_path: Path) -> Path:
-    (tmp_path / "acme.code-workspace").write_text(_WORKSPACE)
-    return tmp_path
-
 
 # --- the model ----------------------------------------------------------------------------
 
@@ -246,64 +205,6 @@ class TestEffectiveSource:
     def test_malformed_override_is_ignored(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.setattr(s.subprocess, "run", self._fake_config({"aisland.source.loggair": "svn:trunk"}))
         assert s.local_override(tmp_path, "loggair") is None
-
-
-# --- *.code-workspace folders --------------------------------------------------------------
-
-
-class TestSyncCodeWorkspace:
-    def test_pypi_comments_the_entry_out_in_place(self, workspace: Path) -> None:
-        s.sync_code_workspace(workspace, {"loggair": s.ProjectSource(kind="pypi", distribution="loggair")})
-        text = (workspace / "acme.code-workspace").read_text()
-        assert '        //     "name": "loggair",' in text
-        assert '            "name": "loggair",' not in text
-        # Position is preserved: still between acme and confluid.
-        assert text.index("acme") < text.index("// aisland source:") < text.index('"confluid"')
-
-    def test_round_trip_is_byte_identical(self, workspace: Path) -> None:
-        """Flipping to pypi and back must leave `git diff` clean — the whole reason entries are
-        commented out rather than deleted."""
-        path = workspace / "acme.code-workspace"
-        original = path.read_text()
-        s.sync_code_workspace(workspace, {"loggair": s.ProjectSource(kind="pypi", distribution="loggair")})
-        assert path.read_text() != original
-        s.sync_code_workspace(workspace, {"loggair": s.ProjectSource(kind="local", ref="dev/main")})
-        assert path.read_text() == original
-
-    def test_jsonc_outside_folders_is_preserved(self, workspace: Path) -> None:
-        s.sync_code_workspace(workspace, {"loggair": s.ProjectSource(kind="pypi")})
-        text = (workspace / "acme.code-workspace").read_text()
-        assert "// A comment, and a trailing comma below" in text
-        assert '"python.analysis.typeCheckingMode": "strict",' in text
-
-    def test_unmanaged_entries_are_untouched(self, workspace: Path) -> None:
-        """`vendorcli` and friends are deactivated by a different mechanism; this one must not
-        touch entries it does not own."""
-        s.sync_code_workspace(workspace, {"loggair": s.ProjectSource(kind="pypi")})
-        text = (workspace / "acme.code-workspace").read_text()
-        assert '            "name": "vendorcli",' in text
-
-    def test_trailing_comma_normalised_when_last_entry_disabled(self, workspace: Path) -> None:
-        s.sync_code_workspace(workspace, {"logs": s.ProjectSource(kind="pypi")})
-        text = (workspace / "acme.code-workspace").read_text()
-        # `vendorcli` is now the last enabled entry, so its closing brace loses the separator.
-        vendorcli_close = text.index('"path": "vendorcli"')
-        assert text[vendorcli_close:].lstrip().splitlines()[1].strip() == "}"
-
-    def test_missing_entry_is_inserted_before_out_of_tree_paths(self, workspace: Path) -> None:
-        s.sync_code_workspace(workspace, {"brandnew": s.ProjectSource(kind="local")})
-        text = (workspace / "acme.code-workspace").read_text()
-        assert text.index('"brandnew"') < text.index('"../logs"')
-
-    def test_pypi_project_with_no_entry_is_not_inserted(self, workspace: Path) -> None:
-        s.sync_code_workspace(workspace, {"brandnew": s.ProjectSource(kind="pypi")})
-        assert "brandnew" not in (workspace / "acme.code-workspace").read_text()
-
-    def test_no_workspace_file_is_a_no_op(self, tmp_path: Path) -> None:
-        assert s.sync_code_workspace(tmp_path, {"loggair": s.ProjectSource(kind="pypi")}) is None
-
-    def test_unchanged_file_is_not_rewritten(self, workspace: Path) -> None:
-        assert s.sync_code_workspace(workspace, {"loggair": s.ProjectSource(kind="local")}) is None
 
 
 # --- applying -----------------------------------------------------------------------------
@@ -915,17 +816,6 @@ class TestUnsetProjectSource:
         s.write_committed_sources(ci_workspace, {"loggair": s.ProjectSource(kind="pypi")})
         assert s.unset_project_source("loggair", workspace_root=ci_workspace) == 0
         assert s.read_committed_sources(ci_workspace) == {}
-
-    def test_re_enables_the_editor_folder_entry(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-        """A leftover `// aisland source:` block would point at configuration that is now gone."""
-        monkeypatch.setattr(s, "local_override", lambda root, name: None)
-        monkeypatch.setattr(s, "set_local_override", lambda *a, **k: None)
-        (tmp_path / "acme.code-workspace").write_text(_WORKSPACE)
-        original = (tmp_path / "acme.code-workspace").read_text()
-        s.write_committed_sources(tmp_path, {"loggair": s.ProjectSource(kind="pypi")})
-        s.sync_code_workspace(tmp_path, s.read_committed_sources(tmp_path))
-        s.unset_project_source("loggair", workspace_root=tmp_path)
-        assert (tmp_path / "acme.code-workspace").read_text() == original
 
     def test_already_unmanaged_is_a_no_op(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.setattr(s, "local_override", lambda root, name: None)

@@ -157,15 +157,15 @@ def _run_client(
     )
 
 
-def read_workspace_env() -> Dict[str, str]:
+def read_workspace_env(workspace_root: Optional[Path] = None) -> Dict[str, str]:
     """``KEY=VALUE`` pairs from the workspace ``.env`` (best-effort, verbatim).
 
     Comments and malformed lines are skipped; values are NOT interpolated.
     Used both by services that publish/consume workspace configuration (e.g.
     Label Studio credentials) and by :func:`apply` for ``${VAR}`` expansion —
-    see the comment there.
+    see the comment there. ``workspace_root`` defaults to the discovered root.
     """
-    env_file = _workspace_root() / ".env"
+    env_file = (workspace_root or _workspace_root()) / ".env"
     if not env_file.exists():
         return {}
     out: Dict[str, str] = {}

@@ -74,6 +74,22 @@ editor `extraPaths` in `.vscode/settings.json` either — pyright ignores
 those whenever a `pyrightconfig.json` is present, and the committed
 copies this mechanism replaced had silently drifted.
 
+`aisland setup` also writes the **VS Code workspace file**,
+`acme.code-workspace` (named after the workspace), from scratch on every
+run. Its folder list is what this machine has: the workspace, every project
+with a checkout in dependency order (`loggair` before `confluid`), and the
+folder loggair writes its log files into, when that folder exists. That folder
+is asked from loggair itself (`python -m loggair --json`, from the workspace
+root with `.env` loaded), so a `log_dir` in `~/.config/loggair/config.yaml` or
+a `LOGGAIR_DIR` in `.env` decides it. A project set to `pypi` or `github`, or
+an inactive optional submodule, has no checkout and is not listed.
+`aisland source set|unset|apply` rewrite the file too, `--machine-only`
+included. The settings and extension recommendations come from
+`aisland/code-workspace.json`: change a shared setting there and re-run
+`aisland setup`. The file is gitignored and rewritten, so a setting you change
+in VS Code at *Workspace* scope is gone at the next setup — put a personal one
+in your *User* settings.
+
 The root **`mypy.ini`** is the opposite: committed, hand-maintained policy
 (the per-module `[mypy-*]` sections). Setup only keeps its `mypy_path`
 line complete — any discovered project missing from it is **appended**
@@ -891,8 +907,8 @@ only in whether a working tree survives; `pypi` takes a `--version` instead:
 | source | directory | `.venv` | `*.code-workspace` |
 |---|---|---|---|
 | `local` | checked out, `git switch <ref>` | `uv pip install -e loggair[dev,…]` | listed |
-| `github` | **deinit'd — empty** | `uv pip install git+…@<ref>` | **commented out** |
-| `pypi` | **deinit'd — empty** | `uv pip install -U loggair` | **commented out** |
+| `github` | **deinit'd — empty** | `uv pip install git+…@<ref>` | **not listed** |
+| `pypi` | **deinit'd — empty** | `uv pip install -U loggair` | **not listed** |
 
 The `local` install target is the one `aisland setup` computes for that checkout — its `dev` extra
 plus every framework/tracker extra this machine selected (`sonair[dev,lightning]`) — so switching a
@@ -1038,14 +1054,16 @@ submodules:
 | default | the `[sources.*]` tables of `<workspace>/config.toml` | **yes** — shared between machines |
 | override | `git config --local aisland.source.<project>` | no — per machine |
 
-**Which layer drives what is load-bearing.** Every downstream artifact except the venv and the
-checkout is itself a committed file, so a machine-local choice must never reach one:
+**Which layer drives what is load-bearing.** Every downstream artifact except the venv, the
+checkout and the generated workspace file is itself a committed file, so a machine-local choice
+must never reach one:
 
-- **committed source only** → the `*.code-workspace` `folders` list, and the published/not bit
-  that `Jenkinsfile` and `ci.yml` read. A `--machine-only` change touches neither.
-- **effective source** (override, else committed) → submodule init/deinit + branch switch, and the
+- **committed source only** → the published/not bit that `Jenkinsfile` and `ci.yml` read. A
+  `--machine-only` change does not touch it.
+- **effective source** (override, else committed) → submodule init/deinit + branch switch, the
   editable/git/PyPI install into the shared `.venv` (the editable one with the same `[dev,…]` extras
-  `aisland setup` installs).
+  `aisland setup` installs), and — through the checkout — the folder list of the generated
+  `*.code-workspace` file.
 - **neither** → `Jenkinsfile.local`, which installs nothing and tests the venv as setup left it.
 
 ### The `[sources]` section of `config.toml`

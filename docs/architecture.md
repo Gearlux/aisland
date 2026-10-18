@@ -55,7 +55,7 @@ The layers are **not** interchangeable. Each artifact reads exactly one:
 |---|---|---|
 | `Jenkinsfile`, `ci.yml` | **neither layer** — asks PyPI "is this dep released?" (2026-09-26) | tracked *and shared* — a dev's source or `ref` must not reach another consumer's CI |
 | `Jenkinsfile.local` | **nothing** | installs nothing — it tests the `.venv`, where the effective source was already applied |
-| `*.code-workspace` `folders` | committed only | tracked, hand-maintained |
+| `*.code-workspace` `folders` | effective, through the checkout (2026-10-18) | generated per machine, gitignored |
 | submodule checkout, shared `.venv` | effective (override ?? committed) | untracked machine state — the whole point of an override |
 
 The middle two rows are the 2026-07-28 revision. Reading the `ref` into a tracked file conflated
@@ -137,7 +137,7 @@ introducing the mechanism changed no behaviour anywhere until a source was actua
 $ aisland source set loggair github --ref dev/main   # from local:main — no CI touched
 ==> loggair: committed source set to github:dev/main in config.toml
 ==> loggair: github @ dev/main (git+https://github.com/Gearlux/loggair.git@dev/main)
-==> Updated acme.code-workspace folders (20 enabled)
+==> Wrote acme.code-workspace (28 folders)
 
 $ aisland source set loggair pypi                    # no CI touched either
 ==> loggair: committed source set to pypi in config.toml
@@ -176,61 +176,76 @@ def _dep_is_released(dep: str) -> bool:
 
 ---
 
-## The `*.code-workspace` `folders` list is edited line-wise, and disabled entries are commented out
+## The VS Code workspace file is generated per machine, never tracked
 
-*2026-07-28*
+*2026-10-18*
 
 ### Context
 
-Disabling a project has to remove it from the editor's folder list. The natural implementation —
-parse the workspace file as JSON, drop the element, re-serialise — fails twice over. First, the
-file is **JSONC**, not JSON: `settings` carries `//` comments and trailing commas, and
-`json.load` raises on the real `acme.code-workspace` at line 121. Second, even a
-comment-preserving round trip would reformat a hand-maintained tracked file and, worse, would
-lose the entry's *position* — the list is dependency-ordered, not alphabetical, so a removed
-entry could not be put back where it came from.
+`acme.code-workspace` was a tracked, hand-maintained file. aisland only commented the folder
+entries of the `[sources]` projects out and back in, line by line, and only from the COMMITTED
+layer — a tracked file must not differ per machine. Two failures followed. A per-machine override
+never reached the editor: `aisland source set loggair local --machine-only` installed the checkout
+but left the editor's list alone, so loggair stayed hidden on the one machine developing it. And everything else stayed manual: seven projects added between 2026-09-28 and 2026-10-04 each
+took a hand edit of two lists (`folders` and a `python.analysis.extraPaths` that pyright ignores
+while `pyrightconfig.json` exists), and inactive optional submodules showed as empty folders.
 
 ### Decision
 
-Scan out only the `folders` span (a small bracket scanner that skips strings and `//` comments),
-then treat it as **lines**. A disabled entry is commented out in place, preceded by a marker line
-naming the command that restores it. Re-enabling strips the marker and the `//` prefixes.
+Generate the whole file on every `aisland setup` and every `aisland source set|unset|apply`, and
+gitignore it, like `pyrightconfig.json` and `.mcp.json`:
 
-Commenting preserves each line verbatim after the marker, so comment → uncomment is
-byte-for-byte lossless: flipping a project to `pypi` and back leaves `git diff` clean. Trailing
-commas are normalised across the *enabled* entries only, which is itself idempotent — the file
-already satisfies the invariant, so a no-op sync writes nothing.
+- **Folders** are what this machine has checked out: the workspace, then every discovered project
+  in dependency order (sorted by folder name first, so the order the disk lists folders in never
+  reorders it), then loggair's log folder when it exists. An empty directory — a project detached
+  to `pypi`/`github`, an inactive optional submodule — is not a project, so it is not listed.
+- **Loggair's log folder** is asked from loggair, never written into aisland: `python -P -m
+  loggair --json` from the workspace root with `.env` over the environment, exactly as a run in
+  the workspace resolves it (`LOGGAIR_DIR`, a `log_dir` in a loggair config file, or `./logs`).
+  Out of process, so aisland keeps no dependency on loggair.
+- **Settings and extensions** come from the tracked template `aisland/code-workspace.json`, strict
+  JSON with no `folders`, so the generator is `json.dumps` plus the provenance header (VS Code
+  reads JSONC, so the header lives in the file).
+- The file is named after the workspace (`get_workspace_name`), the name the template's
+  `${workspaceFolder:<name>}` references use, and the first folder carries that name.
+- An unchanged file is not rewritten, so VS Code does not reload the workspace for nothing.
 
 ### Consequences
 
-- The mechanism only touches entries for projects named in `config.toml`'s `[sources]`. `vendorcli`,
-  `signals-bridge` and `raidar-ultralytics` are governed by submodule activation, not this,
-  and are left exactly as they are.
-- A managed project with no entry at all is *inserted*, before any out-of-tree entry (`../logs`)
-  so those stay last.
-- The scanner is deliberately narrow. It understands the `folders` array and nothing else, which
-  is why the rest of the JSONC document survives untouched.
+- A source override shows in the editor, and no source change dirties a tracked file.
+- A new submodule appears on the next `aisland setup`; nothing is edited by hand.
+- A setting changed in VS Code at *Workspace* scope is written into the file and lost at the next
+  setup. Shared settings belong in the template; personal ones in VS Code's *User* settings.
+- Pulling the commit that untracked the file deletes it on another machine until `aisland setup`
+  runs there.
 
 ### Example
 
 ```jsonc
+// =========================================================================
+// AUTO-GENERATED FILE — DO NOT EDIT BY HAND
+// Generated by: aisland setup
+// Source template: aisland/code-workspace.json (aisland.manager.write_code_workspace)
+// To regenerate:  aisland setup
+// =========================================================================
+{
     "folders": [
-        { "name": "aisland", "path": "aisland" },
-        // aisland source: 'loggair' is consumed as a package (no checkout); restore it with `aisland source set loggair local`.
-        // {
-        //     "name": "loggair",
-        //     "path": "loggair"
-        // },
+        { "name": "acme", "path": "." },
+        { "name": "loggair", "path": "loggair" },
         { "name": "confluid", "path": "confluid" },
+        { "name": "logs", "path": "../logs" }
     ],
+    "settings": { "python.defaultInterpreterPath": "${workspaceFolder:acme}/.venv/bin/python" },
+    "extensions": { "recommendations": ["ms-python.python"] }
+}
 ```
 
 ### What you may change
 
-- The marker text is free-form; `_MARKER_RE` is what detection depends on, so change both together.
-- Insertion position policy (currently "before out-of-tree paths") is a judgement call and safe to revisit.
-- What must not change: never replace this with a JSON parse + re-serialise. It would strip every
-  comment from a tracked, hand-maintained file and destroy the lossless round trip.
+- The template's settings and recommendations, freely; re-run `aisland setup`.
+- The folder order rule (currently dependency order, ties by folder name) is a judgement call.
+- What must not change: the file stays generated and gitignored, its folders follow the checkouts
+  on this machine, and the log folder is loggair's answer, never a path typed into aisland.
 
 ---
 
