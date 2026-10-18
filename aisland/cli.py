@@ -1,6 +1,6 @@
 import json
 from pathlib import Path
-from typing import Optional, Tuple
+from typing import List, Optional, Tuple
 
 import click
 
@@ -289,7 +289,56 @@ def tests_nightly(as_json: bool, no_notify: bool) -> None:
 # --- Wheels For A Project Installed Outside The Workspace ---
 
 
-@main.command(name="wheels")
+class _WheelsGroup(click.Group):
+    """`aisland wheels <project> …` is `aisland wheels build <project> …`: a first word that names no command is
+    the project to build."""
+
+    def resolve_command(
+        self, ctx: click.Context, args: List[str]
+    ) -> Tuple[Optional[str], Optional[click.Command], List[str]]:
+        if args and args[0] not in self.commands and not args[0].startswith("-"):
+            args = ["build", *args]
+        return super().resolve_command(ctx, args)
+
+
+@main.group(name="wheels", cls=_WheelsGroup, invoke_without_command=True)
+@click.option(
+    "--install",
+    "install_path",
+    type=click.Path(path_type=Path, dir_okay=False),
+    help="Short for `aisland wheels install ZIP`: unpack ZIP and install it into --python.",
+)
+@click.option("--python", "python", type=click.Path(path_type=Path, dir_okay=False), help="With --install.")
+@click.option("--into", "into", type=click.Path(path_type=Path, file_okay=False), help="With --install.")
+@click.pass_context
+def wheels_group(
+    ctx: click.Context, install_path: Optional[Path], python: Optional[Path], into: Optional[Path]
+) -> None:
+    """The wheels a project installed outside the workspace needs: build them, zip them, install a zip.
+
+    \b
+    aisland wheels build PROJECT [--include-published | --all] [--zip] [--commit]
+    aisland wheels zip PROJECT
+    aisland wheels install ZIP --python PYTHON [--into DIR] [-- install.py options]
+    aisland wheels PROJECT …          (= aisland wheels build PROJECT …)
+    aisland wheels --install ZIP --python PYTHON [--into DIR]
+    """
+    if ctx.invoked_subcommand is not None:
+        if install_path is not None:
+            raise click.UsageError("--install takes no command after it")
+        return
+    if install_path is None:
+        raise click.UsageError(
+            "say what to do: aisland wheels build PROJECT, aisland wheels zip PROJECT, "
+            "or aisland wheels install ZIP --python PYTHON"
+        )
+    if python is None:
+        raise click.UsageError("--install needs --python: the interpreter of the environment to install into")
+    status = wheels.install_zip(install_path, python, into or Path.cwd(), [], workspace_root=get_workspace_root())
+    raise SystemExit(status)
+
+
+@wheels_group.command(name="build")
 @click.argument("project")
 @click.option(
     "--include-published",
@@ -299,8 +348,17 @@ def tests_nightly(as_json: bool, no_notify: bool) -> None:
 @click.option(
     "--all", "include_all", is_flag=True, help="Build every workspace project that has a checkout here, needed or not."
 )
+@click.option("--zip", "make_zip", is_flag=True, help="Also pack the folder into PROJECT/wheels/PROJECT-wheels.zip.")
+@click.option(
+    "--commit",
+    is_flag=True,
+    help="Commit PROJECT/wheels (the zip excepted) in PROJECT once the install check passed; without it git ignores "
+    "the folder.",
+)
 @click.option("--json", "as_json", is_flag=True, help="Print the report as JSON (what an MCP tool would return).")
-def wheels_cmd(project: str, include_published: bool, include_all: bool, as_json: bool) -> None:
+def wheels_build(
+    project: str, include_published: bool, include_all: bool, make_zip: bool, commit: bool, as_json: bool
+) -> None:
     """Build the wheels PROJECT needs into PROJECT/wheels, with wheels.yaml and install.py; check the install.
 
     By default only the projects PROJECT needs that are not on PyPI are built; --include-published
@@ -310,17 +368,57 @@ def wheels_cmd(project: str, include_published: bool, include_all: bool, as_json
     install.py installs them, naming each by its file, then PROJECT editable. Each dependency PROJECT
     still takes from PyPI is compared with its checkout, file by file; then install.py installs
     PROJECT in an empty venv and every module is imported. Exit 1 when that install or an import
-    fails: the report names the project to release first. Nothing is committed.
+    fails: the report names the project to release first. Git ignores the folder unless --commit,
+    which commits it in PROJECT when the check passed.
 
     \b
-    aisland wheels signals-bridge
-    aisland wheels signals-bridge --include-published
-    aisland wheels signals-bridge --all --json
+    aisland wheels build signals-bridge
+    aisland wheels build signals-bridge --include-published --zip
+    aisland wheels build signals-bridge --all --commit --json
     """
     scope: wheels.WheelsScope = "all" if include_all else "needed" if include_published else "unpublished"
-    report = wheels.vendor_wheels(get_workspace_root(), project, scope=scope)
+    report = wheels.vendor_wheels(get_workspace_root(), project, scope=scope, commit=commit, make_zip=make_zip)
     click.echo(json.dumps(report.to_dict(), indent=2) if as_json else wheels.render_report(report), nl=as_json)
     raise SystemExit(0 if report.ok else 1)
+
+
+@wheels_group.command(name="zip")
+@click.argument("project")
+def wheels_zip(project: str) -> None:
+    """Pack PROJECT/wheels as it is into PROJECT/wheels/PROJECT-wheels.zip.
+
+    The zip installs with plain Python, from PROJECT's folder on any machine: `python PROJECT-wheels.zip`
+    unpacks it into ./wheels and runs wheels/install.py (every other argument goes to install.py).
+    """
+    archive = wheels.zip_wheels(get_workspace_root(), project)
+    click.echo(f"{archive}\ninstall it from the {project} folder with: python {archive.name}")
+
+
+@wheels_group.command(name="install", context_settings={"ignore_unknown_options": True})
+@click.argument("zip_path", type=click.Path(path_type=Path, dir_okay=False))
+@click.option(
+    "--python",
+    "python",
+    required=True,
+    type=click.Path(path_type=Path, dir_okay=False),
+    help="The interpreter of the environment to install into (never the workspace's .venv).",
+)
+@click.option(
+    "--into",
+    "into",
+    type=click.Path(path_type=Path, file_okay=False),
+    help="The project's folder (default: the current one); the zip unpacks into its wheels/.",
+)
+@click.argument("rest", nargs=-1, type=click.UNPROCESSED)
+def wheels_install(zip_path: Path, python: Path, into: Optional[Path], rest: Tuple[str, ...]) -> None:
+    """Unpack ZIP into the project's wheels/ and run its install.py with PYTHON; REST goes to install.py.
+
+    \b
+    aisland wheels install signals-bridge-wheels.zip --python ~/envs/bridge/bin/python
+    aisland wheels install signals-bridge-wheels.zip --python ~/envs/bridge/bin/python -- --dry-run
+    """
+    status = wheels.install_zip(zip_path, python, into or Path.cwd(), list(rest), workspace_root=get_workspace_root())
+    raise SystemExit(status)
 
 
 # --- Workspace Configuration Commands ---
@@ -472,6 +570,75 @@ def source_apply(project: Optional[str]) -> None:
     from aisland.sources import apply_configured
 
     raise SystemExit(apply_configured(project))
+
+
+# --- Project Mirror Commands ---
+
+
+@main.group()
+def mirror() -> None:
+    """Keep a copy of a submodule on a second host (a GitHub and a Bitbucket repository).
+
+    \b
+    The primary is the remote .gitmodules names: you pull from it and push to it as before.
+    The mirror only receives: `aisland mirror sync` pushes the primary's dev/main, main and
+    tags to it, fast-forward only. A branch the mirror moved is refused, a tag that differs is
+    never overwritten, and nothing on the mirror is ever deleted.
+
+    Two layers, like `aisland source`: the committed `[mirrors.*]` tables of `config.toml`,
+    and a per-machine `.git/config` override (`--machine-only`).
+    """
+    pass
+
+
+@mirror.command(name="list")
+def mirror_list() -> None:
+    """Show each mirror, both layers, and what a sync would push (pushes nothing)."""
+    from aisland.mirrors import run_list
+
+    raise SystemExit(run_list())
+
+
+@mirror.command(name="set")
+@click.argument("project")
+@click.argument("url")
+@click.option(
+    "--machine-only",
+    is_flag=True,
+    help="Record only the per-machine .git/config override; leave config.toml untouched.",
+)
+def mirror_set(project: str, url: str, machine_only: bool) -> None:
+    """Record URL as PROJECT's mirror and add the `mirror` remote to its checkout.
+
+    \b
+    aisland mirror set signals-bridge git@github.com:Org/signals-bridge.git
+    aisland mirror set loggair https://bitbucket.example.com/scm/team/loggair.git --machine-only
+    """
+    from aisland.mirrors import set_mirror
+
+    raise SystemExit(set_mirror(project, url, machine_only=machine_only))
+
+
+@mirror.command(name="unset")
+@click.argument("project")
+@click.option("--machine-only", is_flag=True, help="Clear only this machine's override; keep the committed mirror.")
+def mirror_unset(project: str, machine_only: bool) -> None:
+    """Drop PROJECT's mirror and the `mirror` remote aisland added. The mirror host is not touched."""
+    from aisland.mirrors import unset_mirror
+
+    raise SystemExit(unset_mirror(project, machine_only=machine_only))
+
+
+@mirror.command(name="sync")
+@click.argument("project", required=False)
+def mirror_sync(project: Optional[str]) -> None:
+    """Push the primary's dev/main, main and tags to PROJECT's mirror (default: every mirror).
+
+    Exit 1 when a branch or tag was refused or a host could not be reached.
+    """
+    from aisland.mirrors import run_sync
+
+    raise SystemExit(run_sync(project))
 
 
 # --- Framework Selection Commands ---

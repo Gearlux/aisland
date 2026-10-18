@@ -1528,6 +1528,12 @@ def setup_workspace(
 
     apply_all(workspace_root, uv_cmd)
 
+    # 1d. Per-project mirrors — each checkout's `mirror` remote follows `[mirrors.*]` (and this
+    #     machine's override); a remote whose mirror was unset elsewhere is removed. No network.
+    from aisland.mirrors import apply_all as apply_mirrors
+
+    apply_mirrors(workspace_root)
+
     # 2. Dependency Discovery (now reflects the active checkouts)
     click.echo(f"==> Resolving workspace dependency graph in {workspace_root}...")
     install_order = get_install_order(workspace_root)
