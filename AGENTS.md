@@ -27,10 +27,11 @@ The workspace's dev-infrastructure CLI, `aisland` (click, `aisland/cli.py`):
 - `pytest_stats.py`: the `aisland_test_stats` pytest plugin (entry point `pytest11`) that
   records every run of a workspace project, and `aisland tests report` reading it beside the
   Jenkins builds' JUnit results.
-- `wheels.py`: `aisland wheels <project>`, the wheels of the workspace projects it needs that
+- `wheels.py`: `aisland wheels build <project>`, the wheels of the workspace projects it needs that
   are not on PyPI (or, by flag, every needed or every workspace project), written into
   `<project>/wheels/` with `wheels.yaml` and `install.py` (`wheels_install.py`), and the check of what it
-  takes from PyPI.
+  takes from PyPI; the folder git-ignored unless `--commit`, packed by `aisland wheels zip` into a zip that
+  installs with plain `python` (`wheels_unzip.py`), installed elsewhere by `aisland wheels install`.
 - `nightly.py`: `aisland tests nightly`, the morning report of the orchestrator's nightly runs
   (`aisland/data/nightly/<date>.md`, a desktop notification, exit 1 on a bad night), run by the
   `<workspace>.nightly-check` Jenkins job.
@@ -392,6 +393,15 @@ User choice 2026-10-08: an aisland command, only the named project's closure, bo
 - `wheels.yaml`'s `install:` values are the user's: a rerun keeps them, an unreadable file stops the
   run at its line before any build (`TestWheelsYaml`, `TestRefusals`). `wheels_install.read_wheels` is
   the one reader of that file, for both sides.
+- The folder is ignored by git (`wheels/.gitignore`: `*`) unless `--commit`, which writes `*.zip` and
+  commits `wheels/` ITSELF — that path only, only after a passing check, never the zip; a tracked folder
+  without `--commit` is reported with its `git rm -r --cached`, never untracked by the command
+  (`tests/test_wheels_zip.py::TestGit`).
+- `aisland wheels` is a group (`build`, `zip`, `install`); an unknown first word is `build`'s project,
+  `--install ZIP` the group's short form. The zip runs with plain `python` (`wheels_unzip.py`, standard
+  library only — the other machine has no aisland), refuses another project's folder before unpacking,
+  and is byte-identical for an unchanged folder; `install` refuses the workspace's `.venv`
+  (`tests/test_wheels_zip.py`).
 - Tests reach no network: the end-to-end tests run the real uv with `UV_OFFLINE=1`, a fresh
   cache, and `_PYPI_INDEX_ARGS` pointed at a local folder holding this interpreter's setuptools and
   PyYAML, repackaged (`offline_uv`); the pip tests run with `PIP_CONFIG_FILE=/dev/null` against a

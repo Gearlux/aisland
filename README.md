@@ -333,10 +333,13 @@ wheels into that project's `wheels/` folder, and checks the projects it takes fr
 this checkout:
 
 ```bash
-aisland wheels signals-bridge
-aisland wheels signals-bridge --include-published   # also the projects it needs that ARE on PyPI
-aisland wheels signals-bridge --all                 # every workspace project with a checkout here
-aisland wheels signals-bridge --json                # the same report as data
+aisland wheels build signals-bridge
+aisland wheels build signals-bridge --include-published   # also the projects it needs that ARE on PyPI
+aisland wheels build signals-bridge --all                 # every workspace project with a checkout here
+aisland wheels build signals-bridge --zip                 # also pack the folder into one zip
+aisland wheels build signals-bridge --commit              # commit the folder in signals-bridge
+aisland wheels build signals-bridge --json                # the same report as data
+aisland wheels signals-bridge …                           # short for `aisland wheels build signals-bridge …`
 ```
 
 | Flag | Built | Installed by default |
@@ -464,12 +467,67 @@ How each wheel is made, and what is refused:
 | A PyPI name owned by someone else is reported | pip takes the higher version of the two; the report says when that is theirs |
 | Every environment marker is followed | The wheels serve another machine, whose platform is not this one's |
 | The old `*.whl` in `wheels/` go, the folder's other files stay | |
+| A zip of an unchanged folder is the same file | Every member is written in name order with one fixed time |
 | An unchanged project rebuilds byte for byte | Its wheel carries its commit's time, so git sees no change |
 | The empty venv uses the project's own `uv.toml` when it has one | A private index it needs; the workspace's root `uv.toml` is never read |
 
 A rebuild keeps each wheel's version (an unreleased project stays at `0.1.0`), so an
 environment that already has the wheels takes new ones with `python wheels/install.py --reinstall`.
-Nothing is committed; review `git status` in the project and commit `wheels/` yourself. Why it is built
+
+#### Git: the folder is ignored unless you ask to commit it
+
+Wheels are heavy, so every run writes `wheels/.gitignore` holding `*`: git, `git status` and a
+`/commit-all` never see the folder. `--commit` is the one way in: the run writes `*.zip` there
+instead (the zip is never committed) and, once the empty-venv check passed, commits `wheels/` in the
+project itself — that folder only, whatever else is changed or staged:
+
+```text
+Committed signals-bridge/wheels: <short SHA>    (git log: chore: wheels built with aisland wheels build signals-bridge --all)
+Not committed: the install check failed            (the check failed: nothing is committed)
+Nothing new to commit in signals-bridge/wheels  (a rebuild of unchanged commits)
+```
+
+A run without `--commit` that finds files of `wheels/` still tracked says so, with the command
+that stops tracking them (the files stay on disk):
+
+```text
+wheels/ is tracked in signals-bridge (10 files); stop tracking it with: git -C signals-bridge rm -r --cached wheels
+```
+
+#### One zip to carry: `aisland wheels zip` and `aisland wheels install`
+
+```bash
+aisland wheels zip signals-bridge            # → signals-bridge/wheels/signals-bridge-wheels.zip
+aisland wheels build signals-bridge --zip    # the same, at the end of a build
+```
+
+The zip holds the folder (the wheels, `wheels.yaml`, `install.py`) and a `__main__.py`, so Python
+runs it. On the other machine — which has no aisland — from the project's folder:
+
+```bash
+python ~/Downloads/signals-bridge-wheels.zip              # unpack into ./wheels, then run wheels/install.py
+python ~/Downloads/signals-bridge-wheels.zip --dry-run    # every other argument goes to install.py
+python signals-bridge-wheels.zip --into ../signals-bridge --unpack-only
+```
+
+The `*.whl` already in `wheels/` are replaced; other files there stay. A folder whose
+`pyproject.toml` names another project is refused before anything is unpacked:
+
+```text
+signals-bridge-wheels.zip: run it from the signals-bridge folder, or name it with --into (…/pyproject.toml names annotaide)
+```
+
+On a workspace machine the same zip installs into another environment with aisland
+(`aisland wheels --install ZIP --python PYTHON [--into DIR]` is the short form). The
+workspace's own `.venv` is refused: install.py installs with pip, and the workspace installs its
+projects through `aisland setup`.
+
+```bash
+aisland wheels install signals-bridge-wheels.zip --python ~/envs/bridge/bin/python --into ../signals-bridge
+aisland wheels install signals-bridge-wheels.zip --python ~/envs/bridge/bin/python -- --dry-run
+```
+
+Why it is built
 this way: [`docs/architecture.md`](docs/architecture.md) → "A project installed outside the
 workspace gets its unpublished dependencies as wheels".
 

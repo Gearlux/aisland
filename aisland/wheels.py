@@ -43,6 +43,13 @@ reads it and names each chosen wheel by its FILE: pip takes a wheel it finds onl
 ``--find-links`` from PyPI instead when both have the version (measured 2026-10-09), and takes a
 wheel named by its file over PyPI's. The empty-venv check runs that script.
 
+The folder is the machine's, not the repository's: each run writes ``wheels/.gitignore`` holding ``*``,
+so git never sees it — unless the run is told ``--commit``, which then commits ``wheels/`` itself (the zip
+excepted) once the empty-venv check passed. ``aisland wheels zip`` packs the folder into
+``<project>-wheels.zip`` with a ``__main__.py`` (:mod:`aisland.wheels_unzip`), so the other machine — which has
+no aisland — unpacks and installs it with ``python <project>-wheels.zip``; ``aisland wheels install`` runs the
+same zip into a named interpreter.
+
 The report is JSON-serializable (:meth:`WheelsReport.to_dict`, ``aisland wheels --json``): the
 shape an MCP tool returns.
 """
@@ -71,7 +78,7 @@ from packaging.requirements import InvalidRequirement, Requirement
 from packaging.utils import canonicalize_name
 from packaging.version import InvalidVersion, Version
 
-from aisland import wheels_install
+from aisland import wheels_install, wheels_unzip
 from aisland.manager import ensure_uv_in_venv, submodule_active_map
 from aisland.sources import _points_at_gearlux, _pypi_json, read_committed_sources
 from aisland.wheels_install import WheelsFileError, read_wheels
@@ -87,6 +94,17 @@ WHEELS_YAML = wheels_install.WHEELS_FILE
 
 #: The generic installer written beside the wheels (a copy of :mod:`aisland.wheels_install`).
 INSTALL_SCRIPT = "install.py"
+
+#: The ignore file written into the folder: everything (the default) or only the zip (``--commit``).
+GITIGNORE = ".gitignore"
+_IGNORE_ALL = "*\n"
+_IGNORE_ZIP = "*.zip\n"
+
+#: The zip ``aisland wheels zip`` writes into the folder; ``python <it>`` unpacks and installs it.
+ZIP_NAME = "{project}-wheels.zip"
+
+#: Every zip member's time, so a zip of an unchanged folder is the same file (the zip format's epoch).
+_ZIP_TIME = (1980, 1, 1, 0, 0, 0)
 
 #: What a run builds: the needed projects PyPI lacks (the default), every needed project with a
 #: checkout (``--include-published``), or every workspace project with a checkout (``--all``).
@@ -240,6 +258,14 @@ class WheelsReport:
     not_built: List[NotBuilt] = field(default_factory=list)
     #: Every workspace project the target needs, built or not.
     needed_projects: List[str] = field(default_factory=list)
+    #: The commit ``--commit`` made in the target (short SHA), or why it made none (``commit_note``).
+    committed: Optional[str] = None
+    commit_note: Optional[str] = None
+    #: The zip ``--zip`` wrote, relative to the workspace.
+    zip_file: Optional[str] = None
+    zip_bytes: int = 0
+    #: Said when the folder is ignored but files of it are still tracked, with the command that untracks them.
+    tracked_warning: Optional[str] = None
 
     @property
     def ok(self) -> bool:
@@ -618,8 +644,15 @@ def _pypi_version(payload: Optional[Dict[str, Any]]) -> str:
     return str(((payload or {}).get("info") or {}).get("version") or "")
 
 
-def vendor_wheels(workspace_root: Path, project_name: str, scope: WheelsScope = "unpublished") -> WheelsReport:
-    """``aisland wheels <project_name>``: build, write, compare, install, import. See the module docstring."""
+def vendor_wheels(
+    workspace_root: Path,
+    project_name: str,
+    scope: WheelsScope = "unpublished",
+    commit: bool = False,
+    make_zip: bool = False,
+) -> WheelsReport:
+    """``aisland wheels build <project_name>``: build, write, compare, install, import; then, when asked, commit
+    the folder (only if the check passed) and zip it. See the module docstring."""
     projects = workspace_projects(workspace_root)
     target = _find_target(projects, workspace_root, project_name)
     needed = dependency_closure(projects, target)
@@ -674,8 +707,8 @@ def vendor_wheels(workspace_root: Path, project_name: str, scope: WheelsScope = 
         name_clashes: List[str] = []
         for project in to_build:
             branch = _git(project.path, "rev-parse", "--abbrev-ref", "HEAD").stdout.strip()
-            commit = _git(project.path, "rev-parse", "--short", "HEAD").stdout.strip()
-            click.echo(f"==> Building {project.name} ({branch} {commit})", err=True)
+            sha = _git(project.path, "rev-parse", "--short", "HEAD").stdout.strip()
+            click.echo(f"==> Building {project.name} ({branch} {sha})", err=True)
             timestamp = export_head(project.path, scratch / "src" / project.name)
             wheel = build_wheel(uv, scratch / "src" / project.name, scratch / "wheels", timestamp)
             staged.append(wheel)
@@ -687,7 +720,7 @@ def vendor_wheels(workspace_root: Path, project_name: str, scope: WheelsScope = 
                     project.distribution,
                     version,
                     branch,
-                    commit,
+                    sha,
                     wheel.name,
                     needed=project.name in needed_names,
                     on_pypi=_pypi_version(payload) if state == "published" else None,
@@ -701,6 +734,7 @@ def vendor_wheels(workspace_root: Path, project_name: str, scope: WheelsScope = 
             README_NAME: render_readme(target.name, scope, built),
             WHEELS_YAML: render_wheels_yaml(target.name, scope, built, not_built, choices),
             INSTALL_SCRIPT: render_install_script(target.name, scope),
+            GITIGNORE: _IGNORE_ZIP if commit else _IGNORE_ALL,
         }
         _write_wheels(folder, staged, files)
 
@@ -724,9 +758,28 @@ def vendor_wheels(workspace_root: Path, project_name: str, scope: WheelsScope = 
     # extra's (the empty venv installs none), so it is reported without failing the run.
     import_failures = [f for f in every_failure if f.module in packages or f.distribution is not None]
     import_warnings = [f for f in every_failure if f not in import_failures]
+    wheels_dir = str(folder.relative_to(workspace_root))
+    committed: Optional[str] = None
+    commit_note: Optional[str] = None
+    tracked_warning: Optional[str] = None
+    if commit:
+        if install_error is None and not import_failures:
+            committed = _commit_wheels(target, regenerate_command(target.name, scope))
+            commit_note = None if committed else f"nothing new to commit in {wheels_dir}"
+        else:
+            commit_note = "not committed: the install check failed"
+    else:
+        tracked = [line for line in _git(target.path, "ls-files", "--", WHEELS_DIR).stdout.splitlines() if line]
+        if tracked:
+            tracked_warning = (
+                f"{WHEELS_DIR}/ is tracked in {target.name} ({len(tracked)} files); stop tracking it with: "
+                f"git -C {target.name} rm -r --cached {WHEELS_DIR}"
+            )
+    archive = _write_zip(target.name, folder) if make_zip else None
+    zip_file = str(archive.relative_to(workspace_root)) if archive else None
     return WheelsReport(
         target=target.name,
-        wheels_dir=str(folder.relative_to(workspace_root)),
+        wheels_dir=wheels_dir,
         wheels_bytes=sum((folder / b.wheel).stat().st_size for b in built),
         built=built,
         published=compared,
@@ -739,7 +792,81 @@ def vendor_wheels(workspace_root: Path, project_name: str, scope: WheelsScope = 
         scope=scope,
         not_built=not_built,
         needed_projects=sorted(needed_names),
+        committed=committed,
+        commit_note=commit_note,
+        zip_file=zip_file,
+        zip_bytes=archive.stat().st_size if archive else 0,
+        tracked_warning=tracked_warning,
     )
+
+
+def _commit_wheels(target: WorkspaceProject, command: str) -> Optional[str]:
+    """Commit ``wheels/`` in the target — that path only, whatever else is staged or changed — and return the
+    commit's short SHA, or ``None`` when the folder holds nothing new."""
+    added = _git(target.path, "add", "-A", "--", WHEELS_DIR)
+    if added.returncode != 0:
+        raise click.ClickException(f"{target.name}: git add {WHEELS_DIR} failed: {added.stderr.strip()}")
+    if _git(target.path, "diff", "--cached", "--quiet", "--", WHEELS_DIR).returncode == 0:
+        return None
+    message = f"chore: wheels built with {command}"
+    done = _git(target.path, "commit", "-q", "-m", message, "--", WHEELS_DIR)
+    if done.returncode != 0:
+        raise click.ClickException(f"{target.name}: committing {WHEELS_DIR} failed: {done.stderr.strip()}")
+    return _git(target.path, "rev-parse", "--short", "HEAD").stdout.strip()
+
+
+def _write_zip(target_name: str, folder: Path) -> Path:
+    """``<folder>/<target>-wheels.zip``: the generated ``__main__.py``, then every file of the folder but a zip.
+
+    Members are written in name order with one fixed time, so a zip of an unchanged folder is the same file.
+    """
+    archive = folder / ZIP_NAME.format(project=target_name)
+    members = [("__main__.py", render_unzip_script(target_name).encode("utf-8"))]
+    members += [
+        (f"{WHEELS_DIR}/{path.name}", path.read_bytes())
+        for path in sorted(folder.iterdir(), key=lambda p: p.name)
+        if path.is_file() and path.suffix != ".zip"
+    ]
+    partial = archive.with_suffix(".zip.partial")
+    with zipfile.ZipFile(partial, "w", compression=zipfile.ZIP_DEFLATED) as zipped:
+        for name, data in members:
+            info = zipfile.ZipInfo(name, date_time=_ZIP_TIME)
+            info.external_attr = 0o644 << 16
+            info.compress_type = zipfile.ZIP_DEFLATED
+            zipped.writestr(info, data)
+    os.replace(partial, archive)
+    return archive
+
+
+def zip_wheels(workspace_root: Path, project_name: str) -> Path:
+    """``aisland wheels zip <project_name>``: the folder as it is, packed into ``<project>-wheels.zip``."""
+    target = _find_target(workspace_projects(workspace_root), workspace_root, project_name)
+    folder = target.path / WHEELS_DIR
+    if not (folder / WHEELS_YAML).is_file():
+        raise click.ClickException(
+            f"{target.name}/{WHEELS_DIR} has no {WHEELS_YAML}; build it first: aisland wheels build {target.name}"
+        )
+    return _write_zip(target.name, folder)
+
+
+def install_zip(
+    zip_path: Path, python: Path, into: Path, args: List[str], workspace_root: Optional[Path] = None
+) -> int:
+    """``aisland wheels install <zip>``: run the zip (unpack into ``into/wheels``, then its install.py with
+    ``args``) in ``python``; returns its exit status.
+
+    The workspace's own ``.venv`` is refused: install.py installs with pip, which ignores the workspace's
+    ``uv.toml`` overrides, and the workspace installs its projects editable through ``aisland setup``.
+    """
+    if not zip_path.is_file():
+        raise click.ClickException(f"no zip at {zip_path}")
+    if workspace_root is not None:
+        venv = (workspace_root / ".venv").absolute()
+        if venv in python.absolute().parents:
+            raise click.ClickException(
+                f"{python} is the workspace's .venv; install the zip into another environment (--python <its python>)"
+            )
+    return subprocess.run([str(python), str(zip_path), "--into", str(into), *args]).returncode
 
 
 def _clash(project: WorkspaceProject, payload: Dict[str, Any], version: str) -> List[str]:
@@ -898,12 +1025,27 @@ def render_report(report: WheelsReport) -> str:
             lines.append(f"Behind, nothing breaks: {', '.join(report.behind_only)}")
         if not report.import_failures and not report.behind:
             lines.append(f"PyPI is up to date for {target}.")
+    tail = []
+    if report.tracked_warning:
+        tail.append(report.tracked_warning)
+    if report.committed:
+        tail.append(f"Committed {report.wheels_dir}: {report.committed}")
+    elif report.commit_note:
+        tail.append(report.commit_note[0].upper() + report.commit_note[1:])
+    if report.zip_file:
+        zip_name = Path(report.zip_file).name
+        tail.append(
+            f"Zip: {report.zip_file} ({_size(report.zip_bytes)}) — install it from the {target} folder with: "
+            f"python {zip_name}"
+        )
+    if tail:
+        lines += ["", *tail]
     return "\n".join(lines).rstrip() + "\n"
 
 
 def regenerate_command(target: str, scope: WheelsScope) -> str:
     """The command that wrote a generated file — its header's ``Generated by:`` and ``To regenerate:``."""
-    return f"aisland wheels {target}{_SCOPE_FLAGS[scope]}"
+    return f"aisland wheels build {target}{_SCOPE_FLAGS[scope]}"
 
 
 def _header(prefix: str, command: str, source: str) -> List[str]:
@@ -1026,4 +1168,16 @@ def render_install_script(target: str, scope: WheelsScope) -> str:
     shebang, _template_header, rest = template.split(_HEADER_RULE, 2)
     command = regenerate_command(target, scope)
     header = _header("# ", command, "aisland/aisland/wheels_install.py (copied unchanged below this header)")
+    return shebang + _HEADER_RULE + "\n".join(header) + "\n" + _HEADER_RULE + rest
+
+
+def render_unzip_script(target: str) -> str:
+    """A zip's ``__main__.py``: :mod:`aisland.wheels_unzip` under a generated header, naming ``target``."""
+    template = Path(wheels_unzip.__file__).read_text(encoding="utf-8")
+    shebang, _template_header, rest = template.split(_HEADER_RULE, 2)
+    header = _header("# ", f"aisland wheels zip {target}", "aisland/aisland/wheels_unzip.py (copied below this header)")
+    placeholder = 'PROJECT = "<project>"'
+    if rest.count(placeholder) != 1:
+        raise RuntimeError(f"{wheels_unzip.__file__}: expected one {placeholder!r} line to fill in")
+    rest = rest.replace(placeholder, f"PROJECT = {json.dumps(target)}")
     return shebang + _HEADER_RULE + "\n".join(header) + "\n" + _HEADER_RULE + rest
