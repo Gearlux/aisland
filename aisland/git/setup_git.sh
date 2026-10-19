@@ -78,8 +78,8 @@ if [ -f "$WORKSPACE_ROOT/.gitmodules" ]; then
             name="${key#submodule.}"
             name="${name%.active}"
             # Respect a pre-existing local `true` — that's a user opt-in
-            # (e.g. a Company contributor with Bitbucket access enabling
-            # signals-bridge). Without this guard, every setup.sh run
+            # (e.g. a contributor with access to a private submodule's host
+            # enabling it). Without this guard, every setup.sh run
             # would silently flip the user's choice back to inactive.
             current=$(git config --local --get "submodule.$name.active" 2>/dev/null || true)
             if [ "$current" = "true" ]; then
@@ -234,7 +234,7 @@ if git rev-parse --is-inside-work-tree >/dev/null 2>&1; then
     # does not propagate, so commits inside a submodule would write notebook
     # outputs as-is. Register the filter in every active submodule too.
     # `git submodule foreach` skips submodules marked `active = false`,
-    # which is what we want (e.g. signals-bridge on non-Company hosts).
+    # which is what we want (e.g. a private submodule on a host without access).
     git submodule foreach --quiet "
         git config filter.ipynb-cleaner.clean '$AISLAND_CLEAN_CMD'
         git config filter.ipynb-cleaner.smudge cat

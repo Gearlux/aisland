@@ -40,30 +40,30 @@ class TestTorchExtensionLock:
         assert str(root) in result.detail
 
     def test_no_lock_is_healthy(self, root: Path) -> None:
-        (root / "company_ai_fast_cc").mkdir(parents=True)
-        (root / "company_ai_fast_cc" / "company_ai_fast_cc.so").touch()
+        (root / "fast_kernels").mkdir(parents=True)
+        (root / "fast_kernels" / "fast_kernels.so").touch()
         assert doctor.check_torch_extension_lock().ok
 
     def test_a_stale_lock_fails_with_the_rm_command(self, root: Path) -> None:
-        lock = _lock(root, "company_ai_fast_cc", age_seconds=doctor._TORCH_LOCK_STALE_SECONDS + 3000)
+        lock = _lock(root, "fast_kernels", age_seconds=doctor._TORCH_LOCK_STALE_SECONDS + 3000)
         result = doctor.check_torch_extension_lock()
         assert not result.ok
         assert result.name == "torch-ext-lock"
-        assert "company_ai_fast_cc" in result.detail
+        assert "fast_kernels" in result.detail
         assert str(lock) in result.detail
         assert "waits on it forever" in result.detail
         assert result.remedy == f"rm '{lock}'"
 
     def test_a_young_lock_is_a_build_in_progress_not_a_failure(self, root: Path) -> None:
-        _lock(root, "company_ai_fast_cc", age_seconds=5)
+        _lock(root, "fast_kernels", age_seconds=5)
         result = doctor.check_torch_extension_lock()
         assert result.ok
         assert "building" in result.detail
-        assert "company_ai_fast_cc" in result.detail
+        assert "fast_kernels" in result.detail
 
     def test_the_default_layout_one_folder_deeper_is_searched_too(self, root: Path) -> None:
         """Without `TORCH_EXTENSIONS_DIR` torch builds under `<root>/py313_cpu/<ext>/`."""
-        lock = _lock(root, "py313_cpu", "company_ai_fast_cc", age_seconds=600)
+        lock = _lock(root, "py313_cpu", "fast_kernels", age_seconds=600)
         result = doctor.check_torch_extension_lock()
         assert not result.ok
         assert result.remedy == f"rm '{lock}'"

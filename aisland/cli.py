@@ -322,7 +322,7 @@ def tests_report(project: str, days: int, as_json: bool) -> None:
 
     \b
     aisland tests report streamstudio
-    aisland tests report signals-wlan --days 90
+    aisland tests report navigaitor --days 90
     aisland tests report raidar --json
     """
     if not (pytest_stats.WORKSPACE_ROOT / project / "pyproject.toml").is_file():
@@ -439,9 +439,9 @@ def wheels_build(
     which commits it in PROJECT when the check passed.
 
     \b
-    aisland wheels build signals-bridge
-    aisland wheels build signals-bridge --include-published --zip
-    aisland wheels build signals-bridge --all --commit --json
+    aisland wheels build navigaitor
+    aisland wheels build navigaitor --include-published --zip
+    aisland wheels build navigaitor --all --commit --json
     """
     scope: wheels.WheelsScope = "all" if include_all else "needed" if include_published else "unpublished"
     report = wheels.vendor_wheels(get_workspace_root(), project, scope=scope, commit=commit, make_zip=make_zip)
@@ -481,8 +481,8 @@ def wheels_install(zip_path: Path, python: Path, into: Optional[Path], rest: Tup
     """Unpack ZIP into the project's wheels/ and run its install.py with PYTHON; REST goes to install.py.
 
     \b
-    aisland wheels install signals-bridge-wheels.zip --python ~/envs/bridge/bin/python
-    aisland wheels install signals-bridge-wheels.zip --python ~/envs/bridge/bin/python -- --dry-run
+    aisland wheels install navigaitor-wheels.zip --python ~/envs/navigaitor/bin/python
+    aisland wheels install navigaitor-wheels.zip --python ~/envs/navigaitor/bin/python -- --dry-run
     """
     status = wheels.install_zip(zip_path, python, into or Path.cwd(), list(rest), workspace_root=get_workspace_root())
     raise SystemExit(status)
@@ -678,7 +678,7 @@ def mirror_set(project: str, url: str, machine_only: bool) -> None:
     """Record URL as PROJECT's mirror and add the `mirror` remote to its checkout.
 
     \b
-    aisland mirror set signals-bridge git@github.com:Org/signals-bridge.git
+    aisland mirror set navigaitor git@github.com:Org/navigaitor.git
     aisland mirror set loggair https://bitbucket.example.com/scm/team/loggair.git --machine-only
     """
     from aisland.mirrors import set_mirror

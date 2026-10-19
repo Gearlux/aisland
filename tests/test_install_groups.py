@@ -1,7 +1,7 @@
 """Cyclic workspace projects install in ONE `uv pip install`, and a failure is reported once.
 
-Observed on a fresh machine: `signals[dev]` requires `annotaide` and `annotaide` requires
-`signals`, so installing either alone makes uv look for the other on the index and fail. The
+Observed on a fresh machine: one project's `dev` extra requires a second project that requires the
+first, so installing either alone makes uv look for the other on the index and fail. The
 old loop then also tried (and failed) every dependent, burying the first error in a dozen more.
 """
 
@@ -29,20 +29,20 @@ class TestInstallGroups:
         assert _names(groups) == [["lib"], ["app"]]
 
     def test_a_cycle_is_one_group(self) -> None:
-        projects = [_project("annotaide", "signals>=0.1"), _project("signals", "annotaide>=0.1")]
-        assert sorted(_names(m.install_groups(projects))[0]) == ["annotaide", "signals"]
+        projects = [_project("app", "plugin>=0.1"), _project("plugin", "app>=0.1")]
+        assert sorted(_names(m.install_groups(projects))[0]) == ["app", "plugin"]
         assert len(m.install_groups(projects)) == 1
 
     def test_the_cycle_still_follows_its_own_dependencies_and_precedes_its_dependents(self) -> None:
         projects = [
-            _project("tool", "signals"),
-            _project("signals", "annotaide", "base"),
-            _project("annotaide", "signals"),
+            _project("tool", "plugin"),
+            _project("plugin", "app", "base"),
+            _project("app", "plugin"),
             _project("base"),
         ]
         names = _names(m.install_groups(projects))
         assert names[0] == ["base"]
-        assert sorted(names[1]) == ["annotaide", "signals"]
+        assert sorted(names[1]) == ["app", "plugin"]
         assert names[2] == ["tool"]
 
     def test_external_dependencies_and_self_references_are_ignored(self) -> None:
@@ -64,7 +64,7 @@ class TestRunInstalls:
         return seen
 
     def test_a_cycle_is_installed_with_one_command(self, calls: List[List[str]], tmp_path: Path) -> None:
-        projects = [_project("annotaide", "signals"), _project("signals", "annotaide")]
+        projects = [_project("app", "plugin"), _project("plugin", "app")]
         failed, skipped = m._run_installs(tmp_path, "uv", projects)
         assert (failed, skipped) == ([], [])
         assert len(calls) == 1

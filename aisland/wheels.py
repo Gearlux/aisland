@@ -1,6 +1,6 @@
 """Wheels for a project installed OUTSIDE the workspace (``aisland wheels <project>``).
 
-A private project (signals-bridge) depends on workspace projects of which some are on PyPI
+A project that is not on PyPI (navigaitor) depends on workspace projects of which some are on PyPI
 and some are not. A machine without the workspace can install the first kind from PyPI only;
 this module builds the second kind as wheels into ``<project>/wheels/``, where
 ``pip install --find-links wheels -e .`` finds them, and then answers whether the PyPI half is
@@ -28,9 +28,8 @@ The run, in order:
    published dependency's PyPI wheel against the one its checkout builds, file by file ("behind");
    then the project installed in an EMPTY venv from its wheels plus PyPI, and every module of
    the project and of its wheels imported — not only the packages: a module no package imports
-   is checked too (``signals.bridge.labelling`` needs ``recordstream.draws``, and
-   ``import signals.bridge`` never reaches it). A failed import names the project whose module
-   is missing — the one to release first (measured 2026-10-08: ``signals.lte`` needs
+   is checked too, because ``import <package>`` never reaches it. A failed import names the project whose module
+   is missing — the one to release first (measured 2026-10-08: a module needed
    ``recordstream.draws``, which recordstream 0.1.0a2 lacks).
 
 What is built is the run's SCOPE (:data:`WheelsScope`): by default the projects above that PyPI
@@ -444,8 +443,8 @@ def _is_shim(source: str) -> bool:
 def wheel_modules(wheel: Path) -> List[str]:
     """The outermost packages (and top-level modules) ``wheel`` brings — what to import.
 
-    A namespace shim's package is not one of them (``signals/__init__.py`` in a child
-    project's wheel); its child is, by its dotted name (``signals.bridge``).
+    A namespace shim's package is not one of them (``raidar/__init__.py`` in a child
+    project's wheel); its child is, by its dotted name (``raidar.ultralytics``).
     """
     real: Set[str] = set()
     modules: Set[str] = set()

@@ -298,7 +298,7 @@ User choice 2026-10-16: an aisland command, submodules only, run by `/push-all` 
 - Unset ≠ empty: setup prompts on unset, `-y` with nothing recorded selects all, an explicit
   `--framework` is recorded. `all_extras()` spans both axes. Reinstalls follow
   `get_install_order`.
-- A project that needs one framework outright (`signals`, `raidar-ultralytics`) keeps it as
+- A project that needs one framework outright (`raidar-ultralytics`) keeps it as
   a base dependency and declares no axis. Never fake an extra.
 
 ## Generated CI (`aisland jenkins scaffold`)
@@ -487,4 +487,4 @@ User choice 2026-10-08: an aisland command, only the named project's closure, bo
 - `git push-all` pushes every submodule before the root, and the root only when they all pushed
   (`::test_the_push_all_alias_pushes_the_submodules_before_the_root`).
 
-- **`aisland setup` installs a dependency CYCLE in one `uv pip install` and skips the dependents of a failure (`manager.install_groups` / `_run_installs`, 2026-10-07):** `signals[dev]` and `annotaide` require each other, so installing either alone makes uv look for the other on the index and fail — and every project depending on either then failed too, burying the first error. `install_groups` returns dependency-first strongly-connected components (a cycle is ONE group); `_run_installs` runs one `uv pip install -e A -e B` per group, SKIPS (and names) a project whose dependency failed rather than attempting it against the stale index copy, and setup prints one failed/skipped summary. Don't revert to a per-project loop or edit the extras to hide the cycle. `apply_selection` still installs singletons (`TASKS.md`). Pins: `tests/test_install_groups.py`.
+- **`aisland setup` installs a dependency CYCLE in one `uv pip install` and skips the dependents of a failure (`manager.install_groups` / `_run_installs`, 2026-10-07):** two projects can require each other (one through its `dev` extra), so installing either alone makes uv look for the other on the index and fail — and every project depending on either then failed too, burying the first error. `install_groups` returns dependency-first strongly-connected components (a cycle is ONE group); `_run_installs` runs one `uv pip install -e A -e B` per group, SKIPS (and names) a project whose dependency failed rather than attempting it against the stale index copy, and setup prints one failed/skipped summary. Don't revert to a per-project loop or edit the extras to hide the cycle. `apply_selection` still installs singletons (`TASKS.md`). Pins: `tests/test_install_groups.py`.

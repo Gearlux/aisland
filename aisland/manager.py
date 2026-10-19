@@ -669,8 +669,8 @@ def _internal_dependencies(projects: List[dict]) -> Dict[str, List[str]]:
 def install_groups(projects: List[dict]) -> List[List[dict]]:
     """Group projects into install units, dependencies first; a dependency CYCLE is one unit.
 
-    Tarjan's strongly-connected-components: a cycle (``signals[dev]`` requires ``annotaide``
-    and ``annotaide`` requires ``signals``) cannot be installed one project at a time — uv
+    Tarjan's strongly-connected-components: a cycle (``a[dev]`` requires ``b`` and ``b`` requires
+    ``a``) cannot be installed one project at a time — uv
     resolves the missing half from the package index and fails — so its members must go through
     ONE ``uv pip install -e A -e B``. Every acyclic project is a singleton unit. Tarjan emits a
     component only after everything it depends on, which is exactly install order.

@@ -14,7 +14,7 @@ class LabelStudioService(BaseService):
         # Label Studio uses a base directory for its data, including its own SQLite DB
         self.data_dir = self.service_data_dir
         # Where Label Studio serves user-supplied local files from. Pipelines
-        # that produce PNGs (e.g. the signals segmentation visualize stage)
+        # that produce PNGs (e.g. a segmentation visualize stage)
         # write into this directory so LS references them via
         # /data/local-files/?d=<rel-path> without a re-encode.
         self.local_files_root = self.data_dir / "local-files"
@@ -73,7 +73,7 @@ class LabelStudioService(BaseService):
         Credentials resolve as *explicit argument → workspace ``.env`` →
         derived default* (git email / workspace name / generated token), and
         the resolved values are written back to ``.env`` — the single source
-        of truth, shared with downstream clients (annotaide, signals).
+        of truth, shared with downstream clients (annotaide, a pipeline).
         The server process receives them ONLY through environment variables
         (label-studio reads ``LABEL_STUDIO_*``), and those entries are stored
         in the supervisor document as ``${LABELSTUDIO_*}`` references — so no

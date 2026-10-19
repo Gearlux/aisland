@@ -320,20 +320,18 @@ documentation extra.
 - **Scope is deliberately limited to projects that OFFER a choice** (decided 2026-07-30 after
   reading each project, not counting its imports). `recordstream`, `matrainer`, `sonair`,
   `deltaid`, `distilaide` and `raidar` declare frameworks because a genuine alternative exists:
-  each keeps its core install free of torch and puts every engine behind an extra. Two others
-  keep `torch` as a plain hard dependency and are NOT declarable:
+  each keeps its core install free of torch and puts every engine behind an extra. Another
+  keeps `torch` as a plain hard dependency and is NOT declarable:
 
   | project | why it requires torch |
   | --- | --- |
-  | `signals` | `schema.py` — "THE builder for the record model" — enforces `torch.complex64` IQ. Torch is the canonical representation, not a peripheral op. |
   | `raidar-ultralytics` | the ultralytics detection trainer; `__init__.py` imports its torch/ultralytics classes eagerly. |
 
   Moving their deps behind a `[torch]` extra was considered and REJECTED: `pip install
-  raidar-ultralytics` would then yield a package whose `__init__` raises `ImportError`, and a
-  plain `signals` install would fail at the first record it builds, which is dishonest
-  packaging for a project that genuinely needs torch. The consequence to accept is that selecting `keras` on
+  raidar-ultralytics` would then yield a package whose `__init__` raises `ImportError`, which is
+  dishonest packaging for a project that genuinely needs torch. The consequence to accept is that selecting `keras` on
   a FULL workspace still installs torch — the selection narrows multi-backend projects, and does
-  not promise a framework-free venv. (`torpaido` was a third case and is fixed rather than
+  not promise a framework-free venv. (`torpaido` was a second case and is fixed rather than
   excepted: it declared `torch` while referencing it *zero* times, so the dependency was simply
   dropped.) A future mechanism for "skip this project unless its framework is selected" is the
   path if a truly torch-free venv is ever wanted; it is not this one.
@@ -769,9 +767,9 @@ rule collected the transitive closure of "every Gearlux name in `project.depende
 extras group** of every reachable pyproject". Extras walk was justified for the scaffolded
 project itself (its CI does install `.[dev]`), but applying it transitively collected packages
 no install step would ever request: a signal-analysis app (since removed from the workspace)
-depended only on `signals`; signals's *dev* extra names `matrainer` and `annotaide`; matrainer's *torpaido* extra names `torpaido` —
+depended only on one sibling; that sibling's *dev* extra names `matrainer` and `annotaide`; matrainer's *torpaido* extra names `torpaido` —
 and CI installed all three, half-broken (`--no-deps`, their own deps never resolved), for a
-project that imports none of them. The same walk let annotaide's and signals's mutual
+project that imports none of them. The same walk let annotaide's and that sibling's mutual
 dev-extra references cycle back to the scaffolded project, so each pipeline pre-installed *its
 own* `main` branch over the checkout under test. A third latent defect hid beside these: specs
 were name-stripped with `re.split(r"[>=< ]", …)`, which cannot parse `matrainer[torch]>=0.1.0`
@@ -793,7 +791,7 @@ The closure mirrors the install steps the templates themselves emit, node by nod
 
 ### Consequences
 
-Twelve projects' pre-install lists shrank to their real dependency cones (the signals-only
+Twelve projects' pre-install lists shrank to their real dependency cones (the one-sibling
 app above: five deps → two). A sibling named only inside a dependency's dev extra no longer reaches any
 consumer pipeline — if a root's CI genuinely needs it, the root's own extras must say so, which
 is also where uv will look. The committed CI files stop churning when an unrelated project
@@ -921,11 +919,11 @@ at a time: vendorcli waited 875 s for recordstream, and annotaide and purifai sh
   checkout as its source (`direct_url.json`, written for every editable install), else the build
   stops naming `aisland setup`. It reads the distribution rather than looking up the package, for
   two reasons: nothing is imported, and a project may ship its code inside another project's
-  package namespace (`signals-bridge` installs `signals/bridge/`), where a package lookup
+  package namespace (`raidar-ultralytics` installs `raidar/ultralytics/`), where a package lookup
   would resolve a sibling's checkout. It runs `python3 -P` — Jenkins runs inside the checkout,
   and without `-P` the working directory is first on `sys.path`, so a stale `<name>.egg-info`
   left there shadows the venv's record and a correctly-installed project fails (measured on
-  `signals-bridge`: exit 1 without `-P`, exit 0 with it).
+  such a child project: exit 1 without `-P`, exit 0 with it).
 - The orchestrator declares `agent none`; `build job:` needs no node.
 - The runner files (`Jenkinsfile`, `ci.yml`) are unchanged: a runner has no workspace venv.
 
@@ -988,15 +986,15 @@ torpaido is not installed from /Users/you/acme/torpaido (found: file:///Users/yo
 
 The local orchestrator builds every project at 01:00 and waits for each build (`build job:`,
 `wait: true`); nothing in the orchestrator or the project pipelines bounded that wait. On
-2026-10-14 the Slow Tests stage of `signals-5gnr.local` #13 ran 518.6 min (41 392 tests whose
+2026-10-14 the Slow Tests stage of one project's `.local` #13 ran 518.6 min (41 392 tests whose
 own clocks summed to 11 min; pytest's clock said 8:38:30) and passed; on 2026-10-15 the Unit Tests
 stage of `annotaide.local` #37 waited 108.9 min on a test that waits for a SIGINT Jenkins' background
 shell ignores, until a hand `kill` ended pytest (`Terminated: 15`, exit 143). Both held
 `acme.local` #36 "building" from 01:00 into the afternoon, and the morning report could only say
 "still building". The stage durations of the six 01:00 runs before (read from each build's
 pipeline-graph record) were small and steady: Unit Tests at most 6.0 min (streamstudio), Slow Tests
-at most 29.6 min (signals-lte), Verify Examples 0.5 min, Verify Notebooks 1.4 min, Initialize and
-the quality gates 0.2 min. The 35-48 min builds of some generator projects were executor queueing
+at most 29.6 min, Verify Examples 0.5 min, Verify Notebooks 1.4 min, Initialize and
+the quality gates 0.2 min. The 35-48 min builds of some projects were executor queueing
 inside the build, not stage time.
 
 A second finding from #37: pytest killed before it writes `--junitxml` leaves the previous build's
@@ -1343,20 +1341,20 @@ before the `.venv` exists, and from a submodule's shell, where `aisland` is not 
 ### Example
 
 ```console
-$ git pull-all                       # both machines recorded signals
+$ git pull-all                       # both machines recorded navigaitor
 fetching the root and 25 submodules…
-signals             merged origin/dev/main (1 commit)
-root                   pointer conflict signals → 6cb3d7f (holds both sides)
+navigaitor             merged origin/dev/main (1 commit)
+root                   pointer conflict navigaitor → 6cb3d7f (holds both sides)
 root                   merged origin/dev/main (1 commit)
 ```
 
 ```bash
 # the settle rule, as git_pull_all.sh applies it to each conflicted gitlink
-ours=$(git rev-parse :2:signals); theirs=$(git rev-parse :3:signals)
-head=$(git -C signals rev-parse HEAD)
-git -C signals merge-base --is-ancestor "$ours" "$head" &&
-    git -C signals merge-base --is-ancestor "$theirs" "$head" &&
-    git add signals          # settled; otherwise it stays listed as CONFLICT
+ours=$(git rev-parse :2:navigaitor); theirs=$(git rev-parse :3:navigaitor)
+head=$(git -C navigaitor rev-parse HEAD)
+git -C navigaitor merge-base --is-ancestor "$ours" "$head" &&
+    git -C navigaitor merge-base --is-ancestor "$theirs" "$head" &&
+    git add navigaitor          # settled; otherwise it stays listed as CONFLICT
 ```
 
 ### What you may change
@@ -1468,12 +1466,12 @@ Fix: brew install openjdk@25
 
 ### Context
 
-A private project (signals-bridge) has to be installable on a machine that has neither the
-workspace nor access to the workspace's GitHub repositories. Its dependencies are workspace
-projects of two kinds: some are on PyPI (confluid, recordstream), some are not (signals and
-its generators, annotaide). The second kind has to travel with the project. And because those
+A project that is not on PyPI (navigaitor, say) has to be installable on a machine that has
+neither the workspace nor access to the workspace's GitHub repositories. Its dependencies are
+workspace projects of two kinds: some are on PyPI (confluid, recordstream), some are not (a
+sibling not yet released). The second kind has to travel with the project. And because those
 wheels are built from this checkout, they can use code that the PyPI releases of the first kind
-do not hold yet — measured on 2026-10-08: `signals.lte` imports `recordstream.draws`, which
+do not hold yet — measured on 2026-10-08: a sibling's module imported `recordstream.draws`, which
 recordstream 0.1.0a2 on PyPI lacks, so an install that resolves fine fails at `import`.
 
 ### Decision
@@ -1518,9 +1516,9 @@ Rejected:
 - A run needs PyPI (an unreachable PyPI stops it before anything is built, because a guess would
   ship a wheel too many or one too few) and takes about 35 s with uv's cache warm.
 - The import check imports every module, because a module no package imports is otherwise
-  never checked (measured 2026-10-08: importing only the outermost packages of signals-bridge
-  found 2 modules missing `recordstream.draws`; importing every module found 9, among them
-  `signals.bridge.labelling` and `signals.sources`). The optional extras' modules, whose
+  never checked (measured 2026-10-08: importing only the outermost packages of a project with
+  unreleased dependencies found 2 modules missing `recordstream.draws`; importing every module
+  found 9). The optional extras' modules, whose
   dependencies the empty venv does not install, are kept from failing the run by one rule: a
   package that fails, or any module missing a workspace project's module, is a break (exit 1);
   a deeper module missing something no workspace project ships is listed under "Not imported"
@@ -1536,27 +1534,25 @@ Rejected:
 ### Example
 
 ```text
-$ aisland wheels signals-bridge            # exit 1
+$ aisland wheels navigaitor            # exit 0
 ...
-Installed signals-bridge in an empty venv (its wheels + PyPI) and imported every module of its 5 packages:
-  signals.analysis.fivegnr  ModuleNotFoundError: No module named 'recordstream.draws'  (recordstream)
-  ...
-  signals.bridge.labelling  ModuleNotFoundError: No module named 'recordstream.draws'  (recordstream)
-  ...
-  signals.sources           ModuleNotFoundError: No module named 'recordstream.draws'  (recordstream)
-  149 other modules imported
+Installed navigaitor in an empty venv (its wheels + PyPI) and imported every module of its 1 package:
+  17 modules imported
 
-Release first: recordstream
-Behind, nothing breaks: confluid, liquifai
+Not imported, missing what no workspace project ships (an optional extra's?):
+  navigaitor.server         ModuleNotFoundError: No module named 'sonair'
+  navigaitor.visualisation  ModuleNotFoundError: No module named 'matplotlib'
+
+Behind, nothing breaks: confluid, liquifai, recordstream
 ```
 
 ```python
 from aisland import wheels
 from aisland.manager import get_workspace_root
 
-report = wheels.vendor_wheels(get_workspace_root(), "signals-bridge")
-report.release_first      # ['recordstream']
-report.to_dict()["ok"]    # False: what an MCP tool would return
+report = wheels.vendor_wheels(get_workspace_root(), "navigaitor")
+report.release_first      # []: a module missing a workspace project's module would name it here
+report.to_dict()["ok"]    # True: what an MCP tool would return
 ```
 
 ### What you may change
@@ -1575,7 +1571,7 @@ report.to_dict()["ok"]    # False: what an MCP tool would return
 ### Context
 
 Shipping only what PyPI lacks leaves the other machine at the mercy of the PyPI releases: on
-2026-10-08 signals-bridge could not import because recordstream 0.1.0a2 on PyPI lacked
+2026-10-08 a project's modules could not import because recordstream 0.1.0a2 on PyPI lacked
 `recordstream.draws`. The user asked for an option that ships the published dependencies as
 wheels too, and one that ships every workspace project. A wheel built from a checkout ahead of
 its release carries the SAME version as the release, and the old install line
@@ -1628,18 +1624,18 @@ Rejected:
 ### Example
 
 ```bash
-aisland wheels signals-bridge --include-published
-python wheels/install.py --dry-run      # on the other machine, from signals-bridge/
-# $ python -m pip install --find-links …/wheels -e …/signals-bridge …/wheels/confluid-0.4.0-py3-none-any.whl …
+aisland wheels navigaitor --include-published
+python wheels/install.py --dry-run      # on the other machine, from navigaitor/
+# $ python -m pip install --find-links …/wheels -e …/navigaitor …/wheels/confluid-0.4.1-py3-none-any.whl …
 ```
 
 ```python
 from aisland import wheels
 from aisland.manager import get_workspace_root
 
-report = wheels.vendor_wheels(get_workspace_root(), "signals-bridge", scope="needed")
-[(b.project, b.on_pypi) for b in report.built][:2]   # [('confluid', '0.4.0'), ('liquifai', '0.3.0')]
-report.not_built                                      # [NotBuilt(project='loggair', reason='no checkout here — taken from PyPI 0.2.0')]
+report = wheels.vendor_wheels(get_workspace_root(), "navigaitor", scope="needed")
+[(b.project, b.on_pypi) for b in report.built][:2]   # [('confluid', '0.4.1'), ('liquifai', '0.3.1')]
+report.not_built                                      # []: a needed project without a checkout here would be listed
 ```
 
 ### What you may change
@@ -1661,8 +1657,8 @@ workspace nor aisland (`aisland-manager` is not on PyPI), so carrying them must 
 
 ### Decision
 
-User choices 2026-10-18: the opt-in flag commits by itself; both command shapes; bridge's tracked wheels
-untracked.
+User choices 2026-10-18: the opt-in flag commits by itself; both command shapes; a project's
+already-tracked wheels untracked.
 
 - **Every run writes `wheels/.gitignore` holding `*`.** The folder ignores itself, the ignore file
   included, so git never sees it. A run that finds files of the folder still tracked prints the
@@ -1695,16 +1691,16 @@ Rejected:
 ### Example
 
 ```bash
-aisland wheels build signals-bridge --all --zip
-# … Zip: signals-bridge/wheels/signals-bridge-wheels.zip (…) — install it from the signals-bridge folder with: python signals-bridge-wheels.zip
-cd ~/src/signals-bridge && python ~/Downloads/signals-bridge-wheels.zip --dry-run   # the other machine
+aisland wheels build navigaitor --all --zip
+# … Zip: navigaitor/wheels/navigaitor-wheels.zip (…) — install it from the navigaitor folder with: python navigaitor-wheels.zip
+cd ~/src/navigaitor && python ~/Downloads/navigaitor-wheels.zip --dry-run   # the other machine
 ```
 
 ```python
 from aisland import wheels
 from aisland.manager import get_workspace_root
 
-report = wheels.vendor_wheels(get_workspace_root(), "signals-bridge", commit=True, make_zip=True)
+report = wheels.vendor_wheels(get_workspace_root(), "navigaitor", commit=True, make_zip=True)
 report.committed, report.commit_note, report.zip_file
 ```
 
@@ -1753,11 +1749,11 @@ syncing (pulling from both) would make a second primary, with merges between the
 ### Example
 
 ```bash
-aisland mirror set signals-bridge git@github.com:Org/signals-bridge.git
+aisland mirror set navigaitor git@github.com:Org/navigaitor.git
 aisland mirror sync
 ```
 ```
-==> signals-bridge → git@github.com:Org/signals-bridge.git
+==> navigaitor → git@github.com:Org/navigaitor.git
     dev/main  pushed (3 commits)
     main      in sync
     tags      pushed v0.4.0

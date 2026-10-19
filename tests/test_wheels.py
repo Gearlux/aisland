@@ -149,7 +149,7 @@ class TestDependencyClosure:
         assert [p.name for p in closure] == ["conf", "lib", "plug"]
 
     def test_a_projects_own_extra_named_in_its_dependencies_is_followed(self, tmp_path: Path) -> None:
-        """signals's `dev` extra names `signals[torchsig]`."""
+        """A project's `dev` extra names one of its own extras (`base[sig]`)."""
         root = _workspace(tmp_path, "app", "base", "sig")
         _project(root, "app", deps=["base[dev]"])
         _project(root, "base", extras={"dev": ["base[sig]"], "sig": ["sig"]})
@@ -227,7 +227,7 @@ class TestPypiState:
 
     def test_a_name_nobody_published_is_absent(self, monkeypatch: pytest.MonkeyPatch) -> None:
         _pypi(monkeypatch, {})
-        assert w.pypi_state("signals") == ("absent", None)
+        assert w.pypi_state("torpaido") == ("absent", None)
 
     def test_a_strangers_package_under_the_same_name_is_foreign(self, monkeypatch: pytest.MonkeyPatch) -> None:
         stranger = ("ok", {"info": {"version": "0.1.3", "project_urls": {"Home": "https://example.com"}}})
@@ -262,14 +262,14 @@ class TestWheelModules:
         """A wheel that still carries the shim (a child without the build step)."""
         wheel = _wheel(
             tmp_path / "child-0.1.0-py3-none-any.whl",
-            {"signals/__init__.py": _SHIM, "signals/bridge/__init__.py": "X = 1\n"},
+            {"raidar/__init__.py": _SHIM, "raidar/ultralytics/__init__.py": "X = 1\n"},
         )
-        assert w.wheel_modules(wheel) == ["signals.bridge"]
+        assert w.wheel_modules(wheel) == ["raidar.ultralytics"]
 
     def test_a_child_without_its_parents_init_is_imported_by_its_dotted_name(self, tmp_path: Path) -> None:
-        """signals-bte's wheel: the build step left the shim out."""
-        wheel = _wheel(tmp_path / "bte-0.1.0-py3-none-any.whl", {"signals/bte/__init__.py": ""})
-        assert w.wheel_modules(wheel) == ["signals.bte"]
+        """raidar-ultralytics's wheel: the build step left the shim out."""
+        wheel = _wheel(tmp_path / "ultralytics-0.1.0-py3-none-any.whl", {"raidar/ultralytics/__init__.py": ""})
+        assert w.wheel_modules(wheel) == ["raidar.ultralytics"]
 
     def test_a_package_inside_a_plain_folder_of_a_package_is_not_a_second_root(self, tmp_path: Path) -> None:
         wheel = _wheel(
@@ -360,11 +360,11 @@ class TestRefusals:
     def test_a_project_not_checked_out_here_is_refused_with_the_command_that_activates_it(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        root = _workspace(tmp_path, "signals-bridge")
+        root = _workspace(tmp_path, "navigaitor")
         with pytest.raises(click.ClickException) as error:
-            w.vendor_wheels(root, "signals-bridge")
-        assert "signals-bridge is not checked out on this machine" in error.value.message
-        assert "aisland setup --activate signals-bridge" in error.value.message
+            w.vendor_wheels(root, "navigaitor")
+        assert "navigaitor is not checked out on this machine" in error.value.message
+        assert "aisland setup --activate navigaitor" in error.value.message
 
     def test_a_project_named_by_its_distribution_is_found_and_named_by_its_folder(self, tmp_path: Path) -> None:
         root = _workspace(tmp_path, "aisland")
@@ -436,9 +436,14 @@ class TestRefusals:
 
 def _report(**overrides: Any) -> w.WheelsReport:
     built = [
-        w.BuiltWheel("signals", "signals", "0.1.0", "dev/main", "38ba9a9", "signals-0.1.0-py3-none-any.whl"),
+        w.BuiltWheel("torpaido", "torpaido", "0.1.0", "dev/main", "38ba9a9", "torpaido-0.1.0-py3-none-any.whl"),
         w.BuiltWheel(
-            "signals-lte", "signals-lte", "0.1.0", "dev/main", "d63b739", "signals_lte-0.1.0-py3-none-any.whl"
+            "raidar-ultralytics",
+            "raidar-ultralytics",
+            "0.1.0",
+            "dev/main",
+            "d63b739",
+            "raidar_ultralytics-0.1.0-py3-none-any.whl",
         ),
     ]
     published = [
@@ -455,23 +460,23 @@ def _report(**overrides: Any) -> w.WheelsReport:
     ]
     failures = [
         w.ImportFailure(
-            "signals.lte",
+            "raidar.ultralytics",
             "ModuleNotFoundError: No module named 'recordstream.draws'",
             "recordstream.draws",
             "recordstream",
         )
     ]
     values: Dict[str, Any] = dict(
-        target="signals-bridge",
-        wheels_dir="signals-bridge/wheels",
+        target="navigaitor",
+        wheels_dir="navigaitor/wheels",
         wheels_bytes=3_400_000,
         built=built,
         published=published,
         name_clashes=[],
         install_error=None,
         import_failures=failures,
-        imported=["signals", "signals.bridge"],
-        packages=["signals", "signals.bridge", "signals.lte"],
+        imported=["torpaido", "navigaitor"],
+        packages=["torpaido", "navigaitor", "raidar.ultralytics"],
     )
     values.update(overrides)
     return w.WheelsReport(**values)
@@ -484,9 +489,9 @@ class TestReport:
         assert report.release_first == ["recordstream"]
         assert report.behind_only == ["confluid"]
         text = w.render_report(report)
-        assert "signals-bridge needs 2 workspace projects that are not on PyPI" in text
-        assert "signals-bridge/wheels (3.4 MB)" in text
-        assert "signals-lte  0.1.0  dev/main d63b739" in text
+        assert "navigaitor needs 2 workspace projects that are not on PyPI" in text
+        assert "navigaitor/wheels (3.4 MB)" in text
+        assert "raidar-ultralytics  0.1.0  dev/main d63b739" in text
         assert (
             "confluid      PyPI 0.4.0                      behind: 2 files differ (confluid/a.py, confluid/b.py)"
             in text
@@ -497,7 +502,7 @@ class TestReport:
             "recordstream  PyPI 0.1.0a2, checkout 0.1.0a3  behind: 4 files differ "
             "(recordstream/draws.py, recordstream/x.py, recordstream/y.py, …)" in text
         )
-        assert "signals.lte  ModuleNotFoundError: No module named 'recordstream.draws'  (recordstream)" in text
+        assert "raidar.ultralytics  ModuleNotFoundError: No module named 'recordstream.draws'  (recordstream)" in text
         assert "imported every module of its 3 packages:" in text
         assert "2 other modules imported" in text
         assert text.rstrip().endswith("Release first: recordstream\nBehind, nothing breaks: confluid")
@@ -510,21 +515,21 @@ class TestReport:
         assert report.ok is True
         text = w.render_report(report)
         assert "all 2 modules imported" in text
-        assert text.rstrip().endswith("PyPI is up to date for signals-bridge.")
+        assert text.rstrip().endswith("PyPI is up to date for navigaitor.")
 
     def test_a_failed_install_shows_uvs_own_words_and_cannot_clear_anything_behind(self) -> None:
         error = "× No solution found when resolving dependencies:\n╰─▶ Because only confluid<=0.4.0 is available"
         report = _report(install_error=error, import_failures=[], imported=[])
         assert report.ok is False
         text = w.render_report(report)
-        assert "Installing signals-bridge in an empty venv failed:\n    × No solution found" in text
+        assert "Installing navigaitor in an empty venv failed:\n    × No solution found" in text
         assert "Behind: confluid, recordstream" in text
         nothing_behind = _report(install_error=error, import_failures=[], imported=[], published=[])
         assert w.render_report(nothing_behind).rstrip().endswith("Because only confluid<=0.4.0 is available")
 
     def test_nothing_to_build_and_nothing_from_pypi(self) -> None:
         text = w.render_report(_report(built=[], published=[], import_failures=[], wheels_bytes=0))
-        assert "signals-bridge needs no workspace project that is not on PyPI" in text
+        assert "navigaitor needs no workspace project that is not on PyPI" in text
         assert "It takes no workspace project from PyPI." in text
 
     def test_one_of_each_is_written_in_the_singular(self) -> None:
@@ -534,13 +539,11 @@ class TestReport:
                 wheels_bytes=465_000,
                 published=[w.PublishedDependency("loggair", "loggair", "0.2.0", "0.2.0", ["loggair/core.py"])],
                 import_failures=[],
-                imported=["signals.bridge"],
-                packages=["signals.bridge"],
+                imported=["navigaitor"],
+                packages=["navigaitor"],
             )
         )
-        assert (
-            "needs 1 workspace project that is not on PyPI. Its wheel is in signals-bridge/wheels (465 kB):" in text
-        )
+        assert "needs 1 workspace project that is not on PyPI. Its wheel is in navigaitor/wheels (465 kB):" in text
         assert "It takes 1 workspace project from PyPI" in text
         assert "behind: 1 file differs (loggair/core.py)" in text
         assert "imported every module of its 1 package:" in text
@@ -548,17 +551,15 @@ class TestReport:
         assert text.rstrip().endswith("Behind, nothing breaks: loggair")
 
     def test_a_failure_no_published_project_explains_is_said_so(self) -> None:
-        failure = w.ImportFailure("signals.bridge", "ModuleNotFoundError: No module named 'torch'", "torch", None)
+        failure = w.ImportFailure("navigaitor", "ModuleNotFoundError: No module named 'torch'", "torch", None)
         report = _report(import_failures=[failure])
         assert report.release_first == []
         text = w.render_report(report)
-        assert "signals.bridge  ModuleNotFoundError: No module named 'torch'\n" in text
-        assert "signals-bridge does not import, and no project it takes from PyPI is the cause." in text
+        assert "navigaitor  ModuleNotFoundError: No module named 'torch'\n" in text
+        assert "navigaitor does not import, and no project it takes from PyPI is the cause." in text
 
     def test_a_module_missing_what_no_workspace_project_ships_is_listed_and_breaks_nothing(self) -> None:
-        warning = w.ImportFailure(
-            "signals.bridge.ops", "ModuleNotFoundError: No module named 'company'", "company", None
-        )
+        warning = w.ImportFailure("navigaitor.ops", "ModuleNotFoundError: No module named 'pycrate'", "pycrate", None)
         report = _report(
             published=[w.PublishedDependency("loggair", "loggair", "0.2.0", "0.2.0", [])],
             import_failures=[],
@@ -570,9 +571,9 @@ class TestReport:
         assert "all 2" not in text
         assert (
             "Not imported, missing what no workspace project ships (an optional extra's?):\n"
-            "  signals.bridge.ops  ModuleNotFoundError: No module named 'company'\n" in text
+            "  navigaitor.ops  ModuleNotFoundError: No module named 'pycrate'\n" in text
         )
-        assert text.rstrip().endswith("PyPI is up to date for signals-bridge.")
+        assert text.rstrip().endswith("PyPI is up to date for navigaitor.")
 
     def test_a_name_clash_is_reported(self) -> None:
         clash = "purifai: PyPI's purifai 0.1.3 is another project's — pip takes it over this wheel (0.1.0)"
@@ -583,12 +584,12 @@ class TestReport:
         assert data["ok"] is False
         assert data["release_first"] == ["recordstream"]
         assert data["built"][0] == {
-            "project": "signals",
-            "distribution": "signals",
+            "project": "torpaido",
+            "distribution": "torpaido",
             "version": "0.1.0",
             "branch": "dev/main",
             "commit": "38ba9a9",
-            "wheel": "signals-0.1.0-py3-none-any.whl",
+            "wheel": "torpaido-0.1.0-py3-none-any.whl",
             "needed": True,
             "on_pypi": None,
         }
@@ -598,18 +599,18 @@ class TestReport:
 
 class TestReadme:
     def test_the_readme_names_its_generator_each_wheels_commit_and_the_install_command(self) -> None:
-        text = w.render_readme("signals-bridge", "unpublished", _report().built)
+        text = w.render_readme("navigaitor", "unpublished", _report().built)
         assert "AUTO-GENERATED FILE — DO NOT EDIT BY HAND" in text
-        assert "Generated by: aisland wheels build signals-bridge" in text
+        assert "Generated by: aisland wheels build navigaitor" in text
         assert "Source: aisland/aisland/wheels.py (render_readme)" in text
-        assert "To regenerate: aisland wheels build signals-bridge" in text
+        assert "To regenerate: aisland wheels build navigaitor" in text
         assert "    python wheels/install.py\n" in text
         assert "    python wheels/install.py --reinstall\n" in text
-        assert "| signals_lte-0.1.0-py3-none-any.whl | signals-lte | dev/main | d63b739 | yes |" in text
+        assert "| raidar_ultralytics-0.1.0-py3-none-any.whl | raidar-ultralytics | dev/main | d63b739 | yes |" in text
 
     def test_the_readme_holds_no_date_so_an_unchanged_rebuild_changes_no_file(self) -> None:
         built = _report().built
-        assert w.render_readme("signals-bridge", "all", built) == w.render_readme("signals-bridge", "all", built)
+        assert w.render_readme("navigaitor", "all", built) == w.render_readme("navigaitor", "all", built)
 
     def test_with_all_the_readme_names_the_scope_and_which_wheels_are_needed(self) -> None:
         built = [
@@ -625,8 +626,8 @@ class TestReadme:
                 on_pypi="0.2.0",
             ),
         ]
-        text = w.render_readme("signals-bridge", "all", built)
-        assert "To regenerate: aisland wheels build signals-bridge --all" in text
+        text = w.render_readme("navigaitor", "all", built)
+        assert "To regenerate: aisland wheels build navigaitor --all" in text
         assert "| raidar-0.2.0-py3-none-any.whl | raidar | dev/main | 9f8e7d6 | no |" in text
 
 
@@ -659,8 +660,8 @@ class TestWheelsYaml:
 
     def test_each_wheel_its_commit_whether_it_is_needed_and_install_defaulting_to_needed(self, tmp_path: Path) -> None:
         not_built = [w.NotBuilt("loggair", "no checkout here — taken from PyPI 0.2.0")]
-        text = w.render_wheels_yaml("signals-bridge", "all", self._built(), not_built, {})
-        assert "# To regenerate: aisland wheels build signals-bridge --all" in text
+        text = w.render_wheels_yaml("navigaitor", "all", self._built(), not_built, {})
+        assert "# To regenerate: aisland wheels build navigaitor --all" in text
         assert "# AUTO-GENERATED FILE — edit only the `install:` values (a rerun keeps them)" in text
         assert "DO NOT EDIT" not in text
         assert (
@@ -670,7 +671,7 @@ class TestWheelsYaml:
         assert '  - project: "loggair"\n    reason: "no checkout here — taken from PyPI 0.2.0"\n' in text
         (tmp_path / "wheels.yaml").write_text(text)
         project, entries = wi.read_wheels(tmp_path / "wheels.yaml")
-        assert project == "signals-bridge"
+        assert project == "navigaitor"
         assert [(e.project, e.needed, e.install) for e in entries] == [
             ("confluid", True, True),
             ("raidar", False, False),
@@ -704,11 +705,11 @@ class TestWheelsYaml:
 
 class TestTheInstallScript:
     def test_the_script_is_the_template_under_a_header_naming_its_command(self) -> None:
-        script = w.render_install_script("signals-bridge", "needed")
+        script = w.render_install_script("navigaitor", "needed")
         template = Path(wi.__file__).read_text()
         header = script.split("# =========================================================================\n")
-        assert "# Generated by: aisland wheels build signals-bridge --include-published\n" in header[1]
-        assert "# To regenerate: aisland wheels build signals-bridge --include-published\n" in header[1]
+        assert "# Generated by: aisland wheels build navigaitor --include-published\n" in header[1]
+        assert "# To regenerate: aisland wheels build navigaitor --include-published\n" in header[1]
         assert "THE TEMPLATE" not in script
         assert (
             header[2]
@@ -722,9 +723,9 @@ class TestTheInstallScript:
 
         built = TestWheelsYaml._built()
         files = {
-            "README.md": w.render_readme("signals-bridge", scope, built),
-            "wheels.yaml": w.render_wheels_yaml("signals-bridge", scope, built, [], {}),
-            "install.py": w.render_install_script("signals-bridge", scope),
+            "README.md": w.render_readme("navigaitor", scope, built),
+            "wheels.yaml": w.render_wheels_yaml("navigaitor", scope, built, [], {}),
+            "install.py": w.render_install_script("navigaitor", scope),
         }
         expected = {"unpublished": (False, False), "needed": (True, False), "all": (False, True)}[scope]
         for name, text in files.items():
@@ -732,20 +733,20 @@ class TestTheInstallScript:
             argv = line.split("To regenerate:")[1].split()
             assert argv[:3] == ["aisland", "wheels", "build"], f"{name}: {argv}"
             context = wheels_build.make_context("build", argv[3:])
-            assert context.params["project"] == "signals-bridge", name
+            assert context.params["project"] == "navigaitor", name
             assert (context.params["include_published"], context.params["include_all"]) == expected, name
 
 
 class TestCli:
     def test_exit_one_and_the_text_report_when_something_breaks(self, monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.setattr(w, "vendor_wheels", lambda root, project, **kwargs: _report())
-        result = CliRunner().invoke(main, ["wheels", "signals-bridge"])
+        result = CliRunner().invoke(main, ["wheels", "navigaitor"])
         assert result.exit_code == 1, result.output
         assert "Release first: recordstream" in result.output
 
     def test_exit_zero_and_json_when_nothing_breaks(self, monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.setattr(w, "vendor_wheels", lambda root, project, **kwargs: _report(import_failures=[]))
-        result = CliRunner().invoke(main, ["wheels", "signals-bridge", "--json"])
+        result = CliRunner().invoke(main, ["wheels", "navigaitor", "--json"])
         assert result.exit_code == 0, result.output
         assert json.loads(result.stdout)["ok"] is True
 
@@ -768,7 +769,7 @@ class TestCli:
             return _report(import_failures=[])
 
         monkeypatch.setattr(w, "vendor_wheels", _vendor)
-        result = CliRunner().invoke(main, ["wheels", "signals-bridge", *flags])
+        result = CliRunner().invoke(main, ["wheels", "navigaitor", *flags])
         assert result.exit_code == 0, result.output
         assert asked == [scope]
 
@@ -943,7 +944,7 @@ class TestTheRunWithFakedBuilds:
         failures: Dict[str, Dict[str, Optional[str]]] = {
             "libx": {"error": "ModuleNotFoundError: No module named 'torch'", "missing": "torch"},
             "app.labelling": {"error": "ModuleNotFoundError: No module named 'libx.new'", "missing": "libx.new"},
-            "app.extra": {"error": "ModuleNotFoundError: No module named 'company'", "missing": "company"},
+            "app.extra": {"error": "ModuleNotFoundError: No module named 'pycrate'", "missing": "pycrate"},
         }
         self._fake_builds(monkeypatch, {}, failures)
 
@@ -1001,13 +1002,13 @@ class TestOwner:
     """A missing module points at the distribution whose package is its longest prefix."""
 
     def test_the_longest_prefix_wins(self) -> None:
-        owners = {"signals": "signals", "signals.lte": "signals-lte"}
-        assert w._owner("signals.lte.cell", owners) == "signals-lte"
-        assert w._owner("signals.other", owners) == "signals"
+        owners = {"raidar": "raidar", "raidar.ultralytics": "raidar-ultralytics"}
+        assert w._owner("raidar.ultralytics.models", owners) == "raidar-ultralytics"
+        assert w._owner("raidar.other", owners) == "raidar"
 
     def test_a_module_nobody_ships_or_no_module_has_no_owner(self) -> None:
-        assert w._owner("torch", {"signals": "signals"}) is None
-        assert w._owner(None, {"signals": "signals"}) is None
+        assert w._owner("torch", {"raidar": "raidar"}) is None
+        assert w._owner(None, {"raidar": "raidar"}) is None
 
 
 # --- the empty venv, with uv replaced by a script ---------------------------------------------
@@ -1137,7 +1138,7 @@ def _end_to_end_workspace(root: Path, pypi: Path, monkeypatch: pytest.MonkeyPatc
     app_modules = {
         "app/__init__.py": "",
         "app/core.py": "import libx\n",
-        # Only a deeper import reaches it: `import app` never does (signals.bridge.labelling).
+        # Only a deeper import reaches it: `import app` never does.
         "app/labelling.py": "from pubdep.newer import VALUE\n",
         # An optional extra's module: what it misses no workspace project ships.
         "app/extra.py": "import some_optional_extra\n",

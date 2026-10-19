@@ -13,7 +13,7 @@ loses to PyPI's (measured 2026-10-09 on recordstream 0.1.0a2, built from a check
     python wheels/install.py                 # the wheels marked install: true, then the project
     python wheels/install.py --all           # every wheel listed
     python wheels/install.py --needed        # the wheels the project needs
-    python wheels/install.py --only recordstream,signals
+    python wheels/install.py --only confluid,recordstream
     python wheels/install.py --no-project    # the chosen wheels only
     python wheels/install.py --reinstall     # reinstall the chosen wheels first (a rebuild keeps their version)
     python wheels/install.py --dry-run       # print the commands, run nothing

@@ -403,9 +403,9 @@ class TestTheInternalDepClosureFollowsWhatCIInstalls:
     CI installs each internal dep bare (``--no-deps`` + the root's ``.[dev,…]``,
     which resolves only the dep's BASE dependencies), so a transitive dep's
     extras are never requested and must not add pre-installs — the old
-    walk-every-extras-group rule made the CI of a project depending only on
-    signals install torpaido/matrainer/annotaide (reachable only through signals's dev extra
-    and matrainer's torpaido extra) and made annotaide's CI pre-install
+    walk-every-extras-group rule made the CI of a project depending on one other project install
+    everything that project's dev extra reaches (torpaido through matrainer's extra, a sibling
+    through a dev extra) and made annotaide's CI pre-install
     annotaide ITSELF from git@main. The ROOT is different: its dev/notebook and
     selected framework/tracker extras ARE installed, so their internal deps stay
     in. An extras-carrying spec (``libmid[gpu]``) is a real request: the named
@@ -441,7 +441,7 @@ class TestTheInternalDepClosureFollowsWhatCIInstalls:
     def test_the_roots_own_dev_and_notebook_extras_are_walked(
         self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
     ) -> None:
-        """The signals shape (the CON pin): CI installs the ROOT's `.[dev]` and the
+        """A root whose own extras name internal deps (the CON pin): CI installs the ROOT's `.[dev]` and the
         best-effort `.[notebook]`, so internal deps named there stay pre-installed —
         while an extra CI never installs (`viz`) adds nothing.
         """
@@ -604,7 +604,7 @@ class TestTheWorkflowActionsRunOnNode24:
 class TestALongStageHasATimeLimit:
     """A stage that runs the project's code gets a time limit in `Jenkinsfile.local` (user choice 2026-10-15): past
     it the stage FAILS naming itself and the limit, so one hung test never holds the nightly orchestrator again
-    (annotaide.local #37's Unit Tests waited 109 min on a test ignoring SIGINT, signals-5gnr.local #13's Slow
+    (annotaide.local #37's Unit Tests waited 109 min on a test ignoring SIGINT, another project's Slow
     Tests ran 519 min, and acme.local #36 waited on both). The limits live in ONE table, `STAGE_LIMITS`, and every
     project gets the same; Initialize and the quality gates run tools, not the project's code, and get none; the
     push pipelines get none here. A timed-out pytest writes no report, and Jenkins would record the previous build's

@@ -54,7 +54,7 @@ NIGHTLY_CHECK_CRON = "30 9 * * 1-5"
 
 #: A long stage's time limit in minutes in `Jenkinsfile.local` (user choice 2026-10-15): past it the stage FAILS naming
 #: itself and the limit (`TIMED_OUT_MESSAGE`), so one hung test never holds the nightly orchestrator — annotaide.local
-#: #37's Unit Tests waited 109 min on a test ignoring SIGINT, signals-5gnr.local #13's Slow Tests ran 519 min the
+#: #37's Unit Tests waited 109 min on a test ignoring SIGINT, another project's Slow Tests ran 519 min the
 #: night before, and acme.local #36 waited on both with no limit anywhere. Each limit is about twice the longest
 #: healthy stage of the 01:00 runs of 2026-10-10..15 (Unit Tests 6.0 min, Slow Tests 29.6 min, Verify Examples 0.5 min,
 #: Verify Notebooks 1.4 min); Initialize and the quality gates run tools, not the project's code, and get none. Waiting
@@ -1233,9 +1233,9 @@ pipeline {{
         #     extra). Its OTHER extras are never requested by any install step
         #     (each dep installs bare, and `.[dev]` resolves only its base deps),
         #     so they must not add pre-installs — the old rule made the CI of
-        #     a project depending only on signals install torpaido/matrainer/
-        #     annotaide, reachable only through signals's dev extra and
-        #     matrainer's torpaido extra.
+        #     a project depending on one other project install everything that
+        #     project's dev extra reaches (torpaido through matrainer's extra,
+        #     a sibling through a dev extra).
         # Specs are parsed with packaging.Requirement: the regex split it
         # replaces couldn't parse `matrainer[torch]>=0.1.0` and silently dropped
         # the spec. Topologically sorted so every package's deps install first.
@@ -1296,7 +1296,7 @@ pipeline {{
             work.extend((req.name, frozenset(req.extras)) for req in _gearlux_requirements(sub_table, dep_extras))
 
         # A project never pre-installs itself: a dependency cycle back to the root
-        # (annotaide <-> signals through dev extras) would otherwise install the
+        # (two projects requiring each other through a dev extra) would otherwise install the
         # root's own main branch over the very checkout under test.
         seen.discard(metadata["name"])
 
@@ -1452,12 +1452,12 @@ pipeline {{
         # project's distribution must record the checkout as its editable source (`direct_url.json`,
         # written by every PEP 660 install — uv and pip alike). It reads the distribution, never the
         # package name: a project may ship its code inside another project's package namespace
-        # (`signals-bridge` installs `signals/bridge/`), where a package lookup would import a
+        # (`raidar-ultralytics` installs `raidar/ultralytics/`), where a package lookup would import a
         # sibling and name the wrong checkout. `python3 -P` is load-bearing: Jenkins runs inside the
         # checkout (customWorkspace), and without -P the working directory lands first on sys.path,
         # so a stale `<name>.egg-info` left in the checkout shadows the venv's record and the check
-        # fails a correctly-installed project (measured on signals-bridge: exit 1 without -P,
-        # exit 0 with it).
+        # fails a correctly-installed project (measured on such a child project: exit 1 without
+        # -P, exit 0 with it).
         dist_name = metadata["name"]
         venv_check_sh = f'''sh """${{VENV_BIN}}/python3 -P - '{dist_name}' "${{env.WORKSPACE_ROOT}}/{project_name}" <<'PY'
 import importlib.metadata, json, pathlib, sys

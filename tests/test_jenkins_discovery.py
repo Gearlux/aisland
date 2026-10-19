@@ -46,12 +46,12 @@ class TestDiscoverGearluxProjects:
         assert discover_gearlux_projects(tmp_path) == []
 
     def test_excludes_bitbucket_submodule(self, tmp_path: Path) -> None:
-        """signals-bridge is on Bitbucket, not GitHub Gearlux — must be excluded."""
+        """A submodule whose remote is Bitbucket, not GitHub Gearlux, is excluded."""
         _write_submodule(
             tmp_path,
-            "signals-bridge",
-            "https://bitbucket.example.com/scm/x/signals-bridge.git",
-            "signals-bridge",
+            "navigaitor",
+            "https://bitbucket.example.com/scm/x/navigaitor.git",
+            "navigaitor",
         )
         assert discover_gearlux_projects(tmp_path) == []
 
@@ -105,7 +105,7 @@ class TestIsPrivateGearluxRepo:
             return subprocess.CompletedProcess(args=args[0], returncode=0, stdout="true\n", stderr="")
 
         monkeypatch.setattr(jenkins_mod.subprocess, "run", fake_run)
-        assert is_private_gearlux_repo("signals") is True
+        assert is_private_gearlux_repo("navigaitor") is True
 
     def test_returns_false_when_gh_says_false(self, monkeypatch: pytest.MonkeyPatch) -> None:
         def fake_run(*args, **kwargs):  # type: ignore[no-untyped-def]

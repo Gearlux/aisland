@@ -129,7 +129,7 @@ def test_a_prerelease_floor_accepts_the_prerelease(tmp_path: Path) -> None:
     root = _workspace(
         tmp_path,
         ("recordstream", "0.1.0a1", [], []),
-        ("signals", "0.1.0", ["recordstream>=0.1.0a1"], []),
+        ("navigaitor", "0.1.0", ["recordstream>=0.1.0a1"], []),
     )
     assert find_unsatisfiable_specs(root) == []
 
@@ -139,9 +139,9 @@ def test_a_plain_floor_rejects_a_prerelease_sibling(tmp_path: Path) -> None:
     root = _workspace(
         tmp_path,
         ("recordstream", "0.1.0a1", [], []),
-        ("signals", "0.1.0", ["recordstream>=0.1.0"], []),
+        ("navigaitor", "0.1.0", ["recordstream>=0.1.0"], []),
     )
-    assert find_unsatisfiable_specs(root) == [Violation("signals", "recordstream>=0.1.0", "recordstream", "0.1.0a1")]
+    assert find_unsatisfiable_specs(root) == [Violation("navigaitor", "recordstream>=0.1.0", "recordstream", "0.1.0a1")]
 
 
 def test_specs_inside_an_extra_are_checked_too(tmp_path: Path) -> None:
@@ -188,7 +188,7 @@ def test_external_and_detached_dependencies_are_left_alone(tmp_path: Path) -> No
     """`loggair` is pypi-sourced (empty dir, no local version) and `torch` is not ours."""
     root = _workspace(
         tmp_path,
-        ("signals", "0.1.0", ["loggair>=99.0", "torch>=2.0"], []),
+        ("navigaitor", "0.1.0", ["loggair>=99.0", "torch>=2.0"], []),
     )
     (tmp_path / "loggair").mkdir()  # deinit'd submodule: directory exists, pyproject does not
     assert find_unsatisfiable_specs(root) == []

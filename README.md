@@ -213,7 +213,7 @@ identical across machines).
 
 Some projects are **optional** — they ship their own `uv.toml` (a private
 package index) or are marked `active = false` in `.gitmodules` (e.g. the
-corporate-only `vendorcli` / `signals-bridge`). `aisland setup` **prompts**
+corporate-only `vendorcli`). `aisland setup` **prompts**
 whether to activate each one and remembers the answer **per-machine** in
 `.git/config` (`submodule.<name>.active`), never in the committed
 `.gitmodules`. A decided module is honored silently on later runs; a *new*
@@ -304,7 +304,7 @@ recorded:
 
 ```bash
 aisland tests report aisland                  # the last 30 days
-aisland tests report signals-wlan --days 90
+aisland tests report navigaitor --days 90
 aisland tests report raidar --json            # the same report as data
 pytest -p no:aisland_test_stats               # one run left out of the record
 ```
@@ -461,13 +461,13 @@ wheels into that project's `wheels/` folder, and checks the projects it takes fr
 this checkout:
 
 ```bash
-aisland wheels build signals-bridge
-aisland wheels build signals-bridge --include-published   # also the projects it needs that ARE on PyPI
-aisland wheels build signals-bridge --all                 # every workspace project with a checkout here
-aisland wheels build signals-bridge --zip                 # also pack the folder into one zip
-aisland wheels build signals-bridge --commit              # commit the folder in signals-bridge
-aisland wheels build signals-bridge --json                # the same report as data
-aisland wheels signals-bridge …                           # short for `aisland wheels build signals-bridge …`
+aisland wheels build navigaitor
+aisland wheels build navigaitor --include-published   # also the projects it needs that ARE on PyPI
+aisland wheels build navigaitor --all                 # every workspace project with a checkout here
+aisland wheels build navigaitor --zip                 # also pack the folder into one zip
+aisland wheels build navigaitor --commit              # commit the folder in navigaitor
+aisland wheels build navigaitor --json                # the same report as data
+aisland wheels navigaitor …                           # short for `aisland wheels build navigaitor …`
 ```
 
 | Flag | Built | Installed by default |
@@ -479,72 +479,62 @@ aisland wheels signals-bridge …                           # short for `aisland
 A project the flag covers that has no checkout on this machine is not built: the report says so
 (`Not built: loggair (no checkout here — taken from PyPI 0.2.0)`) and it comes from PyPI.
 
-What it printed for signals-bridge on 2026-10-08 (53 s; exit 1):
+What it printed for navigaitor on 2026-10-19 (24 s; exit 0) — every workspace project it needs is on PyPI, so it built
+nothing and checked the PyPI half:
 
 ```text
-signals-bridge needs 4 workspace projects that are not on PyPI. Their wheels are in signals-bridge/wheels (1.3 MB):
-  signals           0.1.0  dev/main 75e9dee
-  signals-5gnr      0.1.0  dev/main abe8d10
-  signals-analysis  0.1.0  dev/main d544812
-  signals-lte       0.1.0  dev/main d63b739
+navigaitor needs no workspace project that is not on PyPI; navigaitor/wheels holds no wheel.
 
 It takes 4 workspace projects from PyPI, compared with this checkout:
-  confluid      PyPI 0.4.0    behind: 6 files differ (confluid/configurator.py, confluid/decorators.py, confluid/engine.py, …)
-  liquifai      PyPI 0.3.0    behind: 13 files differ (liquifai/bridge/__init__.py, liquifai/bridge/group.py, liquifai/bridge/policies.py, …)
-  loggair       PyPI 0.2.0    not compared: no checkout here
-  recordstream  PyPI 0.1.0a2  behind: 18 files differ (recordstream/__init__.py, recordstream/core/stream.py, recordstream/draws.py, …)
+  confluid      PyPI 0.4.1    behind: 3 files differ (confluid/__init__.py, confluid/resolver.py, confluid/scopes.py)
+  liquifai      PyPI 0.3.1    behind: 9 files differ (liquifai/__init__.py, liquifai/completion/cache.py, liquifai/completion/engine.py, …)
+  loggair       PyPI 0.2.1    up to date
+  recordstream  PyPI 0.1.0a3  behind: 6 files differ (recordstream/ops/__init__.py, recordstream/ops/image.py, recordstream/ops/predict.py, …)
 
-Installed signals-bridge in an empty venv (its wheels + PyPI) and imported every module of its 5 packages:
-  signals.analysis.fivegnr  ModuleNotFoundError: No module named 'recordstream.draws'  (recordstream)
-  signals.analysis.lte      ModuleNotFoundError: No module named 'recordstream.draws'  (recordstream)
-  signals.fivegnr           ModuleNotFoundError: No module named 'recordstream.draws'  (recordstream)
-  signals.generators        ModuleNotFoundError: No module named 'recordstream.draws'  (recordstream)
-  signals.bridge.labelling  ModuleNotFoundError: No module named 'recordstream.draws'  (recordstream)
-  signals.lte               ModuleNotFoundError: No module named 'recordstream.draws'  (recordstream)
-  signals.occupancy         ModuleNotFoundError: No module named 'recordstream.draws'  (recordstream)
-  signals.rfuav.ops         ModuleNotFoundError: No module named 'recordstream.draws'  (recordstream)
-  signals.sources           ModuleNotFoundError: No module named 'recordstream.draws'  (recordstream)
-  149 other modules imported
+Installed navigaitor in an empty venv (its wheels + PyPI) and imported every module of its 1 package:
+  17 modules imported
 
-Release first: recordstream
-Behind, nothing breaks: confluid, liquifai
+Not imported, missing what no workspace project ships (an optional extra's?):
+  navigaitor.server         ModuleNotFoundError: No module named 'sonair'
+  navigaitor.visualisation  ModuleNotFoundError: No module named 'matplotlib'
+
+Behind, nothing breaks: confluid, liquifai, recordstream
 ```
 
 - **Behind**: the wheel this checkout builds differs from the one on PyPI, file by file. The
   wheels were built against this checkout, so they may use what no release has yet.
 - **Release first**: a module failed to import in an empty venv, and the module it missed
   belongs to that project. Release it, then run `aisland wheels` again. Every module is
-  imported, not only the packages: `signals.bridge.labelling` above is reached by no package's
-  own import. Exit status 1 means the install failed, a package failed to import, or a module
+  imported, not only the packages: a module no package's own import reaches is checked too.
+  Exit status 1 means the install failed, a package failed to import, or a module
   missed a workspace project's module; 0 means none of that, even if some projects are behind.
 - **Not imported, missing what no workspace project ships**: a module below a package that
   imported, missing something no workspace project ships — most often an optional extra's
   dependency, which the empty venv does not install. It is listed and does not change the exit
   status.
 
-What `--include-published` printed for signals-bridge on 2026-10-09 (1 min 46 s; exit 0):
+What `--include-published` printed for navigaitor on 2026-10-19 (16 s; exit 0):
 
 ```text
-signals-bridge needs 8 workspace projects; 7 are built from this checkout into signals-bridge/wheels (1.9 MB):
-  confluid             0.4.0    dev/main 302e2ed  on PyPI 0.4.0
-  liquifai             0.3.0    dev/main 0cb9dd7  on PyPI 0.3.0
-  recordstream         0.1.0a2  dev/main 73b9772  on PyPI 0.1.0a2
-  signals           0.1.0    dev/main 75e9dee
-  signals-5gnr      0.1.0    dev/main ba9e6f0
-  signals-analysis  0.1.0    dev/main 17991b2
-  signals-lte       0.1.0    dev/main 1eb1815
-Not built: loggair (no checkout here — taken from PyPI 0.2.0)
+navigaitor needs 4 workspace projects; 4 are built from this checkout into navigaitor/wheels (749 kB):
+  confluid      0.4.1    dev/main b313e71  on PyPI 0.4.1
+  liquifai      0.3.1    dev/main e2e0e07  on PyPI 0.3.1
+  loggair       0.2.1    dev/main 5dcb106  on PyPI 0.2.1
+  recordstream  0.1.0a3  dev/main 4ba5477  on PyPI 0.1.0a3
 
-It takes 1 workspace project from PyPI, compared with this checkout:
-  loggair  PyPI 0.2.0  not compared: no checkout here
+It takes no workspace project from PyPI.
 
-Installed signals-bridge in an empty venv (its wheels + PyPI) and imported every module of its 8 packages:
-  351 modules imported
+Installed navigaitor in an empty venv (its wheels + PyPI) and imported every module of its 5 packages:
+  146 modules imported
 
 Not imported, missing what no workspace project ships (an optional extra's?):
-  recordstream.keras  ModuleNotFoundError: No module named 'keras'
+  navigaitor.server         ModuleNotFoundError: No module named 'sonair'
+  navigaitor.visualisation  ModuleNotFoundError: No module named 'matplotlib'
+  recordstream.keras        ModuleNotFoundError: No module named 'keras'
+  recordstream.loaders      ImportError: recordstream.loaders needs torch (it declares DataLoader slots) — install `recordstream[torch]`.
+  recordstream.ops.torch    ModuleNotFoundError: No module named 'torch'
 
-PyPI is up to date for signals-bridge.
+PyPI is up to date for navigaitor.
 ```
 
 #### Installing on the other machine: `wheels/install.py` and `wheels/wheels.yaml`
@@ -569,7 +559,7 @@ From the project's own folder (the folder's `README.md` says the same):
 python wheels/install.py                 # the wheels marked install: true, then the project, editable
 python wheels/install.py --all           # every wheel listed
 python wheels/install.py --needed        # the wheels the project needs
-python wheels/install.py --only recordstream,signals
+python wheels/install.py --only confluid,recordstream
 python wheels/install.py --no-project    # the chosen wheels only
 python wheels/install.py --reinstall     # take rebuilt wheels that kept their version
 python wheels/install.py --dry-run       # print the command, run nothing
@@ -610,39 +600,39 @@ instead (the zip is never committed) and, once the empty-venv check passed, comm
 project itself — that folder only, whatever else is changed or staged:
 
 ```text
-Committed signals-bridge/wheels: <short SHA>    (git log: chore: wheels built with aisland wheels build signals-bridge --all)
-Not committed: the install check failed            (the check failed: nothing is committed)
-Nothing new to commit in signals-bridge/wheels  (a rebuild of unchanged commits)
+Committed navigaitor/wheels: <short SHA>    (git log: chore: wheels built with aisland wheels build navigaitor --all)
+Not committed: the install check failed     (the check failed: nothing is committed)
+Nothing new to commit in navigaitor/wheels  (a rebuild of unchanged commits)
 ```
 
 A run without `--commit` that finds files of `wheels/` still tracked says so, with the command
 that stops tracking them (the files stay on disk):
 
 ```text
-wheels/ is tracked in signals-bridge (10 files); stop tracking it with: git -C signals-bridge rm -r --cached wheels
+wheels/ is tracked in navigaitor (10 files); stop tracking it with: git -C navigaitor rm -r --cached wheels
 ```
 
 #### One zip to carry: `aisland wheels zip` and `aisland wheels install`
 
 ```bash
-aisland wheels zip signals-bridge            # → signals-bridge/wheels/signals-bridge-wheels.zip
-aisland wheels build signals-bridge --zip    # the same, at the end of a build
+aisland wheels zip navigaitor            # → navigaitor/wheels/navigaitor-wheels.zip
+aisland wheels build navigaitor --zip    # the same, at the end of a build
 ```
 
 The zip holds the folder (the wheels, `wheels.yaml`, `install.py`) and a `__main__.py`, so Python
 runs it. On the other machine — which has no aisland — from the project's folder:
 
 ```bash
-python ~/Downloads/signals-bridge-wheels.zip              # unpack into ./wheels, then run wheels/install.py
-python ~/Downloads/signals-bridge-wheels.zip --dry-run    # every other argument goes to install.py
-python signals-bridge-wheels.zip --into ../signals-bridge --unpack-only
+python ~/Downloads/navigaitor-wheels.zip              # unpack into ./wheels, then run wheels/install.py
+python ~/Downloads/navigaitor-wheels.zip --dry-run    # every other argument goes to install.py
+python navigaitor-wheels.zip --into ../navigaitor --unpack-only
 ```
 
 The `*.whl` already in `wheels/` are replaced; other files there stay. A folder whose
 `pyproject.toml` names another project is refused before anything is unpacked:
 
 ```text
-signals-bridge-wheels.zip: run it from the signals-bridge folder, or name it with --into (…/pyproject.toml names annotaide)
+navigaitor-wheels.zip: run it from the navigaitor folder, or name it with --into (…/pyproject.toml names annotaide)
 ```
 
 On a workspace machine the same zip installs into another environment with aisland
@@ -651,8 +641,8 @@ workspace's own `.venv` is refused: install.py installs with pip, and the worksp
 projects through `aisland setup`.
 
 ```bash
-aisland wheels install signals-bridge-wheels.zip --python ~/envs/bridge/bin/python --into ../signals-bridge
-aisland wheels install signals-bridge-wheels.zip --python ~/envs/bridge/bin/python -- --dry-run
+aisland wheels install navigaitor-wheels.zip --python ~/envs/navigaitor/bin/python --into ../navigaitor
+aisland wheels install navigaitor-wheels.zip --python ~/envs/navigaitor/bin/python -- --dry-run
 ```
 
 Why it is built
@@ -942,7 +932,7 @@ Default: [http://localhost:9081](http://localhost:9081)
 |---|---|---|
 | `LABELSTUDIO_USERNAME` | git email | Login user (created on first start) |
 | `LABELSTUDIO_PASSWORD` | workspace folder name | Login password |
-| `LABELSTUDIO_TOKEN` | generated from workspace name | Legacy API token for programmatic clients (annotaide, signals) |
+| `LABELSTUDIO_TOKEN` | generated from workspace name | Legacy API token for programmatic clients (annotaide, a pipeline) |
 | `LABELSTUDIO_URL` | `http://localhost:<port>` | Base URL clients read |
 | `LABELSTUDIO_LOCAL_FILES_ROOT` | `aisland/data/labelstudio/local-files` | Directory LS serves via `/data/local-files/?d=<rel>` |
 
@@ -1043,8 +1033,8 @@ ref = "main"
 source = "pypi"
 distribution = "loggair"
 
-[mirrors.signals-bridge]
-url = "git@github.com:Org/signals-bridge.git"
+[mirrors.navigaitor]
+url = "git@github.com:Org/navigaitor.git"
 ```
 
 You never edit it by hand: `aisland framework set` / `aisland tracker set` / `aisland source set`
@@ -1278,13 +1268,13 @@ remote `.gitmodules` names stays the **primary**: you clone, pull and push it ex
 The **mirror** only receives a copy.
 
 ```bash
-aisland mirror set signals-bridge git@github.com:Org/signals-bridge.git
+aisland mirror set navigaitor git@github.com:Org/navigaitor.git
 ```
 ```
-==> signals-bridge: mirror → git@github.com:Org/signals-bridge.git
-    recorded in config.toml (commit it); remote `mirror` added to signals-bridge
-    Note: each sync copies signals-bridge's dev/main, main and tags from bitbucket.example.com to github.com — make sure its code may live there.
-    Push to it with: aisland mirror sync signals-bridge
+==> navigaitor: mirror → git@github.com:Org/navigaitor.git
+    recorded in config.toml (commit it); remote `mirror` added to navigaitor
+    Note: each sync copies navigaitor's dev/main, main and tags from bitbucket.example.com to github.com — make sure its code may live there.
+    Push to it with: aisland mirror sync navigaitor
 ```
 
 `aisland mirror sync` pushes the primary's `dev/main`, `main` and tags to every mirror (or to
@@ -1293,7 +1283,7 @@ the one project named). `/push-all` and `/ship` run it as their last step, so af
 
 ```
 $ aisland mirror sync
-==> signals-bridge → git@github.com:Org/signals-bridge.git
+==> navigaitor → git@github.com:Org/navigaitor.git
     dev/main  pushed (3 commits)
     main      in sync
     tags      pushed v0.4.0, v0.4.1
@@ -1424,8 +1414,7 @@ The selection controls what is *declared and installed*, not what is *removed*. 
 clean environment, recreate the `.venv` and run `aisland setup --framework keras`.
 
 > **Some projects require a framework rather than offering a choice**, and they keep `torch` as a
-> plain hard dependency on purpose: `signals` (its record builder enforces `torch.complex64`
-> IQ), `deltaid` (a PyTorch-Lightning segmenter), `raidar` and `raidar-ultralytics` (torch
+> plain hard dependency on purpose: `deltaid` (a PyTorch-Lightning segmenter), `raidar` and `raidar-ultralytics` (torch
 > detection trainers). Selecting `keras` therefore still installs torch on a full workspace —
 > narrowing what a *multi-backend* project installs is what this command is for. Moving their
 > deps behind an extra was considered and rejected: it would make `pip install raidar` yield a
@@ -1778,7 +1767,7 @@ git pull-all --autostash    # also set aside uncommitted edits that are in the w
 A plain `git pull` (even with `submodule.recurse`) only moves each submodule to the commit the root *records*; a commit pushed to a submodule that nobody recorded in the root is never pulled. And when two machines both commit in a submodule and record it, the root's merge stops on the pointer even though the submodule merges cleanly:
 
 ```
-CONFLICT (submodule): Merge conflict in signals
+CONFLICT (submodule): Merge conflict in navigaitor
 Automatic merge failed; fix conflicts and then commit the result.
 ```
 
@@ -1793,8 +1782,8 @@ The same situation as above, with `git pull-all`:
 
 ```
 fetching the root and 25 submodules…
-signals             merged origin/dev/main (1 commit)
-root                   pointer conflict signals → 6cb3d7f (holds both sides)
+navigaitor             merged origin/dev/main (1 commit)
+root                   pointer conflict navigaitor → 6cb3d7f (holds both sides)
 root                   merged origin/dev/main (1 commit)
 ```
 

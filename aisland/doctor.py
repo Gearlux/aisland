@@ -86,7 +86,7 @@ _VM_CA_REMEDY = (
 #: a JIT build with an empty `lock` file and waits on an existing one WITHOUT a timeout, deleting it only
 #: when the compiling process lives through the build; the workspace's one such extension compiles in
 #: about ten seconds (measured 2026-10-13), so two minutes is an order of magnitude over a live build.
-#: The same bound the bridge bridge applies before it imports the package that compiles.
+#: A project that imports such an extension may clear a lock older than this before its import.
 _TORCH_LOCK_STALE_SECONDS = 120.0
 
 
