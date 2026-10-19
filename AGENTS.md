@@ -461,10 +461,14 @@ User choice 2026-10-08: an aisland command, only the named project's closure, bo
   reason: a `github`/`pypi` source (it would empty the folder for good), a mirror, a wheel of a
   project in no git repository. (`tests/test_folder_workspace.py`)
 - Without `.gitmodules`, `setup_git.sh` gives every subfolder that is its own clone (and the root
-  when it is a repository) `pull-all` and `push-all` with the root baked in (`GIT_PULL_ALL_ROOT`),
-  nothing else; `git_pull_all.sh`'s `folder_main` merges each clone on ITS OWN branch, the root
-  last, and records no pointer; `git_push_all.sh` pushes each clone's branch and the root only when
-  all pushed. No clone and no root repository: no aliases. (`tests/test_folder_git_aliases.py`)
+  when it is a repository) every workspace alias with the root baked in (`GIT_PULL_ALL_ROOT`):
+  `git_pull_all.sh`'s `folder_main` merges each clone on ITS OWN branch, the root last, and records
+  no pointer; `git_push_all.sh` pushes each clone's branch and the root only when all pushed;
+  `git_folder_all.sh <verb>` loops `status-all` (root first), `switch-all`, `merge-all`, `tag-all`
+  (tag everywhere, then push) and runs `safe` in the clone typed in, with the workspace's venv and
+  mypy from the root. No clone and no root repository: no aliases. The scripts run under bash 3.2
+  (`/bin/bash`): brace a variable before a non-ASCII character (`${noun}…`), as 3.2 reads the
+  byte into the name. (`tests/test_folder_git_aliases.py`, run under `/bin/bash`)
 - `setup_git.sh [root]`: from the checkout (the script in `<root>/aisland/aisland/git/`) the
   `pull-all` alias keeps its root-relative form; installed elsewhere it names the script by its path
   and passes the root in `GIT_PULL_ALL_ROOT`

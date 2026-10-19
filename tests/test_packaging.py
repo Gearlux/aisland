@@ -60,6 +60,7 @@ def test_the_package_holds_the_templates_and_the_git_scripts() -> None:
     assert manager.CODE_WORKSPACE_TEMPLATE.parent == PACKAGE
     assert _package_files_that_are_not_modules() == [
         "aisland/code-workspace.json",
+        "aisland/git/git_folder_all.sh",
         "aisland/git/git_pull_all.sh",
         "aisland/git/git_push_all.sh",
         "aisland/git/setup_git.sh",

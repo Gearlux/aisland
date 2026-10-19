@@ -15,11 +15,11 @@ fi
 cd "$WORKSPACE_ROOT"
 
 # A workspace without .gitmodules whose subfolders are git repositories of their own (clones): each
-# clone, and the root when it is a repository, gets `pull-all` and `push-all` naming the workspace
-# root (from inside a clone git cannot find it), each repository on its own branch. The aliases that
-# fan out over submodules (switch-all, merge-all, tag-all, status-all, safe) are not installed:
-# here they would act on one clone and say nothing of the others. No .gitmodules and no clone:
-# a root repository goes on below as before; a folder that is no repository gets no aliases.
+# clone, and the root when it is a repository, gets the workspace aliases naming the workspace root
+# (from inside a clone git cannot find it): `pull-all` and `push-all` (each repository on its own
+# branch), and switch-all, merge-all, tag-all, status-all and safe, which loop over the clones
+# (git_folder_all.sh) where a superproject's fan out with `git submodule foreach`. No .gitmodules and
+# no clone: a root repository goes on below as before; a folder that is no repository gets no aliases.
 if [ ! -f "$WORKSPACE_ROOT/.gitmodules" ]; then
     CLONES=()
     for dir in "$WORKSPACE_ROOT"/*/; do
@@ -39,6 +39,10 @@ if [ ! -f "$WORKSPACE_ROOT/.gitmodules" ]; then
                 "!GIT_PULL_ALL_ROOT=\"$WORKSPACE_ROOT\" bash \"$SCRIPT_DIR/git_pull_all.sh\""
             git -C "$WORKSPACE_ROOT/$repo" config --local alias.push-all \
                 "!GIT_PULL_ALL_ROOT=\"$WORKSPACE_ROOT\" bash \"$SCRIPT_DIR/git_push_all.sh\""
+            for pair in switch-all:switch merge-all:merge tag-all:tag status-all:status safe:safe; do
+                git -C "$WORKSPACE_ROOT/$repo" config --local "alias.${pair%%:*}" \
+                    "!GIT_PULL_ALL_ROOT=\"$WORKSPACE_ROOT\" bash \"$SCRIPT_DIR/git_folder_all.sh\" ${pair##*:}"
+            done
         done
         if [ -d "$WORKSPACE_ROOT/.git" ]; then
             # The root's notebook filter, as for a superproject; the clones' .gitattributes are theirs.

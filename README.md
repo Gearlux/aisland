@@ -119,8 +119,8 @@ beta needs 1 workspace project that is not on PyPI. Its wheel is in beta/wheels 
   alpha  0.1.0  main 3a126e4
 ```
 
-`git pull-all` and `git push-all` work over the clones: `aisland git aliases` (or `aisland setup`
-from a wheel) installs both into every clone, and the root when it is a repository. Each clone
+The workspace git aliases work over the clones: `aisland git aliases` (or `aisland setup` from a
+wheel) installs them into every clone, and the root when it is a repository. Each clone
 merges and pushes its OWN branch — independent clones share none — and the root goes last; there
 are no pointers to record:
 
@@ -136,9 +136,25 @@ beta                   pushed main (1 commit)
 
 `git pull-all` lists what needs you (edits in the way, `--autostash`, a detached clone, a
 conflict) as it does for submodules, and `git push-all` pushes the root only when every clone
-pushed. The aliases that fan out over submodules (`switch-all`, `merge-all`, `tag-all`,
-`status-all`, `safe`) are not installed there. What only a submodule can do is refused with the
-reason:
+pushed. The others loop over the clones too, the root first for `status-all` and last otherwise:
+
+```text
+$ git status-all
+alpha                  (@main)
+ M f.txt
+beta                   (@dev, 1 ahead)
+
+$ git switch-all feature          # git merge-all <ref> reports the same way
+alpha                  switched to feature
+beta                   not switched: error: pathspec 'feature' did not match any file(s) known to git
+
+$ git tag-all v1 "first release"  # every clone tagged first, then each tag pushed
+```
+
+`git safe "<message>"` runs the gates of the clone you are in with the workspace's `.venv` — mypy
+from the workspace root against the clone's folder — then commits and pushes that clone.
+
+What only a submodule can do is refused with the reason:
 
 ```text
 $ aisland source set alpha pypi

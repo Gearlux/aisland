@@ -1882,8 +1882,10 @@ submodules", `git pull-all` and `git push-all` included.
   when it is a repository, gets `pull-all` and `push-all`, the root written into the alias (from
   inside a clone git cannot find it). `pull-all` merges each clone with origin on its OWN branch —
   independent clones share none, where submodules follow the root's — then the root; `push-all`
-  pushes each clone, then the root only when all pushed. The other aliases fan out with
-  `git submodule foreach` and are not installed.
+  pushes each clone, then the root only when all pushed. The other aliases (`status-all`,
+  `switch-all`, `merge-all`, `tag-all`, `safe`) fan out with `git submodule foreach` in a
+  superproject; here `git_folder_all.sh <verb>` loops over the same clones, and `safe` takes the
+  workspace's venv and runs mypy from its root, which a clone cannot find on its own.
 
 Rejected: generating a `.gitmodules` for the folder (it would claim submodules git does not have,
 and the root may not be a repository); every ancestor holding projects counting as a workspace (a

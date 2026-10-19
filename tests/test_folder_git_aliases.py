@@ -2,7 +2,8 @@
 
 There, each subfolder that is its own git repository (a clone) is pulled and pushed as a submodule would be — on
 its OWN branch, since independent clones share none — and the root too when it is a repository, last. No pointers
-are recorded: nothing records them. The aliases go into every clone's local config, naming the workspace root,
+are recorded: nothing records them. `switch-all`, `merge-all`, `tag-all`, `status-all` and `safe` loop over the
+clones the same way (`git_folder_all.sh`). The aliases go into every clone's local config, naming the workspace root,
 because from inside a clone git cannot find it. A workspace with `.gitmodules` keeps its aliases
 (`tests/test_git_pull_push_all.py`).
 """
@@ -36,6 +37,10 @@ class Folder:
             "GIT_CONFIG_NOSYSTEM": "1",
         }
         self.env.pop("GIT_DIR", None)
+        if Path("/bin/bash").exists():
+            # `bash` (the git aliases' too) is /bin/bash: on macOS that is bash 3.2, which the scripts are
+            # written for (it read `$noun…` as one variable name), as tests/test_git_pull_push_all.py does.
+            self.env["PATH"] = os.pathsep.join(["/bin", self.env.get("PATH", "")])
         self.root = tmp / "work"
         self.root.mkdir()
         for name, branch in (("alpha", "main"), ("beta", "dev")):
@@ -117,11 +122,109 @@ def test_every_clone_gets_pull_all_and_push_all_naming_the_workspace(plain: Fold
         )
 
 
-def test_the_submodule_only_aliases_are_not_installed(plain: Folder) -> None:
-    """`switch-all`, `merge-all`, `tag-all`, `status-all` fan out over submodules: here they would act on one
-    clone and say nothing of the others."""
-    for alias in ("switch-all", "merge-all", "tag-all", "status-all"):
-        assert plain.git(plain.root / "alpha", "config", "--local", f"alias.{alias}", check=False) == ""
+@pytest.mark.parametrize(
+    "alias, verb",
+    [("switch-all", "switch"), ("merge-all", "merge"), ("tag-all", "tag"), ("status-all", "status"), ("safe", "safe")],
+)
+def test_the_other_workspace_aliases_loop_over_the_clones(plain: Folder, alias: str, verb: str) -> None:
+    """Where submodules fan out with `git submodule foreach`, a folder workspace runs `git_folder_all.sh <verb>`."""
+    assert plain.git(plain.root / "alpha", "config", "--local", f"alias.{alias}") == (
+        f'!GIT_PULL_ALL_ROOT="{plain.root}" bash "{GIT_DIR / "git_folder_all.sh"}" {verb}'
+    )
+
+
+# --- status-all, switch-all, merge-all, tag-all ---------------------------------------------------------------------
+
+
+def test_status_all_shows_each_clone_s_branch_and_changes(plain: Folder) -> None:
+    (plain.root / "alpha" / "f.txt").write_text("edited\n")
+    plain.git(plain.root / "beta", "commit", "-q", "--allow-empty", "-m", "local")
+    result = plain.run("status-all")
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert result.stdout.splitlines() == [
+        "alpha                  (@main)",
+        " M f.txt",
+        "beta                   (@dev, 1 ahead)",
+    ]
+
+
+def test_status_all_puts_a_root_repository_first(repo_root: Folder) -> None:
+    result = repo_root.run("status-all")
+    assert result.stdout.splitlines()[0] == "root                   (@main)"
+
+
+def test_switch_all_checks_out_the_branch_everywhere_and_lists_where_it_could_not(plain: Folder) -> None:
+    plain.git(plain.root / "alpha", "branch", "feature")
+    result = plain.run("switch-all", None, "feature")
+    assert result.returncode == 1
+    assert result.stdout.splitlines()[0] == "alpha                  switched to feature"
+    assert result.stdout.splitlines()[1].startswith("beta                   not switched: ")
+    assert plain.git(plain.root / "alpha", "branch", "--show-current") == "feature"
+    assert plain.git(plain.root / "beta", "branch", "--show-current") == "dev"
+
+
+def test_merge_all_merges_the_ref_in_every_clone(plain: Folder) -> None:
+    for name in ("alpha", "beta"):
+        repo = plain.root / name
+        plain.git(repo, "checkout", "-q", "-b", "feature")
+        (repo / "g.txt").write_text("feature\n")
+        plain.git(repo, "add", "g.txt")
+        plain.git(repo, "commit", "-q", "-m", "feature")
+        plain.git(repo, "checkout", "-q", "-")
+    plain.git(plain.root / "beta", "merge", "-q", "feature")
+    result = plain.run("merge-all", None, "feature")
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert result.stdout.splitlines() == [
+        "alpha                  merged feature",
+        "beta                   up to date with feature",
+    ]
+
+
+def test_tag_all_tags_everywhere_then_pushes_each_tag(plain: Folder) -> None:
+    result = plain.run("tag-all", None, "v1", "first release")
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert result.stdout.splitlines() == [
+        "alpha                  tagged v1",
+        "beta                   tagged v1",
+        "alpha                  pushed tag v1",
+        "beta                   pushed tag v1",
+    ]
+    for name in ("alpha", "beta"):
+        assert plain.git(plain.tmp / "origin" / f"{name}.git", "tag", "-n1", "v1").split(None, 1)[1] == "first release"
+
+
+@pytest.mark.parametrize("alias", ["switch-all", "merge-all", "tag-all"])
+def test_an_alias_without_its_argument_says_how_to_call_it(plain: Folder, alias: str) -> None:
+    result = plain.run(alias)
+    assert result.returncode == 2
+    assert result.stderr.startswith(f"usage: git {alias} ")
+
+
+# --- safe -----------------------------------------------------------------------------------------------------------
+
+
+def test_safe_runs_the_gates_with_the_workspace_venv_then_commits_and_pushes(plain: Folder) -> None:
+    """The gates run in the clone; mypy runs from the workspace root against the clone's folder (root
+    AGENTS.md "Mypy MUST Run From Workspace Root") with the workspace's venv, which a clone cannot find."""
+    log = plain.tmp / "gates.log"
+    bin_dir = plain.root / ".venv" / "bin"
+    bin_dir.mkdir(parents=True)
+    for tool in ("isort", "black", "flake8", "mypy", "pytest"):
+        (bin_dir / tool).write_text(f'#!/bin/sh\necho "{tool} $(pwd) $*" >> "{log}"\n')
+        (bin_dir / tool).chmod(0o755)
+    (bin_dir / "activate").write_text(f'export PATH="{bin_dir}:$PATH"\n')
+    (plain.root / "alpha" / "f.txt").write_text("safe\n")
+    result = plain.run("safe", plain.root / "alpha", "feat: safe")
+    assert result.returncode == 0, result.stdout + result.stderr
+    alpha = plain.root / "alpha"
+    assert log.read_text().splitlines() == [
+        f"isort {alpha} .",
+        f"black {alpha} .",
+        f"flake8 {alpha} .",
+        f"mypy {plain.root} alpha",
+        f"pytest {alpha} ",
+    ]
+    assert plain.git(plain.tmp / "origin" / "alpha.git", "log", "-1", "--format=%s", "main") == "feat: safe"
 
 
 def test_a_root_that_is_no_repository_is_left_alone(tmp_path: Path) -> None:

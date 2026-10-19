@@ -329,9 +329,9 @@ folder_main() {
     if [ ${#clones[@]} -eq 1 ]; then noun="1 repository"; else noun="${#clones[@]} repositories"; fi
     if [ -d "$WORKSPACE_ROOT/.git" ]; then
         labels=(root)
-        echo "fetching the root and $noun…"
+        echo "fetching the root and ${noun}…"
     elif [ ${#clones[@]} -gt 0 ]; then
-        echo "fetching $noun…"
+        echo "fetching ${noun}…"
     else
         echo "no git repository in $WORKSPACE_ROOT — nothing pulled"
         exit 1
