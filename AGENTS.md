@@ -13,7 +13,8 @@ pytest run recorded · [pull-all]
 `pull-all` settles a pointer only to a commit holding both sides · [wheels] a project
 installed outside the workspace gets its unpublished dependencies as wheels · [mirror] a mirror
 is push-only, fast-forward-only, and copies the primary · [wheel-mode] from a checkout everything
-is found from aisland's place, from a wheel from where it runs.
+is found from aisland's place, from a wheel from where it runs · [folders-as-submodules] a folder of
+projects is a workspace, its subfolders read as submodules.
 
 ## Current state
 
@@ -56,8 +57,10 @@ start-time port pre-flight naming the PID is the only signal). All service state
 - **From a checkout aisland works as it always did (user ruling 2026-10-19).** [wheel-mode] `locations.FROM_CHECKOUT`
   (aisland's `pyproject.toml` beside the package, which no wheel carries) selects the rule: from a
   checkout the root and the state follow the package's location, and the folder you run in and
-  `AISLAND_WORKSPACE` change nothing; from a wheel the root is `AISLAND_WORKSPACE`, else the nearest
-  folder holding a `.git` FOLDER above where aisland runs, and the state is `<root>/.aisland/`. Never
+  `AISLAND_WORKSPACE` change nothing; from a wheel the root is `AISLAND_WORKSPACE`, else
+  `locations.find_workspace` (first hit upwards: `.gitmodules`; the start folder when it holds
+  projects; a project's parent; a `.git` folder — the subfolder rule only at the start, or a home
+  folder holding one project becomes everyone's workspace), and the state is `<root>/.aisland/`. Never
   read the cwd or `AISLAND_WORKSPACE` in checkout mode, and never find a path by counting folders up
   from a module (`parents[N]`): ask `locations`/`get_workspace_root()`. (`tests/test_locations.py`,
   `tests/test_packaging.py::test_from_the_wheel_the_workspace_is_where_it_runs_and_the_state_goes_into_it`)
@@ -145,8 +148,9 @@ start-time port pre-flight naming the PID is the only signal). All service state
 
 Root `AGENTS.md` "Two Test Runs" (user ruling 2026-10-05). [test-stats]
 (`tests/test_pytest_stats.py`, `tests/test_workspace_fast_run_default.py`)
-- The plugin records a run only when pytest's rootdir is `<workspace>/<project>` (a
-  `.gitmodules` beside it); never a `pytester` tmp project
+- The plugin records a run only when pytest's rootdir is `<workspace>/<project>` (a submodule, or a
+  project folder of a workspace without `.gitmodules`:
+  `::test_a_project_folder_of_a_workspace_without_gitmodules_is_recorded`); never a `pytester` tmp project
   (`::test_a_run_outside_the_workspace_records_nothing`), and never a Jenkins build (`JENKINS_URL`
   set — the local Jenkins builds in the project folder itself, and its JUnit record is the CI half
   the report reads; `::test_a_jenkins_build_is_left_to_jenkins_own_record`).
@@ -449,6 +453,18 @@ User choice 2026-10-08: an aisland command, only the named project's closure, bo
 
 - Aliases live in LOCAL config (root + every active submodule), never global.
   (`tests/test_setup_git_aliases.py`)
+- **A workspace without `.gitmodules` is read as if each project folder were a submodule (user
+  request 2026-10-19).** [folders-as-submodules] `manager.workspace_folders` is the project list: `.gitmodules`' submodules
+  when it exists, else every direct, non-hidden subfolder holding a `pyproject.toml`, active. A new
+  reader of "the workspace's projects" uses it, never `submodule_active_map` (which stays the
+  submodules only: activation, deinit, mirrors). What needs a submodule is refused naming the
+  reason: a `github`/`pypi` source (it would empty the folder for good), a mirror, a wheel of a
+  project in no git repository. (`tests/test_folder_workspace.py`)
+- Without `.gitmodules`, `setup_git.sh` gives every subfolder that is its own clone (and the root
+  when it is a repository) `pull-all` and `push-all` with the root baked in (`GIT_PULL_ALL_ROOT`),
+  nothing else; `git_pull_all.sh`'s `folder_main` merges each clone on ITS OWN branch, the root
+  last, and records no pointer; `git_push_all.sh` pushes each clone's branch and the root only when
+  all pushed. No clone and no root repository: no aliases. (`tests/test_folder_git_aliases.py`)
 - `setup_git.sh [root]`: from the checkout (the script in `<root>/aisland/aisland/git/`) the
   `pull-all` alias keeps its root-relative form; installed elsewhere it names the script by its path
   and passes the root in `GIT_PULL_ALL_ROOT`

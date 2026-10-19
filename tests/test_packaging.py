@@ -61,6 +61,7 @@ def test_the_package_holds_the_templates_and_the_git_scripts() -> None:
     assert _package_files_that_are_not_modules() == [
         "aisland/code-workspace.json",
         "aisland/git/git_pull_all.sh",
+        "aisland/git/git_push_all.sh",
         "aisland/git/setup_git.sh",
         "aisland/templates/vscode-init-bash.sh",
     ]
@@ -152,8 +153,9 @@ def test_from_the_wheel_outside_a_workspace_a_command_is_refused_with_the_way_ou
     assert result.returncode == 1
     assert result.stdout == ""
     assert result.stderr == (
-        f"Error: No workspace here: {plain.resolve()} is not inside a git repository. Run aisland inside your "
-        "workspace, set AISLAND_WORKSPACE to it, or create one with `aisland workspace init <folder>`.\n"
+        f"Error: No workspace here: {plain.resolve()} is in no git repository and holds no project. Run aisland in "
+        "your workspace or one of its projects, set AISLAND_WORKSPACE to it, or create one with "
+        "`aisland workspace init <folder>`.\n"
     )
 
 

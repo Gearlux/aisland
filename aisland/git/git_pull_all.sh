@@ -291,7 +291,87 @@ record_pointers() {
     report root "recorded submodule pointers: $names"
 }
 
+# Print what needs the user and exit 1, or say nothing changed; exit 0.
+finish() {
+    if [ -n "$NEEDS" ]; then
+        printf '\nneeds you:\n%s' "$NEEDS"
+        exit 1
+    fi
+    [ "$REPORTED" = 1 ] || echo "everything up to date"
+    exit 0
+}
+
+# Fetch the root (label `root`) and the folders named after it, in parallel; a failure is listed.
+fetch_all() {
+    local fails
+    fails=$(mktemp)
+    printf '%s\0' "$@" | xargs -0 -n 1 -P "$FETCH_JOBS" sh -c '
+        dir="$2/$3"; [ "$3" = root ] && dir="$2"
+        out=$(git -C "$dir" fetch -q --no-recurse-submodules origin 2>&1) ||
+            printf "%s\t%s\n" "$3" "$(printf "%s\n" "$out" | head -n 1)" >> "$1"
+    ' _ "$fails" "$WORKSPACE_ROOT"
+    while IFS="$(printf '\t')" read -r label err; do
+        need "$label" "not fetched: $err"
+    done <"$fails"
+    rm -f "$fails"
+}
+
+# A workspace without .gitmodules: each subfolder that is its own git repository (a clone) is merged
+# with origin on ITS OWN branch — independent clones share none — then the root, when it is a
+# repository. Nothing records the clones' commits, so there are no pointers to record.
+folder_main() {
+    local -a clones=() labels=()
+    local dir name branch noun
+    for dir in "$WORKSPACE_ROOT"/*/; do
+        dir="${dir%/}"
+        [ -e "$dir/.git" ] && clones+=("$(basename "$dir")")
+    done
+    if [ ${#clones[@]} -eq 1 ]; then noun="1 repository"; else noun="${#clones[@]} repositories"; fi
+    if [ -d "$WORKSPACE_ROOT/.git" ]; then
+        labels=(root)
+        echo "fetching the root and $noun…"
+    elif [ ${#clones[@]} -gt 0 ]; then
+        echo "fetching $noun…"
+    else
+        echo "no git repository in $WORKSPACE_ROOT — nothing pulled"
+        exit 1
+    fi
+    [ ${#clones[@]} -gt 0 ] && labels+=("${clones[@]}")
+    fetch_all "${labels[@]}"
+
+    for name in "${clones[@]}"; do
+        dir="$WORKSPACE_ROOT/$name"
+        if mid_merge "$dir"; then
+            need "$name" "CONFLICT in $(unmerged "$dir") — resolve, commit, then run git pull-all again"
+            continue
+        fi
+        branch=$(git -C "$dir" branch --show-current)
+        if [ -z "$branch" ]; then
+            need "$name" "detached HEAD — not pulled"
+            continue
+        fi
+        BRANCH="$branch"
+        merge_origin "$dir" "$name"
+        if [ $? = 3 ]; then
+            need "$name" "CONFLICT in $(unmerged "$dir") — resolve, commit, then run git pull-all again$(stash_note)"
+        fi
+    done
+
+    if [ -d "$WORKSPACE_ROOT/.git" ]; then
+        BRANCH=$(git -C "$WORKSPACE_ROOT" branch --show-current)
+        if [ -z "$BRANCH" ]; then
+            need root "detached HEAD — not pulled"
+        else
+            SUBMODULE_MID_MERGE=0
+            root_step
+        fi
+    fi
+    finish
+}
+
 # --- main ----------------------------------------------------------------------------------
+
+[ -f "$WORKSPACE_ROOT/.gitmodules" ] || folder_main
 
 BRANCH=$(git -C "$WORKSPACE_ROOT" branch --show-current)
 if [ -z "$BRANCH" ]; then
@@ -310,17 +390,8 @@ done <<<"$SUBMODULE_PATHS"
 
 # 1. Fetch everything first, so an unreachable remote is known before anything merges.
 #    --no-recurse-submodules: each submodule is fetched here once, not again by the root.
-FETCH_FAILS=$(mktemp)
-trap 'rm -f "$FETCH_FAILS"' EXIT
 if [ ${#SUBMODULES[@]} = 1 ]; then echo "fetching the root and 1 submodule…"; else echo "fetching the root and ${#SUBMODULES[@]} submodules…"; fi
-printf '%s\0' root "${SUBMODULES[@]}" | xargs -0 -n 1 -P "$FETCH_JOBS" sh -c '
-    dir="$2/$3"; [ "$3" = root ] && dir="$2"
-    out=$(git -C "$dir" fetch -q --no-recurse-submodules origin 2>&1) ||
-        printf "%s\t%s\n" "$3" "$(printf "%s\n" "$out" | head -n 1)" >> "$1"
-' _ "$FETCH_FAILS" "$WORKSPACE_ROOT"
-while IFS="$(printf '\t')" read -r label err; do
-    need "$label" "not fetched: $err"
-done <"$FETCH_FAILS"
+fetch_all root "${SUBMODULES[@]}"
 
 # 2. The submodules.
 SUBMODULE_MID_MERGE=0
@@ -355,10 +426,4 @@ done
 # 3. The root, then 4. its pointers.
 root_step
 record_pointers
-
-if [ -n "$NEEDS" ]; then
-    printf '\nneeds you:\n%s' "$NEEDS"
-    exit 1
-fi
-[ "$REPORTED" = 1 ] || echo "everything up to date"
-exit 0
+finish

@@ -7,8 +7,8 @@ aisland is installed one of two ways, and each has its own rule:
   ``<workspace>/aisland/`` (``data/``, ``bin/``, ``tools/``). The folder you run aisland in and ``AISLAND_WORKSPACE``
   change nothing — this is how aisland worked before it could be installed from a wheel.
 * **From a wheel** — the package in ``site-packages``, where the package's location says nothing about any
-  workspace. The workspace is ``AISLAND_WORKSPACE`` when set, else the git repository you run aisland in (the
-  nearest folder holding a ``.git`` FOLDER — a submodule holds a ``.git`` file, so its superproject is found); the
+  workspace. The workspace is ``AISLAND_WORKSPACE`` when set, else the one the folder you run aisland in belongs to
+  (:func:`find_workspace`: a superproject, a folder of projects, a project's parent, a fresh repository); the
   state lives in ``<workspace>/.aisland/``.
 
 Standard library only: the pytest plugin (``aisland.pytest_stats``) imports this in every pytest start.
@@ -75,9 +75,36 @@ def checkout_workspace_root(package_file: Optional[Path] = None) -> Path:
     return start.parents[2]
 
 
+def holds_projects(folder: Path) -> bool:
+    """Whether a direct, non-hidden subfolder of ``folder`` holds a ``pyproject.toml`` (a workspace's projects)."""
+    try:
+        children = list(folder.iterdir())
+    except OSError:
+        return False
+    return any(
+        child.is_dir() and not child.name.startswith(".") and (child / "pyproject.toml").is_file() for child in children
+    )
+
+
 def find_workspace(start: Path) -> Optional[Path]:
-    """The nearest of ``start`` and its parents holding a ``.git`` folder, or None outside any git repository."""
+    """The workspace ``start`` is in, or None. From ``start`` upwards, the first folder that
+
+    1. holds ``.gitmodules`` — a superproject (from inside a submodule too);
+    2. is ``start`` itself and holds projects (:func:`holds_projects`) — a folder of projects, run from its root;
+    3. holds a ``pyproject.toml`` — a project, so the workspace is its PARENT (a project that is its own git clone
+       is never the workspace);
+    4. holds a ``.git`` folder — a repository with no project yet (what ``aisland workspace init`` makes).
+
+    Rule 2 looks at ``start`` only: applied above it, a home folder holding one project would become the workspace
+    of every folder under it.
+    """
     for candidate in [start, *start.parents]:
+        if (candidate / ".gitmodules").is_file():
+            return candidate
+        if candidate == start and holds_projects(candidate):
+            return candidate
+        if (candidate / "pyproject.toml").is_file():
+            return candidate.parent
         if (candidate / ".git").is_dir():
             return candidate
     return None
@@ -123,6 +150,7 @@ def missing_workspace_message() -> str:
             "repository you run aisland in."
         )
     return (
-        f"No workspace here: {Path.cwd().resolve()} is not inside a git repository. Run aisland inside your "
-        f"workspace, set {WORKSPACE_ENV} to it, or create one with `aisland workspace init <folder>`."
+        f"No workspace here: {Path.cwd().resolve()} is in no git repository and holds no project. Run aisland in "
+        f"your workspace or one of its projects, set {WORKSPACE_ENV} to it, or create one with "
+        "`aisland workspace init <folder>`."
     )

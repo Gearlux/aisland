@@ -84,15 +84,14 @@ def pytest_configure(config: "pytest.Config") -> None:
 
 
 def _is_workspace_project(folder: Path) -> bool:
-    """A direct child of the workspace root (a `.gitmodules` there) holding a `pyproject.toml`.
+    """A direct child of the workspace root holding a `pyproject.toml` — a submodule, or a project folder of a
+    workspace without `.gitmodules`.
 
     A test's own tmp project (`pytester`, a subprocess in `tmp_path`) is not one: its inner pytest run is no run of
     the project.
     """
     root = WORKSPACE_ROOT.resolve()
-    return (
-        folder.resolve().parent == root and (root / ".gitmodules").is_file() and (folder / "pyproject.toml").is_file()
-    )
+    return folder.resolve().parent == root and (folder / "pyproject.toml").is_file()
 
 
 def run_leg(markexpr: str, slow_registered: bool) -> Leg:

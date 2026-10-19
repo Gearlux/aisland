@@ -79,7 +79,7 @@ from packaging.utils import canonicalize_name
 from packaging.version import InvalidVersion, Version
 
 from aisland import wheels_install, wheels_unzip
-from aisland.manager import ensure_uv_in_venv, submodule_active_map
+from aisland.manager import ensure_uv_in_venv, workspace_folders
 from aisland.sources import _points_at_gearlux, _pypi_json, read_committed_sources
 from aisland.wheels_install import WheelsFileError, read_wheels
 
@@ -300,14 +300,15 @@ class WheelsReport:
 
 
 def workspace_projects(workspace_root: Path) -> Dict[str, WorkspaceProject]:
-    """Every submodule that is a Python project, keyed by canonical distribution name.
+    """Every submodule that is a Python project (without ``.gitmodules``: every project folder), keyed by canonical
+    distribution name.
 
     An empty folder is kept (``pyproject=None``): a requirement on it must be told apart from a
     requirement on something outside the workspace.
     """
     registry = read_committed_sources(workspace_root)
     projects: Dict[str, WorkspaceProject] = {}
-    for _name, relative, _active in submodule_active_map(workspace_root):
+    for _name, relative, _active in workspace_folders(workspace_root):
         path = workspace_root / relative
         pyproject_file = path / "pyproject.toml"
         if pyproject_file.is_file():
@@ -606,6 +607,11 @@ def _refuse_uncommitted(projects: List[WorkspaceProject]) -> None:
     """Stop before any build when a project to ship has changes no commit holds."""
     problems = []
     for project in projects:
+        if _git(project.path, "rev-parse", "--is-inside-work-tree").returncode != 0:
+            raise click.ClickException(
+                f"{project.name} is in no git repository; a wheel is built from a project's last commit. "
+                "Put it under git (git init, then commit) and run this again."
+            )
         lines = [line for line in _git(project.path, "status", "--porcelain").stdout.splitlines() if line]
         if lines:
             problems.append(f"{project.name} has changes no commit holds; its wheel would not contain them:")

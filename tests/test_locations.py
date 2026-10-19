@@ -123,8 +123,9 @@ def test_from_a_wheel_outside_a_workspace_the_message_says_how_to_get_one(
     assert locations.workspace_found() is False
     assert locations.workspace_root() == tmp_path.resolve()  # importing never fails; the CLI refuses
     assert locations.missing_workspace_message() == (
-        f"No workspace here: {tmp_path.resolve()} is not inside a git repository. Run aisland inside your "
-        "workspace, set AISLAND_WORKSPACE to it, or create one with `aisland workspace init <folder>`."
+        f"No workspace here: {tmp_path.resolve()} is in no git repository and holds no project. Run aisland in "
+        "your workspace or one of its projects, set AISLAND_WORKSPACE to it, or create one with "
+        "`aisland workspace init <folder>`."
     )
 
 

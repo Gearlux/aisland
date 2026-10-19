@@ -673,6 +673,14 @@ def set_project_source(
     if kind not in SOURCE_KINDS:
         click.echo(f"Error: unknown source kind '{kind}'; expected one of {', '.join(SOURCE_KINDS)}", err=True)
         return 1
+    if kind in DETACHED_KINDS and project not in {name for name, _path, _active in submodule_active_map(root)}:
+        # A folder project (no .gitmodules entry) has no submodule to deinit and none to check out again.
+        click.echo(
+            f"Error: '{project}' is a folder of the workspace, not a submodule: a {kind} source empties its folder, "
+            "and nothing could check it out again. Keep it local.",
+            err=True,
+        )
+        return 1
 
     venv_bin = root / ".venv" / "bin"
     if not venv_bin.exists():

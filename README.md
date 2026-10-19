@@ -73,23 +73,23 @@ Next:
 
 `init` never writes over a file that exists, and refuses a folder that already is a git
 repository (set that one up with `aisland setup`). Every file it writes is a starting point you
-own. A workspace is a git repository whose projects are folders holding a `pyproject.toml`,
-usually submodules; `aisland setup` needs the `.venv` and reads `config.toml`, `.env` and
-`mypy.ini` when they exist.
+own. A workspace is a folder whose projects are subfolders holding a `pyproject.toml` —
+submodules listed in `.gitmodules`, or, without one, every such subfolder (next section);
+`aisland setup` needs the `.venv` and reads `config.toml`, `.env` and `mypy.ini` when they exist.
 
 How aisland finds its workspace depends on how it is installed:
 
 | installed | the workspace | aisland's state (`data/`, `bin/`, `tools/`) |
 |---|---|---|
 | from this checkout (editable) | the workspace this checkout is in, wherever you run it | `<workspace>/aisland/` |
-| from a wheel | `AISLAND_WORKSPACE` when set, else the git repository you run it in (from a submodule's folder too) | `<workspace>/.aisland/` |
+| from a wheel | `AISLAND_WORKSPACE` when set, else the nearest folder above where you run it that holds `.gitmodules`; the folder you run it in when it holds projects; from inside a project, the project's parent; a git repository with no project yet | `<workspace>/.aisland/` |
 
 From a wheel, outside a workspace, a command is refused before it writes anything; only
 `aisland workspace …`, `aisland wheels …` and `--help` run anywhere:
 
 ```text
 $ aisland status
-Error: No workspace here: /Users/you/Downloads is not inside a git repository. Run aisland inside your workspace, set AISLAND_WORKSPACE to it, or create one with `aisland workspace init <folder>`.
+Error: No workspace here: /Users/you/Downloads is in no git repository and holds no project. Run aisland in your workspace or one of its projects, set AISLAND_WORKSPACE to it, or create one with `aisland workspace init <folder>`.
 ```
 
 From a wheel, `aisland setup` also installs the git aliases (`git pull-all`, …), which then name
@@ -99,6 +99,55 @@ the scripts by their place in the venv: after recreating the venv, re-point them
 the template's is missing on the machine. aisland's own system tools (process-compose for the
 services, Homebrew's bash) are not provisioned from a wheel; install them yourself before
 `aisland start`.
+
+#### A workspace without `.gitmodules`: a folder of projects
+
+A folder whose subfolders are projects — plain folders, or each its own git clone — is a
+workspace as it is: aisland reads it as if every subfolder holding a `pyproject.toml` were an
+active submodule (hidden folders and folders without one are not projects):
+
+```text
+acme/                  ← the workspace (no .gitmodules, need not be a git repository)
+├── alpha/             ← a project: pyproject.toml (here its own git clone)
+├── beta/              ← a project, needing alpha
+└── docs/              ← not a project: no pyproject.toml
+```
+
+```text
+$ cd acme/beta && aisland wheels build beta
+beta needs 1 workspace project that is not on PyPI. Its wheel is in beta/wheels (1 kB):
+  alpha  0.1.0  main 3a126e4
+```
+
+`git pull-all` and `git push-all` work over the clones: `aisland git aliases` (or `aisland setup`
+from a wheel) installs both into every clone, and the root when it is a repository. Each clone
+merges and pushes its OWN branch — independent clones share none — and the root goes last; there
+are no pointers to record:
+
+```text
+$ git pull-all            # from any clone
+fetching 2 repositories…
+alpha                  merged origin/main (1 commit)
+
+$ git push-all
+alpha                  main up to date
+beta                   pushed main (1 commit)
+```
+
+`git pull-all` lists what needs you (edits in the way, `--autostash`, a detached clone, a
+conflict) as it does for submodules, and `git push-all` pushes the root only when every clone
+pushed. The aliases that fan out over submodules (`switch-all`, `merge-all`, `tag-all`,
+`status-all`, `safe`) are not installed there. What only a submodule can do is refused with the
+reason:
+
+```text
+$ aisland source set alpha pypi
+Error: 'alpha' is a folder of the workspace, not a submodule: a pypi source empties its folder, and nothing could check it out again. Keep it local.
+```
+
+A wheel is built from a project's last commit, so a project folder in no git repository is
+refused (`alpha is in no git repository; …`); `aisland mirror` needs a submodule's `.gitmodules`
+remote and is refused as before.
 
 ### Shell completion
 

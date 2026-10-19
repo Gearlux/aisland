@@ -14,6 +14,52 @@ else
 fi
 cd "$WORKSPACE_ROOT"
 
+# A workspace without .gitmodules whose subfolders are git repositories of their own (clones): each
+# clone, and the root when it is a repository, gets `pull-all` and `push-all` naming the workspace
+# root (from inside a clone git cannot find it), each repository on its own branch. The aliases that
+# fan out over submodules (switch-all, merge-all, tag-all, status-all, safe) are not installed:
+# here they would act on one clone and say nothing of the others. No .gitmodules and no clone:
+# a root repository goes on below as before; a folder that is no repository gets no aliases.
+if [ ! -f "$WORKSPACE_ROOT/.gitmodules" ]; then
+    CLONES=()
+    for dir in "$WORKSPACE_ROOT"/*/; do
+        dir="${dir%/}"
+        if [ -e "$dir/.git" ]; then CLONES+=("$(basename "$dir")"); fi
+    done
+    if [ ${#CLONES[@]} -eq 0 ] && [ ! -d "$WORKSPACE_ROOT/.git" ]; then
+        echo "==> No git repository in $WORKSPACE_ROOT: no git aliases installed."
+        exit 0
+    fi
+    if [ ${#CLONES[@]} -gt 0 ]; then
+        echo "==> Configuring Git Aliases (no .gitmodules: the clones $(printf '%s\n' "${CLONES[@]}" | paste -sd, - | sed 's/,/, /g'))..."
+        REPOS=("${CLONES[@]}")
+        if [ -d "$WORKSPACE_ROOT/.git" ]; then REPOS+=("."); fi
+        for repo in "${REPOS[@]}"; do
+            git -C "$WORKSPACE_ROOT/$repo" config --local alias.pull-all \
+                "!GIT_PULL_ALL_ROOT=\"$WORKSPACE_ROOT\" bash \"$SCRIPT_DIR/git_pull_all.sh\""
+            git -C "$WORKSPACE_ROOT/$repo" config --local alias.push-all \
+                "!GIT_PULL_ALL_ROOT=\"$WORKSPACE_ROOT\" bash \"$SCRIPT_DIR/git_push_all.sh\""
+        done
+        if [ -d "$WORKSPACE_ROOT/.git" ]; then
+            # The root's notebook filter, as for a superproject; the clones' .gitattributes are theirs.
+            if [ -x "$WORKSPACE_ROOT/.venv/bin/aisland" ]; then
+                AISLAND_CLEAN_CMD="$WORKSPACE_ROOT/.venv/bin/aisland notebooks clean"
+            else
+                AISLAND_CLEAN_CMD="aisland notebooks clean"
+            fi
+            git config filter.ipynb-cleaner.clean "$AISLAND_CLEAN_CMD"
+            git config filter.ipynb-cleaner.smudge cat
+            if [ ! -f ".gitattributes" ]; then
+                echo "*.ipynb filter=ipynb-cleaner" > .gitattributes
+            elif ! grep -q "filter=ipynb-cleaner" .gitattributes; then
+                echo "*.ipynb filter=ipynb-cleaner" >> .gitattributes
+            fi
+        fi
+        echo "==> Git configuration complete!"
+        exit 0
+    fi
+fi
+
 echo "==> Configuring Git Submodule Tracking..."
 git config submodule.recurse true
 

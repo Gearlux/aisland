@@ -216,10 +216,13 @@ def test_a_jenkins_build_is_left_to_jenkins_own_record(
     assert not (pytester.path / "stats").exists()
 
 
-def test_a_folder_without_gitmodules_is_no_workspace(pytester: pytest.Pytester, project: Path) -> None:
+def test_a_project_folder_of_a_workspace_without_gitmodules_is_recorded(
+    pytester: pytest.Pytester, project: Path
+) -> None:
+    """A workspace without `.gitmodules` reads its project folders as submodules (`manager.workspace_folders`)."""
     (pytester.path / ".gitmodules").unlink()
     _run(pytester)
-    assert not (pytester.path / "stats").exists()
+    assert (pytester.path / "stats" / "proj" / f"{date.today()}.jsonl").stat().st_size > 0
 
 
 def test_a_run_writes_todays_file_and_removes_files_past_the_retention(

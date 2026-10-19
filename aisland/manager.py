@@ -1265,6 +1265,22 @@ def submodule_active_map(workspace_root: Path) -> List[Tuple[str, str, bool]]:
     return entries
 
 
+def workspace_folders(workspace_root: Path) -> List[Tuple[str, str, bool]]:
+    """Return ``(name, path, active)`` for every project of the workspace.
+
+    With ``.gitmodules``, its submodules (:func:`submodule_active_map`). Without one, every direct, non-hidden
+    subfolder holding a ``pyproject.toml``, active and named by its folder — the workspace is read as if each were
+    a submodule (`aisland.locations.holds_projects` is the same test).
+    """
+    if (workspace_root / ".gitmodules").is_file():
+        return submodule_active_map(workspace_root)
+    return [
+        (child.name, child.name, True)
+        for child in sorted(workspace_root.iterdir(), key=lambda c: c.name)
+        if child.is_dir() and not child.name.startswith(".") and (child / "pyproject.toml").is_file()
+    ]
+
+
 def reconcile_submodules(workspace_root: Path) -> None:
     """Align each submodule's checkout with its ``.gitmodules`` ``active`` flag.
 
