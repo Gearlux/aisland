@@ -13,13 +13,12 @@ from pathlib import Path
 
 import pytest
 
-from aisland import manager
+from aisland import locations, manager
 
 
 def _resolve_from(monkeypatch: pytest.MonkeyPatch, module_file: Path) -> Path:
-    """Run get_workspace_root as if manager.py lived at ``module_file``."""
-    monkeypatch.setattr(manager, "__file__", str(module_file))
-    return manager.get_workspace_root()
+    """Run the checkout's root rule as if manager.py lived at ``module_file``."""
+    return locations.checkout_workspace_root(module_file)
 
 
 def _make_tree(tmp_path: Path, *, gitmodules: bool) -> Path:

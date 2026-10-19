@@ -42,7 +42,9 @@
 # command below names its repository with -C, so drop them (as git's own scripts do).
 unset $(git rev-parse --local-env-vars)
 
-WORKSPACE_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+# The root: GIT_PULL_ALL_ROOT when the alias passes it (this file installed outside the workspace,
+# aisland from a wheel); else this file is aisland/aisland/git/git_pull_all.sh, three levels below it.
+WORKSPACE_ROOT="$(cd "${GIT_PULL_ALL_ROOT:-$(dirname "$0")/../../..}" && pwd)"
 STASH_MSG="git pull-all autostash"
 CLASH_MSG="$STASH_MSG (applied with conflicts)"
 USAGE="usage: git pull-all [--autostash]"

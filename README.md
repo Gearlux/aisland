@@ -35,7 +35,70 @@ for project provisioning, installs shell completion for every workspace
 CLI into a workspace-local `.project.bashrc.completion`
 file (sourced by `project.bashrc`, gitignored — so the user's global
 `~/.bashrc` stays clean and re-running setup never dirties the tree),
-and finally runs `setup_git.sh` to configure submodule + git aliases.
+and finally runs `aisland/aisland/git/setup_git.sh` to configure submodule + git aliases.
+
+### Another workspace: aisland from a wheel (`aisland workspace init`)
+
+aisland also runs installed from a wheel, in a workspace of your own. Built here, the wheel
+carries everything aisland reads (the editor-file template, the git alias scripts, the shell init):
+
+```bash
+python -m pip wheel --no-deps -w dist aisland     # → dist/aisland_manager-0.1.0-py3-none-any.whl
+```
+
+Make a workspace, give it a venv holding aisland, and set it up:
+
+```bash
+aisland workspace init ~/work/acme --add git@github.com:acme/models.git
+cd ~/work/acme
+uv venv --seed .venv && .venv/bin/pip install aisland_manager-0.1.0-py3-none-any.whl
+.venv/bin/aisland setup
+```
+
+```text
+==> Created workspace acme in /Users/you/work/acme
+    .git/                     git init
+    models/                   submodule git@github.com:acme/models.git
+    .gitignore                written
+    .env                      written
+    config.toml               written
+    mypy.ini                  written
+    vscode-init-bash.sh       written
+    git aliases               pull-all, push-all, … in the local git config
+Next:
+    cd /Users/you/work/acme
+    uv venv --seed .venv && .venv/bin/pip install <the aisland wheel>
+    .venv/bin/aisland setup
+```
+
+`init` never writes over a file that exists, and refuses a folder that already is a git
+repository (set that one up with `aisland setup`). Every file it writes is a starting point you
+own. A workspace is a git repository whose projects are folders holding a `pyproject.toml`,
+usually submodules; `aisland setup` needs the `.venv` and reads `config.toml`, `.env` and
+`mypy.ini` when they exist.
+
+How aisland finds its workspace depends on how it is installed:
+
+| installed | the workspace | aisland's state (`data/`, `bin/`, `tools/`) |
+|---|---|---|
+| from this checkout (editable) | the workspace this checkout is in, wherever you run it | `<workspace>/aisland/` |
+| from a wheel | `AISLAND_WORKSPACE` when set, else the git repository you run it in (from a submodule's folder too) | `<workspace>/.aisland/` |
+
+From a wheel, outside a workspace, a command is refused before it writes anything; only
+`aisland workspace …`, `aisland wheels …` and `--help` run anywhere:
+
+```text
+$ aisland status
+Error: No workspace here: /Users/you/Downloads is not inside a git repository. Run aisland inside your workspace, set AISLAND_WORKSPACE to it, or create one with `aisland workspace init <folder>`.
+```
+
+From a wheel, `aisland setup` also installs the git aliases (`git pull-all`, …), which then name
+the scripts by their place in the venv: after recreating the venv, re-point them with
+`aisland git aliases`. The editor file names the workspace's own folder
+(`${workspaceFolder:acme}`, the `acme-bash` terminal profile) and takes the bash on `PATH` when
+the template's is missing on the machine. aisland's own system tools (process-compose for the
+services, Homebrew's bash) are not provisioned from a wheel; install them yourself before
+`aisland start`.
 
 ### Shell completion
 
@@ -85,7 +148,7 @@ a `LOGGAIR_DIR` in `.env` decides it. A project set to `pypi` or `github`, or
 an inactive optional submodule, has no checkout and is not listed.
 `aisland source set|unset|apply` rewrite the file too, `--machine-only`
 included. The settings and extension recommendations come from
-`aisland/code-workspace.json`: change a shared setting there and re-run
+`aisland/aisland/code-workspace.json` (inside the package, so a wheel carries it): change a shared setting there and re-run
 `aisland setup`. The file is gitignored and rewritten, so a setting you change
 in VS Code at *Workspace* scope is gone at the next setup — put a personal one
 in your *User* settings.
@@ -1648,10 +1711,10 @@ git config submodule.recurse true
 
 ### Workspace Git Aliases
 
-The aliases below (`pull-all`, `push-all`, `switch-all`, `merge-all`, `tag-all`, `status-all`, `safe`) are installed by `aisland/setup_git.sh` into the **local** config of the root repository *and* every active submodule. They assume the acme mono-repo layout and toolchain, so they are deliberately not written to the global config — that would leak workspace-specific behavior into unrelated repositories (the script also removes any global copies left by earlier versions of itself). The definitions live in `setup_git.sh` (`pull-all` calls [`git_pull_all.sh`](git_pull_all.sh) beside it); to (re)install them — including after activating a new submodule — run:
+The aliases below (`pull-all`, `push-all`, `switch-all`, `merge-all`, `tag-all`, `status-all`, `safe`) are installed by `aisland/aisland/git/setup_git.sh` into the **local** config of the root repository *and* every active submodule. They assume the acme mono-repo layout and toolchain, so they are deliberately not written to the global config — that would leak workspace-specific behavior into unrelated repositories (the script also removes any global copies left by earlier versions of itself). The definitions live in `setup_git.sh` (`pull-all` calls [`git_pull_all.sh`](aisland/git/git_pull_all.sh) beside it); to (re)install them — including after activating a new submodule — run:
 
 ```bash
-bash aisland/setup_git.sh
+bash aisland/aisland/git/setup_git.sh
 ```
 
 ### Pulling Everything (`pull-all`)
@@ -1699,7 +1762,7 @@ What it cannot do is listed under `needs you:` and it exits 1; fix the item and 
 
 `--autostash` sets aside only the files the merge needs, in a stash named `git pull-all autostash`, merges, and puts them back. If the merge itself conflicts, your edits stay aside until you commit the merge; the next `git pull-all` puts them back.
 
-The merges are explicit (`git fetch` + `git merge`, never `git pull`), so the result does not depend on a machine's `pull.rebase` setting. The logic lives in [`git_pull_all.sh`](git_pull_all.sh) (why it is shaped this way: [docs/architecture.md](docs/architecture.md), "`pull-all` settles a submodule pointer only to a commit holding both sides"). In Claude Code, `/pull-all` runs it and finishes the listed conflicts for you; `/push-all` runs `/pull-all`, pushes, and ends with `aisland mirror sync` (see [Project Mirrors](#project-mirrors-aisland-mirror)).
+The merges are explicit (`git fetch` + `git merge`, never `git pull`), so the result does not depend on a machine's `pull.rebase` setting. The logic lives in [`git_pull_all.sh`](aisland/git/git_pull_all.sh) (why it is shaped this way: [docs/architecture.md](docs/architecture.md), "`pull-all` settles a submodule pointer only to a commit holding both sides"). In Claude Code, `/pull-all` runs it and finishes the listed conflicts for you; `/push-all` runs `/pull-all`, pushes, and ends with `aisland mirror sync` (see [Project Mirrors](#project-mirrors-aisland-mirror)).
 
 ### Pushing Everything (`push-all`)
 

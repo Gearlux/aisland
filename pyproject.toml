@@ -32,6 +32,12 @@ aisland_test_stats = "aisland.pytest_stats"
 where = ["."]
 include = ["aisland*"]
 
+# The non-Python files the package reads or runs, so a wheel carries them:
+# the workspace-file template (manager.write_code_workspace), the git alias scripts and the
+# files `aisland workspace init` writes (aisland/workspace.py). setup.py adds project.bashrc.
+[tool.setuptools.package-data]
+aisland = ["code-workspace.json", "git/*.sh", "templates/*"]
+
 [tool.black]
 line-length = 120
 extend-exclude = 'data/'

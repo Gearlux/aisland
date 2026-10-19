@@ -2,6 +2,7 @@ import hashlib
 import json
 import os
 import platform
+import shutil
 import subprocess
 import tarfile
 import urllib.request
@@ -10,12 +11,13 @@ from typing import Any, Dict, List, Optional, Tuple
 
 import click
 
-from aisland import supervisor
+from aisland import locations, supervisor
 
 # Path Configuration (relative to the file itself)
-SERVICES_DIR = Path(__file__).parent.absolute()
-# The package is at aisland/aisland/manager.py, so project root is SERVICES_DIR.parent
-BASE_DIR = SERVICES_DIR.parent.absolute()
+SERVICES_DIR = locations.PACKAGE_DIR
+# The state folder: the aisland checkout (aisland/aisland/manager.py -> aisland/), or `<workspace>/.aisland` when
+# aisland runs from a wheel (aisland.locations).
+BASE_DIR = locations.state_dir()
 BIN_DIR = BASE_DIR / "bin"
 DATA_DIR = BASE_DIR / "data"
 TOOLS_DIR = BASE_DIR / "tools"
@@ -308,44 +310,9 @@ def get_git_email() -> str:
 
 
 def get_workspace_root() -> Path:
-    """Resolve the absolute path to the workspace root by searching upwards for a marker.
-
-    Marker choice is load-bearing. `TASKS.md` alone is NOT a workspace marker: the
-    2026-07-26 backlog restructuring made backlogs PROJECT-OWNED, so every project
-    dir carries one and an innermost-match walk stops at a PROJECT. Concretely,
-    `aisland/TASKS.md` made this return ``<root>/aisland``, which then named the
-    Jenkins orchestrator job "aisland" instead of "acme", set the global
-    ``WORKSPACE_ROOT`` env to the aisland dir (so every job's `customWorkspace`
-    pointed at ``<root>/aisland/<project>``), and looked for the workspace `.env`
-    one level too deep ("No workspace .env found; skipping injection").
-
-    The workspace root is the SUPERPROJECT — the single directory carrying
-    ``.gitmodules`` (a submodule has a `.git` *file* and no `.gitmodules`). Prefer
-    that; when a checkout genuinely has no submodules, fall back to the OUTERMOST
-    `TASKS.md` — never the innermost — so a nested project can't win.
-    """
-    start = Path(__file__).resolve()
-    # start itself is a file; its parents are the candidate directories.
-    chain: List[Path] = list(start.parents)[:6]
-
-    # 1. The superproject: the one directory with .gitmodules (+ a TASKS.md, so a
-    #    stray .gitmodules elsewhere in the tree can't hijack the result).
-    for cand in chain:
-        if (cand / ".gitmodules").is_file() and (cand / "TASKS.md").exists():
-            return cand
-
-    # 2. No submodules in this checkout: OUTERMOST TASKS.md wins over a project's.
-    with_tasks = [cand for cand in chain if (cand / "TASKS.md").exists()]
-    if with_tasks:
-        return with_tasks[-1]
-
-    # 3. Outermost .git (the superproject's directory, not a submodule's file).
-    with_git = [cand for cand in chain if (cand / ".git").exists()]
-    if with_git:
-        return with_git[-1]
-
-    # 4. Absolute fallback: <root>/aisland/aisland/manager.py -> <root>.
-    return start.parents[2]
+    """The workspace root: found from the package's location in a checkout, from where aisland runs when it comes
+    from a wheel (:mod:`aisland.locations`, which holds the marker rule)."""
+    return locations.workspace_root()
 
 
 def get_workspace_name(root: Optional[Path] = None) -> str:
@@ -829,9 +796,9 @@ def ensure_uv_in_venv(venv_bin: Path) -> str:
 
     pip_path = venv_bin / "pip"
     if not pip_path.exists():
-        click.echo(
-            f"  - Error: {pip_path} not found. Cannot bootstrap uv; " f"the venv is broken. Re-run aisland/setup.sh."
-        )
+        # A venv made by `uv venv` without `--seed` has no pip (setup.sh seeds one with ensurepip).
+        remedy = "Re-run aisland/setup.sh." if locations.FROM_CHECKOUT else "Recreate it with `uv venv --seed .venv`."
+        click.echo(f"  - Error: {pip_path} not found. Cannot bootstrap uv; the venv is broken. {remedy}")
         raise click.ClickException("Workspace venv missing pip")
 
     click.echo(f"==> Bootstrapping uv into {venv_bin}...")
@@ -839,10 +806,22 @@ def ensure_uv_in_venv(venv_bin: Path) -> str:
     return str(uv_path)
 
 
+def _copy_packaged_bashrc(target: Path) -> None:
+    """From a wheel: put the packaged ``project.bashrc`` at ``target`` (``<workspace>/.aisland/``), replacing an older
+    copy. The copy is aisland's (its header says so), and its place there makes the workspace its parent folder."""
+    packaged = locations.PACKAGE_DIR / "project.bashrc"
+    text = packaged.read_text()
+    if target.exists() and target.read_text() == text:
+        return
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.write_text(text)
+
+
 def _link_project_bashrc(workspace_root: Path) -> None:
     """Symlink ``<workspace>/project.bashrc`` to the canonical aisland-managed copy.
 
-    The source of truth lives at ``aisland/project.bashrc`` (tracked). The
+    The source of truth lives at ``aisland/project.bashrc`` (tracked); from a wheel, the packaged copy is first
+    written to ``<workspace>/.aisland/project.bashrc`` and the link points there. The
     workspace-root entry is a symlink so `source ./project.bashrc` from the
     workspace still works for muscle-memory. Replaces a stale symlink in place,
     but refuses to clobber a real file — that would silently destroy the user's
@@ -850,6 +829,8 @@ def _link_project_bashrc(workspace_root: Path) -> None:
     """
     target = BASE_DIR / "project.bashrc"
     link = workspace_root / "project.bashrc"
+    if not locations.FROM_CHECKOUT:
+        _copy_packaged_bashrc(target)
 
     if not target.exists():
         click.echo(f"  - Warning: {target} not found; skipping project.bashrc symlink.")
@@ -1132,14 +1113,15 @@ def generate_mcp_json() -> None:
 
 #: The settings and extension recommendations every machine's workspace file carries. The folder list is the only
 #: part written per machine, so the template holds none.
-CODE_WORKSPACE_TEMPLATE = BASE_DIR / "code-workspace.json"
+# Inside the package, so a wheel carries it (pyproject `package-data`).
+CODE_WORKSPACE_TEMPLATE = SERVICES_DIR / "code-workspace.json"
 
 # VS Code reads the file as JSONC, so the provenance header can live in the file itself.
 _CODE_WORKSPACE_HEADER = """\
 // =========================================================================
 // AUTO-GENERATED FILE — DO NOT EDIT BY HAND
 // Generated by: aisland setup
-// Source template: aisland/code-workspace.json (aisland.manager.write_code_workspace)
+// Source template: aisland/aisland/code-workspace.json (aisland.manager.write_code_workspace)
 // To regenerate:  aisland setup
 // =========================================================================
 """
@@ -1187,6 +1169,38 @@ def _loggair_log_dir(workspace_root: Path) -> Optional[Path]:
     return Path(log_dir)
 
 
+#: The workspace the template is written for: its `${workspaceFolder:<name>}` references and terminal profile name.
+_TEMPLATE_WORKSPACE = "acme"
+#: The key of this platform's terminal profiles in the template.
+_PROFILE_PLATFORMS = {"Darwin": "osx", "Linux": "linux"}
+
+
+def _terminal_shell(path: str) -> str:
+    """The template's shell when this machine has it, else the bash on PATH (else the template's, unchanged)."""
+    if Path(path).exists():
+        return path
+    return shutil.which("bash") or path
+
+
+def _code_workspace_settings(name: str) -> Dict[str, Any]:
+    """The template's settings and extensions for the workspace ``name`` on this machine.
+
+    The template is written for `acme`: every `${workspaceFolder:acme}` and the `acme-bash` profile name
+    become the workspace's own name, so they resolve in a workspace with another name (in `acme` the text is
+    unchanged). This platform's terminal profiles keep their shell when the machine has it and take the bash on
+    PATH when it does not; the other platform's profiles are left as written.
+    """
+    text = CODE_WORKSPACE_TEMPLATE.read_text()
+    text = text.replace(f"${{workspaceFolder:{_TEMPLATE_WORKSPACE}}}", f"${{workspaceFolder:{name}}}")
+    text = text.replace(f'"{_TEMPLATE_WORKSPACE}-bash"', json.dumps(f"{name}-bash"))
+    settings: Dict[str, Any] = json.loads(text)
+    key = _PROFILE_PLATFORMS.get(platform.system())
+    if key is not None:
+        for profile in settings["settings"].get(f"terminal.integrated.profiles.{key}", {}).values():
+            profile["path"] = _terminal_shell(profile["path"])
+    return settings
+
+
 def write_code_workspace(workspace_root: Path) -> Optional[Path]:
     """Write this machine's VS Code workspace file. Returns its path when the content changed, else None.
 
@@ -1209,7 +1223,7 @@ def write_code_workspace(workspace_root: Path) -> Optional[Path]:
     if log_dir is not None and log_dir.is_dir():
         folders.append({"name": log_dir.name, "path": os.path.relpath(log_dir, workspace_root)})
 
-    document = {"folders": folders, **json.loads(CODE_WORKSPACE_TEMPLATE.read_text())}
+    document = {"folders": folders, **_code_workspace_settings(name)}
     text = _CODE_WORKSPACE_HEADER + json.dumps(document, indent=4) + "\n"
     out = code_workspace_path(workspace_root)
     if out.exists() and out.read_text() == text:
@@ -1493,7 +1507,15 @@ def setup_workspace(
     venv_bin = workspace_root / ".venv" / "bin"
 
     if not venv_bin.exists():
-        click.echo(f"Error: Virtual environment not found at {workspace_root / '.venv'}. Run aisland/setup.sh first.")
+        if locations.FROM_CHECKOUT:
+            click.echo(
+                f"Error: Virtual environment not found at {workspace_root / '.venv'}. Run aisland/setup.sh first."
+            )
+        else:
+            click.echo(
+                f"Error: Virtual environment not found at {workspace_root / '.venv'}. Create it and install aisland "
+                "into it: uv venv --seed .venv && .venv/bin/pip install <the aisland wheel>"
+            )
         return
 
     # 0. Ensure uv is present in the venv — required by everything below and by
@@ -1620,7 +1642,35 @@ def setup_workspace(
     #    installed to be asked.
     write_code_workspace(workspace_root)
 
+    # 6. From a wheel, the git aliases — a checkout gets them from setup.sh, which a wheel does not carry.
+    if not locations.FROM_CHECKOUT:
+        install_git_aliases(workspace_root)
+
     click.echo("==> Workspace setup complete!")
+
+
+#: The script that installs the workspace git aliases (`git pull-all`, `git push-all`, ...), shipped in the package.
+SETUP_GIT_SCRIPT = SERVICES_DIR / "git" / "setup_git.sh"
+
+
+def install_git_aliases(workspace_root: Path, quiet: bool = False) -> bool:
+    """Install the workspace git aliases into the local config of ``workspace_root`` and each active submodule.
+
+    Runs the packaged ``setup_git.sh`` with the root as its argument, so the scripts need not sit in the workspace:
+    from a wheel the aliases name them by their path in ``site-packages`` (re-run this after recreating the venv).
+    Returns whether the script succeeded. Its output is passed through, or with ``quiet`` shown only on a failure.
+    """
+    result = subprocess.run(
+        ["bash", str(SETUP_GIT_SCRIPT), str(workspace_root)],
+        cwd=workspace_root,
+        capture_output=quiet,
+        text=True,
+    )
+    if result.returncode != 0:
+        if quiet:
+            click.echo((result.stdout or "") + (result.stderr or ""), nl=False)
+        click.echo(f"  - Error: installing the git aliases failed (bash {SETUP_GIT_SCRIPT} {workspace_root}).")
+    return result.returncode == 0
 
 
 def run_quality_gates(arg1: Optional[str] = None, arg2: Optional[str] = None) -> None:
@@ -1635,7 +1685,15 @@ def run_quality_gates(arg1: Optional[str] = None, arg2: Optional[str] = None) ->
     venv_bin = workspace_root / ".venv" / "bin"
 
     if not venv_bin.exists():
-        click.echo(f"Error: Virtual environment not found at {workspace_root / '.venv'}. Run aisland/setup.sh first.")
+        if locations.FROM_CHECKOUT:
+            click.echo(
+                f"Error: Virtual environment not found at {workspace_root / '.venv'}. Run aisland/setup.sh first."
+            )
+        else:
+            click.echo(
+                f"Error: Virtual environment not found at {workspace_root / '.venv'}. Create it and install aisland "
+                "into it: uv venv --seed .venv && .venv/bin/pip install <the aisland wheel>"
+            )
         return
 
     env = os.environ.copy()

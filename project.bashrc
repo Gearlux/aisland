@@ -7,22 +7,24 @@
 # Put your personal aliases / shell tweaks in <workspace>/user.bashrc instead;
 # it is sourced at the bottom of this file and is never touched by aisland.
 
-# Resolve PROJECT_ROOT from this script's own location, regardless of cwd or
-# whether we were reached via a symlink at the workspace root.
+# Resolve aisland's folder — the one holding this real file and `bin/` — from this script's own
+# location, regardless of cwd or whether we were reached via a symlink at the workspace root:
+# `aisland/` in a checkout, `.aisland/` when aisland runs from a wheel (`aisland setup` copies
+# this file there). Its parent is the workspace root.
+_aisland_self="${BASH_SOURCE[0]}"
+# If sourced through a symlink (the canonical path), resolve to the real file.
+while [ -L "$_aisland_self" ]; do
+    _aisland_link_target="$(readlink "$_aisland_self")"
+    case "$_aisland_link_target" in
+        /*) _aisland_self="$_aisland_link_target" ;;
+        *)  _aisland_self="$(cd "$(dirname "$_aisland_self")" && cd "$(dirname "$_aisland_link_target")" && pwd)/$(basename "$_aisland_link_target")" ;;
+    esac
+done
+_aisland_home="$(cd "$(dirname "$_aisland_self")" && pwd)"
 if [ -z "${PROJECT_ROOT:-}" ]; then
-    _aisland_self="${BASH_SOURCE[0]}"
-    # If sourced through a symlink (the canonical path), resolve to the real
-    # aisland/project.bashrc, then go up one level for PROJECT_ROOT.
-    while [ -L "$_aisland_self" ]; do
-        _aisland_link_target="$(readlink "$_aisland_self")"
-        case "$_aisland_link_target" in
-            /*) _aisland_self="$_aisland_link_target" ;;
-            *)  _aisland_self="$(cd "$(dirname "$_aisland_self")" && cd "$(dirname "$_aisland_link_target")" && pwd)/$(basename "$_aisland_link_target")" ;;
-        esac
-    done
-    export PROJECT_ROOT="$(cd "$(dirname "$_aisland_self")/.." && pwd)"
-    unset _aisland_self _aisland_link_target
+    export PROJECT_ROOT="$(cd "$_aisland_home/.." && pwd)"
 fi
+unset _aisland_self _aisland_link_target
 
 # Activate the python virtual environment for this project.
 if [ -f "$PROJECT_ROOT/.venv/bin/activate" ]; then
@@ -35,12 +37,13 @@ if [ -f "$PROJECT_ROOT/.env" ]; then
 fi
 
 # Aisland vendors workspace-local tools (jenkins.war, node/npm on Linux, ...)
-# under aisland/bin/. Put it on PATH so `aisland provision` can drop binaries
+# under its folder's bin/. Put it on PATH so `aisland provision` can drop binaries
 # there without further setup.
 case ":$PATH:" in
-    *":$PROJECT_ROOT/aisland/bin:"*) ;;
-    *) export PATH="$PROJECT_ROOT/aisland/bin:$PATH" ;;
+    *":$_aisland_home/bin:"*) ;;
+    *) export PATH="$_aisland_home/bin:$PATH" ;;
 esac
+unset _aisland_home
 
 # Quick jump back to the workspace root from any subdirectory.
 unalias cdp cdd cdm 2>/dev/null || true

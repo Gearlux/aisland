@@ -19,8 +19,10 @@ from typing import Dict, List, Tuple
 import pytest
 
 AISLAND = Path(__file__).resolve().parents[1]
-PULL_ALL = AISLAND / "git_pull_all.sh"
-SETUP_GIT = AISLAND / "setup_git.sh"
+PULL_ALL = AISLAND / "aisland" / "git" / "git_pull_all.sh"
+SETUP_GIT = AISLAND / "aisland" / "git" / "setup_git.sh"
+# Where the scripts sit in a workspace; they find the root three levels above themselves.
+SCRIPTS = Path("aisland", "aisland", "git")
 BRANCH = "dev/main"
 LINES = ["line1", "line2", "line3", "line4", "line5"]
 
@@ -102,8 +104,8 @@ class Workspace:
         self.git(machine, "config", "submodule.recurse", "true")
         for sub in ("alpha", "beta"):
             self.git(machine / sub, "checkout", "-q", BRANCH)
-        (machine / "aisland").mkdir()
-        shutil.copy(PULL_ALL, machine / "aisland" / "git_pull_all.sh")
+        (machine / SCRIPTS).mkdir(parents=True)
+        shutil.copy(PULL_ALL, machine / SCRIPTS / "git_pull_all.sh")
         with open(machine / ".git" / "info" / "exclude", "a") as exclude:
             exclude.write("/aisland/\n/.gitattributes\n")
         return machine
@@ -157,7 +159,7 @@ class Workspace:
 
     def pull_all(self, machine: Path, *args: str, cwd: Path | None = None) -> Tuple[int, str]:
         result = subprocess.run(
-            ["bash", str(machine / "aisland" / "git_pull_all.sh"), *args],
+            ["bash", str(machine / SCRIPTS / "git_pull_all.sh"), *args],
             cwd=cwd or machine,
             env=self.env,
             capture_output=True,
@@ -478,9 +480,9 @@ def test_usage(ws: Workspace) -> None:
 
 
 def _install_aliases(ws: Workspace, machine: Path) -> None:
-    shutil.copy(SETUP_GIT, machine / "aisland" / "setup_git.sh")
+    shutil.copy(SETUP_GIT, machine / SCRIPTS / "setup_git.sh")
     subprocess.run(
-        ["bash", str(machine / "aisland" / "setup_git.sh")], cwd=machine, env=ws.env, capture_output=True, check=True
+        ["bash", str(machine / SCRIPTS / "setup_git.sh")], cwd=machine, env=ws.env, capture_output=True, check=True
     )
 
 
@@ -491,6 +493,36 @@ def test_the_pull_all_alias_pulls_the_whole_workspace_from_inside_a_submodule(ws
     assert result.returncode == 0, result.stdout + result.stderr
     assert ws.head(ws.B / "alpha") == a_sha
     assert ws.head(ws.B) == ws.head(ws.A)
+
+
+def test_aliases_installed_from_outside_the_workspace_pull_it_from_inside_a_submodule(ws: Workspace) -> None:
+    """Installed from a wheel, the scripts sit in `site-packages/aisland/git/`, not in the workspace: the root is
+    the argument, and the alias names the script by its path and passes the root it finds."""
+    site = ws.tmp / "site" / "aisland" / "git"
+    site.mkdir(parents=True)
+    shutil.copy(SETUP_GIT, site / "setup_git.sh")
+    shutil.copy(PULL_ALL, site / "git_pull_all.sh")
+    subprocess.run(
+        ["bash", str(site / "setup_git.sh"), str(ws.B)], cwd=ws.tmp, env=ws.env, capture_output=True, check=True
+    )
+    alias = ws.git(ws.B / "beta", "config", "--local", "alias.pull-all")
+    assert alias == (
+        '!GIT_PULL_ALL_ROOT="$(git rev-parse --show-superproject-working-tree --show-toplevel | head -n 1)" '
+        f'bash "{site / "git_pull_all.sh"}"'
+    )
+    a_sha = _publish(ws, "alpha", 1, "A")
+    result = subprocess.run(["git", "pull-all"], cwd=ws.B / "beta", env=ws.env, capture_output=True, text=True)
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert ws.head(ws.B / "alpha") == a_sha
+    assert ws.head(ws.B) == ws.head(ws.A)
+
+
+def test_aliases_installed_from_the_checkout_keep_their_form(ws: Workspace) -> None:
+    _install_aliases(ws, ws.B)
+    assert ws.git(ws.B, "config", "--local", "alias.pull-all") == (
+        '!bash "$(git rev-parse --show-superproject-working-tree --show-toplevel | head -n 1)'
+        '/aisland/aisland/git/git_pull_all.sh"'
+    )
 
 
 def test_the_push_all_alias_pushes_the_submodules_before_the_root(ws: Workspace) -> None:

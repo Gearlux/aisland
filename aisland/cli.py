@@ -4,14 +4,16 @@ from typing import List, Optional, Tuple
 
 import click
 
-from aisland import nightly, pytest_stats
+from aisland import locations, nightly, pytest_stats
 from aisland import supervisor as supervisor_mod
 from aisland import wheels
+from aisland import workspace as workspace_mod
 from aisland.clean import DEFAULT_KEEP_DAYS
 from aisland.manager import (
     generate_gemini_settings,
     generate_mcp_json,
     get_workspace_root,
+    install_git_aliases,
     provision_system,
     reconcile_submodules,
     run_quality_gates,
@@ -33,11 +35,76 @@ from aisland.services.mlflow import MLflowService
 from aisland.services.swiftbar import SwiftBarService
 from aisland.sources import SOURCE_KINDS
 
+#: The commands that run outside a workspace: creating one, and installing a project's wheels elsewhere.
+_WORKSPACE_FREE = {"workspace", "wheels"}
 
-@click.group()
+
+class _WorkspaceGroup(click.Group):
+    """The top-level group, refusing a command that needs a workspace when there is none.
+
+    From a wheel the workspace is where aisland runs (:mod:`aisland.locations`); outside one, every command that
+    works on a workspace is refused before it writes anything into the folder it was run in. From a checkout there
+    is always one. Checked on the whole command line (`parse_args`): a `--help` anywhere, a workspace-free command,
+    and shell completion run anywhere.
+    """
+
+    def parse_args(self, ctx: click.Context, args: List[str]) -> List[str]:
+        rest = super().parse_args(ctx, args)
+        if ctx.resilient_parsing or "--help" in args or (args and args[0] in _WORKSPACE_FREE):
+            return rest
+        if not locations.workspace_found():
+            raise click.ClickException(locations.missing_workspace_message())
+        return rest
+
+
+@click.group(cls=_WorkspaceGroup)
 def main() -> None:
     """Aisland Manager: Multi-service development infrastructure."""
-    pass
+
+
+# --- Workspace Commands ---
+
+
+@main.group("workspace")
+def workspace_group() -> None:
+    """Create a workspace aisland runs in."""
+
+
+@workspace_group.command("init")
+@click.argument("folder", type=click.Path(path_type=Path))
+@click.option(
+    "--add",
+    "add",
+    multiple=True,
+    metavar="URL",
+    help="A repository to add as a submodule (a project of the workspace). Repeat for several.",
+)
+def workspace_init(folder: Path, add: Tuple[str, ...]) -> None:
+    """Make FOLDER a new workspace: git init, the starting files, the --add submodules and the git aliases.
+
+    Writes .gitignore, .env, config.toml, mypy.ini and vscode-init-bash.sh, never over a file that exists, and
+    refuses a folder that already is a git repository (set that one up with `aisland setup`).
+    """
+    workspace_mod.init_workspace(folder, add)
+
+
+# --- Git Commands ---
+
+
+@main.group("git")
+def git_group() -> None:
+    """The workspace git aliases (git pull-all, git push-all, ...)."""
+
+
+@git_group.command("aliases")
+def git_aliases() -> None:
+    """Install the workspace git aliases into the local config of the root and every active submodule.
+
+    From a checkout setup.sh does this; from a wheel `aisland setup` and `aisland workspace init` do, and this
+    command re-points them at the package after the venv is recreated.
+    """
+    if not install_git_aliases(get_workspace_root()):
+        raise SystemExit(1)
 
 
 # --- Notebook Commands ---

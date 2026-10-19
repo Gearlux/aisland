@@ -14,7 +14,7 @@ from typing import Any, Dict, List, Mapping, Optional, cast
 import click
 from packaging.requirements import InvalidRequirement, Requirement
 
-from aisland.manager import BIN_DIR, BaseService, _install_brew_packages
+from aisland.manager import BIN_DIR, BaseService, _install_brew_packages, get_workspace_root
 from aisland.selection import AXES, PLAYWRIGHT_BROWSER
 from aisland.selection import declared as sel_declared
 from aisland.selection import dev_extra_names
@@ -593,7 +593,7 @@ class JenkinsService(BaseService):
 
         # Start Jenkins without skipping the setup wizard to ensure security is enabled
         cmd = [str(java), *jvm_args, "-jar", str(self.war_file), f"--httpPort={port}"]
-        workspace_root = Path(__file__).resolve().parents[3]
+        workspace_root = get_workspace_root()
         venv_bin = workspace_root / ".venv" / "bin"
         # BIN_DIR (aisland/bin) hosts symlinks to userspace-installed tools like
         # node/npm/npx (see manager._install_userspace_tool). Putting it on
@@ -2325,7 +2325,7 @@ jobs:
         # setup_plugins returns True if it actually installed/updated something
         plugins_changed = self.setup_plugins()
 
-        workspace_root = Path(__file__).resolve().parents[3]
+        workspace_root = get_workspace_root()
 
         if project_name:
             project_path = workspace_root / project_name

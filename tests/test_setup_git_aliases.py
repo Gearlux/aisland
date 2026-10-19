@@ -19,7 +19,9 @@ from pathlib import Path
 
 import pytest
 
-SETUP_GIT = Path(__file__).resolve().parents[1] / "setup_git.sh"
+SETUP_GIT = Path(__file__).resolve().parents[1] / "aisland" / "git" / "setup_git.sh"
+# Where the script sits in a workspace; it finds the root three levels above itself.
+SCRIPTS = Path("aisland", "aisland", "git")
 
 ALIASES = ["pull-all", "push-all", "switch-all", "merge-all", "tag-all", "status-all", "safe"]
 
@@ -54,16 +56,14 @@ def sandbox(tmp_path: Path) -> tuple[Path, dict]:
     )
     subprocess.check_call(["git", "commit", "-q", "-m", "add submodule"], cwd=root, env=env)
 
-    # The script resolves the workspace root as the parent of its own dir.
-    aisland_dir = root / "aisland"
-    aisland_dir.mkdir()
-    (aisland_dir / "setup_git.sh").write_text(SETUP_GIT.read_text())
+    (root / SCRIPTS).mkdir(parents=True)
+    (root / SCRIPTS / "setup_git.sh").write_text(SETUP_GIT.read_text())
     return root, env
 
 
 def _run_script(root: Path, env: dict) -> str:
     return subprocess.check_output(
-        ["bash", str(root / "aisland" / "setup_git.sh")], cwd=root, env=env, text=True, stderr=subprocess.STDOUT
+        ["bash", str(root / SCRIPTS / "setup_git.sh")], cwd=root, env=env, text=True, stderr=subprocess.STDOUT
     )
 
 

@@ -168,7 +168,7 @@ echo "==> Installing shell completion"
 
 # 6. Initialize Git Configuration
 echo "==> Setting up Git configurations..."
-bash "$WORKSPACE_ROOT/aisland/setup_git.sh"
+bash "$WORKSPACE_ROOT/aisland/aisland/git/setup_git.sh"
 
 # 7. Link workspace .vscode/tasks.json to aisland/tasks.json so the integrated
 # Simple Browser shortcuts (Jenkins, MLflow, LabelStudio, FiftyOne, ...) are

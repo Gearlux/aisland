@@ -159,6 +159,53 @@ def test_settings_and_extensions_come_from_the_template(workspace: Path) -> None
     assert written == json.loads(manager.CODE_WORKSPACE_TEMPLATE.read_text())
 
 
+def test_another_workspace_s_settings_name_its_own_folder(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """The template is written for `acme`; in `acme` every `${workspaceFolder:acme}` names `acme`."""
+    root = tmp_path / "acme"
+    _project(root, "models")
+    monkeypatch.setattr(manager, "_loggair_log_dir", lambda workspace_root: None)
+    manager.write_code_workspace(root)
+    text = manager.code_workspace_path(root).read_text()
+    settings = _read(root)["settings"]
+    assert "acme" not in text.split("\n", 6)[-1]  # past the header
+    assert settings["python.defaultInterpreterPath"] == "${workspaceFolder:acme}/.venv/bin/python"
+    assert settings["terminal.integrated.defaultProfile.osx"] == "acme-bash"
+    assert settings["terminal.integrated.profiles.osx"]["acme-bash"]["args"] == [
+        "--rcfile",
+        "${workspaceFolder:acme}/vscode-init-bash.sh",
+    ]
+
+
+def test_a_terminal_shell_missing_on_this_machine_is_the_bash_on_its_path(
+    workspace: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The template names Homebrew's bash on macOS; a Mac without it gets the bash it has. Only this platform's
+    profile is looked at: the other platform's shell is not on this machine either way."""
+    monkeypatch.setattr(manager.platform, "system", lambda: "Darwin")
+    real_exists = Path.exists
+    monkeypatch.setattr(
+        Path, "exists", lambda self: False if str(self) == "/opt/homebrew/bin/bash" else real_exists(self)
+    )
+    monkeypatch.setattr(manager.shutil, "which", lambda name: "/usr/local/bin/bash" if name == "bash" else None)
+    manager.write_code_workspace(workspace)
+    profiles = _read(workspace)["settings"]["terminal.integrated.profiles.osx"]
+    assert profiles["acme-bash"]["path"] == "/usr/local/bin/bash"
+    linux = _read(workspace)["settings"]["terminal.integrated.profiles.linux"]
+    assert linux["acme-bash"]["path"] == "/bin/bash"
+
+
+def test_a_terminal_shell_this_machine_has_is_kept_as_written(workspace: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(manager.platform, "system", lambda: "Darwin")
+    real_exists = Path.exists
+    monkeypatch.setattr(
+        Path, "exists", lambda self: True if str(self) == "/opt/homebrew/bin/bash" else real_exists(self)
+    )
+    monkeypatch.setattr(manager.shutil, "which", lambda name: "/usr/local/bin/bash")
+    manager.write_code_workspace(workspace)
+    profiles = _read(workspace)["settings"]["terminal.integrated.profiles.osx"]
+    assert profiles["acme-bash"]["path"] == "/opt/homebrew/bin/bash"
+
+
 def test_the_template_holds_no_folders_and_no_extra_paths() -> None:
     """Folders are this machine's; `python.analysis.extraPaths` is ignored while `pyrightconfig.json` exists."""
     template = json.loads(manager.CODE_WORKSPACE_TEMPLATE.read_text())

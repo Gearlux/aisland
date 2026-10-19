@@ -31,18 +31,19 @@ from datetime import date, datetime, timedelta
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Dict, Iterator, List, Literal, Optional, Tuple
 
+from aisland import locations
+
 if TYPE_CHECKING:
     import pytest
 
-# Resolved from this file exactly as `aisland.manager` resolves `DATA_DIR` (pinned by
-# `tests/test_pytest_stats.py::test_the_records_live_in_aislands_data_folder`).
-_PACKAGE_DIR = Path(__file__).parent.absolute()
-#: The workspace root: aisland's checkout sits directly in it.
-WORKSPACE_ROOT = _PACKAGE_DIR.parent.parent
+# Resolved exactly as `aisland.manager` resolves `DATA_DIR`, through `aisland.locations` (standard library only;
+# pinned by `tests/test_pytest_stats.py::test_the_records_live_in_aislands_data_folder`).
+#: The workspace root.
+WORKSPACE_ROOT = locations.workspace_root()
 #: One folder per project, one JSON-lines file per day.
-STATS_DIR = _PACKAGE_DIR.parent / "data" / "test-stats"
+STATS_DIR = locations.state_dir() / "data" / "test-stats"
 #: The local Jenkins' job folders (`<project>.local`, `<project>`), each build's JUnit record in it.
-JENKINS_JOBS_DIR = _PACKAGE_DIR.parent / "data" / "jenkins" / "jobs"
+JENKINS_JOBS_DIR = locations.state_dir() / "data" / "jenkins" / "jobs"
 
 #: The fast run's budget (user ruling 2026-10-05: "around 5 min max per project").
 FAST_RUN_BUDGET_SECONDS = 300.0

@@ -12,13 +12,18 @@ disk · [containers] containerised services · [closure] the pre-install closure
 pytest run recorded · [pull-all]
 `pull-all` settles a pointer only to a commit holding both sides · [wheels] a project
 installed outside the workspace gets its unpublished dependencies as wheels · [mirror] a mirror
-is push-only, fast-forward-only, and copies the primary.
+is push-only, fast-forward-only, and copies the primary · [wheel-mode] from a checkout everything
+is found from aisland's place, from a wheel from where it runs.
 
 ## Current state
 
 The workspace's dev-infrastructure CLI, `aisland` (click, `aisland/cli.py`):
+- `locations.py`: where the workspace and the state are — from a checkout as always, from a wheel
+  where aisland runs (standard library only; the pytest plugin imports it).
 - `manager.py`: workspace root, `aisland setup` (provisioning, submodule activation, editable
   installs, generated workspace files), `BaseService`.
+- `workspace.py`: `aisland workspace init <folder>`, a new workspace (its starting files, `--add`
+  submodules, the git aliases).
 - `config.py`: the one committed `config.toml`, written through `sources.py`
   (`aisland source`), `mirrors.py` (`aisland mirror`) and `selection.py`
   (`aisland framework|tracker`; `frameworks.py` is a facade over it).
@@ -39,20 +44,40 @@ The workspace's dev-infrastructure CLI, `aisland` (click, `aisland/cli.py`):
   `fiftyone`, `aim`, `swiftbar` run under the supervisor; `docker` (Colima), `clearml`,
   `iqengine` run under Docker.
 - `setup.sh`: interpreter + venv, then `aisland setup -y` and `aisland completion install`.
-- `setup_git.sh`: the workspace git aliases, local config of the root and every active
-  submodule; `pull-all` runs `git_pull_all.sh`.
+- `aisland/git/setup_git.sh`: the workspace git aliases, local config of the root and every active
+  submodule; `pull-all` runs `git_pull_all.sh`. `aisland git aliases` runs it with the root.
 
 Invariants: only supervisor-started services exist (one started elsewhere is invisible; the
 start-time port pre-flight naming the PID is the only signal). All service state lives under
-`<workspace>/aisland/data/`.
+`<workspace>/aisland/data/` (from a wheel, `<workspace>/.aisland/data/`).
 
 ## Workspace root and paths
 
-- `get_workspace_root()` returns the directory holding `.gitmodules` (+ `TASKS.md`); without
-  submodules the OUTERMOST `TASKS.md`, then the outermost `.git`; last resort `parents[2]`.
+- **From a checkout aisland works as it always did (user ruling 2026-10-19).** [wheel-mode] `locations.FROM_CHECKOUT`
+  (aisland's `pyproject.toml` beside the package, which no wheel carries) selects the rule: from a
+  checkout the root and the state follow the package's location, and the folder you run in and
+  `AISLAND_WORKSPACE` change nothing; from a wheel the root is `AISLAND_WORKSPACE`, else the nearest
+  folder holding a `.git` FOLDER above where aisland runs, and the state is `<root>/.aisland/`. Never
+  read the cwd or `AISLAND_WORKSPACE` in checkout mode, and never find a path by counting folders up
+  from a module (`parents[N]`): ask `locations`/`get_workspace_root()`. (`tests/test_locations.py`,
+  `tests/test_packaging.py::test_from_the_wheel_the_workspace_is_where_it_runs_and_the_state_goes_into_it`)
+  - Importing never raises; outside a workspace the CLI's group (`cli._WorkspaceGroup.parse_args`)
+    refuses every command but `workspace`, `wheels` and `--help`, before anything is written
+    (`::test_a_workspace_command_is_refused_and_writes_nothing`). A new workspace-free command joins
+    `_WORKSPACE_FREE`.
+  - From a wheel, setup copies the packaged `project.bashrc` to `.aisland/` and links the root to it
+    (`setup.py` puts it in the wheel; it stays at `aisland/project.bashrc` in the checkout, whose place
+    defines the root); the file finds `bin/` beside itself. (`tests/test_project_bashrc.py`)
+- From a checkout, `get_workspace_root()` (`locations.checkout_workspace_root`) returns the directory
+  holding `.gitmodules` (+ `TASKS.md`); without submodules the OUTERMOST `TASKS.md`, then the outermost
+  `.git`; last resort `parents[2]`.
   Never "first `TASKS.md` wins": every project has one. (`tests/test_workspace_root.py`)
 - Binaries, data and logs resolve to `<workspace>/aisland/` from the package's own location,
   never the cwd. Nothing is written into the workspace root as service state.
+- A file the package reads or runs (the workspace-file template, the git alias scripts) lives
+  INSIDE `aisland/aisland/` and is named in `[tool.setuptools.package-data]`, so a wheel carries
+  it; never read one from the project folder beside the package.
+  (`tests/test_packaging.py::test_the_wheel_carries_every_file_of_the_package`)
 
 ## Supervisor and services
 
@@ -205,8 +230,11 @@ Root `AGENTS.md` "Two Test Runs" (user ruling 2026-10-05). [test-stats]
   `manager.write_code_workspace` on every `aisland setup` and `aisland source set|unset|apply`
   (`--machine-only` included). Folders: the workspace, each project with a checkout in
   dependency order (sorted by folder name first), then loggair's log folder when it exists.
-  Settings and extensions come from `aisland/code-workspace.json` (strict JSON, no `folders`, no
-  `python.analysis.extraPaths`): a shared setting changes there, never in the file.
+  Settings and extensions come from `aisland/aisland/code-workspace.json` (strict JSON, no `folders`, no
+  `python.analysis.extraPaths`): a shared setting changes there, never in the file. The template is
+  written for `acme`: its `${workspaceFolder:acme}` and `acme-bash` take the workspace's name, and
+  this platform's profile keeps its shell when the machine has it, else the bash on PATH (in acme on
+  this machine the output is unchanged). (`::test_another_workspace_s_settings_name_its_own_folder`)
   (`tests/test_code_workspace.py`) [folders]
   - The log folder is loggair's answer, asked out of process (`python -P -m loggair --json`,
     from the root, `.env` over the environment): never a path typed into aisland, never an
@@ -421,6 +449,11 @@ User choice 2026-10-08: an aisland command, only the named project's closure, bo
 
 - Aliases live in LOCAL config (root + every active submodule), never global.
   (`tests/test_setup_git_aliases.py`)
+- `setup_git.sh [root]`: from the checkout (the script in `<root>/aisland/aisland/git/`) the
+  `pull-all` alias keeps its root-relative form; installed elsewhere it names the script by its path
+  and passes the root in `GIT_PULL_ALL_ROOT`
+  (`::test_aliases_installed_from_outside_the_workspace_pull_it_from_inside_a_submodule`,
+  `::test_aliases_installed_from_the_checkout_keep_their_form`).
 - `git pull-all` is `git_pull_all.sh`, run from the workspace root wherever it is typed; the
   root `/pull-all` and `/push-all` workflows call it — change its `needs you:` wording and those
   workflows together. (`tests/test_git_pull_push_all.py`) [pull-all]

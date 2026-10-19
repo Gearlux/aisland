@@ -2,8 +2,16 @@
 # Initialize Git aliases and configuration for the workspace
 set -e
 
-# Resolve the project root
-WORKSPACE_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+# Usage: setup_git.sh [workspace-root]
+#
+# The root is the argument (what `aisland` passes, wherever this file is installed); without one, this
+# file is aisland/aisland/git/setup_git.sh inside the workspace, three levels below the root.
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+if [ -n "${1:-}" ]; then
+    WORKSPACE_ROOT="$(cd "$1" && pwd)"
+else
+    WORKSPACE_ROOT="$(cd "$SCRIPT_DIR/../../.." && pwd)"
+fi
 cd "$WORKSPACE_ROOT"
 
 echo "==> Configuring Git Submodule Tracking..."
@@ -76,10 +84,15 @@ set_alias() {
 }
 
 # pull-all: fetch + merge every submodule, then the root, settling submodule-pointer
-# conflicts and recording what came in — see git_pull_all.sh. The script lives in the
-# workspace root's aisland/, found from the root or from inside any submodule.
+# conflicts and recording what came in — see git_pull_all.sh. In a checkout the script lives in the
+# workspace root's aisland/aisland/git/, found from the root or from inside any submodule. Installed
+# elsewhere (aisland from a wheel), the alias names the script by its path and hands it the root.
 # Usage: git pull-all [--autostash]
-set_alias pull-all '!bash "$(git rev-parse --show-superproject-working-tree --show-toplevel | head -n 1)/aisland/git_pull_all.sh"'
+if [ "$SCRIPT_DIR" = "$WORKSPACE_ROOT/aisland/aisland/git" ]; then
+    set_alias pull-all '!bash "$(git rev-parse --show-superproject-working-tree --show-toplevel | head -n 1)/aisland/aisland/git/git_pull_all.sh"'
+else
+    set_alias pull-all "!GIT_PULL_ALL_ROOT=\"\$(git rev-parse --show-superproject-working-tree --show-toplevel | head -n 1)\" bash \"$SCRIPT_DIR/git_pull_all.sh\""
+fi
 
 # push-all: the submodules first, the root last and only when they all pushed, so the root
 # on origin never records a submodule commit origin does not have.

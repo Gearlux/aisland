@@ -40,10 +40,12 @@ from typing import Any, Dict, List, Optional, Tuple
 import click
 import yaml
 
+from aisland import locations
+
 # Mirrors manager.py's path constants. Kept local (not imported) because
 # manager imports this module for BaseService — importing manager back at
 # module level would be a circular import.
-BASE_DIR = Path(__file__).parent.parent.absolute()
+BASE_DIR = locations.state_dir()
 DATA_DIR = BASE_DIR / "data"
 BIN_DIR = BASE_DIR / "bin"
 
