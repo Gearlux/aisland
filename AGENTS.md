@@ -422,7 +422,13 @@ User choice 2026-10-08: an aisland command, only the named project's closure, bo
   module missing a workspace project's module, is a break; a deeper module missing what no
   workspace project ships (an optional extra's) is a warning, never an exit 1
   (`TestTheRunWithFakedBuilds::test_a_package_or_a_module_missing_a_workspace_projects_module_breaks_any_other_module_warns`,
-  `TestEndToEnd`).
+  `TestEndToEnd`). Only a `ModuleNotFoundError` of such a module is an optional extra's: any other
+  error of a deeper module (a `TypeError` from an outdated release's missing keyword) is a break when a
+  published project is behind, blamed by `attribute_failure` on the innermost traceback frame in a behind
+  project's code, else the behind projects whose checkout-only code uses a name the message quotes, else
+  every behind project; nothing behind, nobody blamed (user choice 2026-10-19;
+  `::test_an_error_naming_no_module_breaks_and_blames_the_behind_project_whose_code_has_the_name`,
+  `::test_a_missing_module_no_workspace_project_ships_stays_a_warning_even_with_a_project_behind`).
 - What is built is a scope (`WheelsScope`): the default ships what PyPI lacks, `--include-published`
   every needed project with a checkout, `--all` every workspace project with one; a covered project
   without a checkout is reported as not built, a dirty one refused in every scope

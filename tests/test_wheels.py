@@ -784,14 +784,17 @@ class TestTheRunWithFakedBuilds:
     def _fake_builds(
         monkeypatch: pytest.MonkeyPatch,
         versions: Dict[str, str],
-        failures: Optional[Dict[str, Dict[str, Optional[str]]]] = None,
+        failures: Optional[Dict[str, Dict[str, Any]]] = None,
+        contents: Optional[Dict[str, Dict[str, str]]] = None,
     ) -> List[Tuple[str, ...]]:
+        """`contents`: the files a project's build holds beyond an empty `__init__.py`."""
         installs: List[Tuple[str, ...]] = []
 
         def _build(uv: str, source: Path, out: Path, timestamp: Optional[int] = None) -> Path:
             name = source.name
             out.mkdir(parents=True, exist_ok=True)
-            return _wheel(out / f"{name}-{versions.get(name, '0.1.0')}-py3-none-any.whl", {f"{name}/__init__.py": ""})
+            files = {f"{name}/__init__.py": "", **(contents or {}).get(name, {})}
+            return _wheel(out / f"{name}-{versions.get(name, '0.1.0')}-py3-none-any.whl", files)
 
         def _install(
             uv: str, target: Path, wheels: Path, packages: List[str], scratch: Path
@@ -957,6 +960,124 @@ class TestTheRunWithFakedBuilds:
         ]
         assert [f.module for f in report.import_warnings] == ["app.extra"]
         assert report.ok is False
+
+    def _behind_workspace(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, behind: Sequence[str]) -> Path:
+        """`app` takes libx and libz from PyPI; the checkouts of `behind` build a changed `<name>/app.py`.
+
+        libx's checkout adds the keyword `config_files` to a method PyPI's wheel has without it; libz's
+        changes an unrelated function."""
+        root = _workspace(tmp_path, "app", "libx", "libz")
+        _project(root, "app", deps=["libx", "libz"])
+        _project(root, "libx")
+        _project(root, "libz")
+        for name in ("app", "libx", "libz"):
+            _commit(root / name)
+        answers = {}
+        for name in ("libx", "libz"):
+            wheel = _wheel(
+                tmp_path / f"{name}-0.1.0-py3-none-any.whl",
+                {f"{name}/__init__.py": "", f"{name}/app.py": "def command(self, name): ...\n"},
+            )
+            answers[name] = _published("0.1.0", wheel)
+        _pypi(monkeypatch, answers)
+        changed = {
+            "libx": {"libx/app.py": "def command(self, name, config_files=None): ...\n"},
+            "libz": {"libz/app.py": "def helper(self, name): ...\n"},
+        }
+        same = {n: {f"{n}/app.py": "def command(self, name): ...\n"} for n in ("libx", "libz")}
+        self._fake_builds(monkeypatch, {}, self._failures, {n: changed[n] if n in behind else same[n] for n in same})
+        return root
+
+    _failures: Dict[str, Dict[str, Any]] = {}
+
+    def test_an_error_naming_no_module_breaks_and_blames_the_behind_project_whose_code_has_the_name(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        # A bad keyword is raised at the call: the traceback holds only the caller's frame.
+        self._failures = {
+            "app.cli": {
+                "error": "TypeError: LiquifyApp.command() got an unexpected keyword argument 'config_files'",
+                "missing": None,
+                "frames": ["/venv/lib/python3.13/site-packages/app/cli.py"],
+            }
+        }
+        root = self._behind_workspace(tmp_path, monkeypatch, ["libx", "libz"])
+
+        report = w.vendor_wheels(root, "app")
+
+        assert [(f.module, f.distribution, f.culprits) for f in report.import_failures] == [("app.cli", None, ["libx"])]
+        assert report.import_warnings == []
+        assert report.release_first == ["libx"]
+        assert report.behind == ["libx", "libz"]
+        assert report.ok is False
+        text = w.render_report(report)
+        assert (
+            "app.cli  TypeError: LiquifyApp.command() got an unexpected keyword argument 'config_files'  (libx)" in text
+        )
+        assert "Release first: libx" in text
+
+    def test_the_innermost_frame_in_a_behind_projects_code_is_the_culprit(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        self._failures = {
+            "app.cli": {
+                "error": "AttributeError: 'Thing' object has no attribute 'unrelated'",
+                "missing": None,
+                "frames": [
+                    "/venv/lib/python3.13/site-packages/app/cli.py",
+                    "/venv/lib/python3.13/site-packages/libz/app.py",
+                    "/usr/lib/python3.13/functools.py",
+                ],
+            }
+        }
+        root = self._behind_workspace(tmp_path, monkeypatch, ["libx", "libz"])
+
+        report = w.vendor_wheels(root, "app")
+
+        assert [f.culprits for f in report.import_failures] == [["libz"]]
+        assert report.release_first == ["libz"]
+
+    def test_without_a_frame_or_a_name_match_every_behind_project_is_blamed(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        self._failures = {"app.cli": {"error": "ValueError: bad value", "missing": None, "frames": []}}
+        root = self._behind_workspace(tmp_path, monkeypatch, ["libx", "libz"])
+
+        report = w.vendor_wheels(root, "app")
+
+        assert report.release_first == ["libx", "libz"]
+
+    def test_a_missing_module_no_workspace_project_ships_stays_a_warning_even_with_a_project_behind(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        self._failures = {
+            "app.plot": {
+                "error": "ModuleNotFoundError: No module named 'matplotlib'",
+                "missing": "matplotlib",
+                "frames": [],
+            }
+        }
+        root = self._behind_workspace(tmp_path, monkeypatch, ["libx"])
+
+        report = w.vendor_wheels(root, "app")
+
+        assert report.import_failures == []
+        assert [f.module for f in report.import_warnings] == ["app.plot"]
+        assert report.ok is True
+        assert report.behind_only == ["libx"]
+
+    def test_an_error_naming_no_module_stays_a_warning_when_nothing_is_behind(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        self._failures = {
+            "app.cli": {"error": "TypeError: x() got an unexpected keyword argument 'y'", "missing": None, "frames": []}
+        }
+        root = self._behind_workspace(tmp_path, monkeypatch, [])
+
+        report = w.vendor_wheels(root, "app")
+
+        assert report.import_failures == []
+        assert [f.module for f in report.import_warnings] == ["app.cli"]
 
     def test_a_published_dependency_without_a_checkout_or_a_pure_wheel_is_not_compared(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch

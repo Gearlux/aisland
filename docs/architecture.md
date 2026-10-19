@@ -1522,7 +1522,14 @@ Rejected:
   dependencies the empty venv does not install, are kept from failing the run by one rule: a
   package that fails, or any module missing a workspace project's module, is a break (exit 1);
   a deeper module missing something no workspace project ships is listed under "Not imported"
-  and breaks nothing. The cost of that rule: a deeper module missing an undeclared third-party
+  and breaks nothing. Only a `ModuleNotFoundError` is that: a `TypeError` from the liquifai
+  release on PyPI (0.3.1: `LiquifyApp.command() got an unexpected keyword argument
+  'config_files'`) was once filed there, though it is the outdated release's doing — with
+  `--include-published` the module imported. Any other error of a deeper module is therefore a
+  break once a published project is behind, blamed on one project when it can be: the
+  traceback's innermost frame in a behind project's code, else the behind projects whose
+  checkout-only code uses a name the message quotes (a bad keyword is raised at the call, so
+  the callee has no frame), else all of them. The cost of that rule: a deeper module missing an undeclared third-party
   dependency is only listed, never a failure. A package that fails is reported alone, since the
   modules under it cannot be reached.
 - A child project that ships inside its parent package (the `extend_path` shim) is imported by

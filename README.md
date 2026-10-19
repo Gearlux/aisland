@@ -527,7 +527,9 @@ Behind, nothing breaks: confluid, liquifai, recordstream
 - **Not imported, missing what no workspace project ships**: a module below a package that
   imported, missing something no workspace project ships — most often an optional extra's
   dependency, which the empty venv does not install. It is listed and does not change the exit
-  status.
+  status. Only a `ModuleNotFoundError` is listed here: any other error of such a module (say a
+  `TypeError` because PyPI's release of a dependency lacks a keyword) is a break once a project
+  is behind, printed with that project's name in parentheses and under "Release first".
 
 What `--include-published` printed for navigaitor on 2026-10-19 (16 s; exit 0):
 

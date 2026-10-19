@@ -60,6 +60,7 @@ import hashlib
 import io
 import json
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -125,18 +126,23 @@ _ENTRY_POINTS = "(its entry points)"
 
 #: Run inside the empty venv: imports each package named after the output path and, when it
 #: imports, every module under it (``__main__`` excepted: importing it runs the program), then
-#: writes ``{"failures": {module: {"error", "missing"}}, "imported": [module, ...]}``. ``missing``
-#: is the module an ``ImportError`` names (``recordstream.draws``), which says whose release lacks
-#: it. A package that fails is reported alone; the modules under it cannot be reached.
+#: writes ``{"failures": {module: {"error", "missing", "frames"}}, "imported": [module, ...]}``.
+#: ``missing`` is the module an ``ImportError`` names (``recordstream.draws``), which says whose release
+#: lacks it; ``frames`` the files of the traceback, outermost first, which say whose code raised it. A package that fails is reported alone; the modules under it cannot be reached.
 _IMPORT_SCRIPT = """\
-import importlib, json, pkgutil, sys
+import importlib, json, pkgutil, sys, traceback
 failures, imported, seen = {}, [], set()
 def attempt(name):
     seen.add(name)
     try:
         module = importlib.import_module(name)
     except BaseException as error:  # an import may raise anything, SystemExit included
-        failures[name] = {"error": f"{type(error).__name__}: {error}", "missing": getattr(error, "name", None)}
+        frames = [frame.filename for frame in traceback.extract_tb(error.__traceback__)]
+        failures[name] = {
+            "error": f"{type(error).__name__}: {error}",
+            "missing": getattr(error, "name", None),
+            "frames": frames,
+        }
         return None
     imported.append(name)
     return module
@@ -225,13 +231,21 @@ class PublishedDependency:
 class ImportFailure:
     """A module that did not import in the empty venv.
 
-    ``missing`` is the module the error names; ``distribution`` the project that owns it.
+    ``missing`` is the module the error names; ``distribution`` the project that owns it. ``culprits``
+    are the distributions an error that names no module (a ``TypeError`` from an outdated release) is
+    attributed to: see :func:`attribute_failure`.
     """
 
     module: str
     error: str
     missing: Optional[str]
     distribution: Optional[str]
+    culprits: List[str] = field(default_factory=list)
+
+    @property
+    def blamed(self) -> List[str]:
+        """The distributions the failure points at: the one owning the module it misses, else its culprits."""
+        return [self.distribution] if self.distribution else self.culprits
 
 
 @dataclass
@@ -274,7 +288,7 @@ class WheelsReport:
     @property
     def release_first(self) -> List[str]:
         """The published projects a failed import points at: PyPI lacks what the wheels use."""
-        owners = {f.distribution for f in self.import_failures if f.distribution}
+        owners = {d for f in self.import_failures for d in f.blamed}
         return sorted(p.project for p in self.published if p.distribution in owners)
 
     @property
@@ -525,7 +539,7 @@ def _pure_wheel(payload: Dict[str, Any]) -> Optional[Dict[str, Any]]:
 
 def install_and_import(
     uv: str, target_dir: Path, wheels_dir: Path, packages: List[str], scratch: Path
-) -> Tuple[Optional[str], Dict[str, Dict[str, Optional[str]]], List[str]]:
+) -> Tuple[Optional[str], Dict[str, Dict[str, Any]], List[str]]:
     """Install ``target_dir`` in an empty venv with the shipped ``install.py`` (the wheels it needs, through
     uv), and import every module of ``packages``.
 
@@ -562,7 +576,7 @@ def install_and_import(
     if not result.is_file():
         return f"the import run ended without a result (exit {imported.returncode}):\n{imported.stderr.strip()}", {}, []
     outcome = json.loads(result.read_text())
-    failures: Dict[str, Dict[str, Optional[str]]] = outcome["failures"]
+    failures: Dict[str, Dict[str, Any]] = outcome["failures"]
     return None, failures, list(outcome["imported"])
 
 
@@ -576,6 +590,79 @@ def _owner(module: Optional[str], owners: Dict[str, str]) -> Optional[str]:
         if prefix in owners:
             return owners[prefix]
     return None
+
+
+_IDENTIFIER = re.compile(r"[A-Za-z_]\w*")
+_QUOTED = re.compile(r"""['"]([^'"]+)['"]""")
+_CALLED = re.compile(r"^\w+: ([\w.]+)\(")
+
+
+def _identifiers(wheel: Path, only: Optional[Set[str]] = None) -> Set[str]:
+    """The identifiers in the ``.py`` files of ``wheel`` (only the members named in ``only``, when given)."""
+    names: Set[str] = set()
+    with zipfile.ZipFile(wheel) as archive:
+        for member in archive.namelist():
+            if member.endswith(".py") and (only is None or member in only):
+                names.update(_IDENTIFIER.findall(archive.read(member).decode("utf-8", errors="replace")))
+    return names
+
+
+def _names_only_here(published: Path, local: Path, differing: List[str]) -> Set[str]:
+    """The identifiers the checkout's changed files use that no file of PyPI's wheel does."""
+    return _identifiers(local, set(differing)) - _identifiers(published)
+
+
+def _error_names(error: str) -> Set[str]:
+    """The names an error message points at: what it quotes and the callable it opens with."""
+    names: Set[str] = set()
+    for quoted in _QUOTED.findall(error):
+        names.update(_IDENTIFIER.findall(quoted))
+    called = _CALLED.match(error)
+    if called:
+        names.update(called.group(1).split("."))
+    return names
+
+
+def _frame_owner(filename: str, owners: Dict[str, str]) -> Optional[str]:
+    """The distribution whose installed package holds ``filename`` (``.../site-packages/liquifai/app.py``)."""
+    parts = Path(filename).parts
+    if "site-packages" not in parts:
+        return None
+    inside = parts[parts.index("site-packages") + 1 :]
+    if not inside:
+        return None
+    return _owner(inside[0].removesuffix(".py"), owners)
+
+
+def attribute_failure(
+    failure: Dict[str, Any],
+    owners: Dict[str, str],
+    behind: List[PublishedDependency],
+    new_names: Dict[str, Set[str]],
+) -> List[str]:
+    """The published projects, behind PyPI, whose release a failure that names no module is blamed on.
+
+    Only a ``ModuleNotFoundError`` of a module no workspace project ships is an optional extra's. Any
+    other error is the outdated release's when a project is behind, found in this order:
+
+    1. the innermost frame of the traceback that lies in a behind project's code;
+    2. the behind projects whose checkout-only code uses a name the message points at — a quoted name
+       or the callable it opens with (``'config_files'``): a bad keyword is raised at the call, so no
+       frame of the callee exists;
+    3. else every behind project.
+
+    No project behind, or a ``ModuleNotFoundError``: nobody.
+    """
+    if not behind or str(failure.get("error", "")).startswith("ModuleNotFoundError:"):
+        return []
+    distributions = {p.distribution for p in behind}
+    for filename in reversed(failure.get("frames") or []):
+        owner = _frame_owner(str(filename), owners)
+        if owner in distributions:
+            return [str(owner)]
+    names = _error_names(str(failure.get("error", "")))
+    named = [d for d in distributions if names & new_names.get(d, set())]
+    return sorted(named or distributions)
 
 
 # --- the run ---------------------------------------------------------------------------------
@@ -743,7 +830,10 @@ def vendor_wheels(
         }
         _write_wheels(folder, staged, files)
 
-        compared = [_compare(uv, project, states[project.name][1] or {}, scratch, owners) for project in published]
+        new_names: Dict[str, Set[str]] = {}
+        compared = [
+            _compare(uv, project, states[project.name][1] or {}, scratch, owners, new_names) for project in published
+        ]
 
         click.echo(f"==> Installing {target.name} in an empty venv and importing every module", err=True)
         export_head(target.path, scratch / "src" / target.name)
@@ -754,14 +844,18 @@ def vendor_wheels(
         packages = sorted(set(own) | {m for wheel in installed for m in wheel_modules(wheel)})
         install_error, failures, imported = install_and_import(uv, target.path, folder, packages, scratch)
 
-    every_failure = [
-        ImportFailure(module, str(f.get("error")), f.get("missing"), _owner(f.get("missing"), owners))
-        for module, f in sorted(failures.items())
-    ]
-    # A package that fails, or any module that misses a workspace project's module, is a break. A
-    # deeper module that misses something no workspace project ships is most often an optional
-    # extra's (the empty venv installs none), so it is reported without failing the run.
-    import_failures = [f for f in every_failure if f.module in packages or f.distribution is not None]
+    behind = [p for p in compared if p.differing_files]
+    every_failure = []
+    for module, f in sorted(failures.items()):
+        named = f.get("missing")
+        owner = _owner(named, owners)
+        culprits = [] if owner else attribute_failure(f, owners, behind, new_names)
+        every_failure.append(ImportFailure(module, str(f.get("error")), named, owner, culprits))
+    # A package that fails, a module that misses a workspace project's module, or one that fails on a
+    # project behind PyPI is a break. A deeper module that misses something no workspace project ships
+    # is most often an optional extra's (the empty venv installs none), so it is reported without
+    # failing the run.
+    import_failures = [f for f in every_failure if f.module in packages or f.blamed]
     import_warnings = [f for f in every_failure if f not in import_failures]
     wheels_dir = str(folder.relative_to(workspace_root))
     committed: Optional[str] = None
@@ -889,9 +983,15 @@ def _clash(project: WorkspaceProject, payload: Dict[str, Any], version: str) -> 
 
 
 def _compare(
-    uv: str, project: WorkspaceProject, payload: Dict[str, Any], scratch: Path, owners: Dict[str, str]
+    uv: str,
+    project: WorkspaceProject,
+    payload: Dict[str, Any],
+    scratch: Path,
+    owners: Dict[str, str],
+    new_names: Dict[str, Set[str]],
 ) -> PublishedDependency:
-    """``project``'s PyPI wheel against the one its checkout builds; records whose modules are whose."""
+    """``project``'s PyPI wheel against the one its checkout builds; records whose modules are whose and
+    the names only the checkout's changed files use (``new_names``, for :func:`attribute_failure`)."""
     pypi_version = str((payload.get("info") or {}).get("version") or "")
     entry = _pure_wheel(payload)
     if entry is None:
@@ -906,6 +1006,8 @@ def _compare(
     export_head(project.path, scratch / "src" / project.name)
     local = build_wheel(uv, scratch / "src" / project.name, scratch / "local")
     differing = wheel_differences(remote, local)
+    if differing:
+        new_names[project.distribution] = _names_only_here(remote, local, differing)
     return PublishedDependency(project.name, project.distribution, pypi_version, _wheel_version(local), differing)
 
 
@@ -1003,8 +1105,7 @@ def render_report(report: WheelsReport) -> str:
         modules = f"module{'s' if n_imported != 1 else ''}"
         if report.import_failures:
             rows = [
-                [f.module, f.error + (f"  ({f.distribution})" if f.distribution else "")]
-                for f in report.import_failures
+                [f.module, f.error + (f"  ({', '.join(f.blamed)})" if f.blamed else "")] for f in report.import_failures
             ]
             lines += _table(rows)
             lines.append(f"  {n_imported} other {modules} imported")
