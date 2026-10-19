@@ -94,17 +94,26 @@ def _commit(path: Path, message: str = "commit") -> None:
 
 
 def _wheel(path: Path, files: Dict[str, str], *, requires: Sequence[str] = (), version: str = "0.1.0") -> Path:
-    """A wheel written by hand: its files plus a dist-info whose METADATA carries `requires`."""
+    """A wheel written by hand: its files plus a dist-info whose METADATA carries `requires`.
+
+    Every member carries one fixed time, as a real build's carries its commit's (`SOURCE_DATE_EPOCH`): a member
+    written with the clock made two builds of one project two seconds apart differ, so a rerun of
+    `--commit` committed again (`test_wheels_zip.py::TestGit::test_a_rerun_with_nothing_new_commits_nothing`
+    failed whenever its two runs straddled a two-second step).
+    """
     distribution = path.name.split("-")[0]
     info = f"{distribution}-{version}.dist-info"
     metadata = ["Metadata-Version: 2.1", f"Name: {distribution}", f"Version: {version}"]
     metadata += [f"Requires-Dist: {r}" for r in requires]
+    members = {
+        **files,
+        f"{info}/METADATA": "\n".join(metadata) + "\n",
+        f"{info}/WHEEL": "Wheel-Version: 1.0\n",
+        f"{info}/RECORD": f"{version}\n",
+    }
     with zipfile.ZipFile(path, "w") as archive:
-        for name, text in files.items():
-            archive.writestr(name, text)
-        archive.writestr(f"{info}/METADATA", "\n".join(metadata) + "\n")
-        archive.writestr(f"{info}/WHEEL", "Wheel-Version: 1.0\n")
-        archive.writestr(f"{info}/RECORD", f"{version}\n")
+        for name, text in members.items():
+            archive.writestr(zipfile.ZipInfo(name, date_time=w._ZIP_TIME), text)
     return path
 
 

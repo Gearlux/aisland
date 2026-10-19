@@ -454,6 +454,10 @@ User choice 2026-10-08: an aisland command, only the named project's closure, bo
   cache, and `_PYPI_INDEX_ARGS` pointed at a local folder holding this interpreter's setuptools and
   PyYAML, repackaged (`offline_uv`); the pip tests run with `PIP_CONFIG_FILE=/dev/null` against a
   local PEP 503 index.
+- A wheel a test writes by hand (`tests/test_wheels.py::_wheel`) gives every member one fixed time
+  (`wheels._ZIP_TIME`), as a real build stamps its commit's: a member stamped by the clock makes two
+  builds two seconds apart differ, and a test comparing reruns then fails only some of the time
+  (`tests/test_wheels_zip.py::TestGit::test_a_rerun_after_the_clock_moved_commits_nothing`).
 
 ## Workspace git aliases (`setup_git.sh`, `git_pull_all.sh`)
 

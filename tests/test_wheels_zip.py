@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import subprocess
 import sys
+import time
 import zipfile
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple
@@ -99,6 +100,23 @@ class TestGit:
 
         assert _git(root / "app", "rev-parse", "HEAD") == head
         assert report.committed is None
+        assert report.commit_note == "nothing new to commit in app/wheels"
+
+    def test_a_rerun_after_the_clock_moved_commits_nothing(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """The two runs ten seconds apart: what decided the test above when the runs straddled a two-second step
+        (a zip member's time has two-second steps)."""
+        root = _app_workspace(tmp_path, monkeypatch)
+        _fake_builds(monkeypatch, {})
+        w.vendor_wheels(root, "app", commit=True)
+        head = _git(root / "app", "rev-parse", "HEAD")
+        now = time.time()
+        monkeypatch.setattr(time, "time", lambda: now + 10)  # zipfile stamps a member from time.time()
+
+        report = w.vendor_wheels(root, "app", commit=True)
+
+        assert _git(root / "app", "rev-parse", "HEAD") == head
         assert report.commit_note == "nothing new to commit in app/wheels"
 
     def test_a_failed_check_commits_nothing(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
