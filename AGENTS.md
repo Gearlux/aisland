@@ -10,7 +10,8 @@ disk · [containers] containerised services · [closure] the pre-install closure
 [playwright] dev dependencies needing more than pip · [local-pipeline] the local pipeline ·
 [stage-limits] a long stage's time limit · [doctor] the environment doctor · [test-stats] every
 pytest run recorded · [pull-all]
-`pull-all` settles a pointer only to a commit holding both sides · [wheels] a project
+`pull-all` settles a pointer only to a commit holding both sides · [tunnel] the remote tunnel runs where there is no
+workspace and its remembered workspaces are a cache · [wheels] a project
 installed outside the workspace gets its unpublished dependencies as wheels · [mirror] a mirror
 is push-only, fast-forward-only, and copies the primary · [wheel-mode] from a checkout everything
 is found from aisland's place, from a wheel from where it runs · [folders-as-submodules] a folder of
@@ -44,6 +45,15 @@ The workspace's dev-infrastructure CLI, `aisland` (click, `aisland/cli.py`):
 - `nightly.py`: `aisland tests nightly`, the morning report of the orchestrator's nightly runs
   (`aisland/data/nightly/<date>.md`, a desktop notification, exit 1 on a bad night), run by the
   `<workspace>.nightly-check` Jenkins job.
+- `tunnel.py`: `aisland tunnel` — a VS Code Remote Tunnel to the machine aisland runs on. One
+  detached process with a pidfile, NOT a `BaseService` (the remote box has no process-compose) and
+  not in `aisland start`; workspace-free in `cli.py`'s `_WORKSPACE_FREE`, because the box it is for
+  has no workspace. State is PER MACHINE, `~/.aisland/tunnel` (`AISLAND_TUNNEL_HOME` overrides it,
+  for a `$HOME` that does not persist) — never derived from the working directory, which made
+  `start` in one folder and `status` in another disagree. `code tunnel` is passed NO account option
+  (it has none; the sign-in runs first, separately). The remembered workspaces back `open`'s shell
+  completion — aisland's first dynamic completion — so every reader of that file treats a bad file
+  as empty rather than raising.
 - `services/`: `jenkins` (incl. `aisland jenkins scaffold`), `mlflow`, `labelstudio`,
   `fiftyone`, `aim`, `swiftbar` run under the supervisor; `docker` (Colima), `clearml`,
   `iqengine` run under Docker.

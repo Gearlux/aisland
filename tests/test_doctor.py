@@ -293,6 +293,43 @@ class TestColimaVmTrustCheck:
         assert colima["urls"] == ["https://ghcr.io/v2/"]
 
 
+class TestTunnelRelayCheck:
+    """The relay probe runs only where a tunnel has been used, and names what to do when it fails."""
+
+    def test_a_machine_with_no_tunnel_passes_without_probing(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        def explode(*args: Any, **kwargs: Any) -> None:
+            raise AssertionError("a machine with no tunnel must not probe the relay")
+
+        monkeypatch.setattr(doctor.tunnel, "relay_reachable", explode)
+
+        result = doctor.check_tunnel_relay()
+
+        assert result.ok
+        assert "no tunnel configured here" in result.detail
+
+    def test_a_reachable_relay_passes_with_what_it_answered(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        doctor.tunnel.cli_path().parent.mkdir(parents=True, exist_ok=True)
+        doctor.tunnel.cli_path().write_text("")
+        monkeypatch.setattr(doctor.tunnel, "relay_reachable", lambda *a, **k: (True, "the relay answers (HTTP 404)"))
+
+        result = doctor.check_tunnel_relay()
+
+        assert result.ok
+        assert "HTTP 404" in result.detail
+
+    def test_an_unreachable_relay_fails_with_a_command_to_run(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        doctor.tunnel.provider_path().parent.mkdir(parents=True, exist_ok=True)
+        doctor.tunnel.provider_path().write_text("github\n")
+        monkeypatch.setattr(doctor.tunnel, "relay_reachable", lambda *a, **k: (False, "the relay is unreachable: x"))
+
+        result = doctor.check_tunnel_relay()
+
+        assert not result.ok
+        assert "cannot reach the editor" in result.detail
+        assert result.remedy.startswith("curl ")
+        assert doctor.tunnel.RELAY_HOST in result.remedy
+
+
 class TestReporting:
     def test_exit_code_is_zero_when_everything_passes(self, monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.setattr(doctor, "CHECKS", (lambda: doctor.CheckResult("x", True, "fine"),))

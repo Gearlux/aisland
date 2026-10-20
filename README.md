@@ -43,7 +43,7 @@ aisland also runs installed from a wheel, in a workspace of your own. Built here
 carries everything aisland reads (the editor-file template, the git alias scripts, the shell init):
 
 ```bash
-python -m pip wheel --no-deps -w dist aisland     # → dist/aisland_manager-0.1.0-py3-none-any.whl
+python -m pip wheel --no-deps -w dist ./aisland   # → dist/aisland_manager-0.1.0-py3-none-any.whl
 ```
 
 Make a workspace, give it a venv holding aisland, and set it up:
@@ -333,8 +333,9 @@ aisland doctor
 #   ✓ colima-tls       the VM verifies TLS to https://ghcr.io/v2/ — pulls can download
 #   ✓ jenkins-java     Jenkins 2.555.2 runs on Java 25.0.3 (/opt/homebrew/opt/openjdk@25/bin/java)
 #   ✓ torch-ext-lock   no torch extension build lock left behind under /Users/you/Library/Caches/torch_extensions
+#   ✓ tunnel-relay     no tunnel configured here (nothing in /path/to/aisland/data/tunnel)
 #
-# All 7 checks passed.
+# All 8 checks passed.
 ```
 
 It exits non-zero when a check fails, so it works as a CI preflight step. Current checks:
@@ -720,6 +721,69 @@ aisland wheels install navigaitor-wheels.zip --python ~/envs/navigaitor/bin/pyth
 Why it is built
 this way: [`docs/architecture.md`](docs/architecture.md) → "A project installed outside the
 workspace gets its unpublished dependencies as wheels".
+
+### Reaching a remote machine from your editor (`aisland tunnel`)
+
+A remote box is often published through an HTTPS ingress that carries HTTP and WebSocket but not raw
+TCP — a browser IDE under a path prefix, nothing else — so there is no port for Remote-SSH to attach
+to, and asking for one is a platform change. `aisland tunnel` uses a VS Code Remote Tunnel instead:
+the remote machine dials *out* to the relay, your editor attaches to that tunnel, and nothing is
+exposed through the ingress.
+
+On the machine you want to reach. It needs no workspace and no checkout of its own: build the wheel
+here (`python -m pip wheel --no-deps -w dist ./aisland`, as in "Another workspace" above), copy that
+one file over, `pip install` it there — its three dependencies come from the index, or add them to
+the copy with `python -m pip wheel -w dist ./aisland` for a box with no index. Then:
+
+```bash
+aisland tunnel start                              # name: $WORKSPACE, else this machine's hostname
+aisland tunnel start --cli ~/vscode_cli.tar.gz    # a box that cannot reach the download host
+aisland tunnel status                             # running? under which name and account?
+aisland tunnel logs -n 50
+aisland tunnel stop
+```
+
+The first start signs in — a code to enter in a browser — and keeps the account, so later starts need
+no interaction; `aisland tunnel login --provider microsoft` picks the other account. The sign-in
+happens before the tunnel is spawned, because `code tunnel` takes no account options and asks
+interactively when it has none, which a detached process cannot answer.
+
+The tunnel keeps everything in `~/.aisland/tunnel` on that machine — the CLI binary, the log, the
+pidfile, the account and the remembered workspaces — so every command finds the same tunnel wherever
+it runs from. A box whose `$HOME` does not survive a restart points it at storage that does, once:
+
+```bash
+export AISLAND_TUNNEL_HOME=/mnt/workspace/.aisland/tunnel
+```
+
+From your own machine, paste the workspace's address once — after that it completes:
+
+```bash
+aisland tunnel open 'https://<host>/<workspace>/?folder=/mnt/workspace'
+aisland tunnel open 'https://<host>/<workspace>/?workspace=/mnt/workspace/repo/dev.code-workspace'
+aisland tunnel open <workspace><TAB>   # the workspaces you have opened, newest first
+aisland tunnel list
+aisland tunnel clear <name>      # forget one — a name or the address
+aisland tunnel clear --all       # forget all of them
+```
+
+The address carries what to open in whichever parameter the IDE wrote — `workspace` for a
+`.code-workspace` file, `folder` for a directory (`workspace` wins if both are there) — and its last
+path segment suggests the tunnel name. Only suggests: an ingress serving `<workspace>-prod` says
+nothing about what the box inside calls itself, which is usually `<workspace>`. So when the two forms
+differ, `open` uses whichever is already remembered, asks when neither is, and takes `--name` when
+you would rather say it than be asked:
+
+```bash
+aisland tunnel open 'https://<host>/<workspace>-prod/?folder=/mnt/workspace' --name <workspace>
+```
+
+`aisland tunnel status` reports the name the tunnel registered under and the account it holds — the
+two things to compare when the editor cannot find a tunnel that is running.
+
+`aisland tunnel` is deliberately not part of `aisland start` / `stop`: a tunnel into your own laptop
+is nobody's intent, so it runs only where you ask for it. `aisland doctor` probes the relay only on a
+machine that has used the tunnel.
 
 ## Service Supervision (process-compose)
 

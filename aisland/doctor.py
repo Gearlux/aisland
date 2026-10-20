@@ -30,6 +30,7 @@ from typing import Callable, List, Optional, Tuple
 
 import click
 
+from aisland import tunnel
 from aisland.services.docker import DockerService
 from aisland.services.jenkins import JenkinsService
 from aisland.services.jenkins_java import JenkinsJava
@@ -414,6 +415,33 @@ def check_torch_extension_lock() -> CheckResult:
     )
 
 
+def check_tunnel_relay() -> CheckResult:
+    """A machine that uses `aisland tunnel` can still reach the relay the tunnel dials out to.
+
+    The tunnel's whole premise is outbound-only: nothing is exposed through an ingress, so the one
+    thing that can quietly take it away is egress to the relay being closed — and the symptom on the
+    remote box is a tunnel that starts, logs nothing useful and never appears in the editor.
+
+    The probe runs ONLY where a tunnel has been used (a downloaded CLI, a remembered provider or a
+    pidfile): the doctor runs on every machine, most of which have no tunnel, and none of them should
+    pay a network timeout for a feature they never touched.
+    """
+    state = tunnel.state_dir()
+    configured = any(path.exists() for path in (tunnel.cli_path(), tunnel.provider_path(), tunnel.pid_path()))
+    if not configured:
+        return CheckResult("tunnel-relay", True, f"no tunnel configured here (nothing in {state})")
+    reachable, detail = tunnel.relay_reachable()
+    if reachable:
+        return CheckResult("tunnel-relay", True, detail)
+    return CheckResult(
+        "tunnel-relay",
+        False,
+        f"{detail} — a tunnel started here cannot reach the editor",
+        f"curl -sS -m 8 -o /dev/null -w '%{{http_code}}\\n' https://{tunnel.RELAY_HOST}/   "
+        "# confirm, then ask for outbound 443 to that host; until then `aisland tunnel stop` and work over git",
+    )
+
+
 #: Every check the doctor runs, in report order.
 CHECKS: Tuple[Callable[[], CheckResult], ...] = (
     check_opencv_single_variant,
@@ -423,6 +451,7 @@ CHECKS: Tuple[Callable[[], CheckResult], ...] = (
     check_colima_vm_trust,
     check_jenkins_java,
     check_torch_extension_lock,
+    check_tunnel_relay,
 )
 
 
