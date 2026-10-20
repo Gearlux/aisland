@@ -2151,9 +2151,9 @@ from `aisland setup` and `aisland workspace init`):
 - A rule or command changes in one place for every workspace; a workspace on a wheel takes it with the next aisland
   release and `aisland setup`.
 - An agent that reads `AGENTS.md` without following imports sees the import line, not the rules.
-- Claude Code documents parent-folder discovery for `.claude/skills/` and `CLAUDE.md`, not for `.claude/commands/`:
-  a session started inside a project folder reads the rules through the root's `CLAUDE.md`, but may not list the
-  commands.
+- Claude Code reads `.claude/commands/` of the folder a session starts in only (measured 2026-10-20: started in a
+  project folder it listed none of the six), so every project folder gets the same link, kept out of git through its
+  repository's `.git/info/exclude` — a line in each project's tracked `.gitignore` would change every project.
 - A command dropped from aisland disappears on the next setup: its link is removed, an unedited copy deleted, an
   edited copy kept and named.
 

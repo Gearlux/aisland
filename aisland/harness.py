@@ -3,7 +3,8 @@
 aisland ships, in ``aisland/harness/``:
 
 * ``commands/*.md`` — the workspace slash commands (``/commit-session``, ``/ship``, ...), installed into
-  ``.agents/workflows/``; ``.claude/commands`` is a link to that folder, so Claude Code finds them;
+  ``.agents/workflows/``; ``.claude/commands`` is a link to that folder — at the root and in every project folder,
+  as Claude Code reads only the folder a session starts in — so Claude Code finds them;
 * ``scripts/*.py`` — the helpers a command runs (``stage_hunks.py`` for ``/commit-session``), into
   ``.agents/scripts/``;
 * ``AGENTS.md`` — the generic agent rules, into ``.agents/aisland/AGENTS.md``. The workspace's own ``AGENTS.md``
@@ -26,6 +27,7 @@ the report names the missing import line instead.
 import hashlib
 import json
 import os
+import subprocess
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple
 
@@ -143,22 +145,61 @@ def _remove_dropped(root: Path, shipped: List[str], record: Dict[str, str]) -> L
     return report
 
 
-def _link_claude_commands(root: Path) -> Optional[str]:
-    """``.claude/commands`` → ``../.agents/workflows``, where Claude Code looks for a project's commands."""
-    commands = root / ".claude" / "commands"
+def _link_claude_commands(root: Path, folder: Path) -> Optional[str]:
+    """``<folder>/.claude/commands`` → the workspace's ``.agents/workflows``, where Claude Code looks for commands.
+
+    Claude Code reads ``.claude/commands`` of the folder a session starts in, not of the workspace above it (measured
+    2026-10-20: started in a project folder it listed none of the workspace's commands), so the root and every project
+    folder get the link."""
+    commands = folder / ".claude" / "commands"
     wanted = os.path.relpath(root / WORKFLOWS, commands.parent)
     if commands.is_symlink():
         if os.readlink(commands) == wanted:
             return None
         commands.unlink()
     elif commands.exists():
+        where = commands.relative_to(root).as_posix()
         return (
-            ".claude/commands is a folder of its own — move its files into .agents/workflows and delete it, "
+            f"{where} is a folder of its own — move its files into .agents/workflows and delete it, "
             "so Claude finds aisland's commands"
         )
     commands.parent.mkdir(parents=True, exist_ok=True)
     os.symlink(wanted, commands)
     return None
+
+
+def _project_folders(root: Path) -> List[Path]:
+    """The workspace's project folders: each direct, non-hidden subfolder holding a ``pyproject.toml`` (a submodule
+    whose source is detached has an empty folder and gets nothing)."""
+    return sorted(
+        child
+        for child in root.iterdir()
+        if child.is_dir() and not child.name.startswith(".") and (child / "pyproject.toml").is_file()
+    )
+
+
+def _exclude_in_its_repository(path: Path) -> None:
+    """Keep ``path`` out of git in the repository that holds it, through that repository's ``.git/info/exclude``: the
+    link is per machine, and a line in each project's tracked ``.gitignore`` would change every project."""
+    top = subprocess.run(
+        ["git", "-C", str(path.parent), "rev-parse", "--show-toplevel"], capture_output=True, text=True
+    ).stdout.strip()
+    exclude = subprocess.run(
+        ["git", "-C", str(path.parent), "rev-parse", "--path-format=absolute", "--git-path", "info/exclude"],
+        capture_output=True,
+        text=True,
+    ).stdout.strip()
+    if not top or not exclude:
+        return  # in no repository: nothing could commit it
+    # The parent resolved, never the link itself: resolving `.claude/commands` would follow it to the workflows.
+    line = "/" + (path.parent.resolve() / path.name).relative_to(Path(top).resolve()).as_posix()
+    target = Path(exclude)
+    content = target.read_text() if target.is_file() else ""
+    if line in (entry.strip() for entry in content.splitlines()):
+        return
+    target.parent.mkdir(parents=True, exist_ok=True)
+    sep = "" if (not content or content.endswith("\n")) else "\n"
+    target.write_text(content + sep + line + "\n")
 
 
 def _workspace_agents_md(root: Path) -> Optional[str]:
@@ -209,8 +250,14 @@ def install_harness(root: Path, link: Optional[bool] = None) -> List[str]:
             report.append(line)
     report += _remove_dropped(root, [name for _source, name in shipped], record)
     _write_record(root, record)
-    for line in (_link_claude_commands(root), _workspace_agents_md(root)):
+    for line in (_link_claude_commands(root, root), _workspace_agents_md(root)):
         if line:
             report.append(line)
+    for project in _project_folders(root):
+        line = _link_claude_commands(root, project)
+        if line:
+            report.append(line)
+        elif (project / ".claude" / "commands").is_symlink():
+            _exclude_in_its_repository(project / ".claude" / "commands")
     _ignore(root, [name for _source, name in shipped] + [RECORD])
     return report

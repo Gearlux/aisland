@@ -419,6 +419,10 @@ A bare `::` pin in this section is in `tests/test_jenkins_scaffold.py`.
   `::test_a_command_of_the_users_own_is_never_touched`, `::test_an_agents_md_without_the_import_is_left_and_named`).
 - Every installed file is ignored by its own path, never by its folder, so a workspace's own command stays
   committable (`::test_the_installed_files_are_ignored_and_the_users_own_are_not`).
+- Every project folder (a direct subfolder with a `pyproject.toml`) gets `.claude/commands` too — Claude Code reads
+  only the folder a session starts in — excluded through ITS repository's `.git/info/exclude`, never a tracked
+  `.gitignore` (`::test_a_session_started_in_a_project_finds_the_commands_too`,
+  `::test_a_projects_link_is_excluded_in_its_own_repository_and_changes_no_tracked_file`).
 - Setup installs it before provisioning; the commands that commit carry `model: sonnet`
   (`::test_a_command_that_commits_runs_on_sonnet`). `harness/` is no package: a new file kind there joins
   `[tool.setuptools.package-data]` (`tests/test_packaging.py::test_the_package_holds_the_templates_and_the_git_scripts`).

@@ -113,6 +113,64 @@ def test_a_claude_commands_folder_of_the_users_own_is_left_and_named(root: Path,
     )
 
 
+def _project(root: Path, name: str, own_repository: bool = True) -> Path:
+    """A project folder of the workspace: its `pyproject.toml`, and (like a submodule) a repository of its own."""
+    project = _write(root / name / "pyproject.toml", f'[project]\nname = "{name}"\n').parent
+    if own_repository:
+        subprocess.run(["git", "init", "-q"], cwd=project, check=True)
+    return project
+
+
+def test_a_session_started_in_a_project_finds_the_commands_too(root: Path, shipped: Path) -> None:
+    """Claude Code reads `.claude/commands` of the folder it starts in, not of the workspace above it (measured
+    2026-10-20: started in a project folder it listed none of the six), so every project links to the workflows."""
+    project = _project(root, "models")
+    harness.install_harness(root, link=False)
+    assert os.readlink(project / ".claude" / "commands") == "../../.agents/workflows"
+    assert (project / ".claude" / "commands" / "ship.md").read_text().endswith("ship v1\n")
+
+
+def test_a_projects_link_is_excluded_in_its_own_repository_and_changes_no_tracked_file(
+    root: Path, shipped: Path
+) -> None:
+    project = _project(root, "models")
+    harness.install_harness(root, link=False)
+    harness.install_harness(root, link=False)
+    status = subprocess.run(["git", "status", "--porcelain"], cwd=project, capture_output=True, text=True).stdout
+    assert status == "?? pyproject.toml\n"  # the project's own file, never committed in this test; no `.claude/`
+    assert not (project / ".gitignore").exists()
+    exclude = (project / ".git" / "info" / "exclude").read_text().splitlines()
+    assert exclude.count("/.claude/commands") == 1
+
+
+def test_a_project_folder_inside_the_workspaces_repository_is_excluded_by_its_path_there(
+    root: Path, shipped: Path
+) -> None:
+    _project(root, "models", own_repository=False)
+    harness.install_harness(root, link=False)
+    assert subprocess.run(["git", "check-ignore", "-q", "models/.claude/commands"], cwd=root).returncode == 0
+
+
+def test_a_project_with_a_claude_commands_folder_of_its_own_keeps_it_and_is_named(root: Path, shipped: Path) -> None:
+    project = _project(root, "models")
+    _write(project / ".claude" / "commands" / "mine.md", "mine\n")
+    report = harness.install_harness(root, link=False)
+    assert not (project / ".claude" / "commands").is_symlink()
+    assert (
+        "models/.claude/commands is a folder of its own — move its files into .agents/workflows and delete it, "
+        "so Claude finds aisland's commands" in report
+    )
+
+
+def test_a_folder_that_is_no_project_gets_no_link(root: Path, shipped: Path) -> None:
+    (root / "notes").mkdir()
+    (root / ".hidden").mkdir()
+    _write(root / ".hidden" / "pyproject.toml", "")
+    harness.install_harness(root, link=False)
+    assert not os.path.lexists(root / "notes" / ".claude")
+    assert not os.path.lexists(root / ".hidden" / ".claude")
+
+
 def test_a_second_install_with_nothing_changed_reports_nothing(root: Path, shipped: Path) -> None:
     harness.install_harness(root, link=False)
     assert harness.install_harness(root, link=False) == []

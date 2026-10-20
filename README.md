@@ -224,7 +224,7 @@ rules, so Claude Code (and Gemini CLI) behave alike in all of them:
 | In the workspace | What it is |
 | --- | --- |
 | `.agents/workflows/*.md` | the commands `/commit-all`, `/commit-session`, `/list-actions`, `/pull-all`, `/push-all`, `/ship` |
-| `.claude/commands` | a link to `.agents/workflows`, where Claude Code looks for them |
+| `.claude/commands` | a link to `.agents/workflows`, where Claude Code looks for them — at the root and in every project folder (Claude Code reads only the folder a session starts in); a project's link is kept out of git through its repository's own `.git/info/exclude` |
 | `.agents/scripts/stage_hunks.py` | the helper `/commit-session` runs to stage only some hunks of a file |
 | `.agents/aisland/AGENTS.md` | the generic rules; the workspace's `AGENTS.md` imports them with its first line |
 | `AGENTS.md`, `CLAUDE.md`, `GEMINI.md` | written once, when the workspace has no `AGENTS.md`: the import line, then room for the workspace's own rules; the other two link to it |
