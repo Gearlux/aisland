@@ -35,9 +35,7 @@ _LIGHTNING_OVERRIDE = ["lightning ; sys_platform == 'never'"]
 
 def _pyproject(project: Path, name: str, requires: list[str]) -> None:
     body = ", ".join(f'"{r}"' for r in requires)
-    (project / "pyproject.toml").write_text(
-        f'[project]\nname = "{name}"\nversion = "0.1.0"\ndependencies = [{body}]\n'
-    )
+    (project / "pyproject.toml").write_text(f'[project]\nname = "{name}"\nversion = "0.1.0"\ndependencies = [{body}]\n')
 
 
 # --- root uv.toml generation --------------------------------------------------
