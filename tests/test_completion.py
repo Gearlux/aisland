@@ -270,3 +270,41 @@ def test_setup_sh_delegates_instead_of_reimplementing() -> None:
     assert 'aisland" completion install' in setup or "aisland completion install" in setup
     assert "liquifai-install-completions" not in setup, "the shell copy is gone; the command owns this"
     assert comp._NON_LIQUIFAI_START not in setup, "the block is rendered in Python now"
+
+
+# --------------------------------------------------------------------------- #
+# the interactive-only guard (the fork bomb of 2026-10-20)
+# --------------------------------------------------------------------------- #
+
+
+def test_the_block_does_nothing_in_a_NON_interactive_shell(rc: Path, all_present: None) -> None:
+    """The block's `eval "$(_X_COMPLETE=bash_source X)"` RUNS the CLI at source time, so any
+    non-interactive bash that reads this file executes it.
+
+    Measured 2026-10-20: with `BASH_ENV` pointing at `project.bashrc` (which sources this file),
+    `aisland` emitted completion, click probed the shell with `bash --norc -c 'echo
+    "${BASH_VERSION}"'`, that shell read `BASH_ENV`, sourced this file and ran `aisland` again —
+    an endless aisland <-> bash recursion that filled the machine's process table (2931
+    processes; nothing on the machine could fork, twice needing a reboot). It is self-sustaining:
+    killing a slice lets the survivors refill.
+
+    Completion means nothing without a prompt, so the block leaves at once unless the shell is
+    interactive. That makes the recursion impossible whatever sets `BASH_ENV`.
+    """
+    comp.install_completions(target_rc=rc, shell="bash", apps=[])
+    body = rc.read_text()
+    start = body.index(comp._NON_LIQUIFAI_START)
+
+    guard = "case $- in *i*) ;; *) return 0 ;; esac"
+    assert guard in body, "the generated block must leave a non-interactive shell at once"
+    assert body.index(guard) < body.index(
+        "_AISLAND_COMPLETE", start
+    ), "the guard must come BEFORE the eval that runs the CLI, or it guards nothing"
+
+
+def test_the_guard_is_rendered_for_every_shell(rc: Path, all_present: None) -> None:
+    """zsh and fish emit no bash version guard, but they run the CLI at source time just the
+    same — the recursion is not bash's alone."""
+    for shell in ("bash", "zsh"):
+        comp.install_completions(target_rc=rc, shell=shell, apps=[])
+        assert "case $- in *i*) ;; *) return 0 ;; esac" in rc.read_text(), shell

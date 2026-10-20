@@ -397,6 +397,18 @@ A bare `::` pin in this section is in `tests/test_jenkins_scaffold.py`.
     guarded on `BASH_VERSINFO >= 4.4`. argcomplete: no member; never add a `streamstudio` row.
   - `--target-rc` appends marked blocks only.
   - Pruning stands down when discovery finds no liquifai app; program lookup is venv-first.
+  - **The generated block LEAVES a non-interactive shell at once** (`_INTERACTIVE_ONLY`, the
+    block's first line after its provenance header; 2026-10-20): every line below it RUNS its
+    CLI to get the script (`eval "$(_X_COMPLETE=..._source X)"`), so a non-interactive shell
+    that reads the file executes them — and with `BASH_ENV` pointing at the file that sources
+    this one, click's own `bash --norc -c 'echo "${BASH_VERSION}"'` probe reads it and runs the
+    CLI again, which probes again. Measured: 51 processes spawned from one `aisland` in 8 s
+    against 0 with the guard; unguarded it filled this machine's process table (2931 processes,
+    nothing could fork) and is SELF-SUSTAINING — killing a slice lets the survivors refill, so a
+    clear is `while` over `pkill -9 -f BASH_VERSION; pkill -9 -f 'venv/bin/aisland$'` (anchored:
+    the bare, argument-less invocations are the bomb's; `aisland tunnel …` is a person's).
+    Never add a line to the block that runs a program before the guard.
+    (`tests/test_completion.py::test_the_block_does_nothing_in_a_NON_interactive_shell`)
 
 ## `aisland clean` / `aisland backups`
 
