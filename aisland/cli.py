@@ -454,7 +454,7 @@ def wheels_group(
     """The wheels a project installed outside the workspace needs: build them, zip them, install a zip.
 
     \b
-    aisland wheels build PROJECT [--include-published | --all] [--zip] [--commit]
+    aisland wheels build PROJECT [--include-published | --all] [--zip] [--commit] [--force] [--no-check] [--json]
     aisland wheels zip PROJECT
     aisland wheels install ZIP --python PYTHON [--into DIR] [-- install.py options]
     aisland wheels PROJECT …          (= aisland wheels build PROJECT …)

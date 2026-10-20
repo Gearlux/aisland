@@ -863,6 +863,15 @@ class TestCli:
         assert result.exit_code == 0, result.output
         assert asked == [check]
 
+    def test_the_groups_help_names_every_option_of_build(self) -> None:
+        result = CliRunner().invoke(main, ["wheels", "--help"])
+        assert result.exit_code == 0, result.output
+        usage = next(line for line in result.output.splitlines() if "aisland wheels build PROJECT" in line)
+        build = main.commands["wheels"].commands["build"]  # type: ignore[attr-defined]
+        options = [opt for param in build.params for opt in param.opts if opt.startswith("--") and opt != "--help"]
+        assert options, "build has options"
+        assert [opt for opt in options if opt not in usage] == []
+
     def test_an_unchecked_run_exits_zero_and_says_so_in_json(self, monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.setattr(
             w, "vendor_wheels", lambda root, project, **kwargs: _report(import_failures=[], checked=False)
