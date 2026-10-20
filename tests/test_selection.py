@@ -345,18 +345,18 @@ def test_the_extras_axis_has_nothing_to_declare_undefined(extras_workspace: Path
 def test_a_self_referential_extra_is_not_offered(tmp_path: Path) -> None:
     """`all = ["me[dev,local]"]` re-exports the others; offering it too perturbs resolution.
 
-    Observed 2026-10-20: company_ai_bridge with `[all,...]` resolved platform-client to a version
+    Observed 2026-10-20: a project selected with `[all,...]` resolved platform-client to a version
     whose URL dependency uv refuses; the same list without `all` resolved cleanly.
     """
     subprocess.run(["git", "init", "-q"], cwd=tmp_path, check=True)
-    project = tmp_path / "company_ai_bridge"
+    project = tmp_path / "my_project"
     project.mkdir()
     (project / "pyproject.toml").write_text(
-        '[project]\nname = "company-ai-bridge"\nversion = "0.1.0"\n\n'
+        '[project]\nname = "my-project"\nversion = "0.1.0"\n\n'
         "[project.optional-dependencies]\n"
         'dev = ["pytest"]\n'
         'local = ["torch"]\n'
-        'all = ["company-ai-bridge[dev,local]"]\n'
+        'all = ["my-project[dev,local]"]\n'
     )
     assert s.available(tmp_path, EXTRAS) == ["dev", "local"]
 
@@ -378,15 +378,15 @@ def test_the_self_reference_test_is_structural_not_a_name_match(tmp_path: Path) 
 
 
 def test_the_self_reference_test_normalises_the_distribution_name(tmp_path: Path) -> None:
-    """`company_ai_bridge[dev]` names the same distribution as `company-ai-bridge` (PEP 503)."""
+    """`my_project[dev]` names the same distribution as `my-project` (PEP 503)."""
     subprocess.run(["git", "init", "-q"], cwd=tmp_path, check=True)
     project = tmp_path / "p"
     project.mkdir()
     (project / "pyproject.toml").write_text(
-        '[project]\nname = "company-ai-bridge"\nversion = "0.1.0"\n\n'
+        '[project]\nname = "my-project"\nversion = "0.1.0"\n\n'
         "[project.optional-dependencies]\n"
         'dev = ["pytest"]\n'
-        'all = ["company_ai_bridge[dev]"]\n'
+        'all = ["my_project[dev]"]\n'
     )
     assert s.available(tmp_path, EXTRAS) == ["dev"]
 

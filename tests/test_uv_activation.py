@@ -41,11 +41,11 @@ def _pyproject(project: Path, name: str, requires: list[str]) -> None:
 # --- root uv.toml generation --------------------------------------------------
 class TestWriteRootUvToml:
     def test_lightning_is_kept_where_nothing_wants_pytorch_lightning(self, tmp_path: Path) -> None:
-        """bridge, 2026-10-20: two projects require `lightning`, nothing requires the other one."""
-        project = tmp_path / "company_ai_bridge"
+        """Another workspace, 2026-10-20: two projects require `lightning`, nothing requires the other one."""
+        project = tmp_path / "my_project"
         project.mkdir()
-        _pyproject(project, "company-ai-bridge", ["lightning", "torch"])
-        m._write_root_uv_toml(tmp_path, [{"name": "company_ai_bridge", "path": project}])
+        _pyproject(project, "my-project", ["lightning", "torch"])
+        m._write_root_uv_toml(tmp_path, [{"name": "my_project", "path": project}])
         data = tomllib.loads((tmp_path / "uv.toml").read_text())
         assert data["override-dependencies"] == _OVERRIDE
         assert "lightning ; sys_platform == 'never'" not in data["override-dependencies"]

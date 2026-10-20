@@ -304,7 +304,7 @@ def _defined_extras(pyproject_path: Path) -> List[str]:
 
 
 def _canonical(name: str) -> str:
-    """PEP 503 normalisation, so ``company-ai-bridge`` and ``company_ai_bridge`` compare equal."""
+    """PEP 503 normalisation, so ``my-project`` and ``my_project`` compare equal."""
     return re.sub(r"[-_.]+", "-", name).lower()
 
 
@@ -312,11 +312,11 @@ def _selectable_extras(pyproject_path: Path) -> List[str]:
     """The defined extras WITHOUT the self-referential ones — the extras axis's vocabulary.
 
     A project commonly defines a convenience extra that is nothing but its own other extras
-    (``all = ["company-ai-bridge[dev,local,platform,tools,torchsig,confluence]"]``). Offering
+    (``all = ["my-project[dev,local,tools]"]``). Offering
     it beside the extras it re-exports is not merely redundant, it is harmful: selecting both
     puts the distribution into its own requirement set, and uv then resolves the project a
-    second time as an ordinary dependency. Observed 2026-10-20 on company_ai_bridge, where
-    `[all,confluence,dev,local,platform,tools,torchsig]` pulled `platform-client==0.1.36` — whose
+    second time as an ordinary dependency. Observed 2026-10-20 on a project of another workspace, where
+    selecting `all` beside the extras it re-exports pulled `platform-client==0.1.36` — whose
     URL dependency uv refuses outright — while the same list without `all` resolved 310
     packages cleanly on 0.1.38.
 
