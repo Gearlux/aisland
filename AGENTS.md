@@ -14,7 +14,8 @@ pytest run recorded · [pull-all]
 installed outside the workspace gets its unpublished dependencies as wheels · [mirror] a mirror
 is push-only, fast-forward-only, and copies the primary · [wheel-mode] from a checkout everything
 is found from aisland's place, from a wheel from where it runs · [folders-as-submodules] a folder of
-projects is a workspace, its subfolders read as submodules.
+projects is a workspace, its subfolders read as submodules · [workspace-file] a workspace is written down in a
+file a machine without aisland reads.
 
 ## Current state
 
@@ -23,7 +24,9 @@ The workspace's dev-infrastructure CLI, `aisland` (click, `aisland/cli.py`):
   where aisland runs (standard library only; the pytest plugin imports it).
 - `manager.py`: workspace root, `aisland setup` (provisioning, submodule activation, editable
   installs, generated workspace files), `BaseService`.
-- `workspace.py`: `aisland workspace init <folder>`, a new workspace (its starting files, `--add`
+- `workspace.py`: `aisland workspace export [file]`, the workspace file (the how-to for a machine without aisland,
+  then `[projects]`: each project's folder, `url`, `branch`), and `aisland workspace init <folder>`, a new
+  workspace (its starting files, the `--from` file's projects and the `--add`
   submodules, the git aliases).
 - `config.py`: the one committed `config.toml`, written through `sources.py`
   (`aisland source`), `mirrors.py` (`aisland mirror`) and `selection.py`
@@ -81,6 +84,13 @@ start-time port pre-flight naming the PID is the only signal). All service state
   INSIDE `aisland/aisland/` and is named in `[tool.setuptools.package-data]`, so a wheel carries
   it; never read one from the project folder beside the package.
   (`tests/test_packaging.py::test_the_wheel_carries_every_file_of_the_package`)
+- **A workspace is written down in one TOML file a machine without aisland reads (user request
+  2026-10-20).** [workspace-file] `export` writes the how-to comments (venv with pip and with uv, aisland-manager
+  from PyPI or a wheel, `init --from`, `setup`) and `[projects]`; `init --from` reads it. A project takes `url` and
+  `branch` only; the file is read BEFORE anything is written, and every refusal names `file:line`
+  (`_line_of`). `export` never writes over a file. `.venv` stays the one venv aisland finds — a link counts, and
+  `init`'s `.gitignore` says `.venv` (not `.venv/`) so the link is ignored; never add a venv-name setting without
+  asking. (`tests/test_workspace_init.py`)
 
 ## Supervisor and services
 

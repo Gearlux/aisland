@@ -1982,3 +1982,60 @@ alpha                  merged origin/main (1 commit)
   the same test), with `tests/test_folder_workspace.py`.
 - Which aliases a folder workspace gets, with `tests/test_folder_git_aliases.py`.
 - Never: a second project list beside `workspace_folders`, or `.gitmodules` overruled by the folders.
+
+## A workspace is written down in a file a machine without aisland reads (2026-10-20)
+
+### Context
+
+Setting a workspace up on another machine meant knowing three things nobody had written down: how to make a venv
+aisland works from (the editable aisland of another workspace works on THAT workspace, wherever it is run — the
+record above), how to install aisland into it, and every project's address and branch, typed one `--add` at a time.
+`aisland workspace init --add` took no branch, so each project came on its default branch.
+
+### Decision
+
+One file, `<name>.workspace.toml`, holds both halves:
+
+- **Comments for the machine that has no aisland yet**: the venv with uv and with pip (`--prompt <name>` names it;
+  a venv kept elsewhere is linked in as `.venv`), aisland-manager from PyPI or from a wheel, then
+  `aisland workspace init . --from <file>` and `aisland setup`. They are comments because nothing can read the file
+  before aisland is installed.
+- **`[projects]` for aisland**: one `name = { url = …, branch = … }` per project, `name` the folder it is cloned into.
+  `init --from` adds each as a submodule on its branch (`git submodule add -b`), before any `--add`.
+- **`export` writes it** from the workspace: `.gitmodules`' submodules, a branch of `.` written as the root's branch
+  (a new workspace has no superproject branch to follow yet); without `.gitmodules`, each clone's `origin` and the
+  branch it is on, the same reading of a folder workspace as the record above. A project folder that is no clone,
+  and a clone without `origin`, are reported as left out.
+- **TOML**, because the workspace's one committed config is TOML and the standard library reads it (aisland needs
+  Python 3.12).
+- **Read before anything is written.** A file aisland refuses leaves the folder as it was; every refusal names the
+  file and the line — tomllib's position for a syntax error, `_line_of` for a project aisland refuses.
+
+Rejected: a venv-name setting. `.venv` is read in some twenty places (setup, the services' PATH, the git aliases, the
+generated editor and MCP files); a name of one's own is had with `--prompt` or a link, and `init`'s `.gitignore`
+writes `.venv` rather than `.venv/` so a link is ignored too. Rejected: a script that runs the three steps — the file
+is meant to be edited and read, and the steps differ per machine (uv or pip, PyPI or a wheel).
+
+### Consequences
+
+- The file is the user's after it is written: `export` never writes over it, and `init` never writes it.
+- An inactive submodule is exported like any other; a machine without access to it gets the clone's error from
+  `init`, naming its address — delete its line first.
+
+### Example
+
+```python
+from pathlib import Path
+from aisland import workspace
+
+workspace.export_workspace(Path("~/work/acme").expanduser())        # → ~/work/acme/acme.workspace.toml
+workspace.read_workspace_file(Path("acme.workspace.toml"))
+# [FileProject(name='models', url='git@github.com:acme/models.git', branch='dev/main'), ...]
+workspace.init_workspace(Path("."), from_file=Path("acme.workspace.toml"))
+```
+
+### What you may change
+
+- The comments' wording (with `tests/test_workspace_init.py::test_an_exported_file_says_how_to_create_the_workspace_from_it`).
+- A new project setting, added to `_PROJECT_KEYS`, written by `export` and read by `init` in the same change.
+- Never: reading the file after `git init`, a refusal without its line, `export` over an existing file.

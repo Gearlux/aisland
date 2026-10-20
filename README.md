@@ -77,6 +77,57 @@ own. A workspace is a folder whose projects are subfolders holding a `pyproject.
 submodules listed in `.gitmodules`, or, without one, every such subfolder (next section);
 `aisland setup` needs the `.venv` and reads `config.toml`, `.env` and `mypy.ini` when they exist.
 
+#### The same workspace on another machine: a workspace file
+
+`aisland workspace export` writes the workspace's projects into one file — each submodule's folder,
+address and branch (without `.gitmodules`, each clone's `origin` and branch) — after comments saying
+how to start on a machine that has no aisland yet:
+
+```text
+$ aisland workspace export            # or: aisland workspace export ~/acme.workspace.toml
+==> Wrote /Users/you/work/acme/acme.workspace.toml: 2 projects
+    models                    git@github.com:acme/models.git (dev/main)
+    tools                     git@github.com:acme/tools.git
+Edit the list as you like; the file's first lines say how to create the workspace from it.
+```
+
+```toml
+# acme.workspace.toml
+# Written by: aisland workspace export (aisland/aisland/workspace.py)
+# ...
+#   1. A virtual environment with aisland-manager in it. ...
+#        uv venv --seed --prompt acme .venv
+#        uv pip install --python .venv/bin/python aisland-manager
+#   2. ...
+#        .venv/bin/aisland workspace init . --from acme.workspace.toml
+#   3. ...
+#        .venv/bin/aisland setup
+[projects]
+models = { url = "git@github.com:acme/models.git", branch = "dev/main" }
+tools  = { url = "git@github.com:acme/tools.git" }
+```
+
+Edit the list, take the file to the new machine and follow its three steps in the folder that will
+hold the workspace. `init --from` clones each project as a submodule on its `branch` (without one,
+the repository's default branch), before any `--add`. A project takes `url` and `branch` and nothing
+else; a file aisland cannot read is refused before anything is written, naming the line:
+
+```text
+$ .venv/bin/aisland workspace init . --from acme.workspace.toml
+Error: acme.workspace.toml:4: project 'tools' has no url.
+```
+
+aisland finds the venv at `.venv` in the workspace. To give it a name, use `--prompt` (the shell
+then shows `(acme)`), or keep the venv elsewhere and link it in — `.gitignore` covers the link:
+
+```bash
+python3 -m venv ~/venvs/acme && ln -s ~/venvs/acme .venv
+```
+
+Run from that `.venv`, `init` leaves the venv line out of its `Next:` steps. `export` never writes
+over a file; a branch of `.` in `.gitmodules` (follow the superproject's) is written as the root's
+branch.
+
 How aisland finds its workspace depends on how it is installed:
 
 | installed | the workspace | aisland's state (`data/`, `bin/`, `tools/`) |

@@ -67,7 +67,7 @@ def main() -> None:
 
 @main.group("workspace")
 def workspace_group() -> None:
-    """Create a workspace aisland runs in."""
+    """Create a workspace aisland runs in, or write this one down for another machine."""
 
 
 @workspace_group.command("init")
@@ -79,13 +79,35 @@ def workspace_group() -> None:
     metavar="URL",
     help="A repository to add as a submodule (a project of the workspace). Repeat for several.",
 )
-def workspace_init(folder: Path, add: Tuple[str, ...]) -> None:
-    """Make FOLDER a new workspace: git init, the starting files, the --add submodules and the git aliases.
+@click.option(
+    "--from",
+    "from_file",
+    type=click.Path(path_type=Path),
+    metavar="FILE",
+    help="A workspace file (`aisland workspace export` writes one): each of its projects is added as a submodule, "
+    "on its branch, before the --add ones.",
+)
+def workspace_init(folder: Path, add: Tuple[str, ...], from_file: Optional[Path]) -> None:
+    """Make FOLDER a new workspace: git init, the starting files, the submodules and the git aliases.
 
     Writes .gitignore, .env, config.toml, mypy.ini and vscode-init-bash.sh, never over a file that exists, and
-    refuses a folder that already is a git repository (set that one up with `aisland setup`).
+    refuses a folder that already is a git repository (set that one up with `aisland setup`). A --from file that
+    cannot be read is refused, naming its line, before anything is written.
     """
-    workspace_mod.init_workspace(folder, add)
+    workspace_mod.init_workspace(folder, add, from_file)
+
+
+@workspace_group.command("export")
+@click.argument("file", required=False, type=click.Path(path_type=Path))
+def workspace_export(file: Optional[Path]) -> None:
+    """Write this workspace's projects into FILE (default <workspace>/<name>.workspace.toml), never over a file.
+
+    Each submodule's folder, address and branch — without .gitmodules, each clone's — under [projects], after comments
+    saying how to create the venv, install aisland and run `aisland workspace init . --from FILE` on another machine.
+    """
+    if not locations.workspace_found():
+        raise click.ClickException(locations.missing_workspace_message())
+    workspace_mod.export_workspace(get_workspace_root(), file)
 
 
 # --- Git Commands ---
