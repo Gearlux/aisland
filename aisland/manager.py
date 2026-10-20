@@ -1511,13 +1511,17 @@ def setup_workspace(
     activate: Tuple[str, ...] = (),
     deactivate: Tuple[str, ...] = (),
     framework: Tuple[str, ...] = (),
+    extra: Tuple[str, ...] = (),
+    install_all: bool = False,
 ) -> None:
     """Perform a full workspace setup: system provisioning followed by editable pip installs.
 
-    ``framework`` names the ML frameworks to install (``--framework torch --framework keras``).
-    Passing any RECORDS the selection in ``config.toml``, so it is a one-time flag rather than
-    something to repeat on every run; omitting it uses the recorded selection, and prompts when
-    there is none. See :mod:`aisland.frameworks`.
+    ``extra`` names the optional-dependency extras to install (``--extra dev --extra local``),
+    and ``install_all`` (``--all``) takes every extra every project defines. ``framework`` names
+    the ML frameworks (``--framework torch --framework keras``). Passing any of them RECORDS the
+    selection in ``config.toml``, so they are one-time flags rather than something to repeat on
+    every run; omitting them uses the recorded selection, and prompts when there is none. See
+    :mod:`aisland.selection`.
     """
     workspace_root = get_workspace_root()
     venv_bin = workspace_root / ".venv" / "bin"
@@ -1596,11 +1600,18 @@ def setup_workspace(
         resolve_for_setup,
     )
 
+    # Each axis takes the flag that names it; the tracker axis has none and resolves from its
+    # recorded selection (or prompts once), which is why `requested` is None for it. `--all` is
+    # the extras axis's own: frameworks and trackers are a machine's choice of ONE backend each,
+    # where "all of them" installs mutually exclusive stacks.
+    requested_for = {"extras": extra, "frameworks": framework}
     for axis in AXES:
-        # Only the framework axis takes a flag; the tracker axis resolves from its recorded
-        # selection (or prompts once), which is why `requested` is None for it.
         selected, _just_chosen = resolve_for_setup(
-            workspace_root, framework if axis.plural == "frameworks" else None, non_interactive, axis
+            workspace_root,
+            requested_for.get(axis.plural),
+            non_interactive,
+            axis,
+            select_all=install_all and axis.from_defined_extras,
         )
         if selected:
             click.echo(f"==> {axis.plural.capitalize()}: {', '.join(selected)}")

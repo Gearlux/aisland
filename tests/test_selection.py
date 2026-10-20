@@ -19,7 +19,7 @@ import pytest
 from aisland import selection as s
 from aisland.config import CONFIG_FILE
 from aisland.config import update as update_config
-from aisland.selection import FRAMEWORKS, TRACKERS
+from aisland.selection import EXTRAS, FRAMEWORKS, TRACKERS
 
 _PYPROJECT = """\
 [project]
@@ -249,3 +249,94 @@ def test_editable_target_without_a_pyproject_is_the_bare_directory(workspace: Pa
     """A checkout with nothing to read falls back to the directory, so uv reports the real error."""
     (workspace / "empty").mkdir()
     assert s.editable_target(workspace, workspace / "empty", "empty") == str(workspace / "empty")
+
+
+# --------------------------------------------------------------------------- #
+# the extras axis: vocabulary from what each project DEFINES, not what it declares
+# --------------------------------------------------------------------------- #
+
+
+_EXTRAS_PYPROJECT = """\
+[project]
+name = "{name}"
+version = "0.1.0"
+
+[project.optional-dependencies]
+{extras}
+"""
+
+
+def _extras_project(root: Path, name: str, extras: list[str]) -> Path:
+    """A project that declares NOTHING under [tool.aisland] — only plain extras."""
+    project = root / name
+    project.mkdir(parents=True, exist_ok=True)
+    body = "\n".join(f'{e} = ["some-package"]' for e in extras)
+    (project / "pyproject.toml").write_text(_EXTRAS_PYPROJECT.format(name=name, extras=body))
+    return project
+
+
+@pytest.fixture
+def extras_workspace(tmp_path: Path) -> Path:
+    subprocess.run(["git", "init", "-q"], cwd=tmp_path, check=True)
+    _extras_project(tmp_path, "company_ai", ["dev", "local", "platform"])
+    _extras_project(tmp_path, "sonair", ["dev", "tools"])
+    return tmp_path
+
+
+def test_the_extras_axis_needs_no_declaration(extras_workspace: Path) -> None:
+    """The reason the axis exists: `[tool.aisland] extras` is not a thing to forget."""
+    assert s.available(extras_workspace, EXTRAS) == ["dev", "local", "platform", "tools"]
+    assert s.declared(extras_workspace / "sonair" / "pyproject.toml", EXTRAS) == ["dev", "tools"]
+
+
+def test_each_project_gets_only_the_extras_it_defines(extras_workspace: Path) -> None:
+    """One workspace-wide selection, intersected per project — `platform` must not reach sonair."""
+    s.write_committed(extras_workspace, ["dev", "local", "platform", "tools"], EXTRAS)
+    assert s.editable_target(extras_workspace, extras_workspace / "company_ai", "company_ai").endswith(
+        "[dev,local,platform]"
+    )
+    assert s.editable_target(extras_workspace, extras_workspace / "sonair", "sonair").endswith("[dev,tools]")
+
+
+def test_select_all_takes_everything_without_an_all_extra(extras_workspace: Path) -> None:
+    """`--all` is computed from what the projects DEFINE; no project here defines `all`."""
+    chosen, just_chosen = s.resolve_for_setup(extras_workspace, None, False, EXTRAS, select_all=True)
+    assert chosen == ["dev", "local", "platform", "tools"]
+    assert just_chosen is True
+    assert s.read_committed(extras_workspace, EXTRAS) == ["dev", "local", "platform", "tools"]
+
+
+def test_select_all_beats_a_recorded_selection(extras_workspace: Path) -> None:
+    """Passing the flag re-records: a narrowed workspace must be wideable without editing TOML."""
+    s.write_committed(extras_workspace, ["dev"], EXTRAS)
+    chosen, _ = s.resolve_for_setup(extras_workspace, None, False, EXTRAS, select_all=True)
+    assert chosen == ["dev", "local", "platform", "tools"]
+
+
+def test_naming_extras_explicitly_records_them(extras_workspace: Path) -> None:
+    chosen, _ = s.resolve_for_setup(extras_workspace, ["local", "platform"], False, EXTRAS)
+    assert chosen == ["local", "platform"]
+    assert s.read_committed(extras_workspace, EXTRAS) == ["local", "platform"]
+
+
+def test_a_resolved_extras_selection_owns_dev(extras_workspace: Path) -> None:
+    """Deselecting `dev` must actually drop it, or the prompt offers a choice it ignores."""
+    s.write_committed(extras_workspace, ["local"], EXTRAS)
+    assert s.editable_target(extras_workspace, extras_workspace / "company_ai", "company_ai").endswith("[local]")
+
+
+def test_an_unresolved_extras_axis_keeps_the_historical_dev(extras_workspace: Path) -> None:
+    """Unset is not empty: a workspace that never answered still gets `[dev]` as it always did."""
+    assert s.effective(extras_workspace, EXTRAS) is None
+    assert s.editable_target(extras_workspace, extras_workspace / "company_ai", "company_ai").endswith("[dev]")
+
+
+def test_install_target_never_lists_dev_twice(extras_workspace: Path) -> None:
+    target = s.install_target(extras_workspace / "company_ai", True, ["dev", "local"])
+    assert target.endswith("[dev,local]")
+
+
+def test_the_extras_axis_has_nothing_to_declare_undefined(extras_workspace: Path) -> None:
+    """`require_defined_declarations` must not fault an axis whose names ARE the defined extras."""
+    assert s.undefined_declarations(extras_workspace) == []
+    s.require_defined_declarations(extras_workspace)

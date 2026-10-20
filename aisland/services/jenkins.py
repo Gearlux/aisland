@@ -1099,7 +1099,10 @@ pipeline {{
                 sel_declared(pyproject_path, axis),
                 sel_committed(workspace_root, axis),
             )
-        ci_extras = ",".join(["dev"] + selected_extras)
+        # `dev` is listed first and unconditionally (CI always needs the test tooling), then
+        # deduped: since 2026-10-20 the EXTRAS axis offers `dev` like any other extra, so a
+        # workspace that selected it would otherwise emit `.[dev,dev,local]`.
+        ci_extras = ",".join(dict.fromkeys(["dev"] + selected_extras))
 
         # A project that REGISTERS a `slow` pytest marker gets its CI test invocations SPLIT:
         # the routine run deselects the slow tests (`-m 'not slow'`) and a separate stage/job

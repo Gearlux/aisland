@@ -91,6 +91,13 @@ class Axis:
     plural: str
     question: str
     hint: str
+    #: Where this axis's vocabulary comes from. ``False`` (the default) reads a project's
+    #: ``[tool.aisland] <plural>`` declaration — the MENU a project opts into. ``True`` uses
+    #: the project's own ``[project.optional-dependencies]`` keys instead, so the axis covers
+    #: everything the project defines without the project declaring anything. Only the extras
+    #: axis does the latter: "which of your extras do you want" has no menu to opt into, and
+    #: nothing on it can be declared-but-undefined.
+    from_defined_extras: bool = False
 
     @property
     def config_key(self) -> str:
@@ -117,8 +124,18 @@ TRACKERS = Axis(
     hint="(the local-file backend always works; this selects the ones needing a library)",
 )
 
-#: Both axes, in the order setup resolves them.
-AXES: Tuple[Axis, ...] = (FRAMEWORKS, TRACKERS)
+EXTRAS = Axis(
+    name="extra",
+    plural="extras",
+    question="Which extras should this machine install?",
+    hint="(every extra the workspace's projects define — dev, local, platform, …; blank = all)",
+    from_defined_extras=True,
+)
+
+#: Every axis, in the order setup resolves them. Extras comes first: it is the one axis that
+#: always has a vocabulary (every project defines some extra), so it is the question an
+#: operator expects first on a fresh workspace.
+AXES: Tuple[Axis, ...] = (EXTRAS, FRAMEWORKS, TRACKERS)
 
 
 # --------------------------------------------------------------------------- #
@@ -135,7 +152,13 @@ def declared(pyproject_path: Path, axis: Axis) -> List[str]:
     Example::
 
         declared(Path("sonair/pyproject.toml"), FRAMEWORKS)  # ["lightning", "keras"]
+
+    On an axis whose vocabulary is the project's own extras (:attr:`Axis.from_defined_extras`)
+    there is nothing to declare: every ``[project.optional-dependencies]`` key is in scope, so
+    no project can be left out by forgetting a declaration.
     """
+    if axis.from_defined_extras:
+        return _defined_extras(pyproject_path)
     try:
         data = tomllib.loads(pyproject_path.read_text())
     except (OSError, tomllib.TOMLDecodeError):
@@ -298,6 +321,8 @@ def undefined_declarations(workspace_root: Path, axes: Tuple[Axis, ...] = AXES) 
         except (OSError, tomllib.TOMLDecodeError):
             name = pyproject.parent.name
         for axis in axes:
+            if axis.from_defined_extras:
+                continue  # its vocabulary IS `extras`, so every name is defined by construction
             for declaration in declared(pyproject, axis):
                 if declaration not in extras:
                     out.append(UndefinedDeclaration(name, axis.plural, declaration, extras))
@@ -378,7 +403,7 @@ def install_target(project_dir: Path, has_dev: bool, extras: Sequence[str]) -> s
     lines) so both spell the extras list identically — they are compared by eye when a
     build disagrees with a local run.
     """
-    parts = (["dev"] if has_dev else []) + list(extras)
+    parts = (["dev"] if has_dev and "dev" not in extras else []) + list(extras)
     return f"{project_dir}[{','.join(parts)}]" if parts else str(project_dir)
 
 
@@ -394,8 +419,13 @@ def editable_target(workspace_root: Path, project_dir: Path, project_name: str) 
     pyproject = project_dir / "pyproject.toml"
     if not pyproject.exists():
         return str(project_dir)
-    has_dev = bool(get_project_metadata(pyproject)["has_dev"])
-    return install_target(project_dir, has_dev, all_extras(workspace_root, pyproject, project_name))
+    # Since 2026-10-20 the EXTRAS axis offers `dev` like any other extra. Once it has been
+    # resolved its answer is the whole answer: forcing `[dev]` back in would make "everything
+    # but dev" unexpressible, and the operator who deselected it would get it anyway. A
+    # workspace that has never resolved that axis keeps the old unconditional `[dev]`.
+    extras = all_extras(workspace_root, pyproject, project_name)
+    has_dev = effective(workspace_root, EXTRAS) is None and bool(get_project_metadata(pyproject)["has_dev"])
+    return install_target(project_dir, has_dev, extras)
 
 
 # --------------------------------------------------------------------------- #
@@ -454,17 +484,28 @@ def resolve_for_setup(
     requested: Optional[Sequence[str]],
     non_interactive: bool,
     axis: Axis = FRAMEWORKS,
+    select_all: bool = False,
 ) -> Tuple[List[str], bool]:
     """The selection ``setup`` should install, plus whether it was just chosen.
 
-    Precedence: an explicit flag wins and is RECORDED (so the next run needs no flag); else
-    an existing selection is used as-is; else the operator is prompted, unless the run is
-    non-interactive, in which case everything available is selected — a headless setup must
-    not hang, and must not silently produce a workspace that cannot do its job.
+    Precedence: ``select_all`` (``--all``) wins, then an explicit flag — both are RECORDED, so
+    the next run needs no flag; else an existing selection is used as-is; else the operator is
+    prompted, unless the run is non-interactive, in which case everything available is selected
+    — a headless setup must not hang, and must not silently produce a workspace that cannot do
+    its job.
+
+    ``select_all`` is the whole vocabulary, computed from what the projects DEFINE. It does not
+    look for an extra named ``all``: that convention is a project's own shorthand, several
+    projects here spell it differently or not at all, and a flag that silently installed less
+    on the project that omitted it would be worse than no flag.
     """
     choices = available(workspace_root, axis)
     if not choices:
         return [], False
+
+    if select_all:
+        write_committed(workspace_root, choices, axis)
+        return choices, True
 
     if requested:
         chosen = parse_selection(" ".join(requested), choices, axis)

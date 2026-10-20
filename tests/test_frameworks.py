@@ -287,11 +287,11 @@ class TestScaffolderUsesThisModule:
 
     def test_the_scaffolder_covers_every_axis(self) -> None:
         """A new axis must reach CI without editing the scaffolder again."""
-        from aisland.selection import AXES, FRAMEWORKS, TRACKERS
+        from aisland.selection import AXES, EXTRAS, FRAMEWORKS, TRACKERS
         from aisland.services import jenkins
 
         assert jenkins.AXES is AXES
-        assert set(AXES) == {FRAMEWORKS, TRACKERS}
+        assert set(AXES) == {EXTRAS, FRAMEWORKS, TRACKERS}
 
     def test_every_emission_site_uses_ci_extras(self) -> None:
         """Guards against a new install line being added with a hardcoded `.[dev]`."""

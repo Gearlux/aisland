@@ -174,14 +174,46 @@ def provision() -> None:
     help="ML framework(s) to install, e.g. --framework torch --framework keras (repeatable). "
     "Recorded in config.toml; omit to reuse the recorded selection.",
 )
+@click.option(
+    "--extra",
+    multiple=True,
+    help="Extra(s) to install, e.g. --extra dev --extra local (repeatable). Recorded in "
+    "config.toml; omit to reuse the recorded selection, or prompt when there is none.",
+)
+@click.option(
+    "--all",
+    "install_all",
+    is_flag=True,
+    help="Install every extra every project defines, without asking. Computed from the "
+    "projects' own [project.optional-dependencies]; does not need an extra named `all`.",
+)
 def setup(
     non_interactive: bool,
     activate: tuple[str, ...],
     deactivate: tuple[str, ...],
     framework: tuple[str, ...],
+    extra: tuple[str, ...],
+    install_all: bool,
 ) -> None:
-    """Full workspace setup: provision tools, resolve optional-submodule activation, install activated projects."""
-    setup_workspace(non_interactive=non_interactive, activate=activate, deactivate=deactivate, framework=framework)
+    """Full workspace setup: provision tools, resolve optional-submodule activation, install activated projects.
+
+    Which extras land is a workspace decision, asked once and recorded in config.toml: pick them
+    at the prompt, name them with --extra, or take the lot with --all.
+
+    \b
+    aisland setup --all
+    aisland setup --extra dev --extra local
+    """
+    if install_all and extra:
+        raise click.UsageError("--all takes every extra; pass either --all or --extra, not both.")
+    setup_workspace(
+        non_interactive=non_interactive,
+        activate=activate,
+        deactivate=deactivate,
+        framework=framework,
+        extra=extra,
+        install_all=install_all,
+    )
 
 
 @main.command()
