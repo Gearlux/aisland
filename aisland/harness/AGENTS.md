@@ -315,6 +315,12 @@ in that project's `AGENTS.md`. The commands in `.agents/workflows/` cite these r
 - **Plain Words, The Outcome First:** report what the user sees, naming the object, before any internal measure;
   explain a measure in a phrase when it first appears; say explicitly when a result rests on synthetic data you made.
 - **Minimalism:** high-signal, low-noise output; no conversational filler.
+- **A Turn Left Waiting On A Background Task Says So On Its Last Line (user request 2026-10-20):** when a turn ends
+  while something it started still runs (a test run, a build, a download, a subagent, another session), the LAST
+  line of the message starts with `Waiting:` and names the task, about how long it takes, and what happens when it
+  ends — `Waiting: the fast test run (about 5 minutes); then I compare it with the baseline and report.` Why: a
+  message that ends on the work done so far reads as finished, and the user has to ask "done?". Such a turn is not
+  a completion report: its follow-ups come once the task has ended.
 - **Parallelism:** run independent searches, reads and commands in parallel, in one step.
 - **Propose Next Actions After Completing a Request:** every completion report ends with 2–5 concrete, prioritized
   follow-ups, NUMBERED (`1.`, `2.`, never bullets) so the user can answer "do 2 and 4": the natural continuation, a
