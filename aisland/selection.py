@@ -59,6 +59,7 @@ long-standing ``*_frameworks`` call sites and their tests are unaffected.
 
 from __future__ import annotations
 
+import re
 import subprocess
 import tomllib
 from dataclasses import dataclass
@@ -158,7 +159,7 @@ def declared(pyproject_path: Path, axis: Axis) -> List[str]:
     no project can be left out by forgetting a declaration.
     """
     if axis.from_defined_extras:
-        return _defined_extras(pyproject_path)
+        return _selectable_extras(pyproject_path)
     try:
         data = tomllib.loads(pyproject_path.read_text())
     except (OSError, tomllib.TOMLDecodeError):
@@ -300,6 +301,51 @@ def _defined_extras(pyproject_path: Path) -> List[str]:
     except (OSError, tomllib.TOMLDecodeError):
         return []
     return sorted(data.get("project", {}).get("optional-dependencies", {}))
+
+
+def _canonical(name: str) -> str:
+    """PEP 503 normalisation, so ``company-ai-bridge`` and ``company_ai_bridge`` compare equal."""
+    return re.sub(r"[-_.]+", "-", name).lower()
+
+
+def _selectable_extras(pyproject_path: Path) -> List[str]:
+    """The defined extras WITHOUT the self-referential ones — the extras axis's vocabulary.
+
+    A project commonly defines a convenience extra that is nothing but its own other extras
+    (``all = ["company-ai-bridge[dev,local,platform,tools,torchsig,confluence]"]``). Offering
+    it beside the extras it re-exports is not merely redundant, it is harmful: selecting both
+    puts the distribution into its own requirement set, and uv then resolves the project a
+    second time as an ordinary dependency. Observed 2026-10-20 on company_ai_bridge, where
+    `[all,confluence,dev,local,platform,tools,torchsig]` pulled `platform-client==0.1.36` — whose
+    URL dependency uv refuses outright — while the same list without `all` resolved 310
+    packages cleanly on 0.1.38.
+
+    The test is STRUCTURAL, not a name match: an extra is dropped when one of its requirements
+    is the project's own distribution, whatever either is called. A project that happens to
+    name an extra `all` while putting real packages in it keeps it; `everything = ["foo[dev]"]`
+    in project `foo` is dropped. Name matching is what this module warns against elsewhere, and
+    it would both miss the second case and break the first.
+    """
+    try:
+        data = tomllib.loads(pyproject_path.read_text())
+    except (OSError, tomllib.TOMLDecodeError):
+        return []
+    project = data.get("project", {})
+    me = _canonical(str(project.get("name", "")))
+    out: List[str] = []
+    for extra, requirements in sorted(project.get("optional-dependencies", {}).items()):
+        if not me:
+            out.append(extra)
+            continue
+        for raw in requirements:
+            try:
+                if _canonical(Requirement(str(raw)).name) == me:
+                    break
+            except InvalidRequirement:
+                continue
+        else:
+            out.append(extra)
+    return out
 
 
 def undefined_declarations(workspace_root: Path, axes: Tuple[Axis, ...] = AXES) -> List[UndefinedDeclaration]:

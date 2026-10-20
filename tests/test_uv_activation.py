@@ -19,17 +19,71 @@ import pytest
 from aisland import manager as m
 
 # The workspace-wide override policy (manager._ROOT_UV_BASE), restated so a change to it is a
-# deliberate edit here too: the unified `lightning` and the GUI `opencv-python` are dropped
-# workspace-wide, and headless opencv is pinned to the one range every consumer can share.
+# deliberate edit here too: the GUI `opencv-python` is dropped workspace-wide, and headless
+# opencv is pinned to the one range every consumer can share.
 _OVERRIDE = [
-    "lightning ; sys_platform == 'never'",
     "opencv-python ; sys_platform == 'never'",
     "opencv-python-headless>=4.12,<5",
 ]
 
+# The conditional half (manager._CONDITIONAL_OVERRIDES): dropping the unified `lightning` applies
+# ONLY where a project names `pytorch-lightning`, because the two conflict with each other and
+# nothing else. A workspace with no `pytorch-lightning` keeps `lightning` — stripping it there
+# removes a dependency its projects declare outright.
+_LIGHTNING_OVERRIDE = ["lightning ; sys_platform == 'never'"]
+
+
+def _pyproject(project: Path, name: str, requires: list[str]) -> None:
+    body = ", ".join(f'"{r}"' for r in requires)
+    (project / "pyproject.toml").write_text(
+        f'[project]\nname = "{name}"\nversion = "0.1.0"\ndependencies = [{body}]\n'
+    )
+
 
 # --- root uv.toml generation --------------------------------------------------
 class TestWriteRootUvToml:
+    def test_lightning_is_kept_where_nothing_wants_pytorch_lightning(self, tmp_path: Path) -> None:
+        """bridge, 2026-10-20: two projects require `lightning`, nothing requires the other one."""
+        project = tmp_path / "company_ai_bridge"
+        project.mkdir()
+        _pyproject(project, "company-ai-bridge", ["lightning", "torch"])
+        m._write_root_uv_toml(tmp_path, [{"name": "company_ai_bridge", "path": project}])
+        data = tomllib.loads((tmp_path / "uv.toml").read_text())
+        assert data["override-dependencies"] == _OVERRIDE
+        assert "lightning ; sys_platform == 'never'" not in data["override-dependencies"]
+
+    def test_lightning_is_dropped_where_a_project_wants_pytorch_lightning(self, tmp_path: Path) -> None:
+        """acme, where the override was written: matrainer and friends declare pytorch-lightning."""
+        project = tmp_path / "matrainer"
+        project.mkdir()
+        _pyproject(project, "matrainer", ["pytorch-lightning"])
+        m._write_root_uv_toml(tmp_path, [{"name": "matrainer", "path": project}])
+        data = tomllib.loads((tmp_path / "uv.toml").read_text())
+        assert data["override-dependencies"] == _LIGHTNING_OVERRIDE + _OVERRIDE
+
+    def test_pytorch_lightning_behind_an_extra_still_triggers_the_override(self, tmp_path: Path) -> None:
+        """matrainer declares it under [lightning]; an override that came and went with the
+        selected extras would resolve differently run to run."""
+        project = tmp_path / "matrainer"
+        project.mkdir()
+        (project / "pyproject.toml").write_text(
+            '[project]\nname = "matrainer"\nversion = "0.1.0"\ndependencies = []\n\n'
+            "[project.optional-dependencies]\n"
+            'lightning = ["pytorch-lightning", "torchmetrics"]\n'
+        )
+        m._write_root_uv_toml(tmp_path, [{"name": "matrainer", "path": project}])
+        data = tomllib.loads((tmp_path / "uv.toml").read_text())
+        assert data["override-dependencies"] == _LIGHTNING_OVERRIDE + _OVERRIDE
+
+    def test_the_distribution_name_is_normalised(self, tmp_path: Path) -> None:
+        """`pytorch_lightning` and `pytorch-lightning` are the same distribution (PEP 503)."""
+        project = tmp_path / "p"
+        project.mkdir()
+        _pyproject(project, "p", ["pytorch_lightning"])
+        m._write_root_uv_toml(tmp_path, [{"name": "p", "path": project}])
+        data = tomllib.loads((tmp_path / "uv.toml").read_text())
+        assert data["override-dependencies"] == _LIGHTNING_OVERRIDE + _OVERRIDE
+
     def test_merges_base_with_activated_project(self, tmp_path: Path) -> None:
         vendorcli = tmp_path / "vendorcli"
         vendorcli.mkdir()

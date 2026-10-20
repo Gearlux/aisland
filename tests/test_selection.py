@@ -340,3 +340,57 @@ def test_the_extras_axis_has_nothing_to_declare_undefined(extras_workspace: Path
     """`require_defined_declarations` must not fault an axis whose names ARE the defined extras."""
     assert s.undefined_declarations(extras_workspace) == []
     s.require_defined_declarations(extras_workspace)
+
+
+def test_a_self_referential_extra_is_not_offered(tmp_path: Path) -> None:
+    """`all = ["me[dev,local]"]` re-exports the others; offering it too perturbs resolution.
+
+    Observed 2026-10-20: company_ai_bridge with `[all,...]` resolved platform-client to a version
+    whose URL dependency uv refuses; the same list without `all` resolved cleanly.
+    """
+    subprocess.run(["git", "init", "-q"], cwd=tmp_path, check=True)
+    project = tmp_path / "company_ai_bridge"
+    project.mkdir()
+    (project / "pyproject.toml").write_text(
+        '[project]\nname = "company-ai-bridge"\nversion = "0.1.0"\n\n'
+        "[project.optional-dependencies]\n"
+        'dev = ["pytest"]\n'
+        'local = ["torch"]\n'
+        'all = ["company-ai-bridge[dev,local]"]\n'
+    )
+    assert s.available(tmp_path, EXTRAS) == ["dev", "local"]
+
+
+def test_the_self_reference_test_is_structural_not_a_name_match(tmp_path: Path) -> None:
+    """An extra called `all` holding real packages stays; a differently named one that
+    re-exports the project is still dropped. Name matching would get both backwards."""
+    subprocess.run(["git", "init", "-q"], cwd=tmp_path, check=True)
+    project = tmp_path / "foo"
+    project.mkdir()
+    (project / "pyproject.toml").write_text(
+        '[project]\nname = "foo"\nversion = "0.1.0"\n\n'
+        "[project.optional-dependencies]\n"
+        'dev = ["pytest"]\n'
+        'all = ["rich", "tqdm"]\n'
+        'everything = ["foo[dev]"]\n'
+    )
+    assert s.available(tmp_path, EXTRAS) == ["all", "dev"]
+
+
+def test_the_self_reference_test_normalises_the_distribution_name(tmp_path: Path) -> None:
+    """`company_ai_bridge[dev]` names the same distribution as `company-ai-bridge` (PEP 503)."""
+    subprocess.run(["git", "init", "-q"], cwd=tmp_path, check=True)
+    project = tmp_path / "p"
+    project.mkdir()
+    (project / "pyproject.toml").write_text(
+        '[project]\nname = "company-ai-bridge"\nversion = "0.1.0"\n\n'
+        "[project.optional-dependencies]\n"
+        'dev = ["pytest"]\n'
+        'all = ["company_ai_bridge[dev]"]\n'
+    )
+    assert s.available(tmp_path, EXTRAS) == ["dev"]
+
+
+def test_undefined_declarations_still_reports_every_defined_extra(extras_workspace: Path) -> None:
+    """The `defines:` column is about what EXISTS, so it must not hide self-referential extras."""
+    assert s._defined_extras(extras_workspace / "company_ai" / "pyproject.toml") == ["dev", "local", "platform"]

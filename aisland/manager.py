@@ -2,6 +2,7 @@ import hashlib
 import json
 import os
 import platform
+import re
 import shutil
 import subprocess
 import tarfile
@@ -10,6 +11,7 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
 import click
+from packaging.requirements import InvalidRequirement, Requirement
 
 from aisland import locations, supervisor
 
@@ -1414,7 +1416,9 @@ def _resolve_submodule_activation(
 # root uv.toml beneath every activated project's own uv.toml. The never-true marker
 # (`sys_platform == 'never'`) is uv's idiom for "drop this requirement everywhere".
 #
-# * ``lightning`` — the unified package conflicts with ``pytorch-lightning`` workspace-wide.
+# * ``lightning`` — the unified package conflicts with ``pytorch-lightning``, so it is dropped
+#   in a workspace where something asks for ``pytorch-lightning``. It is NOT dropped elsewhere:
+#   see ``_CONDITIONAL_OVERRIDES``.
 # * ``opencv-python`` — it and ``opencv-python-headless`` install the SAME files (both RECORDs
 #   claim ``cv2/cv2.abi3.so`` and ``cv2/.dylibs/*``) with DIFFERENT bundled native libraries, so
 #   having both installed lets any install that moves one variant leave ``cv2/.dylibs/`` mixed
@@ -1428,11 +1432,47 @@ def _resolve_submodule_activation(
 #   order (verified: roboflow + rfdetr import fine on 4.13).
 _ROOT_UV_BASE: Dict[str, Any] = {
     "override-dependencies": [
-        "lightning ; sys_platform == 'never'",
         "opencv-python ; sys_platform == 'never'",
         "opencv-python-headless>=4.12,<5",
     ],
 }
+
+#: Overrides that apply only where the conflict they exist for is actually possible, keyed by the
+#: distribution whose presence makes it so. Dropping a requirement no project in this workspace
+#: conflicts with is not conservative, it is silent breakage: the bridge workspace (2026-10-20) has
+#: no `pytorch-lightning` anywhere and two projects requiring `lightning` outright, so the blanket
+#: override stripped a hard dependency and `import company.ai.bridge` failed on a venv that had
+#: just reported a successful install. The acme workspace, where this override was written, keeps
+#: it unchanged — `pytorch-lightning` is declared by matrainer, deltaid and distilaide.
+#:
+#: The trigger is a mention ANYWHERE in a project's pyproject (base dependencies or any extra),
+#: not just the selected extras: an override that appeared and vanished as extras were selected
+#: would resolve differently run to run, which is worse than either answer on its own.
+_CONDITIONAL_OVERRIDES: Dict[str, List[str]] = {
+    "pytorch-lightning": ["lightning ; sys_platform == 'never'"],
+}
+
+
+def _mentions_distribution(pyproject_path: Path, distribution: str) -> bool:
+    """True when ``distribution`` is required by a pyproject, in its dependencies or ANY extra."""
+    import tomllib
+
+    try:
+        data = tomllib.loads(pyproject_path.read_text())
+    except (OSError, tomllib.TOMLDecodeError):
+        return False
+    project = data.get("project", {})
+    requirements = list(project.get("dependencies", []) or [])
+    for extra in (project.get("optional-dependencies", {}) or {}).values():
+        requirements += list(extra or [])
+    wanted = re.sub(r"[-_.]+", "-", distribution).lower()
+    for raw in requirements:
+        try:
+            if re.sub(r"[-_.]+", "-", Requirement(str(raw)).name).lower() == wanted:
+                return True
+        except InvalidRequirement:
+            continue
+    return False
 
 
 def _merge_uv(into: Dict[str, Any], other: Dict[str, Any]) -> None:
@@ -1489,6 +1529,14 @@ def _write_root_uv_toml(workspace_root: Path, activated: List[dict]) -> None:
     import tomllib
 
     merged: Dict[str, Any] = {k: (list(v) if isinstance(v, list) else v) for k, v in _ROOT_UV_BASE.items()}
+    # Conditional overrides: added only where some activated project actually names the
+    # conflicting distribution (see _CONDITIONAL_OVERRIDES for why a blanket one is unsafe).
+    for distribution, overrides in _CONDITIONAL_OVERRIDES.items():
+        if any(_mentions_distribution(Path(p["path"]) / "pyproject.toml", distribution) for p in activated):
+            merged.setdefault("override-dependencies", [])
+            merged["override-dependencies"] = overrides + [
+                o for o in merged["override-dependencies"] if o not in overrides
+            ]
     n_merged = 0
     for project in activated:
         uv_file = Path(project["path"]) / "uv.toml"
