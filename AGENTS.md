@@ -84,6 +84,10 @@ start-time port pre-flight naming the PID is the only signal). All service state
   - From a wheel, setup copies the packaged `project.bashrc` to `.aisland/` and links the root to it
     (`setup.py` puts it in the wheel; it stays at `aisland/project.bashrc` in the checkout, whose place
     defines the root); the file finds `bin/` beside itself. (`tests/test_project_bashrc.py`)
+  - `project.bashrc` ALWAYS sets `PROJECT_ROOT` from its own place, never keeps an inherited one: an editor
+    started from a shell that sourced another workspace passes that root down, and its `.venv` was activated
+    (`::test_a_project_root_inherited_from_another_workspace_is_replaced_by_this_ones`). A `.env` with no
+    settings exports nothing — a bare `export` lists every variable (`::test_an_env_file_without_settings_prints_nothing`).
 - From a checkout, `get_workspace_root()` (`locations.checkout_workspace_root`) returns the directory
   holding `.gitmodules` (+ `TASKS.md`); without submodules the OUTERMOST `TASKS.md`, then the outermost
   `.git`; last resort `parents[2]`.

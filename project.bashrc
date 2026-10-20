@@ -21,9 +21,9 @@ while [ -L "$_aisland_self" ]; do
     esac
 done
 _aisland_home="$(cd "$(dirname "$_aisland_self")" && pwd)"
-if [ -z "${PROJECT_ROOT:-}" ]; then
-    export PROJECT_ROOT="$(cd "$_aisland_home/.." && pwd)"
-fi
+# Always this file's workspace, never an inherited PROJECT_ROOT: an editor or terminal started from a
+# shell that sourced another workspace passes that one's root down, and its venv would be activated.
+export PROJECT_ROOT="$(cd "$_aisland_home/.." && pwd)"
 unset _aisland_self _aisland_link_target
 
 # Activate the python virtual environment for this project.
@@ -32,8 +32,14 @@ if [ -f "$PROJECT_ROOT/.venv/bin/activate" ]; then
 fi
 
 # Load environment variables if present.
+# A `.env` holding only comments leaves nothing to export: a bare `export` would list every
+# exported variable on each terminal start.
 if [ -f "$PROJECT_ROOT/.env" ]; then
-    export $(grep -v '^#' "$PROJECT_ROOT/.env" | xargs)
+    _aisland_env="$(grep -v -e '^#' -e '^[[:space:]]*$' "$PROJECT_ROOT/.env" | xargs)"
+    if [ -n "$_aisland_env" ]; then
+        export $_aisland_env
+    fi
+    unset _aisland_env
 fi
 
 # Aisland vendors workspace-local tools (jenkins.war, node/npm on Linux, ...)
