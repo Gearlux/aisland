@@ -1,6 +1,6 @@
 # =========================================================================
 # Written by: aisland workspace init (template: aisland/aisland/templates/vscode-init-bash.sh)
-# A starting point that is yours to edit: init writes it once, into a new workspace, never over a file.
+# A starting point that is yours to edit. Written over only on request: aisland workspace init . --rewrite <file>
 # =========================================================================
 #
 # Sourced by VS Code's integrated terminal for this workspace, wired in through the

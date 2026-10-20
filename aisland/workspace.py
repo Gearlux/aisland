@@ -9,7 +9,9 @@ aisland is installed; the workspace it makes is one that aisland from a wheel wo
 
 It never writes over a file that exists, and refuses a folder that already is a git repository: an existing
 repository is set up with ``aisland setup``, not re-created. A workspace file that cannot be read is refused before
-anything is written, naming the file and the line.
+anything is written, naming the file and the line. The one exception is ``--rewrite <file>``: each starting file it
+names is written again from the template, the old copy kept as ``<file>.bak``; in an existing repository that is all
+init does.
 
 The workspace file is what a new machine starts from, before aisland is installed there: its comments say how to make
 the venv and install aisland, its ``[projects]`` table lists each project's folder, address and (optionally) branch.
@@ -25,7 +27,7 @@ import sys
 import tomllib
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Dict, List, Optional, Sequence, Tuple
+from typing import Dict, List, Literal, Optional, Sequence, Tuple, get_args
 
 import click
 
@@ -33,13 +35,17 @@ from aisland import __version__, locations
 from aisland.harness import install_harness
 from aisland.manager import install_git_aliases
 
+#: The files ``init`` starts a workspace with, in the order it writes them; ``--rewrite`` takes only these.
+StartingFile = Literal[".gitignore", ".env", "config.toml", "mypy.ini", "vscode-init-bash.sh"]
+STARTING_FILES: Tuple[StartingFile, ...] = get_args(StartingFile)
+
 #: The terminal init the editor file's profile runs (`${workspaceFolder:<name>}/vscode-init-bash.sh`).
 VSCODE_INIT_BASH = locations.PACKAGE_DIR / "templates" / "vscode-init-bash.sh"
 
 _HEADER = """\
 # =========================================================================
 # Written by: aisland workspace init (aisland/aisland/workspace.py)
-# A starting point that is yours to edit: init writes it once, into a new workspace, never over a file.
+# A starting point that is yours to edit. Written over only on request: aisland workspace init . --rewrite <file>
 # =========================================================================
 """
 
@@ -208,15 +214,70 @@ def runs_from_venv_of(root: Path) -> bool:
     return venv.exists() and Path(sys.prefix).resolve() == venv.resolve()
 
 
-def init_workspace(folder: Path, add: Sequence[str] = (), from_file: Optional[Path] = None) -> None:
+def _starting_files(root: Path) -> Dict[StartingFile, str]:
+    """The text of each starting file for ``root``; ``mypy.ini`` lists the submodules holding a ``pyproject.toml``."""
+    submodules = _submodules(root)
+    return {
+        ".gitignore": _GITIGNORE,
+        ".env": _ENV,
+        "config.toml": _CONFIG,
+        "mypy.ini": _mypy_ini(
+            [path for path, _url, _branch in submodules if (root / path / "pyproject.toml").is_file()]
+        ),
+        "vscode-init-bash.sh": VSCODE_INIT_BASH.read_text(),
+    }
+
+
+def _refuse_a_bak_in_the_way(root: Path, rewrite: Sequence[StartingFile]) -> None:
+    """Before anything is written: a ``<file>.bak`` already there would be lost, so the whole run is refused."""
+    for name in rewrite:
+        bak = root / f"{name}.bak"
+        if (root / name).exists() and bak.exists():
+            raise click.ClickException(
+                f"{bak} exists: move it away first, then rewrite {name} (its current copy is kept there)."
+            )
+
+
+def _write_starting_files(root: Path, rewrite: Sequence[StartingFile], only_rewrite: bool = False) -> List[str]:
+    """Write each starting file that is missing, and each of ``rewrite`` over its old copy (kept as ``.bak``).
+
+    ``only_rewrite`` (an existing repository) writes the ``rewrite`` files alone, missing or not."""
+    rows = []
+    for name, text in _starting_files(root).items():
+        if only_rewrite and name not in rewrite:
+            continue
+        target = root / name
+        if target.exists():
+            if name not in rewrite:
+                rows.append(_row(name, "kept (it exists)"))
+                continue
+            target.rename(root / f"{name}.bak")
+            target.write_text(text)
+            rows.append(_row(name, f"rewritten (the old one kept as {name}.bak)"))
+            continue
+        target.write_text(text)
+        rows.append(_row(name, "written"))
+    return rows
+
+
+def init_workspace(
+    folder: Path, add: Sequence[str] = (), from_file: Optional[Path] = None, rewrite: Sequence[StartingFile] = ()
+) -> None:
     """Make ``folder`` a new workspace (see the module docstring). Raises :class:`click.ClickException` on refusal.
 
     The projects of ``from_file`` are added first, in its order, then each ``add``; the file is read before anything
-    is written, so a file aisland refuses leaves the folder as it was."""
+    is written, so a file aisland refuses leaves the folder as it was. Each of ``rewrite`` is written over its old
+    copy, kept as ``<file>.bak``; in a folder that already is a git repository only those files are written."""
     listed = read_workspace_file(from_file) if from_file is not None else []
     root = folder.absolute()
     if root.exists() and not root.is_dir():
         raise click.ClickException(f"{root} is a file, not a folder.")
+    _refuse_a_bak_in_the_way(root, rewrite)
+    if (root / ".git").exists() and rewrite:
+        click.echo(f"==> Rewrote in {root}")
+        for row in _write_starting_files(root, rewrite, only_rewrite=True):
+            click.echo(row)
+        return
     if (root / ".git").exists():
         raise click.ClickException(
             f"{root} is already a git repository. `aisland workspace init` starts a new one; "
@@ -235,22 +296,7 @@ def init_workspace(folder: Path, add: Sequence[str] = (), from_file: Optional[Pa
         _row(f"{path}/", f"submodule {url}" + (f" ({branch})" if branch else "")) for path, url, branch in submodules
     ]
 
-    files = {
-        ".gitignore": _GITIGNORE,
-        ".env": _ENV,
-        "config.toml": _CONFIG,
-        "mypy.ini": _mypy_ini(
-            [path for path, _url, _branch in submodules if (root / path / "pyproject.toml").is_file()]
-        ),
-        "vscode-init-bash.sh": VSCODE_INIT_BASH.read_text(),
-    }
-    for name, text in files.items():
-        target = root / name
-        if target.exists():
-            rows.append(_row(name, "kept (it exists)"))
-            continue
-        target.write_text(text)
-        rows.append(_row(name, "written"))
+    rows += _write_starting_files(root, rewrite)
 
     aliases = "pull-all, push-all, … in the local git config" if install_git_aliases(root, quiet=True) else "failed"
     rows.append(_row("git aliases", aliases))

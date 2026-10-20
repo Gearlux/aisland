@@ -167,6 +167,81 @@ def test_a_file_that_exists_is_kept(tmp_path: Path) -> None:
     assert "    .env                      kept (it exists)" in result.output.splitlines()
 
 
+def _existing_workspace(tmp_path: Path) -> Path:
+    root = tmp_path / "acme"
+    root.mkdir()
+    subprocess.run(["git", "init", "-q"], cwd=root, check=True)
+    (root / "vscode-init-bash.sh").write_text("# my old shim\n")
+    (root / ".env").write_text("DATA_ROOT=/data\n")
+    return root
+
+
+def test_rewrite_in_an_existing_repository_replaces_the_file_keeps_a_bak_and_writes_nothing_else(
+    tmp_path: Path,
+) -> None:
+    root = _existing_workspace(tmp_path)
+    result = _init(tmp_path, "--rewrite", "vscode-init-bash.sh")
+    assert result.exit_code == 0, result.output
+    assert (root / "vscode-init-bash.sh").read_text() == workspace.VSCODE_INIT_BASH.read_text()
+    assert (root / "vscode-init-bash.sh.bak").read_text() == "# my old shim\n"
+    assert (root / ".env").read_text() == "DATA_ROOT=/data\n"
+    assert sorted(p.name for p in root.iterdir()) == [".env", ".git", "vscode-init-bash.sh", "vscode-init-bash.sh.bak"]
+    aliases = subprocess.run(["git", "config", "--local", "--get-regexp", r"^alias\."], cwd=root, capture_output=True)
+    assert aliases.stdout == b""
+    assert result.output.splitlines() == [
+        f"==> Rewrote in {root}",
+        "    vscode-init-bash.sh       rewritten (the old one kept as vscode-init-bash.sh.bak)",
+    ]
+
+
+def test_rewrite_of_several_files_and_of_one_that_is_missing(tmp_path: Path) -> None:
+    root = _existing_workspace(tmp_path)
+    result = _init(tmp_path, "--rewrite", ".env", "--rewrite", "config.toml")
+    assert result.exit_code == 0, result.output
+    assert (root / ".env.bak").read_text() == "DATA_ROOT=/data\n"
+    assert (root / ".env").read_text() == workspace._ENV
+    assert (root / "config.toml").read_text() == workspace._CONFIG
+    assert not (root / "config.toml.bak").exists()
+    assert result.output.splitlines()[1:] == [
+        "    .env                      rewritten (the old one kept as .env.bak)",
+        "    config.toml               written",
+    ]
+
+
+def test_rewrite_refuses_when_a_bak_is_in_the_way_and_changes_nothing(tmp_path: Path) -> None:
+    root = _existing_workspace(tmp_path)
+    (root / ".env.bak").write_text("older\n")
+    result = _init(tmp_path, "--rewrite", "vscode-init-bash.sh", "--rewrite", ".env")
+    assert result.exit_code == 1
+    assert result.output == (
+        f"Error: {root / '.env.bak'} exists: move it away first, then rewrite .env (its current copy is kept there).\n"
+    )
+    assert (root / "vscode-init-bash.sh").read_text() == "# my old shim\n"
+    assert (root / ".env").read_text() == "DATA_ROOT=/data\n"
+    assert (root / ".env.bak").read_text() == "older\n"
+
+
+def test_rewrite_of_a_file_init_does_not_write_is_refused_naming_the_ones_it_does(tmp_path: Path) -> None:
+    _existing_workspace(tmp_path)
+    result = _init(tmp_path, "--rewrite", "project.bashrc")
+    assert result.exit_code == 2
+    assert "'project.bashrc' is not one of '.gitignore', '.env', 'config.toml', 'mypy.ini', 'vscode-init-bash.sh'" in (
+        result.output
+    )
+
+
+def test_rewrite_in_a_new_folder_writes_over_the_file_and_makes_the_workspace(tmp_path: Path) -> None:
+    root = tmp_path / "acme"
+    root.mkdir()
+    (root / ".env").write_text("DATA_ROOT=/data\n")
+    result = _init(tmp_path, "--rewrite", ".env")
+    assert result.exit_code == 0, result.output
+    assert (root / ".git").is_dir()
+    assert (root / ".env").read_text() == workspace._ENV
+    assert (root / ".env.bak").read_text() == "DATA_ROOT=/data\n"
+    assert "    .env                      rewritten (the old one kept as .env.bak)" in result.output.splitlines()
+
+
 def test_a_file_in_the_way_of_the_folder_is_refused(tmp_path: Path) -> None:
     (tmp_path / "acme").write_text("")
     result = _init(tmp_path)

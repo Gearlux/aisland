@@ -92,6 +92,8 @@ start-time port pre-flight naming the PID is the only signal). All service state
     settings exports nothing — a bare `export` lists every variable (`::test_an_env_file_without_settings_prints_nothing`).
     `.env` is SOURCED under `set -a`, never word-split through `xargs` (which cut `"/a b"` at the space and left
     `$VAR` unexpanded) (`::test_a_quoted_value_with_a_space_is_exported_whole_and_a_variable_in_a_value_expanded`).
+    Each shell function it defines (`cdp`, `cdd`, `cdm`, `cdr`, `h`) is `unalias`ed first: an alias of that name is
+    expanded inside the definition and breaks the file (`::test_h_is_defined_even_where_an_alias_h_exists`).
 - From a checkout, `get_workspace_root()` (`locations.checkout_workspace_root`) returns the directory
   holding `.gitmodules` (+ `TASKS.md`); without submodules the OUTERMOST `TASKS.md`, then the outermost
   `.git`; last resort `parents[2]`.
@@ -109,6 +111,12 @@ start-time port pre-flight naming the PID is the only signal). All service state
   (`_line_of`). `export` never writes over a file. `.venv` stays the one venv aisland finds — a link counts, and
   `init`'s `.gitignore` says `.venv` (not `.venv/`) so the link is ignored; never add a venv-name setting without
   asking. (`tests/test_workspace_init.py`)
+  - `init` writes over a starting file ONLY when `--rewrite <file>` names it (a closed set, `workspace.StartingFile`);
+    the old copy becomes `<file>.bak`, and a `.bak` already there refuses the whole run before anything is written.
+    In an existing repository `--rewrite` writes the named files and nothing else (no git, submodules, aliases or
+    harness); without it that repository is still refused
+    (`::test_rewrite_in_an_existing_repository_replaces_the_file_keeps_a_bak_and_writes_nothing_else`,
+    `::test_rewrite_refuses_when_a_bak_is_in_the_way_and_changes_nothing`).
 
 ## Supervisor and services
 

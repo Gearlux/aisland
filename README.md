@@ -77,6 +77,16 @@ own. A workspace is a folder whose projects are subfolders holding a `pyproject.
 submodules listed in `.gitmodules`, or, without one, every such subfolder (next section);
 `aisland setup` needs the `.venv` and reads `config.toml`, `.env` and `mypy.ini` when they exist.
 
+To take a newer template of a starting file, name it with `--rewrite` (repeat for several). In an
+existing repository that is all `init` does; the old copy is kept as `<file>.bak`, and the run is
+refused when that `.bak` already exists:
+
+```
+$ aisland workspace init . --rewrite vscode-init-bash.sh
+==> Rewrote in /Users/you/work/acme
+    vscode-init-bash.sh       rewritten (the old one kept as vscode-init-bash.sh.bak)
+```
+
 #### The same workspace on another machine: a workspace file
 
 `aisland workspace export` writes the workspace's projects into one file — each submodule's folder,
@@ -255,6 +265,7 @@ Enable it by starting a shell that sources `project.bashrc`:
 
 ```bash
 source project.bashrc      # activates .venv AND exports .env AND loads completion
+                           # (and defines cdp/cdd/cdm/cdr, and h [word]: the history, filtered)
 aisland <TAB>              # check docker fiftyone info jenkins labelstudio mcp mlflow ...
 streamstudio exp<TAB>      # export export-workflow
 recordstream <TAB>         # run

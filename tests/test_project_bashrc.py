@@ -109,6 +109,31 @@ def test_a_quoted_value_with_a_space_is_exported_whole_and_a_variable_in_a_value
     assert out.split("\n") == ["/Volumes/Store/My Data", f"{root}/runs"]
 
 
+def test_h_lists_the_history_and_with_a_word_only_the_lines_holding_it_in_any_case(tmp_path: Path) -> None:
+    root = (tmp_path / "acme").resolve()
+    _layout(root, ".aisland")
+    script = (
+        "set -o history; source ./project.bashrc; history -c; history -s 'pytest -q'; history -s 'ls'; "
+        "history -s 'PYTEST -m slow'; echo '== all'; h; echo '== pytest'; h pytest"
+    )
+    out = _bash(root, script).splitlines()
+    assert [line.split(None, 1)[1] for line in out if not line.startswith("==")] == [
+        "pytest -q",
+        "ls",
+        "PYTEST -m slow",
+        "pytest -q",
+        "PYTEST -m slow",
+    ]
+    assert out[0] == "== all" and out[4] == "== pytest"
+
+
+def test_h_is_defined_even_where_an_alias_h_exists(tmp_path: Path) -> None:
+    root = (tmp_path / "acme").resolve()
+    _layout(root, ".aisland")
+    out = _bash(root, "shopt -s expand_aliases; alias h='echo alias'; source ./project.bashrc && type -t h")
+    assert out.strip() == "function"
+
+
 def test_variables_set_after_the_env_file_are_not_exported(tmp_path: Path) -> None:
     root = (tmp_path / "acme").resolve()
     _layout(root, ".aisland")
