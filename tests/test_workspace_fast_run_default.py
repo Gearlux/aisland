@@ -1,4 +1,4 @@
-"""Plain `pytest` is every project's fast run (root AGENTS.md "Two Test Runs", user ruling 2026-10-05).
+"""Plain `pytest` is every project's fast run (aisland rules → "Two Test Runs", user ruling 2026-10-05).
 
 A project that registers the `slow` marker must deselect those tests by default — `addopts` carrying `-m 'not slow'` —
 so a bare `pytest` (an agent, `/ship`, a habit) never starts the slow run. `pytest -m slow` and `pytest -m ''` still

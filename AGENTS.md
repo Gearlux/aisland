@@ -16,7 +16,7 @@ installed outside the workspace gets its unpublished dependencies as wheels · [
 is push-only, fast-forward-only, and copies the primary · [wheel-mode] from a checkout everything
 is found from aisland's place, from a wheel from where it runs · [folders-as-submodules] a folder of
 projects is a workspace, its subfolders read as submodules · [workspace-file] a workspace is written down in a
-file a machine without aisland reads.
+file a machine without aisland reads · [harness] every workspace gets aisland's agent commands and rules.
 
 ## Current state
 
@@ -58,6 +58,8 @@ The workspace's dev-infrastructure CLI, `aisland` (click, `aisland/cli.py`):
   `fiftyone`, `aim`, `swiftbar` run under the supervisor; `docker` (Colima), `clearml`,
   `iqengine` run under Docker.
 - `setup.sh`: interpreter + venv, then `aisland setup -y` and `aisland completion install`.
+- `harness.py` + `harness/`: the agent harness — the workspace commands, their helper script and the generic
+  agent rules — installed into every workspace's `.agents/` by `aisland setup` and `aisland workspace init`.
 - `aisland/git/setup_git.sh`: the workspace git aliases, local config of the root and every active
   submodule; `pull-all` runs `git_pull_all.sh`. `aisland git aliases` runs it with the root.
 
@@ -402,6 +404,25 @@ A bare `::` pin in this section is in `tests/test_jenkins_scaffold.py`.
   aisland knob for it. After a header change, re-scaffold every project (root Generator
   Provenance rule).
 
+## The agent harness (`harness.py`, `harness/`)
+
+[harness] (`tests/test_harness.py`, `tests/test_packaging.py`)
+- `harness/` holds ONLY what every aisland workspace shares: no workspace's project names, private names or domain
+  rules (`::test_the_harness_names_no_project_of_the_workspace_it_was_written_in`). A workspace's own rule goes in its
+  `AGENTS.md` below the import line, never here.
+- A command cites a rule as `aisland rules → "<bold heading>"`, and `harness/AGENTS.md` must hold that heading
+  (`::test_every_section_a_command_cites_is_in_the_rules`): rename a rule and its citations together.
+- From a checkout, links; from a wheel, copies (`locations.FROM_CHECKOUT`). A copy is replaced only while its
+  fingerprint is the one `installed.json` recorded, or it equals aisland's; anything else is kept and named — never
+  overwritten, never deleted. A file in `.agents/` aisland does not ship is never touched, and an existing workspace
+  `AGENTS.md` is never edited (`::test_an_edited_copy_is_kept_and_named`,
+  `::test_a_command_of_the_users_own_is_never_touched`, `::test_an_agents_md_without_the_import_is_left_and_named`).
+- Every installed file is ignored by its own path, never by its folder, so a workspace's own command stays
+  committable (`::test_the_installed_files_are_ignored_and_the_users_own_are_not`).
+- Setup installs it before provisioning; the commands that commit carry `model: sonnet`
+  (`::test_a_command_that_commits_runs_on_sonnet`). `harness/` is no package: a new file kind there joins
+  `[tool.setuptools.package-data]` (`tests/test_packaging.py::test_the_package_holds_the_templates_and_the_git_scripts`).
+
 ## Shell completion
 
 - `aisland completion install` writes all three families into `.project.bashrc.completion`;
@@ -529,8 +550,8 @@ User choice 2026-10-08: an aisland command, only the named project's closure, bo
   (`::test_aliases_installed_from_outside_the_workspace_pull_it_from_inside_a_submodule`,
   `::test_aliases_installed_from_the_checkout_keep_their_form`).
 - `git pull-all` is `git_pull_all.sh`, run from the workspace root wherever it is typed; the
-  root `/pull-all` and `/push-all` workflows call it — change its `needs you:` wording and those
-  workflows together. (`tests/test_git_pull_push_all.py`) [pull-all]
+  `/pull-all` and `/push-all` commands (`aisland/harness/commands/`) call it — change its `needs you:` wording and
+  those commands together. (`tests/test_git_pull_push_all.py`) [pull-all]
   - A pointer conflict is settled only to the submodule's checkout when it contains BOTH sides
     (`::test_a_pointer_conflict_is_settled_to_the_submodule_merge_holding_both_sides`,
     `::test_a_pointer_whose_submodule_does_not_hold_both_sides_is_left_and_listed`).

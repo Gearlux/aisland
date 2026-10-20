@@ -1,0 +1,403 @@
+"""The agent harness: the workspace commands and the generic agent rules aisland ships and installs.
+
+`aisland setup` and `aisland workspace init` put aisland's commands into `.agents/workflows/` (`.claude/commands`
+links there), the helper script `/commit-session` runs into `.agents/scripts/` and the generic rules into
+`.agents/aisland/AGENTS.md`, which the workspace's `AGENTS.md` imports. From a checkout each file is a link into the
+package, so an edit is aisland's; from a wheel it is a copy, replaced on the next setup unless someone edited it.
+"""
+
+from __future__ import annotations
+
+import hashlib
+import json
+import os
+import re
+import subprocess
+from pathlib import Path
+from typing import Dict, List
+
+import pytest
+import yaml
+
+from aisland import harness, locations, manager
+from tests.test_no_private_names import FORBIDDEN
+
+
+@pytest.fixture
+def root(tmp_path: Path) -> Path:
+    """An empty workspace: a git repository with nothing in it."""
+    folder = tmp_path / "acme"
+    folder.mkdir()
+    subprocess.run(["git", "init", "-q"], cwd=folder, check=True)
+    return folder
+
+
+@pytest.fixture
+def shipped(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
+    """A harness of two commands, one script and the rules, standing in for aisland's own so a test can change it."""
+    folder = tmp_path / "harness"
+    _write(folder / "commands" / "ship.md", "---\ndescription: ship\n---\nship v1\n")
+    _write(folder / "commands" / "list-actions.md", "---\ndescription: list\n---\nlist v1\n")
+    _write(folder / "scripts" / "stage_hunks.py", "# stage v1\n")
+    _write(folder / "AGENTS.md", "# rules v1\n")
+    monkeypatch.setattr(harness, "HARNESS_DIR", folder)
+    return folder
+
+
+def _write(path: Path, text: str) -> Path:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(text)
+    return path
+
+
+def _targets(root: Path) -> Dict[str, Path]:
+    return {name: root / name for _source, name in harness.shipped_files()}
+
+
+TARGETS = [
+    ".agents/workflows/list-actions.md",
+    ".agents/workflows/ship.md",
+    ".agents/scripts/stage_hunks.py",
+    ".agents/aisland/AGENTS.md",
+]
+
+
+# --- what is installed where ----------------------------------------------------------------------------------
+
+
+def test_the_shipped_files_land_in_the_agents_folders(shipped: Path) -> None:
+    assert [name for _source, name in harness.shipped_files()] == TARGETS
+
+
+def test_from_a_checkout_every_file_is_a_relative_link_into_the_package(root: Path, shipped: Path) -> None:
+    harness.install_harness(root, link=True)
+    for source, name in harness.shipped_files():
+        target = root / name
+        assert target.is_symlink(), name
+        assert not os.path.isabs(os.readlink(target)), name
+        assert target.resolve() == source.resolve(), name
+
+
+def test_from_a_wheel_every_file_is_a_copy(root: Path, shipped: Path) -> None:
+    harness.install_harness(root, link=False)
+    for source, name in harness.shipped_files():
+        target = root / name
+        assert not target.is_symlink(), name
+        assert target.read_bytes() == source.read_bytes(), name
+
+
+def test_by_default_a_checkout_links_and_a_wheel_copies(
+    root: Path, shipped: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(locations, "FROM_CHECKOUT", False)
+    harness.install_harness(root)
+    assert not (root / ".agents/workflows/ship.md").is_symlink()
+    monkeypatch.setattr(locations, "FROM_CHECKOUT", True)
+    harness.install_harness(root)
+    assert (root / ".agents/workflows/ship.md").is_symlink()
+
+
+def test_claude_finds_the_commands_through_a_link_to_the_workflows(root: Path, shipped: Path) -> None:
+    harness.install_harness(root, link=False)
+    assert os.readlink(root / ".claude" / "commands") == "../.agents/workflows"
+    assert (root / ".claude" / "commands" / "ship.md").read_text() == "---\ndescription: ship\n---\nship v1\n"
+
+
+def test_a_claude_commands_folder_of_the_users_own_is_left_and_named(root: Path, shipped: Path) -> None:
+    _write(root / ".claude" / "commands" / "mine.md", "mine\n")
+    report = harness.install_harness(root, link=False)
+    assert (root / ".claude" / "commands").is_dir() and not (root / ".claude" / "commands").is_symlink()
+    assert (
+        ".claude/commands is a folder of its own — move its files into .agents/workflows and delete it, "
+        "so Claude finds aisland's commands" in report
+    )
+
+
+def test_a_second_install_with_nothing_changed_reports_nothing(root: Path, shipped: Path) -> None:
+    harness.install_harness(root, link=False)
+    assert harness.install_harness(root, link=False) == []
+    harness.install_harness(root, link=True)
+    assert harness.install_harness(root, link=True) == []
+
+
+# --- copies: replaced when aisland's, kept when edited ------------------------------------------------------------
+
+
+def test_a_newer_aisland_replaces_an_unedited_copy(root: Path, shipped: Path) -> None:
+    harness.install_harness(root, link=False)
+    (shipped / "commands" / "ship.md").write_text("---\ndescription: ship\n---\nship v2\n")
+    report = harness.install_harness(root, link=False)
+    assert (root / ".agents/workflows/ship.md").read_text().endswith("ship v2\n")
+    assert not any(line.startswith("kept") for line in report)
+
+
+def test_an_edited_copy_is_kept_and_named(root: Path, shipped: Path) -> None:
+    harness.install_harness(root, link=False)
+    _write(root / ".agents/workflows/ship.md", "my own ship\n")
+    (shipped / "commands" / "ship.md").write_text("---\ndescription: ship\n---\nship v2\n")
+    report = harness.install_harness(root, link=False)
+    assert (root / ".agents/workflows/ship.md").read_text() == "my own ship\n"
+    assert report == ["kept your edited .agents/workflows/ship.md — delete it to take aisland's"]
+
+
+def test_a_deleted_copy_is_installed_again(root: Path, shipped: Path) -> None:
+    harness.install_harness(root, link=False)
+    (root / ".agents/workflows/ship.md").unlink()
+    harness.install_harness(root, link=False)
+    assert (root / ".agents/workflows/ship.md").read_text().endswith("ship v1\n")
+
+
+def test_a_file_aisland_never_wrote_under_a_shipped_name_is_kept(root: Path, shipped: Path) -> None:
+    _write(root / ".agents/workflows/ship.md", "a ship of my own\n")
+    report = harness.install_harness(root, link=True)
+    assert not (root / ".agents/workflows/ship.md").is_symlink()
+    assert report == ["kept your edited .agents/workflows/ship.md — delete it to take aisland's"]
+
+
+def test_a_file_equal_to_aislands_is_taken_over(root: Path, shipped: Path) -> None:
+    _write(root / ".agents/workflows/ship.md", (shipped / "commands" / "ship.md").read_text())
+    assert harness.install_harness(root, link=True) == []
+    assert (root / ".agents/workflows/ship.md").is_symlink()
+
+
+def test_a_command_of_the_users_own_is_never_touched(root: Path, shipped: Path) -> None:
+    mine = _write(root / ".agents/workflows/mine.md", "mine\n")
+    harness.install_harness(root, link=False)
+    harness.install_harness(root, link=True)
+    assert mine.read_text() == "mine\n" and not mine.is_symlink()
+
+
+def test_the_record_of_the_copies_holds_their_fingerprints(root: Path, shipped: Path) -> None:
+    harness.install_harness(root, link=False)
+    record = json.loads((root / harness.RECORD).read_text())
+    assert record == {
+        name: hashlib.sha256((root / name).read_bytes()).hexdigest() for name in TARGETS if name != harness.RECORD
+    }
+
+
+# --- switching between a checkout and a wheel ------------------------------------------------------------------
+
+
+def test_a_checkouts_links_become_copies_from_a_wheel(root: Path, shipped: Path) -> None:
+    harness.install_harness(root, link=True)
+    assert harness.install_harness(root, link=False) == []
+    assert not (root / ".agents/workflows/ship.md").is_symlink()
+
+
+def test_a_wheels_unedited_copies_become_links_from_a_checkout(root: Path, shipped: Path) -> None:
+    harness.install_harness(root, link=False)
+    assert harness.install_harness(root, link=True) == []
+    assert (root / ".agents/workflows/ship.md").is_symlink()
+    assert not (root / harness.RECORD).exists()
+
+
+def test_an_edited_copy_is_kept_from_a_checkout_too(root: Path, shipped: Path) -> None:
+    harness.install_harness(root, link=False)
+    _write(root / ".agents/workflows/ship.md", "my own ship\n")
+    report = harness.install_harness(root, link=True)
+    assert (root / ".agents/workflows/ship.md").read_text() == "my own ship\n"
+    assert report == ["kept your edited .agents/workflows/ship.md — delete it to take aisland's"]
+
+
+# --- a command aisland no longer ships ------------------------------------------------------------------------
+
+
+def test_a_link_to_a_command_aisland_dropped_is_removed(root: Path, shipped: Path) -> None:
+    harness.install_harness(root, link=True)
+    (shipped / "commands" / "list-actions.md").unlink()
+    harness.install_harness(root, link=True)
+    assert not os.path.lexists(root / ".agents/workflows/list-actions.md")
+
+
+def test_an_unedited_copy_of_a_command_aisland_dropped_is_removed_an_edited_one_kept(root: Path, shipped: Path) -> None:
+    harness.install_harness(root, link=False)
+    _write(root / ".agents/workflows/ship.md", "my own ship\n")
+    (shipped / "commands" / "list-actions.md").unlink()
+    (shipped / "commands" / "ship.md").unlink()
+    report = harness.install_harness(root, link=False)
+    assert not (root / ".agents/workflows/list-actions.md").exists()
+    assert (root / ".agents/workflows/ship.md").read_text() == "my own ship\n"
+    assert report == ["kept your edited .agents/workflows/ship.md — aisland no longer ships it"]
+
+
+# --- the workspace's own AGENTS.md ----------------------------------------------------------------------------
+
+
+def test_a_workspace_without_agents_md_gets_one_importing_the_rules(root: Path, shipped: Path) -> None:
+    harness.install_harness(root, link=False)
+    text = (root / "AGENTS.md").read_text()
+    assert text.splitlines()[0] == "@.agents/aisland/AGENTS.md"
+    assert (root / text.splitlines()[0][1:]).is_file()  # the import names a file that exists
+    assert os.readlink(root / "CLAUDE.md") == "AGENTS.md"
+    assert os.readlink(root / "GEMINI.md") == "AGENTS.md"
+
+
+def test_an_agents_md_without_the_import_is_left_and_named(root: Path, shipped: Path) -> None:
+    _write(root / "AGENTS.md", "# our rules\n")
+    report = harness.install_harness(root, link=False)
+    assert (root / "AGENTS.md").read_text() == "# our rules\n"
+    assert not os.path.lexists(root / "CLAUDE.md")
+    assert report == [
+        'AGENTS.md does not import the aisland rules — add "@.agents/aisland/AGENTS.md" as its first line'
+    ]
+
+
+def test_an_agents_md_with_the_import_is_left_and_says_nothing(root: Path, shipped: Path) -> None:
+    _write(root / "AGENTS.md", "@.agents/aisland/AGENTS.md\n\n# our rules\n")
+    assert harness.install_harness(root, link=False) == []
+    assert (root / "AGENTS.md").read_text() == "@.agents/aisland/AGENTS.md\n\n# our rules\n"
+
+
+def test_a_claude_md_of_its_own_is_kept(root: Path, shipped: Path) -> None:
+    _write(root / "CLAUDE.md", "claude's own\n")
+    harness.install_harness(root, link=False)
+    assert (root / "CLAUDE.md").read_text() == "claude's own\n"
+    assert os.readlink(root / "GEMINI.md") == "AGENTS.md"
+
+
+# --- git -----------------------------------------------------------------------------------------------------
+
+
+def _ignored(root: Path, name: str) -> bool:
+    return subprocess.run(["git", "check-ignore", "-q", name], cwd=root).returncode == 0
+
+
+def test_the_installed_files_are_ignored_and_the_users_own_are_not(root: Path, shipped: Path) -> None:
+    _write(root / ".agents/workflows/mine.md", "mine\n")
+    harness.install_harness(root, link=False)
+    for name in TARGETS:
+        assert _ignored(root, name), name
+    assert _ignored(root, harness.RECORD)
+    assert not _ignored(root, ".agents/workflows/mine.md")
+    assert not _ignored(root, "AGENTS.md")
+
+
+def test_the_ignore_lines_are_added_once(root: Path, shipped: Path) -> None:
+    harness.install_harness(root, link=False)
+    harness.install_harness(root, link=False)
+    lines = (root / ".gitignore").read_text().splitlines()
+    assert len(lines) == len(set(lines))
+
+
+# --- aisland's own harness ------------------------------------------------------------------------------------
+
+#: Names that mean something only in the workspace aisland was written in: the harness runs in any workspace. The two
+#: names no aisland file may carry at all are `test_no_private_names.FORBIDDEN`'s, checked beside these.
+PRIVATE = re.compile(
+    r"acme|company|gearlux|vendorcli|platform|annotaide|navigaitor|confluid|recordstream|matrainer"
+    r"|liquifai|loggair|streamstudio|sonair|raidar|deltaid|purifai|torpaido|distilaide|torchsig",
+    re.IGNORECASE,
+)
+
+
+def _real_harness_files() -> List[Path]:
+    return sorted(path for path in harness.HARNESS_DIR.rglob("*") if path.is_file() and "__pycache__" not in path.parts)
+
+
+def test_the_harness_names_no_project_of_the_workspace_it_was_written_in() -> None:
+    hits = [
+        f"{path.relative_to(harness.HARNESS_DIR)}:{number}: {line.strip()}"
+        for path in _real_harness_files()
+        for number, line in enumerate(path.read_text().splitlines(), start=1)
+        if PRIVATE.search(line) or FORBIDDEN.search(line)
+    ]
+    assert hits == []
+
+
+def test_aisland_ships_the_six_commands_the_helper_and_the_rules() -> None:
+    assert [name for _source, name in harness.shipped_files()] == [
+        ".agents/workflows/commit-all.md",
+        ".agents/workflows/commit-session.md",
+        ".agents/workflows/list-actions.md",
+        ".agents/workflows/pull-all.md",
+        ".agents/workflows/push-all.md",
+        ".agents/workflows/ship.md",
+        ".agents/scripts/stage_hunks.py",
+        ".agents/aisland/AGENTS.md",
+    ]
+
+
+@pytest.mark.parametrize("command", sorted((harness.HARNESS_DIR / "commands").glob("*.md")), ids=lambda p: p.stem)
+def test_every_command_opens_with_frontmatter_naming_what_it_does(command: Path) -> None:
+    text = command.read_text()
+    assert text.startswith("---\n")
+    front = yaml.safe_load(text.split("---\n")[1])
+    assert isinstance(front["description"], str) and front["description"]
+
+
+@pytest.mark.parametrize("command", ["commit-all", "commit-session", "pull-all", "push-all", "ship"])
+def test_a_command_that_commits_runs_on_sonnet(command: str) -> None:
+    text = (harness.HARNESS_DIR / "commands" / f"{command}.md").read_text()
+    assert yaml.safe_load(text.split("---\n")[1])["model"] == "sonnet"
+
+
+@pytest.mark.parametrize("command", ["commit-all", "commit-session"])
+def test_a_commit_command_checks_the_branch_before_it_stages(command: str) -> None:
+    """The rules say these two stop on a checkout that is not on `dev/main`; the command must say how, first."""
+    text = (harness.HARNESS_DIR / "commands" / f"{command}.md").read_text()
+    front = yaml.safe_load(text.split("---\n")[1])
+    assert "Bash(git -C * branch:*)" in front["allowed-tools"]
+    steps = text.split("---\n", 2)[2]
+    check = steps.index("git -C <repo> branch --show-current")
+    assert check < steps.index("1. ") and "`dev/main`" in steps[check : check + 200]
+
+
+def test_every_section_a_command_cites_is_in_the_rules() -> None:
+    """A command cites a rule as `AGENTS.md` → "<its heading>"; the rules file must hold that heading."""
+    rules = (harness.HARNESS_DIR / "AGENTS.md").read_text()
+    cited = {
+        title
+        for path in sorted((harness.HARNESS_DIR / "commands").glob("*.md"))
+        for title in re.findall(r'aisland rules → "([^"]+)"', path.read_text())
+    }
+    assert cited, "the commands cite no rule — the pattern this test reads has changed"
+    assert sorted(title for title in cited if f"**{title}" not in rules) == []
+
+
+def test_the_rules_say_how_they_are_installed_and_changed() -> None:
+    first = (harness.HARNESS_DIR / "AGENTS.md").read_text().splitlines()[:6]
+    assert any("aisland setup" in line for line in first)
+
+
+# --- setup and init install it --------------------------------------------------------------------------------
+
+
+class _Stop(Exception):
+    """Ends `setup_workspace` right after the steps under test; provisioning and the installs need a real machine."""
+
+
+def test_setup_installs_the_harness_before_provisioning(
+    tmp_path: Path, shipped: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    (tmp_path / ".venv" / "bin").mkdir(parents=True)
+    monkeypatch.setattr(manager, "get_workspace_root", lambda: tmp_path)
+    monkeypatch.setattr(manager, "ensure_uv_in_venv", lambda venv_bin: "uv")
+    monkeypatch.setattr(manager, "_link_project_bashrc", lambda root: None)
+    monkeypatch.setattr("aisland.config.migrate", lambda root: None)
+
+    def provision() -> None:
+        raise _Stop
+
+    monkeypatch.setattr(manager, "provision_system", provision)
+    with pytest.raises(_Stop):
+        manager.setup_workspace(non_interactive=True)
+    assert (tmp_path / ".agents/workflows/ship.md").is_file()
+    assert (tmp_path / "AGENTS.md").read_text().startswith("@.agents/aisland/AGENTS.md\n")
+
+
+def test_setup_prints_what_the_harness_reports(
+    tmp_path: Path, shipped: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    (tmp_path / ".venv" / "bin").mkdir(parents=True)
+    _write(tmp_path / "AGENTS.md", "# ours\n")
+    monkeypatch.setattr(manager, "get_workspace_root", lambda: tmp_path)
+    monkeypatch.setattr(manager, "ensure_uv_in_venv", lambda venv_bin: "uv")
+    monkeypatch.setattr(manager, "_link_project_bashrc", lambda root: None)
+    monkeypatch.setattr("aisland.config.migrate", lambda root: None)
+    monkeypatch.setattr(manager, "provision_system", lambda: (_ for _ in ()).throw(_Stop()))
+    with pytest.raises(_Stop):
+        manager.setup_workspace(non_interactive=True)
+    assert (
+        '  - AGENTS.md does not import the aisland rules — add "@.agents/aisland/AGENTS.md" as its first line'
+        in capsys.readouterr().out.splitlines()
+    )

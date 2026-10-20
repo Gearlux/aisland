@@ -22,6 +22,7 @@ from aisland import workspace
 from aisland.cli import main
 
 FILES = [".gitignore", ".env", "config.toml", "mypy.ini", "vscode-init-bash.sh"]
+HARNESS = [".agents", ".claude", "AGENTS.md", "CLAUDE.md", "GEMINI.md"]
 
 
 @pytest.fixture(autouse=True)
@@ -79,8 +80,9 @@ def test_a_new_folder_becomes_a_workspace(tmp_path: Path) -> None:
     assert result.exit_code == 0, result.output
     root = tmp_path / "acme"
     assert (root / ".git").is_dir()
-    # `.gitattributes` comes with the aliases: setup_git.sh registers the notebook-output filter there.
-    assert sorted(p.name for p in root.iterdir() if p.name != ".git") == sorted([*FILES, ".gitattributes"])
+    # `.gitattributes` comes with the aliases: setup_git.sh registers the notebook-output filter there; `.agents/`,
+    # `.claude/` and the three rule files with the agent harness (aisland.harness).
+    assert sorted(p.name for p in root.iterdir() if p.name != ".git") == sorted([*FILES, ".gitattributes", *HARNESS])
     assert "pull-all" in _git(root, "config", "--local", "--get-regexp", r"^alias\.")
     assert result.output.splitlines()[0] == f"==> Created workspace acme in {root}"
     assert result.output.splitlines()[-4:] == [
@@ -99,8 +101,30 @@ def test_the_starting_files_are_what_aisland_setup_needs(tmp_path: Path) -> None
         assert entry in ignored
     assert "mypy_path =" in (root / "mypy.ini").read_text().splitlines()
     assert (root / "vscode-init-bash.sh").read_text() == workspace.VSCODE_INIT_BASH.read_text()
-    for name in FILES:  # every file says where it came from (root AGENTS.md "Generator Provenance")
+    for name in FILES:  # every file says where it came from (aisland rules → "Generator Provenance")
         assert "aisland workspace init" in (root / name).read_text().splitlines()[1]
+
+
+def test_a_new_workspace_gets_the_agent_commands_and_rules(tmp_path: Path) -> None:
+    result = _init(tmp_path)
+    root = tmp_path / "acme"
+    assert (root / ".agents" / "workflows" / "commit-session.md").is_file()
+    assert (root / ".claude" / "commands" / "ship.md").is_file()
+    assert (root / "AGENTS.md").read_text().splitlines()[0] == "@.agents/aisland/AGENTS.md"
+    assert (root / "CLAUDE.md").resolve() == (root / "AGENTS.md").resolve()
+    assert "    AGENTS.md                 written (imports the rules; CLAUDE.md and GEMINI.md link to it)" in (
+        result.output.splitlines()
+    )
+
+
+def test_an_agents_md_of_its_own_is_kept_and_its_missing_import_named(tmp_path: Path) -> None:
+    _write(tmp_path / "acme" / "AGENTS.md", "# ours\n")
+    result = _init(tmp_path)
+    assert (tmp_path / "acme" / "AGENTS.md").read_text() == "# ours\n"
+    assert (
+        '                              AGENTS.md does not import the aisland rules — add "@.agents/aisland/AGENTS.md" '
+        "as its first line" in result.output.splitlines()
+    )
 
 
 def test_a_repository_added_is_a_submodule_and_on_mypys_path(tmp_path: Path, models: Path) -> None:

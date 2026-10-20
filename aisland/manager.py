@@ -14,6 +14,7 @@ import click
 from packaging.requirements import InvalidRequirement, Requirement
 
 from aisland import locations, supervisor
+from aisland.harness import install_harness
 
 # Path Configuration (relative to the file itself)
 SERVICES_DIR = locations.PACKAGE_DIR
@@ -1439,9 +1440,9 @@ _ROOT_UV_BASE: Dict[str, Any] = {
 
 #: Overrides that apply only where the conflict they exist for is actually possible, keyed by the
 #: distribution whose presence makes it so. Dropping a requirement no project in this workspace
-#: conflicts with is not conservative, it is silent breakage: the bridge workspace (2026-10-20) has
+#: conflicts with is not conservative, it is silent breakage: another workspace (2026-10-20) has
 #: no `pytorch-lightning` anywhere and two projects requiring `lightning` outright, so the blanket
-#: override stripped a hard dependency and `import company.ai.bridge` failed on a venv that had
+#: override stripped a hard dependency and importing one of those projects failed on a venv that had
 #: just reported a successful install. The acme workspace, where this override was written, keeps
 #: it unchanged — `pytorch-lightning` is declared by matrainer, deltaid and distilaide.
 #:
@@ -1599,6 +1600,11 @@ def setup_workspace(
     # 0b. Symlink the aisland-managed project.bashrc to the workspace root so
     #     users can `source ./project.bashrc` from the workspace as before.
     _link_project_bashrc(workspace_root)
+
+    # 0c. The agent harness: aisland's commands and generic rules in `.agents/` (aisland.harness) — linked from a
+    #     checkout, copied from a wheel. Before provisioning, which can stop a setup half-way.
+    for line in install_harness(workspace_root):
+        click.echo(f"  - {line}")
 
     # 1. System Provisioning
     provision_system()

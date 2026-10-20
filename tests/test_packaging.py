@@ -64,6 +64,13 @@ def test_the_package_holds_the_templates_and_the_git_scripts() -> None:
         "aisland/git/git_pull_all.sh",
         "aisland/git/git_push_all.sh",
         "aisland/git/setup_git.sh",
+        "aisland/harness/AGENTS.md",
+        "aisland/harness/commands/commit-all.md",
+        "aisland/harness/commands/commit-session.md",
+        "aisland/harness/commands/list-actions.md",
+        "aisland/harness/commands/pull-all.md",
+        "aisland/harness/commands/push-all.md",
+        "aisland/harness/commands/ship.md",
         "aisland/templates/vscode-init-bash.sh",
     ]
 
@@ -71,6 +78,11 @@ def test_the_package_holds_the_templates_and_the_git_scripts() -> None:
 def test_the_wheel_carries_every_file_of_the_package(wheel_members: List[str]) -> None:
     missing = [name for name in _package_files_that_are_not_modules() if name not in wheel_members]
     assert missing == []
+
+
+def test_the_wheel_carries_the_harness_script_though_its_folder_is_no_package(wheel_members: List[str]) -> None:
+    """`harness/` has no `__init__.py`, so its `.py` helper reaches the wheel only as package data."""
+    assert "aisland/harness/scripts/stage_hunks.py" in wheel_members
 
 
 def test_the_wheel_carries_the_shell_init_beside_the_package(wheel_members: List[str]) -> None:
@@ -171,3 +183,15 @@ def test_from_the_wheel_a_workspace_is_created_and_its_aliases_point_into_the_pa
         ["git", "config", "--local", "alias.pull-all"], cwd=root, capture_output=True, text=True, check=True
     ).stdout
     assert str((installed / "aisland" / "git" / "git_pull_all.sh").resolve()) in alias
+
+
+def test_from_the_wheel_a_new_workspace_gets_copies_of_the_agent_harness(installed: Path, tmp_path: Path) -> None:
+    """From a wheel the commands and rules are COPIES: a link would point into site-packages, which a reinstall of
+    the venv replaces."""
+    result = _aisland(installed, tmp_path, "workspace", "init", "acme")
+    assert result.returncode == 0, result.stdout + result.stderr
+    root = tmp_path / "acme"
+    for name in (".agents/workflows/ship.md", ".agents/scripts/stage_hunks.py", ".agents/aisland/AGENTS.md"):
+        assert (root / name).is_file() and not (root / name).is_symlink(), name
+    assert (root / ".agents/workflows/ship.md").read_bytes() == (PACKAGE / "harness/commands/ship.md").read_bytes()
+    assert (root / ".claude/commands/commit-session.md").is_file()

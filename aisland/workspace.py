@@ -30,6 +30,7 @@ from typing import Dict, List, Optional, Sequence, Tuple
 import click
 
 from aisland import __version__, locations
+from aisland.harness import install_harness
 from aisland.manager import install_git_aliases
 
 #: The terminal init the editor file's profile runs (`${workspaceFolder:<name>}/vscode-init-bash.sh`).
@@ -253,6 +254,13 @@ def init_workspace(folder: Path, add: Sequence[str] = (), from_file: Optional[Pa
 
     aliases = "pull-all, push-all, … in the local git config" if install_git_aliases(root, quiet=True) else "failed"
     rows.append(_row("git aliases", aliases))
+
+    had_agents_md = (root / "AGENTS.md").exists()
+    notes = install_harness(root)
+    rows.append(_row(".agents/", "aisland's commands and agent rules (`.claude/commands` links to them)"))
+    if not had_agents_md:
+        rows.append(_row("AGENTS.md", "written (imports the rules; CLAUDE.md and GEMINI.md link to it)"))
+    rows += [_row("", note) for note in notes]
 
     click.echo(f"==> Created workspace {root.name} in {root}")
     for row in rows:
