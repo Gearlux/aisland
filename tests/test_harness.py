@@ -342,6 +342,15 @@ def test_a_commit_command_checks_the_branch_before_it_stages(command: str) -> No
     assert check < steps.index("1. ") and "`dev/main`" in steps[check : check + 200]
 
 
+def test_commit_all_stops_on_files_another_session_already_staged() -> None:
+    """`/commit-all` once committed another session's staged, unfinished files while both were on `dev/main`: it now
+    reads every index before it stages anything, and a non-empty one stops it until the user answers."""
+    steps = (harness.HARNESS_DIR / "commands" / "commit-all.md").read_text().split("---\n", 2)[2]
+    check = steps.index("git -C <repo> diff --cached --name-only")
+    assert check < steps.index("\n1. ") and check < steps.index("git add")
+    assert "stage and commit NOTHING anywhere" in steps[check : steps.index("\n1. ")]
+
+
 def test_every_section_a_command_cites_is_in_the_rules() -> None:
     """A command cites a rule as `AGENTS.md` → "<its heading>"; the rules file must hold that heading."""
     rules = (harness.HARNESS_DIR / "AGENTS.md").read_text()

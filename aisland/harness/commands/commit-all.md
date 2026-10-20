@@ -9,7 +9,16 @@ allowed-tools: [Bash(git add:*), Bash(git commit:*), Bash(git status:*), Bash(gi
 
 When the user invokes the `/commit-all` command (or requests to commit all changes):
 
-0. **Branch check, before anything is staged** (aisland rules → "Everything Goes To `dev/main` — Never Create A Branch"): for the root and every repository with uncommitted changes, `git -C <repo> branch --show-current`. Any that prints something other than `dev/main` — another branch, or nothing (a detached HEAD) — → stage and commit NOTHING anywhere; report each such repository with its branch to the user and stop.
+0a. **Branch check, before anything is staged** (aisland rules → "Everything Goes To `dev/main` — Never Create A Branch"): for the root and every repository with uncommitted changes, `git -C <repo> branch --show-current`. Any that prints something other than `dev/main` — another branch, or nothing (a detached HEAD) — → stage and commit NOTHING anywhere; report each such repository with its branch to the user and stop.
+
+0b. **Files someone else already staged, before anything is staged:** for the root and every submodule, `git -C <repo> diff --cached --name-only`. `/commit-all` has staged nothing yet, so anything listed was staged by another session — often one halfway through `/commit-session`, its files not finished — or by the user. Then stage and commit NOTHING anywhere; show each repository with its staged files, e.g.
+
+   ```text
+   Staged before /commit-all ran — not mine to commit:
+     aisland: aisland/selection.py, tests/test_selection.py
+   ```
+
+   and ask the user whether to commit them too or to wait until that session is done. Run `ListAgents` first and name the busy sessions, so the user can see whose they likely are. Go on only on the user's answer.
 
 1. **Dependency Analysis:** Determine the project processing order to ensure submodules are committed before the root repository update.
    - Command, run with the workspace `.venv` active: `python3 -c "from aisland.manager import get_install_order, get_workspace_root; print([p['path'].name for p in get_install_order(get_workspace_root())])"` — it prints the project FOLDERS, dependencies first (`aisland`, not its distribution name `aisland-manager`).
