@@ -235,8 +235,8 @@ def is_private_gearlux_repo(name: str) -> bool:
 def _parse_dotenv(env_path: Path) -> dict[str, str]:
     """Parse KEY=VALUE pairs from a workspace ``.env`` file.
 
-    Mirrors the loose semantics of ``project.bashrc`` (``export $(grep -v '^#' .env | xargs)``):
-    skip blank and comment lines, split on the first ``=``, strip surrounding quotes.
+    A loose reading of what ``project.bashrc`` sources (``set -a; source .env; set +a``): skip blank and
+    comment lines, split on the first ``=``, strip surrounding quotes. Unlike the shell it expands no ``$VAR``.
     Returns an empty dict when the file is absent so callers can no-op silently.
     """
     if not env_path.exists():

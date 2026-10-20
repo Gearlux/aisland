@@ -101,6 +101,22 @@ def test_the_env_files_settings_are_exported_and_its_comments_skipped(tmp_path: 
     assert out.split("\n") == ["/data", "/runs"]
 
 
+def test_a_quoted_value_with_a_space_is_exported_whole_and_a_variable_in_a_value_expanded(tmp_path: Path) -> None:
+    root = (tmp_path / "acme").resolve()
+    _layout(root, ".aisland")
+    (root / ".env").write_text('DATA_ROOT="/Volumes/Store/My Data"\nRUN_DIR=$HOME/runs\n')
+    out = _bash(root, 'source ./project.bashrc && bash -c \'printf "%s\\n%s" "$DATA_ROOT" "$RUN_DIR"\'')
+    assert out.split("\n") == ["/Volumes/Store/My Data", f"{root}/runs"]
+
+
+def test_variables_set_after_the_env_file_are_not_exported(tmp_path: Path) -> None:
+    root = (tmp_path / "acme").resolve()
+    _layout(root, ".aisland")
+    (root / ".env").write_text("DATA_ROOT=/data\n")
+    out = _bash(root, 'source ./project.bashrc && LATER=1 && bash -c \'printf "%s" "${LATER:-unexported}"\'')
+    assert out == "unexported"
+
+
 def test_setup_from_a_wheel_copies_the_packaged_file_and_links_the_root_to_the_copy(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

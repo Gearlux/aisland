@@ -31,15 +31,12 @@ if [ -f "$PROJECT_ROOT/.venv/bin/activate" ]; then
     source "$PROJECT_ROOT/.venv/bin/activate"
 fi
 
-# Load environment variables if present.
-# A `.env` holding only comments leaves nothing to export: a bare `export` would list every
-# exported variable on each terminal start.
+# Load environment variables if present: every assignment in `.env` is exported (`set -a`), so a
+# quoted value keeps its spaces and `$VAR` in a value expands. A `.env` of only comments exports nothing.
 if [ -f "$PROJECT_ROOT/.env" ]; then
-    _aisland_env="$(grep -v -e '^#' -e '^[[:space:]]*$' "$PROJECT_ROOT/.env" | xargs)"
-    if [ -n "$_aisland_env" ]; then
-        export $_aisland_env
-    fi
-    unset _aisland_env
+    set -a
+    source "$PROJECT_ROOT/.env"
+    set +a
 fi
 
 # Aisland vendors workspace-local tools (jenkins.war, node/npm on Linux, ...)
