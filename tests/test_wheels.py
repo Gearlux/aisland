@@ -426,6 +426,22 @@ class TestRefusals:
         assert "--force cannot be combined with --commit" in error.value.message
         assert not (root / "app" / "wheels").exists()
 
+    def test_no_check_with_commit_is_refused_before_anything_is_built(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        root = _workspace(tmp_path, "app")
+        _project(root, "app")
+        _commit(root / "app")
+        _pypi(monkeypatch, {})
+        _no_builds(monkeypatch)
+        with pytest.raises(click.ClickException) as error:
+            w.vendor_wheels(root, "app", commit=True, check=False)
+        assert error.value.message == (
+            "--no-check cannot be combined with --commit: the folder is committed only once the install check "
+            "passed. Drop one of them."
+        )
+        assert not (root / "app" / "wheels").exists()
+
     def test_all_refuses_a_project_the_target_does_not_need_with_uncommitted_changes(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
@@ -808,7 +824,9 @@ class TestCli:
     ) -> None:
         asked: List[str] = []
 
-        def _vendor(root: Path, project: str, scope: str, commit: bool, make_zip: bool, force: bool) -> w.WheelsReport:
+        def _vendor(
+            root: Path, project: str, scope: str, commit: bool, make_zip: bool, force: bool, check: bool
+        ) -> w.WheelsReport:
             asked.append(scope)
             return _report(import_failures=[])
 
@@ -829,6 +847,30 @@ class TestCli:
         result = CliRunner().invoke(main, ["wheels", "build", "navigaitor", *flags])
         assert result.exit_code == 0, result.output
         assert asked == [force]
+
+    @pytest.mark.parametrize("flags, check", [([], True), (["--no-check"], False)])
+    def test_no_check_is_handed_to_the_run(
+        self, monkeypatch: pytest.MonkeyPatch, flags: List[str], check: bool
+    ) -> None:
+        asked: List[bool] = []
+
+        def _vendor(root: Path, project: str, **kwargs: Any) -> w.WheelsReport:
+            asked.append(kwargs["check"])
+            return _report(import_failures=[])
+
+        monkeypatch.setattr(w, "vendor_wheels", _vendor)
+        result = CliRunner().invoke(main, ["wheels", "build", "navigaitor", *flags])
+        assert result.exit_code == 0, result.output
+        assert asked == [check]
+
+    def test_an_unchecked_run_exits_zero_and_says_so_in_json(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setattr(
+            w, "vendor_wheels", lambda root, project, **kwargs: _report(import_failures=[], checked=False)
+        )
+        result = CliRunner().invoke(main, ["wheels", "navigaitor", "--no-check", "--json"])
+        assert result.exit_code == 0, result.output
+        data = json.loads(result.stdout)
+        assert data["checked"] is False and data["ok"] is True
 
 
 # --- the run, with builds and the empty venv faked ---------------------------------------------
@@ -921,6 +963,50 @@ class TestTheRunWithFakedBuilds:
         _, entries = wi.read_wheels(root / "app" / "wheels" / "wheels.yaml")
         assert [(e.project, e.install) for e in entries] == [("libx", True)]
         assert (root / "app" / "wheels" / "install.py").is_file()
+
+    def test_no_check_builds_and_writes_the_wheels_and_neither_compares_nor_installs(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        root = self._scoped_workspace(tmp_path, monkeypatch)
+        installs = self._fake_builds(monkeypatch, {})
+        checked_files = {}
+        w.vendor_wheels(root, "app")
+        for name in ("wheels.yaml", "install.py", "README.md", ".gitignore"):
+            checked_files[name] = (root / "app" / "wheels" / name).read_bytes()
+        installs.clear()
+        fake_build = w.build_wheel
+        builds: List[str] = []
+
+        def _counted(uv: str, source: Path, out: Path, timestamp: Optional[int] = None) -> Path:
+            builds.append(source.name)
+            return fake_build(uv, source, out, timestamp)
+
+        def _no_download(url: str, path: Path) -> Path:
+            raise AssertionError("an unchecked run downloads nothing from PyPI")
+
+        monkeypatch.setattr(w, "build_wheel", _counted)
+        monkeypatch.setattr(w, "_download", _no_download)
+
+        report = w.vendor_wheels(root, "app", check=False)
+
+        assert builds == ["libx"]
+        assert installs == []
+        assert report.checked is False and report.ok
+        assert [(p.project, p.pypi_version, p.checkout_version, p.differing_files) for p in report.published] == [
+            ("gone", "1.0", None, []),
+            ("pubdep", "0.1.0", None, []),
+        ]
+        assert report.imported == [] and report.packages == []
+        assert (root / "app" / "wheels" / "libx-0.1.0-py3-none-any.whl").is_file()
+        for name, content in checked_files.items():
+            assert (root / "app" / "wheels" / name).read_bytes() == content, name
+        text = w.render_report(report)
+        assert "It takes 2 workspace projects from PyPI, not compared (--no-check): gone 1.0, pubdep 0.1.0" in text
+        assert (
+            "Not checked (--no-check): app was not installed in an empty venv, so nothing says these wheels import."
+            in text
+        )
+        assert "Installed app" not in text and "PyPI is up to date" not in text
 
     def test_include_published_builds_every_needed_project_with_a_checkout(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch

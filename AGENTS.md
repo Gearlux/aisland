@@ -489,6 +489,13 @@ User choice 2026-10-08: an aisland command, only the named project's closure, bo
   own `uv.toml` is passed with `--config-file` (`TestInstallAndImport`).
 - The exit status follows the install and the imports only; *behind* (a file differs from PyPI's
   wheel) is reported, never an exit 1 (`TestCli`).
+- `--no-check` (user choice 2026-10-20) skips BOTH checks — no PyPI wheel downloaded or compared, no target
+  wheel, no empty venv — and nothing else: the PyPI lookup, the refusals, the wheels and the generated files
+  are those of a checked run, byte for byte. The report says `checked: false` and both sections read "not
+  compared/Not checked (--no-check)"; the exit is 0. `--no-check --commit` is refused before any build: the
+  folder is committed only after a passing check
+  (`TestTheRunWithFakedBuilds::test_no_check_builds_and_writes_the_wheels_and_neither_compares_nor_installs`,
+  `TestRefusals::test_no_check_with_commit_is_refused_before_anything_is_built`).
 - Every module is imported, not only the packages (`__main__` skipped). A package that fails, or a
   module missing a workspace project's module, is a break; a deeper module missing what no
   workspace project ships (an optional extra's) is a warning, never an exit 1

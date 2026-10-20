@@ -89,14 +89,28 @@ def workspace_group() -> None:
     help="A workspace file (`aisland workspace export` writes one): each of its projects is added as a submodule, "
     "on its branch, before the --add ones.",
 )
-def workspace_init(folder: Path, add: Tuple[str, ...], from_file: Optional[Path]) -> None:
+@click.option(
+    "--rewrite",
+    "rewrite",
+    multiple=True,
+    type=click.Choice(workspace_mod.STARTING_FILES),
+    metavar="FILE",
+    help="A starting file to write again from aisland's template, the old copy kept as FILE.bak. Repeat for several. "
+    "In an existing repository only these files are written.",
+)
+def workspace_init(
+    folder: Path, add: Tuple[str, ...], from_file: Optional[Path], rewrite: Tuple[workspace_mod.StartingFile, ...]
+) -> None:
     """Make FOLDER a new workspace: git init, the starting files, the submodules and the git aliases.
 
     Writes .gitignore, .env, config.toml, mypy.ini and vscode-init-bash.sh, never over a file that exists, and
     refuses a folder that already is a git repository (set that one up with `aisland setup`). A --from file that
     cannot be read is refused, naming its line, before anything is written.
+
+    --rewrite FILE writes FILE again over the one there, keeping it as FILE.bak (refused when FILE.bak exists);
+    in an existing repository it is all init does: `aisland workspace init . --rewrite vscode-init-bash.sh`.
     """
-    workspace_mod.init_workspace(folder, add, from_file)
+    workspace_mod.init_workspace(folder, add, from_file, rewrite)
 
 
 @workspace_group.command("export")
@@ -484,6 +498,12 @@ def wheels_group(
     help="Build a project with uncommitted changes from its files as they are (those git ignores left out) instead "
     "of refusing it; its commit reads <sha>+uncommitted. Not with --commit.",
 )
+@click.option(
+    "--no-check",
+    is_flag=True,
+    help="Build and write the wheels only: compare nothing with PyPI and install nothing in an empty venv. "
+    "Not with --commit.",
+)
 @click.option("--json", "as_json", is_flag=True, help="Print the report as JSON (what an MCP tool would return).")
 def wheels_build(
     project: str,
@@ -492,6 +512,7 @@ def wheels_build(
     make_zip: bool,
     commit: bool,
     force: bool,
+    no_check: bool,
     as_json: bool,
 ) -> None:
     """Build the wheels PROJECT needs into PROJECT/wheels, with wheels.yaml and install.py; check the install.
@@ -503,18 +524,19 @@ def wheels_build(
     install.py installs them, naming each by its file, then PROJECT editable. Each dependency PROJECT
     still takes from PyPI is compared with its checkout, file by file; then install.py installs
     PROJECT in an empty venv and every module is imported. Exit 1 when that install or an import
-    fails: the report names the project to release first. Git ignores the folder unless --commit,
-    which commits it in PROJECT when the check passed.
+    fails: the report names the project to release first; --no-check skips both checks. Git ignores
+    the folder unless --commit, which commits it in PROJECT when the check passed.
 
     \b
     aisland wheels build navigaitor
     aisland wheels build navigaitor --include-published --zip
     aisland wheels build navigaitor --all --commit --json
     aisland wheels build navigaitor --all --force --zip
+    aisland wheels build navigaitor --all --zip --no-check
     """
     scope: wheels.WheelsScope = "all" if include_all else "needed" if include_published else "unpublished"
     report = wheels.vendor_wheels(
-        get_workspace_root(), project, scope=scope, commit=commit, make_zip=make_zip, force=force
+        get_workspace_root(), project, scope=scope, commit=commit, make_zip=make_zip, force=force, check=not no_check
     )
     click.echo(json.dumps(report.to_dict(), indent=2) if as_json else wheels.render_report(report), nl=as_json)
     raise SystemExit(0 if report.ok else 1)

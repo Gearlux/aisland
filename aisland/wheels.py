@@ -33,7 +33,8 @@ The run, in order:
    the project and of its wheels imported — not only the packages: a module no package imports
    is checked too, because ``import <package>`` never reaches it. A failed import names the project whose module
    is missing — the one to release first (measured 2026-10-08: a module needed
-   ``recordstream.draws``, which recordstream 0.1.0a2 lacks).
+   ``recordstream.draws``, which recordstream 0.1.0a2 lacks). ``--no-check`` skips both and changes
+   nothing else the run writes; the report then says ``checked: false``, and ``--commit`` is refused.
 
 What is built is the run's SCOPE (:data:`WheelsScope`): by default the projects above that PyPI
 lacks; ``--include-published`` every project the target needs that has a checkout here, those on
@@ -285,10 +286,14 @@ class WheelsReport:
     zip_bytes: int = 0
     #: Said when the folder is ignored but files of it are still tracked, with the command that untracks them.
     tracked_warning: Optional[str] = None
+    #: False under ``--no-check``: nothing was compared with PyPI and nothing installed, so ``ok`` found no failure
+    #: because it looked for none.
+    checked: bool = True
 
     @property
     def ok(self) -> bool:
-        """The target installed in an empty venv, every package imported, and no module missed a workspace project."""
+        """The target installed in an empty venv, every package imported, and no module missed a workspace project
+        (an unchecked run: no failure, since nothing was checked)."""
         return self.install_error is None and not self.import_failures
 
     @property
@@ -778,14 +783,21 @@ def vendor_wheels(
     commit: bool = False,
     make_zip: bool = False,
     force: bool = False,
+    check: bool = True,
 ) -> WheelsReport:
     """``aisland wheels build <project_name>``: build, write, compare, install, import; then, when asked, commit
     the folder (only if the check passed) and zip it. ``force`` builds a project with uncommitted changes from
-    its working tree instead of refusing it. See the module docstring."""
+    its working tree instead of refusing it; ``check=False`` (``--no-check``) skips the comparison with PyPI and
+    the empty-venv install. See the module docstring."""
     if force and commit:
         raise click.ClickException(
             "--force cannot be combined with --commit: a wheel built with uncommitted changes is one no commit "
             "reproduces. Commit the changes and run with --commit, or drop --commit."
+        )
+    if not check and commit:
+        raise click.ClickException(
+            "--no-check cannot be combined with --commit: the folder is committed only once the install check "
+            "passed. Drop one of them."
         )
     projects = workspace_projects(workspace_root)
     target = _find_target(projects, workspace_root, project_name)
@@ -878,20 +890,33 @@ def vendor_wheels(
         _write_wheels(folder, staged, files)
 
         new_names: Dict[str, Set[str]] = {}
-        compared = [
-            _compare(uv, project, states[project.name][1] or {}, scratch, owners, new_names) for project in published
-        ]
+        install_error: Optional[str] = None
+        failures: Dict[str, Dict[str, Any]] = {}
+        imported: List[str] = []
+        packages: List[str] = []
+        if not check:
+            compared = [
+                PublishedDependency(
+                    p.name, p.distribution, _pypi_version(states[p.name][1]), None, [], "not compared (--no-check)"
+                )
+                for p in published
+            ]
+        else:
+            compared = [
+                _compare(uv, project, states[project.name][1] or {}, scratch, owners, new_names)
+                for project in published
+            ]
 
-        click.echo(f"==> Installing {target.name} in an empty venv and importing every module", err=True)
-        # Under --force the target's new modules are checked too: it is installed editable, from its folder.
-        target_export = export_worktree if force and _uncommitted(target) else export_head
-        target_export(target.path, scratch / "src" / target.name)
-        target_wheel = build_wheel(uv, scratch / "src" / target.name, scratch / "target")
-        own = wheel_modules(target_wheel)
-        owners.update({module: target.distribution for module in own})
-        installed = [wheel for wheel, b in zip(staged, built) if b.needed]
-        packages = sorted(set(own) | {m for wheel in installed for m in wheel_modules(wheel)})
-        install_error, failures, imported = install_and_import(uv, target.path, folder, packages, scratch)
+            click.echo(f"==> Installing {target.name} in an empty venv and importing every module", err=True)
+            # Under --force the target's new modules are checked too: it is installed editable, from its folder.
+            target_export = export_worktree if force and _uncommitted(target) else export_head
+            target_export(target.path, scratch / "src" / target.name)
+            target_wheel = build_wheel(uv, scratch / "src" / target.name, scratch / "target")
+            own = wheel_modules(target_wheel)
+            owners.update({module: target.distribution for module in own})
+            installed = [wheel for wheel, b in zip(staged, built) if b.needed]
+            packages = sorted(set(own) | {m for wheel in installed for m in wheel_modules(wheel)})
+            install_error, failures, imported = install_and_import(uv, target.path, folder, packages, scratch)
 
     behind = [p for p in compared if p.differing_files]
     every_failure = []
@@ -945,6 +970,7 @@ def vendor_wheels(
         zip_file=zip_file,
         zip_bytes=archive.stat().st_size if archive else 0,
         tracked_warning=tracked_warning,
+        checked=check,
     )
 
 
@@ -1122,7 +1148,13 @@ def render_report(report: WheelsReport) -> str:
             lines += [f"    {line}" for line in b.uncommitted]
         lines.append("")
 
-    if report.published:
+    if report.published and not report.checked:
+        count = len(report.published)
+        taken = ", ".join(f"{p.project} {p.pypi_version}" for p in report.published)
+        lines.append(
+            f"It takes {count} workspace project{'s' if count > 1 else ''} from PyPI, not compared (--no-check): {taken}"
+        )
+    elif report.published:
         count = len(report.published)
         lines.append(
             f"It takes {count} workspace project{'s' if count > 1 else ''} from PyPI, compared with this checkout:"
@@ -1149,7 +1181,11 @@ def render_report(report: WheelsReport) -> str:
         lines += [f"  {clash}" for clash in report.name_clashes]
         lines.append("")
 
-    if report.install_error is not None:
+    if not report.checked:
+        lines.append(
+            f"Not checked (--no-check): {target} was not installed in an empty venv, so nothing says these wheels import."
+        )
+    elif report.install_error is not None:
         lines.append(f"Installing {target} in an empty venv failed:")
         lines += [f"    {line}" for line in report.install_error.splitlines()]
     else:
@@ -1179,7 +1215,7 @@ def render_report(report: WheelsReport) -> str:
     if report.install_error is not None:
         if report.behind:
             lines.append(f"Behind: {', '.join(report.behind)}")
-    else:
+    elif report.checked:
         if report.release_first:
             lines.append(f"Release first: {', '.join(report.release_first)}")
         elif report.import_failures:

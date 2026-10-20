@@ -568,6 +568,7 @@ aisland wheels build navigaitor --all                 # every workspace project 
 aisland wheels build navigaitor --zip                 # also pack the folder into one zip
 aisland wheels build navigaitor --commit              # commit the folder in navigaitor
 aisland wheels build navigaitor --force               # build projects with uncommitted changes as they are
+aisland wheels build navigaitor --no-check            # build and write the wheels only, check nothing
 aisland wheels build navigaitor --json                # the same report as data
 aisland wheels navigaitor …                           # short for `aisland wheels build navigaitor …`
 ```
@@ -616,6 +617,13 @@ Behind, nothing breaks: confluid, liquifai, recordstream
   status. Only a `ModuleNotFoundError` is listed here: any other error of such a module (say a
   `TypeError` because PyPI's release of a dependency lacks a keyword) is a break once a project
   is behind, printed with that project's name in parentheses and under "Release first".
+- **`--no-check`**: both checks are skipped, and the report puts two lines in their place:
+  ```text
+  It takes 4 workspace projects from PyPI, not compared (--no-check): confluid 0.4.1, liquifai 0.3.1, loggair 0.2.1, recordstream 0.1.0a3
+
+  Not checked (--no-check): navigaitor was not installed in an empty venv, so nothing says these wheels import.
+  ```
+  The JSON report says `"checked": false`.
 
 What `--include-published` printed for navigaitor on 2026-10-19 (16 s; exit 0):
 
@@ -685,6 +693,8 @@ How each wheel is made, and what is refused:
 | A project with uncommitted changes is refused, naming its files — with `--all`, also one the project does not need | Its wheel would not contain them |
 | `--force` builds such a project from its files as they are instead — the files git tracks and the new ones it does not ignore, so an ignored `build/lib` still stays out; its commit reads `<sha>+uncommitted` in the report, `wheels.yaml` and the README, and the report lists its changed files | You ship work in progress knowingly, and the wheels say which ones no commit reproduces |
 | `--force` with `--commit` is refused before anything is built | A committed wheel must be one its commit reproduces |
+| `--no-check` builds and writes the folder as a checked run does, then compares nothing with PyPI and installs nothing in an empty venv; the report says so, and the exit status is 0 | A rebuild you do not need checked — the comparison downloads PyPI's wheels and the install needs the network — runs in the time the builds take |
+| `--no-check` with `--commit` is refused before anything is built | The folder is committed only once the install check passed |
 | An unreadable `wheels.yaml` stops the run at its line, before anything is built | Rewriting it would drop the `install:` values it holds |
 | A needed project that is not on PyPI and has no checkout here is refused | There is nothing to build it from; the message names `aisland source set <project> local` |
 | "On PyPI" counts pre-releases | pip installs `recordstream 0.1.0a2` when no final release exists — unlike `aisland jenkins scaffold`, which asks about final releases only |
