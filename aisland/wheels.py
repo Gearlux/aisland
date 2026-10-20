@@ -21,9 +21,12 @@ The run, in order:
 3. **The wheels** (:func:`export_head`, :func:`build_wheel`): each from an export of the
    project's last COMMIT, never its folder — a setuptools ``build/lib`` left in a checkout puts
    files the project deleted long ago into the wheel (measured 2026-10-08). A project with
-   uncommitted changes is refused, so no one ships a change believing it is in. The folder's old
-   ``*.whl`` go; anything else in it stays. Unchanged sources rebuild byte for byte, so git
-   sees no change.
+   uncommitted changes is refused, so no one ships a change believing it is in — unless the run is
+   told ``--force`` (:func:`export_worktree`): such a project is then built from its files as they
+   are, those git ignores left out, its commit written ``<sha>+uncommitted`` and its changed files
+   listed in the report; ``--force`` never goes with ``--commit``, since no commit reproduces those
+   wheels. The folder's old ``*.whl`` go; anything else in it stays. Unchanged sources rebuild byte
+   for byte, so git sees no change.
 4. **The PyPI half, twice** (:func:`wheel_differences`, :func:`install_and_import`): each
    published dependency's PyPI wheel against the one its checkout builds, file by file ("behind");
    then the project installed in an EMPTY venv from its wheels plus PyPI, and every module of
@@ -201,6 +204,9 @@ class BuiltWheel:
     needed: bool = True
     #: The version PyPI has, when the project is published there.
     on_pypi: Optional[str] = None
+    #: ``git status --porcelain`` of a project ``--force`` built from its working tree (its ``commit`` then
+    #: ends in ``+uncommitted``); empty for a wheel built from its commit.
+    uncommitted: List[str] = field(default_factory=list)
 
 
 @dataclass
@@ -416,6 +422,28 @@ def export_head(project_dir: Path, dest: Path) -> int:
     dest.mkdir(parents=True, exist_ok=True)
     with tarfile.open(fileobj=io.BytesIO(archive.stdout)) as tar:
         tar.extractall(dest, filter="data")
+    return int(_git(project_dir, "log", "-1", "--format=%ct", "HEAD").stdout.strip())
+
+
+def export_worktree(project_dir: Path, dest: Path) -> int:
+    """Write ``project_dir``'s files as they are into ``dest`` — what ``--force`` builds a dirty project from.
+
+    The files are the ones git tracks and the untracked ones it does not ignore: a deleted file is gone,
+    a new one is in, and an ignored setuptools ``build/lib`` stays out, as it does from a commit. Returns the
+    last commit's time, so a rerun over unchanged files builds the same wheel.
+    """
+    listed = _git(project_dir, "ls-files", "-z", "--cached", "--others", "--exclude-standard")
+    if listed.returncode != 0:
+        raise click.ClickException(f"{project_dir.name}: cannot list its files: {listed.stderr.strip()}")
+    for relative in sorted(set(filter(None, listed.stdout.split("\0")))):
+        source = project_dir / relative
+        # A deleted file is still listed (it is in the index), and a nested repository is a folder: neither is
+        # copied, as `git archive` carries neither.
+        if not source.is_file() and not source.is_symlink():
+            continue
+        target = dest / relative
+        target.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(source, target, follow_symlinks=False)
     return int(_git(project_dir, "log", "-1", "--format=%ct", "HEAD").stdout.strip())
 
 
@@ -689,21 +717,28 @@ def _find_target(projects: Dict[str, WorkspaceProject], workspace_root: Path, na
     return project
 
 
-def _refuse_uncommitted(projects: List[WorkspaceProject]) -> None:
-    """Stop before any build when a project to ship has changes no commit holds."""
-    problems = []
-    for project in projects:
-        if _git(project.path, "rev-parse", "--is-inside-work-tree").returncode != 0:
-            raise click.ClickException(
-                f"{project.name} is in no git repository; a wheel is built from a project's last commit. "
-                "Put it under git (git init, then commit) and run this again."
-            )
-        lines = [line for line in _git(project.path, "status", "--porcelain").stdout.splitlines() if line]
-        if lines:
-            problems.append(f"{project.name} has changes no commit holds; its wheel would not contain them:")
+def _uncommitted(project: WorkspaceProject) -> List[str]:
+    """``git status --porcelain`` of the project: its changes no commit holds."""
+    if _git(project.path, "rev-parse", "--is-inside-work-tree").returncode != 0:
+        raise click.ClickException(
+            f"{project.name} is in no git repository; a wheel is built from a project's last commit. "
+            "Put it under git (git init, then commit) and run this again."
+        )
+    return [line for line in _git(project.path, "status", "--porcelain").stdout.splitlines() if line]
+
+
+def _refuse_uncommitted(projects: List[WorkspaceProject], force: bool = False) -> Dict[str, List[str]]:
+    """Stop before any build when a project to ship has changes no commit holds — unless ``force``, which
+    returns each such project's changes instead (it is then built from its working tree)."""
+    dirty = {project.name: lines for project in projects if (lines := _uncommitted(project))}
+    if dirty and not force:
+        problems = []
+        for name, lines in dirty.items():
+            problems.append(f"{name} has changes no commit holds; its wheel would not contain them:")
             problems.extend(f"    {line}" for line in lines)
-    if problems:
-        raise click.ClickException("\n".join(problems + ["Commit or stash them, then run this again."]))
+        problems.append("Commit or stash them, then run this again — or pass --force to build them with these changes.")
+        raise click.ClickException("\n".join(problems))
+    return dirty
 
 
 def _write_wheels(folder: Path, staged: List[Path], files: Dict[str, str]) -> None:
@@ -742,9 +777,16 @@ def vendor_wheels(
     scope: WheelsScope = "unpublished",
     commit: bool = False,
     make_zip: bool = False,
+    force: bool = False,
 ) -> WheelsReport:
     """``aisland wheels build <project_name>``: build, write, compare, install, import; then, when asked, commit
-    the folder (only if the check passed) and zip it. See the module docstring."""
+    the folder (only if the check passed) and zip it. ``force`` builds a project with uncommitted changes from
+    its working tree instead of refusing it. See the module docstring."""
+    if force and commit:
+        raise click.ClickException(
+            "--force cannot be combined with --commit: a wheel built with uncommitted changes is one no commit "
+            "reproduces. Commit the changes and run with --commit, or drop --commit."
+        )
     projects = workspace_projects(workspace_root)
     target = _find_target(projects, workspace_root, project_name)
     needed = dependency_closure(projects, target)
@@ -786,7 +828,7 @@ def vendor_wheels(
             if not p.checked_out
         ]
     published = [p for p in needed if _published(p) and p not in to_build]
-    _refuse_uncommitted(to_build)
+    dirty = _refuse_uncommitted(to_build, force)
 
     folder = target.path / WHEELS_DIR
     choices = read_install_choices(folder / WHEELS_YAML)
@@ -800,8 +842,12 @@ def vendor_wheels(
         for project in to_build:
             branch = _git(project.path, "rev-parse", "--abbrev-ref", "HEAD").stdout.strip()
             sha = _git(project.path, "rev-parse", "--short", "HEAD").stdout.strip()
+            changes = dirty.get(project.name, [])
+            if changes:
+                sha += "+uncommitted"
             click.echo(f"==> Building {project.name} ({branch} {sha})", err=True)
-            timestamp = export_head(project.path, scratch / "src" / project.name)
+            export = export_worktree if changes else export_head
+            timestamp = export(project.path, scratch / "src" / project.name)
             wheel = build_wheel(uv, scratch / "src" / project.name, scratch / "wheels", timestamp)
             staged.append(wheel)
             version = _wheel_version(wheel)
@@ -816,6 +862,7 @@ def vendor_wheels(
                     wheel.name,
                     needed=project.name in needed_names,
                     on_pypi=_pypi_version(payload) if state == "published" else None,
+                    uncommitted=changes,
                 )
             )
             owners.update({module: project.distribution for module in wheel_modules(wheel)})
@@ -836,7 +883,9 @@ def vendor_wheels(
         ]
 
         click.echo(f"==> Installing {target.name} in an empty venv and importing every module", err=True)
-        export_head(target.path, scratch / "src" / target.name)
+        # Under --force the target's new modules are checked too: it is installed editable, from its folder.
+        target_export = export_worktree if force and _uncommitted(target) else export_head
+        target_export(target.path, scratch / "src" / target.name)
         target_wheel = build_wheel(uv, scratch / "src" / target.name, scratch / "target")
         own = wheel_modules(target_wheel)
         owners.update({module: target.distribution for module in own})
@@ -1064,6 +1113,14 @@ def render_report(report: WheelsReport) -> str:
     target = report.target
     lines = _built_lines(report)
     lines.append("")
+
+    forced = [b for b in report.built if b.uncommitted]
+    if forced:
+        lines.append("Built with changes no commit holds (--force); no commit reproduces these wheels:")
+        for b in forced:
+            lines.append(f"  {b.project}")
+            lines += [f"    {line}" for line in b.uncommitted]
+        lines.append("")
 
     if report.published:
         count = len(report.published)

@@ -357,7 +357,7 @@ class TestCli:
     def _vendor(monkeypatch: pytest.MonkeyPatch) -> List[Dict[str, object]]:
         calls: List[Dict[str, object]] = []
 
-        def _vendor(root: Path, project: str, scope: str, commit: bool, make_zip: bool) -> w.WheelsReport:
+        def _vendor(root: Path, project: str, scope: str, commit: bool, make_zip: bool, force: bool) -> w.WheelsReport:
             calls.append({"project": project, "scope": scope, "commit": commit, "make_zip": make_zip})
             return _report(import_failures=[])
 

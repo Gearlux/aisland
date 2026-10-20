@@ -411,6 +411,20 @@ class TestRefusals:
         assert "lib has changes no commit holds" in error.value.message
         assert " M lib/__init__.py" in error.value.message
         assert "?? lib/new.py" in error.value.message
+        assert "or pass --force to build them with these changes" in error.value.message
+
+    def test_force_with_commit_is_refused_before_anything_is_built(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        root = _workspace(tmp_path, "app")
+        _project(root, "app")
+        _commit(root / "app")
+        _pypi(monkeypatch, {})
+        _no_builds(monkeypatch)
+        with pytest.raises(click.ClickException) as error:
+            w.vendor_wheels(root, "app", commit=True, force=True)
+        assert "--force cannot be combined with --commit" in error.value.message
+        assert not (root / "app" / "wheels").exists()
 
     def test_all_refuses_a_project_the_target_does_not_need_with_uncommitted_changes(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
@@ -584,6 +598,26 @@ class TestReport:
         )
         assert text.rstrip().endswith("PyPI is up to date for navigaitor.")
 
+    def test_a_wheel_built_with_uncommitted_changes_is_listed_with_its_files(self) -> None:
+        dirty = w.BuiltWheel(
+            "torpaido",
+            "torpaido",
+            "0.1.0",
+            "dev/main",
+            "38ba9a9+uncommitted",
+            "torpaido-0.1.0-py3-none-any.whl",
+            uncommitted=[" M torpaido/a.py", "?? torpaido/new.py"],
+        )
+        text = w.render_report(_report(built=[dirty], import_failures=[]))
+        assert "  torpaido  0.1.0  dev/main 38ba9a9+uncommitted" in text
+        assert (
+            "Built with changes no commit holds (--force); no commit reproduces these wheels:\n"
+            "  torpaido\n"
+            "     M torpaido/a.py\n"
+            "    ?? torpaido/new.py\n"
+        ) in text
+        assert "no commit holds" not in w.render_report(_report(import_failures=[]))
+
     def test_a_name_clash_is_reported(self) -> None:
         clash = "purifai: PyPI's purifai 0.1.3 is another project's — pip takes it over this wheel (0.1.0)"
         assert clash in w.render_report(_report(name_clashes=[clash]))
@@ -601,6 +635,7 @@ class TestReport:
             "wheel": "torpaido-0.1.0-py3-none-any.whl",
             "needed": True,
             "on_pypi": None,
+            "uncommitted": [],
         }
         assert data["import_failures"][0]["distribution"] == "recordstream"
         assert data["scope"] == "unpublished" and data["not_built"] == []
@@ -773,7 +808,7 @@ class TestCli:
     ) -> None:
         asked: List[str] = []
 
-        def _vendor(root: Path, project: str, scope: str, commit: bool, make_zip: bool) -> w.WheelsReport:
+        def _vendor(root: Path, project: str, scope: str, commit: bool, make_zip: bool, force: bool) -> w.WheelsReport:
             asked.append(scope)
             return _report(import_failures=[])
 
@@ -781,6 +816,19 @@ class TestCli:
         result = CliRunner().invoke(main, ["wheels", "navigaitor", *flags])
         assert result.exit_code == 0, result.output
         assert asked == [scope]
+
+    @pytest.mark.parametrize("flags, force", [([], False), (["--force"], True)])
+    def test_force_is_handed_to_the_run(self, monkeypatch: pytest.MonkeyPatch, flags: List[str], force: bool) -> None:
+        asked: List[bool] = []
+
+        def _vendor(root: Path, project: str, **kwargs: Any) -> w.WheelsReport:
+            asked.append(kwargs["force"])
+            return _report(import_failures=[])
+
+        monkeypatch.setattr(w, "vendor_wheels", _vendor)
+        result = CliRunner().invoke(main, ["wheels", "build", "navigaitor", *flags])
+        assert result.exit_code == 0, result.output
+        assert asked == [force]
 
 
 # --- the run, with builds and the empty venv faked ---------------------------------------------
@@ -924,6 +972,53 @@ class TestTheRunWithFakedBuilds:
         assert "Every workspace project with a checkout here is built into app/wheels" in text
         assert "app needs 3 workspace projects:" in text
         assert "not needed" in text
+
+    def test_force_builds_a_dirty_project_from_its_files_as_they_are_and_says_so(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """The edit, the new file and the deletion are in what is built; a file git ignores is not; a clean
+        project is built from its commit as always."""
+        root = _workspace(tmp_path, "app", "lib", "clean")
+        _project(root, "app", deps=["lib", "clean"])
+        _project(root, "lib", modules={"lib/__init__.py": "", "lib/gone.py": "", ".gitignore": "build/\n"})
+        _project(root, "clean")
+        for name in ("app", "lib", "clean"):
+            _commit(root / name)
+        (root / "lib" / "lib" / "__init__.py").write_text("X = 2\n")
+        (root / "lib" / "lib" / "new.py").write_text("")
+        (root / "lib" / "lib" / "gone.py").unlink()
+        (root / "lib" / "build" / "lib" / "lib").mkdir(parents=True)
+        (root / "lib" / "build" / "lib" / "lib" / "stale.py").write_text("")
+        _pypi(monkeypatch, {})
+        self._fake_builds(monkeypatch, {})
+        fake_build = w.build_wheel
+        sources: Dict[str, Dict[str, str]] = {}
+
+        def _seeing_build(uv: str, source: Path, out: Path, timestamp: Optional[int] = None) -> Path:
+            files = sorted(p for p in source.rglob("*") if p.is_file())
+            sources[source.name] = {str(p.relative_to(source)): p.read_text() for p in files}
+            return fake_build(uv, source, out, timestamp)
+
+        monkeypatch.setattr(w, "build_wheel", _seeing_build)
+
+        report = w.vendor_wheels(root, "app", force=True)
+
+        assert sources["lib"] == {
+            ".gitignore": "build/\n",
+            "lib/__init__.py": "X = 2\n",
+            "lib/new.py": "",
+            "pyproject.toml": (root / "lib" / "pyproject.toml").read_text(),
+        }
+        lib_sha = _git(root / "lib", "rev-parse", "--short", "HEAD").strip()
+        clean_sha = _git(root / "clean", "rev-parse", "--short", "HEAD").strip()
+        assert [(b.project, b.commit, b.uncommitted) for b in report.built] == [
+            ("clean", clean_sha, []),
+            ("lib", f"{lib_sha}+uncommitted", [" M lib/__init__.py", " D lib/gone.py", "?? lib/new.py"]),
+        ]
+        yaml_text = (root / "app" / "wheels" / "wheels.yaml").read_text()
+        assert f'    commit: "dev/main {lib_sha}+uncommitted"\n' in yaml_text
+        assert f"| lib | dev/main | {lib_sha}+uncommitted |" in (root / "app" / "wheels" / "README.md").read_text()
+        assert "  lib\n     M lib/__init__.py\n     D lib/gone.py\n    ?? lib/new.py\n" in w.render_report(report)
 
     def test_a_rerun_keeps_the_install_the_user_chose(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
         root = self._scoped_workspace(tmp_path, monkeypatch)
@@ -1384,6 +1479,26 @@ class TestEndToEnd:
         assert report.ok, w.render_report(report)
         assert report.imported == ["app", "app.core", "app.labelling", "libx", "pubdep", "pubdep.newer"]
         assert "    python wheels/install.py\n" in (ws / "app" / "wheels" / "README.md").read_text()
+
+    def test_force_ships_the_working_tree_of_a_dirty_project_and_checks_the_dirty_target(
+        self, tmp_path: Path, offline_uv: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """A new file in libx reaches its wheel, its ignored `build/lib` does not, and a module new in the
+        target itself is imported by the check."""
+        ws = _end_to_end_workspace(tmp_path, offline_uv, monkeypatch, released_new=True)
+        (ws / "libx" / "libx" / "fresh.py").write_text("VALUE = 2\n")
+        (ws / "app" / "app" / "fresh.py").write_text("from libx.fresh import VALUE\n")
+
+        report = w.vendor_wheels(ws, "app", force=True)
+
+        with zipfile.ZipFile(ws / "app" / "wheels" / "libx-0.1.0-py3-none-any.whl") as archive:
+            names = archive.namelist()
+        assert "libx/fresh.py" in names
+        assert not [n for n in names if "deleted_long_ago" in n]
+        assert [(b.project, b.uncommitted) for b in report.built] == [("libx", ["?? libx/fresh.py"])]
+        assert report.built[0].commit.endswith("+uncommitted")
+        assert report.ok, w.render_report(report)
+        assert "app.fresh" in report.imported
 
     def test_all_ships_a_project_the_target_does_not_need_without_installing_it(
         self, tmp_path: Path, offline_uv: Path, monkeypatch: pytest.MonkeyPatch

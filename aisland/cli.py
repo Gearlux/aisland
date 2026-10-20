@@ -422,16 +422,28 @@ def wheels_group(
     help="Commit PROJECT/wheels (the zip excepted) in PROJECT once the install check passed; without it git ignores "
     "the folder.",
 )
+@click.option(
+    "--force",
+    is_flag=True,
+    help="Build a project with uncommitted changes from its files as they are (those git ignores left out) instead "
+    "of refusing it; its commit reads <sha>+uncommitted. Not with --commit.",
+)
 @click.option("--json", "as_json", is_flag=True, help="Print the report as JSON (what an MCP tool would return).")
 def wheels_build(
-    project: str, include_published: bool, include_all: bool, make_zip: bool, commit: bool, as_json: bool
+    project: str,
+    include_published: bool,
+    include_all: bool,
+    make_zip: bool,
+    commit: bool,
+    force: bool,
+    as_json: bool,
 ) -> None:
     """Build the wheels PROJECT needs into PROJECT/wheels, with wheels.yaml and install.py; check the install.
 
     By default only the projects PROJECT needs that are not on PyPI are built; --include-published
     builds every project it needs that has a checkout here, --all every workspace project that has
     one. Each wheel is built from its project's last commit (a project with uncommitted changes is
-    refused). wheels.yaml lists the wheels and which to install (yours to edit; a rerun keeps it);
+    refused; --force builds it from its files as they are). wheels.yaml lists the wheels and which to install (yours to edit; a rerun keeps it);
     install.py installs them, naming each by its file, then PROJECT editable. Each dependency PROJECT
     still takes from PyPI is compared with its checkout, file by file; then install.py installs
     PROJECT in an empty venv and every module is imported. Exit 1 when that install or an import
@@ -442,9 +454,12 @@ def wheels_build(
     aisland wheels build navigaitor
     aisland wheels build navigaitor --include-published --zip
     aisland wheels build navigaitor --all --commit --json
+    aisland wheels build navigaitor --all --force --zip
     """
     scope: wheels.WheelsScope = "all" if include_all else "needed" if include_published else "unpublished"
-    report = wheels.vendor_wheels(get_workspace_root(), project, scope=scope, commit=commit, make_zip=make_zip)
+    report = wheels.vendor_wheels(
+        get_workspace_root(), project, scope=scope, commit=commit, make_zip=make_zip, force=force
+    )
     click.echo(json.dumps(report.to_dict(), indent=2) if as_json else wheels.render_report(report), nl=as_json)
     raise SystemExit(0 if report.ok else 1)
 

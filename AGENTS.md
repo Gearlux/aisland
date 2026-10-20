@@ -411,6 +411,14 @@ User choice 2026-10-08: an aisland command, only the named project's closure, bo
   `::test_once_pypi_has_the_release_everything_imports`).
 - A project to ship with uncommitted changes is refused, naming its files; one with no checkout,
   naming `aisland source set <project> local` (`TestRefusals`). Nothing is built after a refusal.
+  The one exception is `--force` (user choice 2026-10-20): a dirty project is then built from its
+  working tree (`export_worktree`: `git ls-files --cached --others --exclude-standard`, never the bare
+  folder, so an ignored `build/lib` stays out), its commit written `<sha>+uncommitted` and its
+  `git status --porcelain` lines in `BuiltWheel.uncommitted` and the report; a clean project is still
+  built from `git archive HEAD`; `--force --commit` is refused before any build
+  (`TestTheRunWithFakedBuilds::test_force_builds_a_dirty_project_from_its_files_as_they_are_and_says_so`,
+  `TestRefusals::test_force_with_commit_is_refused_before_anything_is_built`,
+  `TestEndToEnd::test_force_ships_the_working_tree_of_a_dirty_project_and_checks_the_dirty_target`).
 - "On PyPI" = `pypi_state`: Gearlux metadata and a file not yanked, pre-releases INCLUDED. Never
   replace it with `released_on_pypi` (final only, CI's question). An unreachable PyPI stops the
   run (`TestPypiState`).

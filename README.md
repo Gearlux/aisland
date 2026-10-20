@@ -482,6 +482,7 @@ aisland wheels build navigaitor --include-published   # also the projects it nee
 aisland wheels build navigaitor --all                 # every workspace project with a checkout here
 aisland wheels build navigaitor --zip                 # also pack the folder into one zip
 aisland wheels build navigaitor --commit              # commit the folder in navigaitor
+aisland wheels build navigaitor --force               # build projects with uncommitted changes as they are
 aisland wheels build navigaitor --json                # the same report as data
 aisland wheels navigaitor …                           # short for `aisland wheels build navigaitor …`
 ```
@@ -597,6 +598,8 @@ How each wheel is made, and what is refused:
 |---|---|
 | Each wheel is built from the project's last **commit**, never from its folder | A `build/lib` that setuptools leaves in a checkout puts files the project deleted long ago into the wheel |
 | A project with uncommitted changes is refused, naming its files — with `--all`, also one the project does not need | Its wheel would not contain them |
+| `--force` builds such a project from its files as they are instead — the files git tracks and the new ones it does not ignore, so an ignored `build/lib` still stays out; its commit reads `<sha>+uncommitted` in the report, `wheels.yaml` and the README, and the report lists its changed files | You ship work in progress knowingly, and the wheels say which ones no commit reproduces |
+| `--force` with `--commit` is refused before anything is built | A committed wheel must be one its commit reproduces |
 | An unreadable `wheels.yaml` stops the run at its line, before anything is built | Rewriting it would drop the `install:` values it holds |
 | A needed project that is not on PyPI and has no checkout here is refused | There is nothing to build it from; the message names `aisland source set <project> local` |
 | "On PyPI" counts pre-releases | pip installs `recordstream 0.1.0a2` when no final release exists — unlike `aisland jenkins scaffold`, which asks about final releases only |
