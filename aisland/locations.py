@@ -18,7 +18,7 @@ command (:func:`workspace_found`, :func:`missing_workspace_message`) before anyt
 
 import os
 from pathlib import Path
-from typing import Dict, List, Mapping, Optional
+from typing import Dict, List, Literal, Mapping, Optional
 
 #: The installed package's folder: ``<workspace>/aisland/aisland`` in a checkout, ``site-packages/aisland`` from a wheel.
 PACKAGE_DIR = Path(__file__).parent.absolute()
@@ -75,13 +75,31 @@ def checkout_workspace_root(package_file: Optional[Path] = None) -> Path:
     return start.parents[2]
 
 
+#: What :func:`_is` asks of a path.
+PathKind = Literal["file", "folder", "link"]
+
+
+def _is(path: Path, kind: PathKind) -> bool:
+    """Whether ``path`` is a file, a folder or a symbolic link — False when it cannot be looked at. pathlib answers
+    False for a missing path but raises ``PermissionError`` for one inside a folder you may not enter
+    (``/tmp/snap-private-tmp`` on Linux), and from a wheel every command looks for its workspace on import."""
+    try:
+        if kind == "file":
+            return path.is_file()
+        if kind == "folder":
+            return path.is_dir()
+        return path.is_symlink()
+    except OSError:
+        return False
+
+
 def is_alias(folder: Path, workspace: Path) -> bool:
     """Whether ``folder`` is a symbolic link to a folder inside ``workspace`` — a second name for a folder the
     workspace already holds (``ml -> machine_learning``), never a project of its own: every reader of the workspace's
     projects skips it, and the folder it names is found under its own name. A link to a folder OUTSIDE the workspace
     is no alias: it is how a checkout kept elsewhere joins the workspace. Both sides are resolved, so a workspace
     entered through a link of its own (``~/acme -> /build/acme``) tells its aliases all the same."""
-    if not folder.is_symlink():
+    if not _is(folder, "link"):
         return False
     target = folder.resolve()
     inside = workspace.resolve()
@@ -93,20 +111,26 @@ def alias_names(workspace: Path) -> Dict[Path, str]:
     an alias (:func:`is_alias`) of a folder, that folder's resolved path -> the link's name. Of two links to one
     folder the first by name gives it. The generated VS Code workspace file shows a project under this name."""
     names: Dict[Path, str] = {}
-    for child in sorted(workspace.iterdir(), key=lambda c: c.name):
-        if not child.name.startswith(".") and child.is_dir() and is_alias(child, workspace):
+    try:
+        children = sorted(workspace.iterdir(), key=lambda c: c.name)
+    except OSError:
+        return names
+    for child in children:
+        if not child.name.startswith(".") and _is(child, "folder") and is_alias(child, workspace):
             names.setdefault(child.resolve(), child.name)
     return names
 
 
 def holds_projects(folder: Path) -> bool:
-    """Whether a direct, non-hidden subfolder of ``folder`` holds a ``pyproject.toml`` (a workspace's projects)."""
+    """Whether a direct, non-hidden subfolder of ``folder`` holds a ``pyproject.toml`` (a workspace's projects). A
+    subfolder that cannot be looked into holds none."""
     try:
         children = list(folder.iterdir())
     except OSError:
         return False
     return any(
-        child.is_dir() and not child.name.startswith(".") and (child / "pyproject.toml").is_file() for child in children
+        not child.name.startswith(".") and _is(child, "folder") and _is(child / "pyproject.toml", "file")
+        for child in children
     )
 
 
@@ -120,16 +144,17 @@ def find_workspace(start: Path) -> Optional[Path]:
     4. holds a ``.git`` folder — a repository with no project yet (what ``aisland workspace init`` makes).
 
     Rule 2 looks at ``start`` only: applied above it, a home folder holding one project would become the workspace
-    of every folder under it.
+    of every folder under it. A folder that cannot be looked into holds none of these, and the search goes on above
+    it.
     """
     for candidate in [start, *start.parents]:
-        if (candidate / ".gitmodules").is_file():
+        if _is(candidate / ".gitmodules", "file"):
             return candidate
         if candidate == start and holds_projects(candidate):
             return candidate
-        if (candidate / "pyproject.toml").is_file():
+        if _is(candidate / "pyproject.toml", "file"):
             return candidate.parent
-        if (candidate / ".git").is_dir():
+        if _is(candidate / ".git", "folder"):
             return candidate
     return None
 
