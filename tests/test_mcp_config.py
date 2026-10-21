@@ -9,7 +9,9 @@ commands are absolute venv paths: `.gemini/settings.json` (Gemini CLI) and `.mcp
 """
 
 import json
+import os
 import re
+import subprocess
 from pathlib import Path
 
 import pytest
@@ -93,6 +95,90 @@ class TestTheTwoClientFiles:
         source = inspect.getsource(manager.setup_workspace)
         assert "_write_gemini_settings(workspace_root, venv_bin)" in source
         assert "_write_mcp_json(workspace_root, venv_bin)" in source
+
+
+class TestTheServersGetTheWorkspaceEnvironment:
+    """A client starts a server with ITS OWN environment, never the workspace's ``.env``
+    (measured 2026-10-21: the desktop app's vendorcli-mcp ran with ``DATA_ROOT`` unset), so with a
+    ``project.bashrc`` at the root each server is started through bash, which sources it — output
+    discarded, stdout being the server's JSON-RPC stream — and then ``exec``s the server."""
+
+    @pytest.fixture()
+    def with_bashrc(self, fake_workspace: Path) -> Path:
+        (fake_workspace / "project.bashrc").write_text(
+            'export DATA_ROOT="/data root"\necho "noise from the shell init"\n'
+        )
+        return fake_workspace
+
+    def test_each_server_is_started_through_bash_sourcing_the_workspace_shell_init(self, with_bashrc: Path) -> None:
+        venv_bin = with_bashrc / ".venv" / "bin"
+        _write_mcp_json(with_bashrc, venv_bin)
+        entry = json.loads((with_bashrc / ".mcp.json").read_text())["mcpServers"]["modern"]
+        assert Path(entry["command"]).is_absolute() and Path(entry["command"]).name == "bash"
+        assert entry["args"][-2:] == [str(with_bashrc / "project.bashrc"), str(venv_bin / "modern-mcp")]
+
+    def test_the_server_sees_the_workspace_environment_and_its_stdout_carries_nothing_else(
+        self, with_bashrc: Path, tmp_path: Path
+    ) -> None:
+        venv_bin = with_bashrc / ".venv" / "bin"
+        venv_bin.mkdir(parents=True)
+        server = venv_bin / "modern-mcp"
+        server.write_text('#!/bin/sh\necho "server: $DATA_ROOT: $*"\n')
+        server.chmod(0o755)
+        _write_mcp_json(with_bashrc, venv_bin)
+        entry = json.loads((with_bashrc / ".mcp.json").read_text())["mcpServers"]["modern"]
+        env = {k: v for k, v in os.environ.items() if k != "DATA_ROOT"}
+        result = subprocess.run(
+            [entry["command"], *entry["args"]], cwd=tmp_path, env=env, capture_output=True, text=True, timeout=30
+        )
+        assert result.returncode == 0, result.stderr
+        assert result.stdout == "server: /data root: \n"
+
+    def test_both_files_carry_the_same_started_through_bash_map(self, with_bashrc: Path) -> None:
+        venv_bin = with_bashrc / ".venv" / "bin"
+        _write_gemini_settings(with_bashrc, venv_bin)
+        _write_mcp_json(with_bashrc, venv_bin)
+        gemini = json.loads((with_bashrc / ".gemini" / "settings.json").read_text())
+        assert gemini == json.loads((with_bashrc / ".mcp.json").read_text())
+        assert "args" in gemini["mcpServers"]["legacy"]
+
+    def test_a_missing_console_script_is_still_named(
+        self, with_bashrc: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        _write_mcp_json(with_bashrc, with_bashrc / ".venv" / "bin")
+        assert "modern's MCP command" in capsys.readouterr().out
+
+    def test_the_real_shell_init_prints_nothing_and_gives_the_server_the_workspace_root(self, tmp_path: Path) -> None:
+        root = get_workspace_root()
+        if not (root / "project.bashrc").exists():
+            pytest.skip("this checkout has no project.bashrc yet (`aisland setup` links it)")
+        servers = manager._with_workspace_env(root, {"probe": {"command": "/usr/bin/printenv"}})
+        entry = servers["probe"]
+        result = subprocess.run(
+            [entry["command"], *entry["args"], "PROJECT_ROOT"],
+            cwd=tmp_path,
+            env={k: v for k, v in os.environ.items() if k != "PROJECT_ROOT"},
+            capture_output=True,
+            text=True,
+            timeout=30,
+        )
+        assert result.returncode == 0, result.stderr
+        assert result.stdout == f"{root}\n", "the shell init's own output must never reach the server's stdout"
+
+    def test_without_a_shell_init_the_server_is_started_directly(self, fake_workspace: Path) -> None:
+        venv_bin = fake_workspace / ".venv" / "bin"
+        _write_mcp_json(fake_workspace, venv_bin)
+        entry = json.loads((fake_workspace / ".mcp.json").read_text())["mcpServers"]["modern"]
+        assert entry == {"command": str(venv_bin / "modern-mcp")}
+
+    def test_without_bash_the_server_is_started_directly(
+        self, with_bashrc: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setattr(manager.shutil, "which", lambda name: None)
+        venv_bin = with_bashrc / ".venv" / "bin"
+        _write_mcp_json(with_bashrc, venv_bin)
+        entry = json.loads((with_bashrc / ".mcp.json").read_text())["mcpServers"]["modern"]
+        assert entry == {"command": str(venv_bin / "modern-mcp")}
 
 
 class TestTheWiring:

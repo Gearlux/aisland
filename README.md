@@ -1958,10 +1958,19 @@ aisland mcp claude    # .mcp.json            — Claude Code's project-scoped se
 ```
 
 ```json
-{"mcpServers": {"annotaide":  {"command": "/…/.venv/bin/annotaide-mcp"},
-                "navigaitor": {"command": "/…/.venv/bin/navigaitor"},
-                "vendorcli":     {"command": "/…/.venv/bin/vendorcli-mcp"}}}
+{"mcpServers": {"vendorcli": {"command": "/…/bin/bash",
+                           "args": ["-c", "source \"$0\" >/dev/null; exec \"$@\"",
+                                    "/…/project.bashrc", "/…/.venv/bin/vendorcli-mcp"]},
+                "...": {}}}
 ```
+
+A client starts a server with its own environment, not the workspace's. So each server is
+started through bash, which first sources the workspace's `project.bashrc` — the venv,
+`PROJECT_ROOT` and every `.env` setting, as in a terminal — with its output discarded (the
+server's stdout is its protocol stream), then becomes the server. `.env`'s values are never
+written into the client file. Without a `project.bashrc` (or without bash) a server is
+started directly, `{"command": "/…/.venv/bin/vendorcli-mcp"}`. A change to `.env` reaches a
+server when the client restarts it.
 
 Claude Code reads `.mcp.json` when a session starts in the workspace and asks once whether
 to use the project's servers (`enableAllProjectMcpServers` in its settings skips the prompt);

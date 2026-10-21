@@ -1058,6 +1058,31 @@ def _warn_missing_commands(servers: Dict[str, dict]) -> None:
             )
 
 
+#: The bash program a client runs to start a server: source the workspace shell init (its file is ``$0``) with its
+#: output discarded — the server's stdout is its JSON-RPC stream — then become the server (``"$@"``).
+_WITH_WORKSPACE_ENV = 'source "$0" >/dev/null; exec "$@"'
+
+
+def _with_workspace_env(workspace_root: Path, servers: Dict[str, dict]) -> Dict[str, dict]:
+    """Each server started through bash sourcing ``<workspace>/project.bashrc`` first.
+
+    A client starts a server with ITS OWN environment, never the workspace's ``.env`` (measured
+    2026-10-21: the desktop app's vendorcli-mcp ran with ``DATA_ROOT`` unset, so a download that names
+    no folder landed where the server happened to start). The shell init exports ``.env`` and sets
+    ``PROJECT_ROOT`` the way a terminal gets them, so a server sees what a run from a shell sees;
+    ``.env``'s values are never copied into the client file, which would put its secrets there.
+    Without the shell init or without bash the server is started directly, as before.
+    """
+    bashrc = workspace_root / "project.bashrc"
+    bash = shutil.which("bash")
+    if bash is None or not bashrc.exists():
+        return servers
+    return {
+        name: {"command": bash, "args": ["-c", _WITH_WORKSPACE_ENV, str(bashrc), entry["command"]]}
+        for name, entry in servers.items()
+    }
+
+
 def _write_gemini_settings(workspace_root: Path, venv_bin: Path) -> None:
     """Generate ``<workspace>/.gemini/settings.json`` registering workspace MCP servers.
 
@@ -1072,7 +1097,7 @@ def _write_gemini_settings(workspace_root: Path, venv_bin: Path) -> None:
     gemini_dir = workspace_root / ".gemini"
     gemini_dir.mkdir(exist_ok=True)
     out = gemini_dir / "settings.json"
-    out.write_text(json.dumps({"mcpServers": servers}, indent=2) + "\n")
+    out.write_text(json.dumps({"mcpServers": _with_workspace_env(workspace_root, servers)}, indent=2) + "\n")
     listed = ", ".join(sorted(servers)) or "none"
     click.echo(f"==> Wrote {out} ({len(servers)} MCP server(s): {listed})")
 
@@ -1089,7 +1114,7 @@ def _write_mcp_json(workspace_root: Path, venv_bin: Path) -> None:
     servers = _discover_mcp_servers(workspace_root, venv_bin)
     _warn_missing_commands(servers)
     out = workspace_root / ".mcp.json"
-    out.write_text(json.dumps({"mcpServers": servers}, indent=2) + "\n")
+    out.write_text(json.dumps({"mcpServers": _with_workspace_env(workspace_root, servers)}, indent=2) + "\n")
     listed = ", ".join(sorted(servers)) or "none"
     click.echo(f"==> Wrote {out} ({len(servers)} MCP server(s): {listed})")
 
