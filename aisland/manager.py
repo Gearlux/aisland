@@ -1355,9 +1355,8 @@ def reconcile_submodules(workspace_root: Path) -> None:
         # This is what lets one machine activate vendorcli while another skips it,
         # without committing the choice.
         local = _local_submodule_active(workspace_root, name)
-        active = committed_active if local is None else local
-        if name in detached:
-            active = False
+        chosen = committed_active if local is None else local
+        active = chosen and name not in detached
         # A submodule's ``.git`` is a gitlink file (or dir) only when it is checked out.
         initialized = (workspace_root / path / ".git").exists()
         if active and not initialized:
@@ -1373,6 +1372,13 @@ def reconcile_submodules(workspace_root: Path) -> None:
                 subprocess.check_call(["git", "submodule", "deinit", path], cwd=workspace_root)
             except subprocess.CalledProcessError as e:
                 click.echo(f"    skip {path}: deinit refused ({e}); resolve local changes and re-run.")
+                continue
+            # The deinit drops the submodule's whole section from .git/config, this machine's choice with it; without
+            # it the next setup falls back to `.gitmodules` and checks the folder out again. Written back only when
+            # the choice switched it off — a package source empties the folder without a choice (`source unset`
+            # relies on the next setup bringing the checkout back).
+            if not chosen:
+                _set_local_submodule_active(workspace_root, name, False)
 
 
 def _local_submodule_active(workspace_root: Path, name: str) -> Optional[bool]:
@@ -1421,10 +1427,11 @@ def _resolve_submodule_activation(
     activate: Tuple[str, ...] = (),
     deactivate: Tuple[str, ...] = (),
 ) -> None:
-    """Decide + record (per machine) which OPTIONAL submodules are active, prompting as needed.
+    """Decide + record (per machine) which submodules are active, prompting the optional ones as needed.
 
-    Explicit ``activate`` / ``deactivate`` names are applied first (write the local override,
-    no prompt). Each remaining optional submodule is then resolved:
+    Explicit ``activate`` / ``deactivate`` names — ANY submodule, by name or path — are applied first (write the
+    local override, no prompt); a name that is no submodule, or one given to both, is refused before anything is
+    written. Each remaining optional submodule is then resolved:
 
     * already decided locally AND ``non_interactive`` -> keep the saved choice silently;
     * otherwise (interactive, or a NEW/undecided module even under ``non_interactive``) ->
@@ -1434,18 +1441,19 @@ def _resolve_submodule_activation(
     committed); :func:`reconcile_submodules` then checks out / deinits accordingly.
     """
     entries = submodule_active_map(workspace_root)
+    forced = _activation_flags(entries, activate, deactivate)
     if not entries:
         return
-    forced: Dict[str, bool] = {name: True for name in activate}
-    forced.update({name: False for name in deactivate})
     optional = [(n, p, c) for n, p, c in entries if _project_is_optional(workspace_root / p, c)]
-    if not optional:
+    if not optional and not forced:
         return
-    click.echo("==> Resolving optional (corporate/private) submodule activation...")
-    for name, _path, committed in optional:
+    click.echo("==> Resolving submodule activation...")
+    for name, _path, _committed in entries:
         if name in forced:
             _set_local_submodule_active(workspace_root, name, forced[name])
             click.echo(f"  - {name}: {'activate' if forced[name] else 'deactivate'} (flag)")
+    for name, _path, committed in optional:
+        if name in forced:
             continue
         local = _local_submodule_active(workspace_root, name)
         if non_interactive and local is not None:
@@ -1453,6 +1461,29 @@ def _resolve_submodule_activation(
         default = committed if local is None else local
         active = click.confirm(f"  Activate '{name}'? (clone + install + merge its uv.toml)", default=default)
         _set_local_submodule_active(workspace_root, name, active)
+
+
+def _activation_flags(
+    entries: List[Tuple[str, str, bool]], activate: Tuple[str, ...], deactivate: Tuple[str, ...]
+) -> Dict[str, bool]:
+    """``{submodule name: active}`` for the names given to ``--activate`` / ``--deactivate``.
+
+    A flag names a submodule by its ``.gitmodules`` name or its path. Raises :class:`click.ClickException` for a name
+    that is no submodule (listing them) or one given to both flags, so a typo never passes silently.
+    """
+    by_name = {name: name for name, _path, _active in entries}
+    by_name.update({path: name for name, path, _active in entries})
+    both = sorted(set(activate) & set(deactivate))
+    if both:
+        raise click.ClickException(f"{', '.join(both)} is given to both --activate and --deactivate")
+    forced: Dict[str, bool] = {}
+    for flag, names, active in (("--activate", activate, True), ("--deactivate", deactivate, False)):
+        for given in names:
+            if given not in by_name:
+                known = ", ".join(name for name, _path, _active in entries) or "none"
+                raise click.ClickException(f"{flag} {given}: no submodule of that name (the submodules: {known})")
+            forced[by_name[given]] = active
+    return forced
 
 
 # Workspace-wide uv settings that are no single project's concern. Merged into the generated
@@ -1628,6 +1659,9 @@ def setup_workspace(
                 "into it: uv venv --seed .venv && .venv/bin/pip install <the aisland wheel>"
             )
         return
+
+    # A flag naming no submodule stops the run before anything changes.
+    _activation_flags(submodule_active_map(workspace_root), activate, deactivate)
 
     # 0. Ensure uv is present in the venv — required by everything below and by
     #    every Jenkinsfile.local job that targets this workspace.

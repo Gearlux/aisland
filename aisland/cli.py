@@ -17,7 +17,6 @@ from aisland.manager import (
     generate_mcp_json,
     get_workspace_root,
     provision_system,
-    reconcile_submodules,
     run_quality_gates,
     setup_workspace,
 )
@@ -310,10 +309,14 @@ def provision() -> None:
     help="Reuse saved activation decisions; still prompt for new/undecided optional submodules.",
 )
 @click.option(
-    "--activate", multiple=True, help="Activate the named optional submodule(s) without prompting (repeatable)."
+    "--activate",
+    multiple=True,
+    help="Check out and install the named submodule(s) on this machine, without prompting (repeatable).",
 )
 @click.option(
-    "--deactivate", multiple=True, help="Deactivate the named optional submodule(s) without prompting (repeatable)."
+    "--deactivate",
+    multiple=True,
+    help="Empty the named submodule(s) on this machine and leave them out, without prompting (repeatable).",
 )
 @click.option(
     "--framework",
@@ -361,12 +364,6 @@ def setup(
         extra=extra,
         install_all=install_all,
     )
-
-
-@main.command()
-def reconcile() -> None:
-    """Align submodule checkouts with .gitmodules `active` flags (init active, deinit inactive)."""
-    reconcile_submodules(get_workspace_root())
 
 
 @main.command()

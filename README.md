@@ -392,15 +392,25 @@ whether to activate each one and remembers the answer **per-machine** in
 `.git/config` (`submodule.<name>.active`), never in the committed
 `.gitmodules`. A decided module is honored silently on later runs; a *new*
 optional module is prompted **even with `--non-interactive/-y`** (a machine
-must consciously opt into a private project). Drive it non-interactively with
-`--activate <name>` / `--deactivate <name>` (repeatable). Activating runs
-`git submodule update --init`; deactivating deinits the working tree.
+must consciously opt into a private project).
+
+`--activate <name>` / `--deactivate <name>` (repeatable) decide ANY submodule
+on this machine without a prompt, optional or not, named by its name or its
+path. Activating runs `git submodule update --init`; deactivating deinits the
+working tree (never with `-f`: a folder with uncommitted changes is left and
+named) and keeps the choice, so later runs leave the folder empty. A name that
+is no submodule stops setup before it changes anything.
 
 ```bash
 aisland setup                          # interactive: prompts for optional submodules
 aisland setup -y                       # reuse saved decisions; still ask about new modules
 aisland setup --activate vendorcli        # opt this machine into vendorcli (no prompt)
-aisland setup --deactivate vendorcli      # opt out (deinits its working tree)
+aisland setup --deactivate navigaitor  # leave navigaitor out on this machine (empties its folder)
+```
+
+```text
+$ aisland setup --deactivate navigatior
+Error: --deactivate navigatior: no submodule of that name (the submodules: confluid, liquifai, …)
 ```
 
 From the activated set, setup **generates the workspace-root `uv.toml`** =

@@ -10,10 +10,13 @@ Covers `aisland setup`'s new pieces in `manager.py`:
 
 from __future__ import annotations
 
+import os
+import subprocess
 import tomllib
 from pathlib import Path
 from typing import Any
 
+import click
 import pytest
 
 from aisland import manager as m
@@ -240,3 +243,142 @@ def test_reconcile_deinits_locally_deactivated_committed_active(
     monkeypatch.setattr(m.subprocess, "check_call", lambda cmd, **k: calls.append(cmd))
     m.reconcile_submodules(tmp_path)
     assert any("deinit" in c for c in calls)
+
+
+# --- --activate / --deactivate name any submodule --------------------------------
+# An ordinary submodule (no uv.toml, active in .gitmodules) is never prompted, but the flags still decide it:
+# they record the per-machine choice that the reconcile step of `aisland setup` checks out or empties.
+
+
+def _stub_entries(monkeypatch: pytest.MonkeyPatch, entries: list[tuple[str, str, bool]]) -> dict[str, bool]:
+    monkeypatch.setattr(m, "submodule_active_map", lambda root: entries)
+    monkeypatch.setattr(m.click, "confirm", lambda *a, **k: pytest.fail("a flag must not prompt"))
+    written: dict[str, bool] = {}
+    monkeypatch.setattr(m, "_set_local_submodule_active", lambda root, name, active: written.__setitem__(name, active))
+    return written
+
+
+@pytest.mark.parametrize("flag, active", [("activate", True), ("deactivate", False)])
+def test_the_flags_decide_an_ordinary_submodule(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, flag: str, active: bool
+) -> None:
+    (tmp_path / "navigaitor").mkdir()  # ordinary: no uv.toml, active in .gitmodules
+    written = _stub_entries(monkeypatch, [("navigaitor", "navigaitor", True)])
+    m._resolve_submodule_activation(tmp_path, non_interactive=True, **{flag: ("navigaitor",)})
+    assert written == {"navigaitor": active}
+
+
+def test_a_flag_may_name_a_submodule_by_its_path(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    (tmp_path / "libs" / "alpha").mkdir(parents=True)
+    written = _stub_entries(monkeypatch, [("alpha", "libs/alpha", True)])
+    m._resolve_submodule_activation(tmp_path, deactivate=("libs/alpha",))
+    assert written == {"alpha": False}
+
+
+def test_a_name_that_is_no_submodule_is_refused_before_anything_is_written(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    written = _stub_entries(monkeypatch, [("alpha", "alpha", True), ("beta", "beta", True)])
+    with pytest.raises(click.ClickException) as refused:
+        m._resolve_submodule_activation(tmp_path, activate=("alpha",), deactivate=("gamma",))
+    assert refused.value.message == "--deactivate gamma: no submodule of that name (the submodules: alpha, beta)"
+    assert written == {}
+
+
+def test_a_name_given_to_both_flags_is_refused(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    written = _stub_entries(monkeypatch, [("alpha", "alpha", True)])
+    with pytest.raises(click.ClickException) as refused:
+        m._resolve_submodule_activation(tmp_path, activate=("alpha",), deactivate=("alpha",))
+    assert refused.value.message == "alpha is given to both --activate and --deactivate"
+    assert written == {}
+
+
+def test_setup_refuses_a_bad_name_before_it_changes_anything(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    (tmp_path / ".venv" / "bin").mkdir(parents=True)
+    monkeypatch.setattr(m, "get_workspace_root", lambda: tmp_path)
+    monkeypatch.setattr(m, "submodule_active_map", lambda root: [("alpha", "alpha", True)])
+    monkeypatch.setattr(m, "ensure_uv_in_venv", lambda venv_bin: pytest.fail("setup went on past a bad name"))
+    with pytest.raises(click.ClickException, match="--activate gamma: no submodule of that name"):
+        m.setup_workspace(non_interactive=True, activate=("gamma",))
+
+
+def test_deactivating_an_ordinary_submodule_empties_its_folder_and_activating_brings_it_back(tmp_path: Path) -> None:
+    """With real git: the flag's choice, then the reconcile step setup runs after it."""
+    env = {
+        **{k: v for k, v in os.environ.items() if not k.startswith("GIT_")},
+        "GIT_CONFIG_GLOBAL": str(tmp_path / "gitconfig"),
+        "GIT_CONFIG_NOSYSTEM": "1",
+        "GIT_AUTHOR_NAME": "T",
+        "GIT_AUTHOR_EMAIL": "t@example.com",
+        "GIT_COMMITTER_NAME": "T",
+        "GIT_COMMITTER_EMAIL": "t@example.com",
+    }
+
+    def git(cwd: Path, *args: str) -> str:
+        return subprocess.run(["git", *args], cwd=cwd, env=env, check=True, capture_output=True, text=True).stdout
+
+    git(tmp_path, "config", "--global", "protocol.file.allow", "always")
+    origin = tmp_path / "navigaitor-origin"
+    git(tmp_path, "init", "-q", str(origin))
+    (origin / "f.txt").write_text("one\n")
+    git(origin, "add", "f.txt")
+    git(origin, "commit", "-q", "-m", "init")
+    root = tmp_path / "ws"
+    git(tmp_path, "init", "-q", str(root))
+    git(root, "submodule", "add", "-q", str(origin), "navigaitor")
+    git(root, "commit", "-q", "-m", "add navigaitor")
+    old_env = dict(os.environ)
+    os.environ.clear()
+    os.environ.update(env)
+    try:
+        m._resolve_submodule_activation(root, deactivate=("navigaitor",))
+        m.reconcile_submodules(root)
+        # `git submodule deinit` drops the submodule's section from .git/config; the choice is written back.
+        assert git(root, "config", "--local", "submodule.navigaitor.active").strip() == "false"
+        assert list((root / "navigaitor").iterdir()) == []
+        m._resolve_submodule_activation(root, non_interactive=True)  # the next `aisland setup -y`
+        m.reconcile_submodules(root)
+        assert list((root / "navigaitor").iterdir()) == []
+        m._resolve_submodule_activation(root, activate=("navigaitor",))
+        m.reconcile_submodules(root)
+        assert (root / "navigaitor" / "f.txt").read_text() == "one\n"
+    finally:
+        os.environ.clear()
+        os.environ.update(old_env)
+
+
+def test_there_is_no_reconcile_command() -> None:
+    from click.testing import CliRunner
+
+    from aisland import cli
+
+    result = CliRunner().invoke(cli.main, ["reconcile"])
+    assert result.exit_code == 2
+    assert "No such command 'reconcile'" in result.output
+
+
+def test_a_deinit_for_a_package_source_records_no_choice(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """A `pypi`/`github` source empties the folder without switching the project off: `aisland source unset` relies on
+    the next setup checking it out again, so no `active false` is written for it."""
+    (tmp_path / "x").mkdir()
+    (tmp_path / "x" / ".git").write_text("")  # checked out
+    monkeypatch.setattr(m, "submodule_active_map", lambda root: [("x", "x", True)])
+    monkeypatch.setattr(m, "_local_submodule_active", lambda root, name: None)
+    monkeypatch.setattr("aisland.sources.detached_projects", lambda root: {"x"})
+    monkeypatch.setattr(m.subprocess, "check_call", lambda cmd, **k: None)
+    monkeypatch.setattr(m, "_set_local_submodule_active", lambda *a: pytest.fail("a source's deinit recorded a choice"))
+    m.reconcile_submodules(tmp_path)
+
+
+def test_a_refused_deinit_records_nothing(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    (tmp_path / "x").mkdir()
+    (tmp_path / "x" / ".git").write_text("")
+    monkeypatch.setattr(m, "submodule_active_map", lambda root: [("x", "x", True)])
+    monkeypatch.setattr(m, "_local_submodule_active", lambda root, name: False)
+
+    def refuse(cmd: list[str], **kwargs: Any) -> None:
+        raise subprocess.CalledProcessError(1, cmd)
+
+    monkeypatch.setattr(m.subprocess, "check_call", refuse)
+    monkeypatch.setattr(m, "_set_local_submodule_active", lambda *a: pytest.fail("a refused deinit lost nothing"))
+    m.reconcile_submodules(tmp_path)

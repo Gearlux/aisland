@@ -265,8 +265,15 @@ Root `AGENTS.md` "Two Test Runs" (user ruling 2026-10-05). [test-stats]
   `uv pip install -e ./<p> --no-deps` to refresh the metadata.
 - Optional submodule = ships a `uv.toml` or is `active = false`. The answer is per machine in
   `.git/config`, never `.gitmodules`; an undecided one is prompted even under `-y`;
-  `--activate`/`--deactivate` skip the prompt; deinit is never `-f`.
-  (`tests/test_uv_activation.py`)
+  deinit is never `-f`. (`tests/test_uv_activation.py`)
+- **`--activate`/`--deactivate` decide ANY submodule, by name or path (user request 2026-10-21)**, without a prompt;
+  a name that is no submodule, or one given to both, stops setup before anything changes
+  (`::test_setup_refuses_a_bad_name_before_it_changes_anything`). There is no `aisland reconcile`: setup's
+  reconcile step is the only one. `git submodule deinit` drops the submodule's `.git/config` section, the choice
+  with it, so `reconcile_submodules` writes `active false` back after a deinit the CHOICE caused — never after one a
+  `pypi`/`github` source caused, which `source unset` expects the next setup to undo
+  (`::test_deactivating_an_ordinary_submodule_empties_its_folder_and_activating_brings_it_back`,
+  `::test_a_deinit_for_a_package_source_records_no_choice`).
 - Every name in a `[tool.aisland] frameworks`/`trackers` declaration must be a real extra:
   `aisland setup` and `aisland framework|tracker set` refuse up front, naming project and name
   (user ruling 2026-08-25). (`tests/test_workspace_axis_declarations.py`)
