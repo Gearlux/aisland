@@ -280,6 +280,13 @@ Root `AGENTS.md` "Two Test Runs" (user ruling 2026-10-05). [test-stats]
 - `.gemini/settings.json` and `.mcp.json` keep ABSOLUTE venv paths (clients launch from any
   cwd). MCP discovery matches a `<pkg>.server:main` whose module imports `mcp.server`, never a
   class name.
+- **Every MCP server is started with the workspace's environment (user request 2026-10-21).**
+  With a `project.bashrc` at the root and bash on PATH, each entry of both client files is
+  `bash -c 'source "$0" >/dev/null; exec "$@"' <root>/project.bashrc <server>`
+  (`manager._with_workspace_env`): a client otherwise starts the server with its own environment
+  (vendorcli-mcp ran with `DATA_ROOT` unset). The init's stdout is discarded — the server's stdout is
+  its JSON-RPC stream; never copy `.env`'s values into a client file (`"env"`), which would put its
+  secrets there. Without either, the plain command. (`tests/test_mcp_config.py::TestTheServersGetTheWorkspaceEnvironment`)
 - Root `mypy.ini` is committed; setup only APPENDS missing projects to `mypy_path` and never
   removes one. Never make it generated. (`tests/test_mypy_path_sync.py`)
 - Root `uv.toml` = `_ROOT_UV_BASE` (drops `lightning`, `opencv-python`; keeps
