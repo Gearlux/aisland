@@ -457,6 +457,12 @@ A bare `::` pin in this section is in `tests/test_jenkins_scaffold.py`.
   [completion]
   - liquifai apps: `install_for_apps`, in-process. click apps: `_<PROG>_COMPLETE`, bash
     guarded on `BASH_VERSINFO >= 4.4`. argcomplete: no member; never add a `streamstudio` row.
+- **An empty word after an aisland command with nothing left to fill offers its options** (user request
+  2026-10-21; click by itself waits for a `-`). `cli._Command.shell_complete` completes `""` as `"-"`; every
+  group is a `cli._Group` (`command_class = _Command`, `group_class = _Group`), so a command added with
+  `@<group>.command` gets it without a `cls=`. A group still offers its commands only; an argument still to
+  fill comes first. A new group class derives from `_Group`, never `click.Group`
+  (`tests/test_cli_option_completion.py`).
   - `--target-rc` appends marked blocks only.
   - Pruning stands down when discovery finds no liquifai app; program lookup is venv-first.
   - **The generated block LEAVES a non-interactive shell at once** (`_INTERACTIVE_ONLY`, the
@@ -549,6 +555,21 @@ User choice 2026-10-08: an aisland command, only the named project's closure, bo
   library only — the other machine has no aisland), refuses another project's folder before unpacking,
   and is byte-identical for an unchanged folder; `install` refuses the workspace's `.venv`
   (`tests/test_wheels_zip.py`).
+- `--include-project` (user request 2026-10-21) builds the target's OWN wheel under the same rules (its commit;
+  dirty refused unless `--force`, its own `wheels/` never counting as dirty), kept OUT of `built`
+  (`WheelsReport.project_wheel`) so every count and table of what it needs is unchanged, and listed LAST in
+  `wheels.yaml`. `install.py` treats the entry whose `project:` is the file's own as the project, never as a
+  dependency: while its `install:` is true it is installed in place of `-e ..` whatever `--all/--needed/--only`
+  chose; `--no-project` drops both. The check installs and imports that wheel, never a second build. A folder
+  that installs its own wheel (`installs_own_wheel`) zips with `STANDALONE = True`: the zip also runs in a
+  folder without `pyproject.toml`, but still refuses another project's `pyproject.toml` and a `wheels/` holding
+  another project's wheels. Without the flag every file is byte-identical
+  (`TestTheProjectsOwnWheelInTheFiles::test_without_it_every_file_is_what_it_was`,
+  `TestEndToEnd::test_include_project_ships_the_project_as_a_wheel_that_installs_from_a_folder_of_no_project`,
+  `tests/test_wheels_zip.py::TestRunningTheZip`).
+- TAB after `wheels build` / `wheels zip` / the short form `wheels` offers the projects (`cli._complete_projects`:
+  checked out here; `zip` only those with a `wheels.yaml`; the group's commands first). It reads folders and
+  `pyproject.toml` only and an unreadable workspace offers nothing (`tests/test_wheels.py::TestShellCompletion`).
 - Tests reach no network: the end-to-end tests run the real uv with `UV_OFFLINE=1`, a fresh
   cache, and `_PYPI_INDEX_ARGS` pointed at a local folder holding this interpreter's setuptools and
   PyYAML, repackaged (`offline_uv`); the pip tests run with `PIP_CONFIG_FILE=/dev/null` against a

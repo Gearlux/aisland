@@ -3,10 +3,12 @@
 # THE TEMPLATE of every <project>/wheels/install.py — edit it here, never in a copy.
 # Source: aisland/aisland/wheels_install.py
 # =========================================================================
-"""Install the wheels of this folder, then the project above it, editable.
+"""Install the wheels of this folder, then the project above it, editable — or its own wheel, when listed.
 
 ``wheels.yaml`` beside this script lists every wheel ``aisland wheels`` built and whether to install it
-(``install:``, yours to edit). The command run names each chosen wheel by its FILE: pip takes a wheel named
+(``install:``, yours to edit). The project's own wheel (``aisland wheels build <project> --include-project``)
+is listed last: while its ``install:`` is true, it is installed in place of the project's folder, which then
+need not be there. The command run names each chosen wheel by its FILE: pip takes a wheel named
 by its file over PyPI's wheel of the same version, while a wheel it only finds through ``--find-links``
 loses to PyPI's (measured 2026-10-09 on recordstream 0.1.0a2, built from a checkout ahead of its release).
 
@@ -14,7 +16,7 @@ loses to PyPI's (measured 2026-10-09 on recordstream 0.1.0a2, built from a check
     python wheels/install.py --all           # every wheel listed
     python wheels/install.py --needed        # the wheels the project needs
     python wheels/install.py --only confluid,recordstream
-    python wheels/install.py --no-project    # the chosen wheels only
+    python wheels/install.py --no-project    # the chosen wheels only (neither the folder nor the project's wheel)
     python wheels/install.py --reinstall     # reinstall the chosen wheels first (a rebuild keeps their version)
     python wheels/install.py --dry-run       # print the commands, run nothing
     python wheels/install.py --installer uv  # uv pip instead of pip
@@ -124,29 +126,37 @@ def commands(
     project: bool,
     reinstall: bool,
     extra: Sequence[str],
+    project_wheel: Optional[Entry] = None,
 ) -> List[List[str]]:
-    """The commands to run, in order: the reinstall of the chosen wheels (asked for), then the install."""
+    """The commands to run, in order: the reinstall of the chosen wheels (asked for), then the install.
+
+    ``project`` installs the project: its own wheel when ``project_wheel`` is given, else its folder, editable.
+    """
     base = _base(installer, uv, python)
-    files = [str(folder / e.wheel) for e in chosen]
+    own = [project_wheel] if project and project_wheel is not None else []
+    files = [str(folder / e.wheel) for e in [*chosen, *own]]
     result = []
     if reinstall and files:
         flag = "--reinstall" if installer == "uv" else "--force-reinstall"
         result.append([*base, *extra, flag, "--no-deps", *files])
     if files or project:
-        editable = ["-e", str(folder.parent)] if project else []
+        editable = ["-e", str(folder.parent)] if project and project_wheel is None else []
         result.append([*base, *extra, "--find-links", str(folder), *editable, *files])
     return result
 
 
 def _parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
-        prog="install.py", description="Install the wheels of this folder, then the project above it, editable."
+        prog="install.py",
+        description="Install the wheels of this folder, then the project above it, editable — or its own wheel.",
     )
     which = parser.add_mutually_exclusive_group()
     which.add_argument("--all", action="store_true", help="every wheel listed in wheels.yaml")
     which.add_argument("--needed", action="store_true", help="the wheels the project needs")
     which.add_argument("--only", default="", help="these projects' wheels, comma-separated")
-    parser.add_argument("--no-project", action="store_true", help="install the wheels only, not the project")
+    parser.add_argument(
+        "--no-project", action="store_true", help="install the wheels only: neither the project nor its own wheel"
+    )
     parser.add_argument("--reinstall", action="store_true", help="reinstall the chosen wheels first")
     parser.add_argument("--dry-run", action="store_true", help="print the commands, run nothing")
     parser.add_argument("--installer", choices=get_args(Installer), default="pip", help="pip (default) or uv")
@@ -176,17 +186,20 @@ def main(argv: Sequence[str], folder: Optional[Path] = None) -> int:
     which: Literal["install", "all", "needed"] = "all" if args.all else "needed" if args.needed else "install"
     only = [name.strip() for name in args.only.split(",") if name.strip()]
     try:
-        _project, entries = read_wheels(folder / WHEELS_FILE)
-        chosen = choose(entries, which, only)
+        project, entries = read_wheels(folder / WHEELS_FILE)
+        own_entry = next((e for e in entries if e.project == project), None)
+        chosen = choose([e for e in entries if e is not own_entry], which, only)
     except WheelsFileError as error:
         print(f"install.py: {error}", file=sys.stderr)
         return 2
-    missing = [e for e in chosen if not (folder / e.wheel).is_file()]
+    project_wheel = own_entry if own_entry is not None and own_entry.install and not args.no_project else None
+    shipped = chosen + ([project_wheel] if project_wheel else [])
+    missing = [e for e in shipped if not (folder / e.wheel).is_file()]
     if missing:
         for e in missing:
             print(f"install.py: {folder / e.wheel} is listed at {WHEELS_FILE}:{e.line} but missing", file=sys.stderr)
         return 2
-    planned = commands(installer, uv, python, folder, chosen, not args.no_project, args.reinstall, extra)
+    planned = commands(installer, uv, python, folder, chosen, not args.no_project, args.reinstall, extra, project_wheel)
     if not planned:
         print("install.py: nothing to install")
         return 0

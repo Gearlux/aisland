@@ -36,6 +36,11 @@ The run, in order:
    ``recordstream.draws``, which recordstream 0.1.0a2 lacks). ``--no-check`` skips both and changes
    nothing else the run writes; the report then says ``checked: false``, and ``--commit`` is refused.
 
+``--include-project`` builds the project's OWN wheel too, under the same rules (its last commit; refused when
+dirty, unless ``--force``). ``wheels.yaml`` lists it last; while its ``install:`` is true, ``install.py`` installs
+that wheel in place of the project's folder, editable, and the empty-venv check installs and imports the wheel.
+Nothing then needs the project's source, so its zip installs from any folder.
+
 What is built is the run's SCOPE (:data:`WheelsScope`): by default the projects above that PyPI
 lacks; ``--include-published`` every project the target needs that has a checkout here, those on
 PyPI too (the wheel holds the commit, not the release); ``--all`` every workspace project that has a
@@ -116,6 +121,9 @@ WheelsScope = Literal["unpublished", "needed", "all"]
 
 #: Each scope's flag, as the command line spells it.
 _SCOPE_FLAGS: Dict[str, str] = {"unpublished": "", "needed": " --include-published", "all": " --all"}
+
+#: The flag that builds the project's own wheel too, as the command line spells it.
+_INCLUDE_PROJECT_FLAG = " --include-project"
 
 #: The line that frames a generated header (and the template's own) in the files written.
 _HEADER_RULE = "# =========================================================================\n"
@@ -284,11 +292,15 @@ class WheelsReport:
     #: The zip ``--zip`` wrote, relative to the workspace.
     zip_file: Optional[str] = None
     zip_bytes: int = 0
+    #: The zip installs the project's own wheel, so it runs from any folder (else only from the project's).
+    zip_standalone: bool = False
     #: Said when the folder is ignored but files of it are still tracked, with the command that untracks them.
     tracked_warning: Optional[str] = None
     #: False under ``--no-check``: nothing was compared with PyPI and nothing installed, so ``ok`` found no failure
     #: because it looked for none.
     checked: bool = True
+    #: The target's own wheel (``--include-project``); never in ``built``, which holds what the target needs.
+    project_wheel: Optional[BuiltWheel] = None
 
     @property
     def ok(self) -> bool:
@@ -732,10 +744,22 @@ def _uncommitted(project: WorkspaceProject) -> List[str]:
     return [line for line in _git(project.path, "status", "--porcelain").stdout.splitlines() if line]
 
 
-def _refuse_uncommitted(projects: List[WorkspaceProject], force: bool = False) -> Dict[str, List[str]]:
+def _outside_wheels_dir(line: str) -> bool:
+    """Whether a ``git status --porcelain`` line names a path outside the project's ``wheels/``."""
+    path = line[3:].split(" -> ")[-1].strip('"')
+    return path != WHEELS_DIR and not path.startswith(f"{WHEELS_DIR}/")
+
+
+def _refuse_uncommitted(
+    projects: List[WorkspaceProject], force: bool = False, target: Optional[WorkspaceProject] = None
+) -> Dict[str, List[str]]:
     """Stop before any build when a project to ship has changes no commit holds — unless ``force``, which
-    returns each such project's changes instead (it is then built from its working tree)."""
+    returns each such project's changes instead (it is then built from its working tree). ``target``, whose
+    own wheel is shipped too, is checked without its ``wheels/``: the folder this command writes is no change
+    of its code."""
     dirty = {project.name: lines for project in projects if (lines := _uncommitted(project))}
+    if target is not None and (lines := [line for line in _uncommitted(target) if _outside_wheels_dir(line)]):
+        dirty[target.name] = lines
     if dirty and not force:
         problems = []
         for name, lines in dirty.items():
@@ -784,11 +808,13 @@ def vendor_wheels(
     make_zip: bool = False,
     force: bool = False,
     check: bool = True,
+    include_project: bool = False,
 ) -> WheelsReport:
     """``aisland wheels build <project_name>``: build, write, compare, install, import; then, when asked, commit
     the folder (only if the check passed) and zip it. ``force`` builds a project with uncommitted changes from
     its working tree instead of refusing it; ``check=False`` (``--no-check``) skips the comparison with PyPI and
-    the empty-venv install. See the module docstring."""
+    the empty-venv install; ``include_project`` (``--include-project``) builds the project's own wheel too. See
+    the module docstring."""
     if force and commit:
         raise click.ClickException(
             "--force cannot be combined with --commit: a wheel built with uncommitted changes is one no commit "
@@ -840,7 +866,7 @@ def vendor_wheels(
             if not p.checked_out
         ]
     published = [p for p in needed if _published(p) and p not in to_build]
-    dirty = _refuse_uncommitted(to_build, force)
+    dirty = _refuse_uncommitted(to_build, force, target if include_project else None)
 
     folder = target.path / WHEELS_DIR
     choices = read_install_choices(folder / WHEELS_YAML)
@@ -851,7 +877,8 @@ def vendor_wheels(
         staged: List[Path] = []
         owners: Dict[str, str] = {}
         name_clashes: List[str] = []
-        for project in to_build:
+
+        def _build(project: WorkspaceProject) -> Tuple[Path, BuiltWheel]:
             branch = _git(project.path, "rev-parse", "--abbrev-ref", "HEAD").stdout.strip()
             sha = _git(project.path, "rev-parse", "--short", "HEAD").stdout.strip()
             changes = dirty.get(project.name, [])
@@ -861,33 +888,40 @@ def vendor_wheels(
             export = export_worktree if changes else export_head
             timestamp = export(project.path, scratch / "src" / project.name)
             wheel = build_wheel(uv, scratch / "src" / project.name, scratch / "wheels", timestamp)
-            staged.append(wheel)
-            version = _wheel_version(wheel)
             state, payload = states.get(project.name, ("absent", None))
-            built.append(
-                BuiltWheel(
-                    project.name,
-                    project.distribution,
-                    version,
-                    branch,
-                    sha,
-                    wheel.name,
-                    needed=project.name in needed_names,
-                    on_pypi=_pypi_version(payload) if state == "published" else None,
-                    uncommitted=changes,
-                )
+            entry = BuiltWheel(
+                project.name,
+                project.distribution,
+                _wheel_version(wheel),
+                branch,
+                sha,
+                wheel.name,
+                needed=project.name in needed_names or project is target,
+                on_pypi=_pypi_version(payload) if state == "published" else None,
+                uncommitted=changes,
             )
+            return wheel, entry
+
+        for project in to_build:
+            wheel, entry = _build(project)
+            staged.append(wheel)
+            built.append(entry)
             owners.update({module: project.distribution for module in wheel_modules(wheel)})
+            state, payload = states.get(project.name, ("absent", None))
             if state == "foreign" and payload is not None:
-                name_clashes.extend(_clash(project, payload, version))
+                name_clashes.extend(_clash(project, payload, entry.version))
+        own_wheel: Optional[Path] = None
+        project_wheel: Optional[BuiltWheel] = None
+        if include_project:
+            own_wheel, project_wheel = _build(target)
 
         files = {
-            README_NAME: render_readme(target.name, scope, built),
-            WHEELS_YAML: render_wheels_yaml(target.name, scope, built, not_built, choices),
-            INSTALL_SCRIPT: render_install_script(target.name, scope),
+            README_NAME: render_readme(target.name, scope, built, project_wheel),
+            WHEELS_YAML: render_wheels_yaml(target.name, scope, built, not_built, choices, project_wheel),
+            INSTALL_SCRIPT: render_install_script(target.name, scope, include_project),
             GITIGNORE: _IGNORE_ZIP if commit else _IGNORE_ALL,
         }
-        _write_wheels(folder, staged, files)
+        _write_wheels(folder, staged + ([own_wheel] if own_wheel else []), files)
 
         new_names: Dict[str, Set[str]] = {}
         install_error: Optional[str] = None
@@ -908,10 +942,13 @@ def vendor_wheels(
             ]
 
             click.echo(f"==> Installing {target.name} in an empty venv and importing every module", err=True)
-            # Under --force the target's new modules are checked too: it is installed editable, from its folder.
-            target_export = export_worktree if force and _uncommitted(target) else export_head
-            target_export(target.path, scratch / "src" / target.name)
-            target_wheel = build_wheel(uv, scratch / "src" / target.name, scratch / "target")
+            if own_wheel is not None:
+                target_wheel = own_wheel
+            else:
+                # Under --force the target's new modules are checked too: it is installed editable, from its folder.
+                target_export = export_worktree if force and _uncommitted(target) else export_head
+                target_export(target.path, scratch / "src" / target.name)
+                target_wheel = build_wheel(uv, scratch / "src" / target.name, scratch / "target")
             own = wheel_modules(target_wheel)
             owners.update({module: target.distribution for module in own})
             installed = [wheel for wheel, b in zip(staged, built) if b.needed]
@@ -937,7 +974,7 @@ def vendor_wheels(
     tracked_warning: Optional[str] = None
     if commit:
         if install_error is None and not import_failures:
-            committed = _commit_wheels(target, regenerate_command(target.name, scope))
+            committed = _commit_wheels(target, regenerate_command(target.name, scope, include_project))
             commit_note = None if committed else f"nothing new to commit in {wheels_dir}"
         else:
             commit_note = "not committed: the install check failed"
@@ -953,7 +990,7 @@ def vendor_wheels(
     return WheelsReport(
         target=target.name,
         wheels_dir=wheels_dir,
-        wheels_bytes=sum((folder / b.wheel).stat().st_size for b in built),
+        wheels_bytes=sum((folder / b.wheel).stat().st_size for b in built + ([project_wheel] if project_wheel else [])),
         built=built,
         published=compared,
         name_clashes=name_clashes,
@@ -969,8 +1006,10 @@ def vendor_wheels(
         commit_note=commit_note,
         zip_file=zip_file,
         zip_bytes=archive.stat().st_size if archive else 0,
+        zip_standalone=archive is not None and installs_own_wheel(folder),
         tracked_warning=tracked_warning,
         checked=check,
+        project_wheel=project_wheel,
     )
 
 
@@ -989,13 +1028,28 @@ def _commit_wheels(target: WorkspaceProject, command: str) -> Optional[str]:
     return _git(target.path, "rev-parse", "--short", "HEAD").stdout.strip()
 
 
+def installs_own_wheel(folder: Path) -> bool:
+    """Whether ``folder``'s ``wheels.yaml`` lists the project's own wheel with ``install: true``, and the wheel is
+    there: ``install.py`` then installs it in place of the project's folder, so nothing needs the project's source."""
+    if not (folder / WHEELS_YAML).is_file():
+        return False
+    project, entries = read_wheels(folder / WHEELS_YAML)
+    return any(e.project == project and e.install and (folder / e.wheel).is_file() for e in entries)
+
+
 def _write_zip(target_name: str, folder: Path) -> Path:
     """``<folder>/<target>-wheels.zip``: the generated ``__main__.py``, then every file of the folder but a zip.
 
-    Members are written in name order with one fixed time, so a zip of an unchanged folder is the same file.
+    Members are written in name order with one fixed time, so a zip of an unchanged folder is the same file. A
+    folder that installs the project's own wheel (:func:`installs_own_wheel`) makes a zip that installs from any
+    folder.
     """
     archive = folder / ZIP_NAME.format(project=target_name)
-    members = [("__main__.py", render_unzip_script(target_name).encode("utf-8"))]
+    try:
+        standalone = installs_own_wheel(folder)
+    except WheelsFileError as error:
+        raise click.ClickException(str(error)) from error
+    members = [("__main__.py", render_unzip_script(target_name, standalone).encode("utf-8"))]
     members += [
         (f"{WHEELS_DIR}/{path.name}", path.read_bytes())
         for path in sorted(folder.iterdir(), key=lambda p: p.name)
@@ -1138,9 +1192,13 @@ def render_report(report: WheelsReport) -> str:
     """The text ``aisland wheels`` prints."""
     target = report.target
     lines = _built_lines(report)
+    own = report.project_wheel
+    if own is not None:
+        lines.append(f"{target}'s own wheel (--include-project), installed in place of its folder:")
+        lines += _table([[own.project, own.version, f"{own.branch} {own.commit}"]])
     lines.append("")
 
-    forced = [b for b in report.built if b.uncommitted]
+    forced = [b for b in report.built + ([own] if own else []) if b.uncommitted]
     if forced:
         lines.append("Built with changes no commit holds (--force); no commit reproduces these wheels:")
         for b in forced:
@@ -1233,18 +1291,18 @@ def render_report(report: WheelsReport) -> str:
         tail.append(report.commit_note[0].upper() + report.commit_note[1:])
     if report.zip_file:
         zip_name = Path(report.zip_file).name
+        where = "any folder" if report.zip_standalone else f"the {target} folder"
         tail.append(
-            f"Zip: {report.zip_file} ({_size(report.zip_bytes)}) — install it from the {target} folder with: "
-            f"python {zip_name}"
+            f"Zip: {report.zip_file} ({_size(report.zip_bytes)}) — install it from {where} with: python {zip_name}"
         )
     if tail:
         lines += ["", *tail]
     return "\n".join(lines).rstrip() + "\n"
 
 
-def regenerate_command(target: str, scope: WheelsScope) -> str:
+def regenerate_command(target: str, scope: WheelsScope, include_project: bool = False) -> str:
     """The command that wrote a generated file — its header's ``Generated by:`` and ``To regenerate:``."""
-    return f"aisland wheels build {target}{_SCOPE_FLAGS[scope]}"
+    return f"aisland wheels build {target}{_SCOPE_FLAGS[scope]}{_INCLUDE_PROJECT_FLAG if include_project else ''}"
 
 
 def _header(prefix: str, command: str, source: str) -> List[str]:
@@ -1257,20 +1315,33 @@ def _header(prefix: str, command: str, source: str) -> List[str]:
     ]
 
 
-def render_readme(target: str, scope: WheelsScope, built: List[BuiltWheel]) -> str:
-    """``wheels/README.md``: its generator, the install command, and each wheel's commit.
+def render_readme(
+    target: str, scope: WheelsScope, built: List[BuiltWheel], project_wheel: Optional[BuiltWheel] = None
+) -> str:
+    """``wheels/README.md``: its generator, the install command, and each wheel's commit (``project_wheel``, the
+    target's own, last).
 
     No date and no PyPI verdict, so a rebuild of unchanged projects changes no file.
     """
-    command = regenerate_command(target, scope)
+    command = regenerate_command(target, scope, project_wheel is not None)
+    shipped = built + ([project_wheel] if project_wheel else [])
     rows = "\n".join(
-        f"| {b.wheel} | {b.project} | {b.branch} | {b.commit} | {'yes' if b.needed else 'no'} |" for b in built
+        f"| {b.wheel} | {b.project} | {b.branch} | {b.commit} | {'yes' if b.needed else 'no'} |" for b in shipped
     )
     table = (
         f"| Wheel | Project | Branch | Commit | Needed |\n| --- | --- | --- | --- | --- |\n{rows}"
-        if built
+        if shipped
         else "No wheel is needed."
     )
+    if project_wheel is None:
+        how = f"""\
+Install {target} from its own folder, editable, with the wheels marked `install: true` in
+`wheels/{WHEELS_YAML}` (by default the ones it needs):"""
+    else:
+        how = f"""\
+{target}'s own wheel is here too. Install it with the wheels marked `install: true` in
+`wheels/{WHEELS_YAML}` (by default the ones it needs); set its own entry's `install:` to false to
+install {target} from its folder, editable, instead:"""
     title, intro = {
         "unpublished": (
             f"The wheels {target} needs",
@@ -1300,8 +1371,7 @@ def render_readme(target: str, scope: WheelsScope, built: List[BuiltWheel]) -> s
 
 {intro}
 
-Install {target} from its own folder, editable, with the wheels marked `install: true` in
-`wheels/{WHEELS_YAML}` (by default the ones it needs):
+{how}
 
     python wheels/{INSTALL_SCRIPT}
 
@@ -1317,15 +1387,21 @@ version, so an environment that already has them takes the new ones with:
 
 
 def render_wheels_yaml(
-    target: str, scope: WheelsScope, built: List[BuiltWheel], not_built: List[NotBuilt], keep: Dict[str, bool]
+    target: str,
+    scope: WheelsScope,
+    built: List[BuiltWheel],
+    not_built: List[NotBuilt],
+    keep: Dict[str, bool],
+    project_wheel: Optional[BuiltWheel] = None,
 ) -> str:
-    """``wheels/wheels.yaml``: each wheel, its commit, whether ``target`` needs it, and ``install:``.
+    """``wheels/wheels.yaml``: each wheel, its commit, whether ``target`` needs it, and ``install:``; the target's
+    own wheel (``project_wheel``) last.
 
     ``install:`` is the value in ``keep`` (the user's, read from the file this one replaces) for a project
-    listed there, else whether it is needed. Strings are written as JSON strings, which YAML reads as
-    they are (a version such as ``1.0`` would otherwise read as a number).
+    listed there, else whether it is needed (the target's own wheel: true). Strings are written as JSON strings,
+    which YAML reads as they are (a version such as ``1.0`` would otherwise read as a number).
     """
-    command = regenerate_command(target, scope)
+    command = regenerate_command(target, scope, project_wheel is not None)
     lines = [_HEADER_RULE.rstrip("\n")]
     # The header's first line, said for this one generated file the user DOES edit: its `install:` values.
     lines += ["# AUTO-GENERATED FILE — edit only the `install:` values (a rerun keeps them)"]
@@ -1334,14 +1410,20 @@ def render_wheels_yaml(
         _HEADER_RULE.rstrip("\n"),
         "# install.py installs the wheels marked `install: true`, then",
         f"# {target} editable. `needed: true` marks what {target} depends on.",
-        f"project: {json.dumps(target)}",
     ]
+    if project_wheel is not None:
+        lines += [
+            f"# The last wheel is {target}'s own: while its `install:` is true, it is",
+            f"# installed in place of {target}'s folder.",
+        ]
+    lines.append(f"project: {json.dumps(target)}")
+    shipped = built + ([project_wheel] if project_wheel else [])
 
     def _string(value: Optional[str]) -> str:
         return "null" if value is None else json.dumps(value, ensure_ascii=False)
 
-    lines.append("wheels:" if built else "wheels: []")
-    for b in built:
+    lines.append("wheels:" if shipped else "wheels: []")
+    for b in shipped:
         install = keep.get(b.project, b.needed)
         lines += [
             f"  - wheel: {_string(b.wheel)}",
@@ -1357,7 +1439,7 @@ def render_wheels_yaml(
     return "\n".join(lines) + "\n"
 
 
-def render_install_script(target: str, scope: WheelsScope) -> str:
+def render_install_script(target: str, scope: WheelsScope, include_project: bool = False) -> str:
     """``wheels/install.py``: :mod:`aisland.wheels_install` unchanged, under a generated header.
 
     The template's own header (between its first two rule lines) says it is the template; the copy's
@@ -1365,18 +1447,22 @@ def render_install_script(target: str, scope: WheelsScope) -> str:
     """
     template = Path(wheels_install.__file__).read_text(encoding="utf-8")
     shebang, _template_header, rest = template.split(_HEADER_RULE, 2)
-    command = regenerate_command(target, scope)
+    command = regenerate_command(target, scope, include_project)
     header = _header("# ", command, "aisland/aisland/wheels_install.py (copied unchanged below this header)")
     return shebang + _HEADER_RULE + "\n".join(header) + "\n" + _HEADER_RULE + rest
 
 
-def render_unzip_script(target: str) -> str:
-    """A zip's ``__main__.py``: :mod:`aisland.wheels_unzip` under a generated header, naming ``target``."""
+def render_unzip_script(target: str, standalone: bool = False) -> str:
+    """A zip's ``__main__.py``: :mod:`aisland.wheels_unzip` under a generated header, naming ``target`` and whether
+    the zip installs the project's own wheel (``standalone``: it then runs from any folder)."""
     template = Path(wheels_unzip.__file__).read_text(encoding="utf-8")
     shebang, _template_header, rest = template.split(_HEADER_RULE, 2)
     header = _header("# ", f"aisland wheels zip {target}", "aisland/aisland/wheels_unzip.py (copied below this header)")
-    placeholder = 'PROJECT = "<project>"'
-    if rest.count(placeholder) != 1:
-        raise RuntimeError(f"{wheels_unzip.__file__}: expected one {placeholder!r} line to fill in")
-    rest = rest.replace(placeholder, f"PROJECT = {json.dumps(target)}")
+    for placeholder, value in (
+        ('PROJECT = "<project>"', f"PROJECT = {json.dumps(target)}"),
+        ("STANDALONE = False", f"STANDALONE = {standalone}"),
+    ):
+        if rest.count(placeholder) != 1:
+            raise RuntimeError(f"{wheels_unzip.__file__}: expected one {placeholder!r} line to fill in")
+        rest = rest.replace(placeholder, value)
     return shebang + _HEADER_RULE + "\n".join(header) + "\n" + _HEADER_RULE + rest

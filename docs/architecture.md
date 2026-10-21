@@ -581,6 +581,52 @@ guard. A line added above it re-arms exactly this. Pin:
 
 ---
 
+## TAB on an empty word offers a command's options (2026-10-21)
+
+### Context
+
+Click offers a command's options only once the word being completed starts with `-`:
+`aisland wheels build vendorcli <TAB>` offered nothing, though the command takes nothing more but options, and
+the same held for every aisland command. The user asked for the options there.
+
+### Decision
+
+- **`cli._Command` completes an empty word as `-`.** Click calls a command's `shell_complete` only when no
+  argument is left to fill, so an argument's values still come first, and click's own filtering still leaves
+  out a hidden option and one already typed.
+- **Every group is a `cli._Group`** (`command_class = _Command`, `group_class = _Group`): a command written with
+  `@<group>.command` gets the behaviour with no `cls=`, and a subgroup made with `@<group>.group` is a `_Group`
+  too — never the root's `_WorkspaceGroup`, whose workspace refusal is for the root only.
+- **A group's own TAB is unchanged**: its commands (the `wheels` group: then the projects). Options mixed in
+  would bury the commands.
+
+Rejected: patching `click.Command.shell_complete` for the process — it would change every click CLI that
+imports aisland.
+
+### Consequences
+
+- An empty word after a finished command lists `--help` too, as `-<TAB>` always did.
+
+### Example
+
+```text
+aisland wheels build vendorcli <TAB>   →  --include-published --all --include-project --zip --commit --force --no-check --json --help
+aisland tests report aisland <TAB>  →  --days --json --help
+aisland <TAB>                       →  aim backups check clean …   (commands only)
+```
+
+```python
+class _Command(click.Command):
+    def shell_complete(self, ctx, incomplete):
+        return super().shell_complete(ctx, incomplete or "-")
+```
+
+### What you may change
+
+- Which words a group offers, with `tests/test_cli_option_completion.py`.
+- What must not change: every aisland group is a `_Group`, so no command misses the behaviour
+  (`::test_every_group_makes_its_commands_and_subgroups_with_the_completing_classes`).
+
 ## The workspace's committed configuration is ONE file, and `uv.toml` cannot join it
 
 *2026-08-01*
@@ -1851,6 +1897,64 @@ report.committed, report.commit_note, report.zip_file
 - What must not change: the folder is ignored unless `--commit`; `--commit` commits only `wheels/`, only
   after a passing check, never the zip; the zip installs without aisland and refuses another project's
   folder; `install` refuses the workspace's `.venv`.
+
+## `--include-project`: the project's own wheel, installed in place of its folder (2026-10-21)
+
+### Context
+
+`aisland wheels build` shipped what a project NEEDS; the project itself was installed editable from its
+folder, so the other machine needed a checkout of it. The user asked for an option that builds the named
+project's wheel too, and for its zip to install from any folder (option 2 of the choice put to them).
+
+### Decision
+
+- **`--include-project` builds the target with the same rules as every other wheel**: from its commit, a dirty
+  one refused unless `--force`. Its own `wheels/` folder is left out of that check — the folder is what this
+  command writes, and on a first run it is untracked.
+- **The wheel is kept out of `WheelsReport.built`** (`project_wheel` instead), so "needs N projects", the
+  tables and the JSON of what it needs mean what they meant; `wheels.yaml` lists it last.
+- **`install.py` knows its project by `wheels.yaml`'s own `project:`.** That entry is never a dependency:
+  `--all`, `--needed` and `--only` choose among the others, and while its `install:` is true it replaces
+  `-e ..`; false gives the editable folder back, `--no-project` drops both. No new field in the file.
+- **The check installs and imports that very wheel** — no second build of the target in the scratch folder.
+- **The zip's `__main__.py` carries `STANDALONE`**, filled from the folder (`installs_own_wheel`: the own entry
+  marked to install, and its file there). A standalone zip runs in a folder with no `pyproject.toml` too; it
+  still refuses another project's `pyproject.toml`, and a `wheels/` whose `*.whl` belong to someone else (the
+  unpacked `wheels.yaml` names another project, or there is none) — it would delete them.
+
+Rejected:
+- **A `needed`/`target` field in `wheels.yaml`**: the file already names its project, and an older
+  `install.py` would choke on the field.
+- **Unpacking a standalone zip into `./<project>-wheels/`**: the user chose `./wheels`, as everywhere else.
+
+### Consequences
+
+- An old zip (no `STANDALONE` line) keeps working: the template's default is the old behaviour.
+- A user who sets the own wheel's `install:` to false must run the zip from the project's folder again; pip
+  names the missing project if they do not.
+
+### Example
+
+```bash
+aisland wheels build vendorcli --include-project --zip
+# … vendorcli's own wheel (--include-project), installed in place of its folder:
+# … Zip: vendorcli/wheels/vendorcli-wheels.zip (…) — install it from any folder with: python vendorcli-wheels.zip
+mkdir /tmp/anywhere && cd /tmp/anywhere && python ~/Downloads/vendorcli-wheels.zip --dry-run   # the other machine
+```
+
+```python
+from aisland import wheels
+from aisland.manager import get_workspace_root
+
+report = wheels.vendor_wheels(get_workspace_root(), "vendorcli", include_project=True, make_zip=True)
+report.project_wheel, report.zip_standalone
+```
+
+### What you may change
+
+- The report's wording and the README section, with `tests/test_wheels.py`.
+- What must not change: without the flag every generated file is byte-identical; the own wheel is never in
+  `built`; a standalone zip never unpacks over another project's folder or wheels.
 
 ## A mirror is push-only, fast-forward-only, and copies the primary (2026-10-16)
 

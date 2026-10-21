@@ -267,9 +267,13 @@ Enable it by starting a shell that sources `project.bashrc`:
 source project.bashrc      # activates .venv AND exports .env AND loads completion
                            # (and defines cdp/cdd/cdm/cdr, and h [word]: the history, filtered)
 aisland <TAB>              # check docker fiftyone info jenkins labelstudio mcp mlflow ...
+aisland wheels build vendorcli <TAB>   # --include-published --all --include-project --zip ... --help
 streamstudio exp<TAB>      # export export-workflow
 recordstream <TAB>         # run
 ```
+
+Once an `aisland` command has every argument it needs, TAB on an empty word offers its options (those
+not typed yet); a command group offers its commands.
 
 After adding, renaming, or removing a CLI, refresh it with **`aisland completion
 install`** — a one-second command, not a re-provision. See
@@ -609,6 +613,7 @@ this checkout:
 aisland wheels build navigaitor
 aisland wheels build navigaitor --include-published   # also the projects it needs that ARE on PyPI
 aisland wheels build navigaitor --all                 # every workspace project with a checkout here
+aisland wheels build navigaitor --include-project     # also navigaitor's own wheel: installs with no source
 aisland wheels build navigaitor --zip                 # also pack the folder into one zip
 aisland wheels build navigaitor --commit              # commit the folder in navigaitor
 aisland wheels build navigaitor --force               # build projects with uncommitted changes as they are
@@ -625,6 +630,23 @@ aisland wheels navigaitor …                           # short for `aisland whe
 
 A project the flag covers that has no checkout on this machine is not built: the report says so
 (`Not built: loggair (no checkout here — taken from PyPI 0.2.0)`) and it comes from PyPI.
+
+`--include-project` builds the named project's own wheel too, beside any of the flags above. It
+follows the same rules as the others — built from the last commit, refused with uncommitted changes
+unless `--force` (its own `wheels/` folder does not count) — and the report lists it after the rest:
+
+```text
+navigaitor's own wheel (--include-project), installed in place of its folder:
+  navigaitor  0.5.0  dev/main <sha>
+```
+
+`install.py` then installs that wheel instead of the folder, editable, so the other machine needs no
+checkout of the project, and the zip installs from any folder. The empty-venv check installs and
+imports that same wheel.
+
+TAB completes the project: `aisland wheels build <TAB>` offers every project checked out here,
+`aisland wheels zip <TAB>` those that have a `wheels/wheels.yaml`, and `aisland wheels <TAB>` the
+commands, then the projects.
 
 What it printed for navigaitor on 2026-10-19 (24 s; exit 0) — every workspace project it needs is on PyPI, so it built
 nothing and checked the PyPI half:
@@ -709,7 +731,10 @@ generic installer that reads it. `install:` is yours: set it to choose what inst
     install: true
 ```
 
-From the project's own folder (the folder's `README.md` says the same):
+From the project's own folder (the folder's `README.md` says the same). With `--include-project`,
+`wheels.yaml` lists the project's own wheel last, `install: true`: the script installs it in place of
+`-e <project>`, and from any folder; set that `install:` to false to install the folder, editable,
+again. `--no-project` leaves out both.
 
 ```bash
 python wheels/install.py                 # the wheels marked install: true, then the project, editable
@@ -786,6 +811,15 @@ runs it. On the other machine — which has no aisland — from the project's fo
 python ~/Downloads/navigaitor-wheels.zip              # unpack into ./wheels, then run wheels/install.py
 python ~/Downloads/navigaitor-wheels.zip --dry-run    # every other argument goes to install.py
 python navigaitor-wheels.zip --into ../navigaitor --unpack-only
+```
+
+A zip built with `--include-project` carries the project's own wheel, so it also runs in a folder
+that holds no project — any folder without a `pyproject.toml` — and unpacks into its `./wheels`
+(`--into` names a folder, made when missing). There it refuses a `wheels/` holding another
+project's wheels. The report and `aisland wheels zip` say which kind they wrote:
+
+```text
+Zip: navigaitor/wheels/navigaitor-wheels.zip (…) — install it from any folder with: python navigaitor-wheels.zip
 ```
 
 The `*.whl` already in `wheels/` are replaced; other files there stay. A folder whose

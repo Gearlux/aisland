@@ -42,7 +42,29 @@ from aisland.sources import SOURCE_KINDS
 _WORKSPACE_FREE = {"workspace", "wheels", "tunnel"}
 
 
-class _WorkspaceGroup(click.Group):
+class _Command(click.Command):
+    """A command whose TAB on an empty word offers its options.
+
+    Click offers a command's options only once the word starts with `-`; it reaches this method only when no
+    argument is left to fill (an argument's values come first), so `aisland wheels build vendorcli <TAB>` lists
+    build's options — those not typed yet — as `-<TAB>` would.
+    """
+
+    def shell_complete(self, ctx: click.Context, incomplete: str) -> List[CompletionItem]:
+        return super().shell_complete(ctx, incomplete or "-")
+
+
+class _Group(click.Group):
+    """A group whose commands are :class:`_Command` and whose subgroups are its own kind, so every aisland
+    command gets the empty-word completion of its options. A group itself still offers its commands only."""
+
+    command_class = _Command
+
+
+_Group.group_class = _Group
+
+
+class _WorkspaceGroup(_Group):
     """The top-level group, refusing a command that needs a workspace when there is none.
 
     From a wheel the workspace is where aisland runs (:mod:`aisland.locations`); outside one, every command that
@@ -552,9 +574,37 @@ def tests_nightly(as_json: bool, no_notify: bool) -> None:
 # --- Wheels For A Project Installed Outside The Workspace ---
 
 
-class _WheelsGroup(click.Group):
+def _complete_projects(incomplete: str, *, with_wheels: bool = False) -> List[CompletionItem]:
+    """The workspace projects checked out here whose name starts with ``incomplete`` (``with_wheels``: only those
+    whose ``wheels/`` holds a ``wheels.yaml``, the ones `aisland wheels zip` packs).
+
+    Completion runs in the user's shell on every TAB: it reads the folders and their ``pyproject.toml`` only, and a
+    workspace it cannot read offers nothing instead of an error.
+    """
+    try:
+        projects = wheels.workspace_projects(get_workspace_root())
+    except Exception:  # a completion callback must never break the shell
+        return []
+    return [
+        CompletionItem(project.name)
+        for project in sorted(projects.values(), key=lambda p: p.name)
+        if project.checked_out
+        and project.name.startswith(incomplete)
+        and (not with_wheels or (project.path / wheels.WHEELS_DIR / wheels.WHEELS_YAML).is_file())
+    ]
+
+
+def _complete_buildable(ctx: click.Context, param: click.Parameter, incomplete: str) -> List[CompletionItem]:
+    return _complete_projects(incomplete)
+
+
+def _complete_zippable(ctx: click.Context, param: click.Parameter, incomplete: str) -> List[CompletionItem]:
+    return _complete_projects(incomplete, with_wheels=True)
+
+
+class _WheelsGroup(_Group):
     """`aisland wheels <project> …` is `aisland wheels build <project> …`: a first word that names no command is
-    the project to build."""
+    the project to build — so a TAB there offers the projects after the commands."""
 
     def resolve_command(
         self, ctx: click.Context, args: List[str]
@@ -562,6 +612,12 @@ class _WheelsGroup(click.Group):
         if args and args[0] not in self.commands and not args[0].startswith("-"):
             args = ["build", *args]
         return super().resolve_command(ctx, args)
+
+    def shell_complete(self, ctx: click.Context, incomplete: str) -> List[CompletionItem]:
+        items = super().shell_complete(ctx, incomplete)
+        if incomplete.startswith("-"):
+            return items
+        return items + [item for item in _complete_projects(incomplete) if item.value not in self.commands]
 
 
 @main.group(name="wheels", cls=_WheelsGroup, invoke_without_command=True)
@@ -580,7 +636,7 @@ def wheels_group(
     """The wheels a project installed outside the workspace needs: build them, zip them, install a zip.
 
     \b
-    aisland wheels build PROJECT [--include-published | --all] [--zip] [--commit] [--force] [--no-check] [--json]
+    aisland wheels build PROJECT [--include-published | --all] [--include-project] [--zip] [--commit] [--force] [--no-check] [--json]
     aisland wheels zip PROJECT
     aisland wheels install ZIP --python PYTHON [--into DIR] [-- install.py options]
     aisland wheels PROJECT …          (= aisland wheels build PROJECT …)
@@ -602,7 +658,7 @@ def wheels_group(
 
 
 @wheels_group.command(name="build")
-@click.argument("project")
+@click.argument("project", shell_complete=_complete_buildable)
 @click.option(
     "--include-published",
     is_flag=True,
@@ -610,6 +666,12 @@ def wheels_group(
 )
 @click.option(
     "--all", "include_all", is_flag=True, help="Build every workspace project that has a checkout here, needed or not."
+)
+@click.option(
+    "--include-project",
+    is_flag=True,
+    help="Also build PROJECT's own wheel; install.py installs it in place of PROJECT's folder, and the zip then "
+    "installs from any folder.",
 )
 @click.option("--zip", "make_zip", is_flag=True, help="Also pack the folder into PROJECT/wheels/PROJECT-wheels.zip.")
 @click.option(
@@ -635,6 +697,7 @@ def wheels_build(
     project: str,
     include_published: bool,
     include_all: bool,
+    include_project: bool,
     make_zip: bool,
     commit: bool,
     force: bool,
@@ -645,8 +708,8 @@ def wheels_build(
 
     By default only the projects PROJECT needs that are not on PyPI are built; --include-published
     builds every project it needs that has a checkout here, --all every workspace project that has
-    one. Each wheel is built from its project's last commit (a project with uncommitted changes is
-    refused; --force builds it from its files as they are). wheels.yaml lists the wheels and which to install (yours to edit; a rerun keeps it);
+    one; --include-project builds PROJECT's own wheel too. Each wheel is built from its project's last commit (a
+    project with uncommitted changes is refused; --force builds it from its files as they are). wheels.yaml lists the wheels and which to install (yours to edit; a rerun keeps it);
     install.py installs them, naming each by its file, then PROJECT editable. Each dependency PROJECT
     still takes from PyPI is compared with its checkout, file by file; then install.py installs
     PROJECT in an empty venv and every module is imported. Exit 1 when that install or an import
@@ -656,28 +719,38 @@ def wheels_build(
     \b
     aisland wheels build navigaitor
     aisland wheels build navigaitor --include-published --zip
+    aisland wheels build navigaitor --include-project --zip
     aisland wheels build navigaitor --all --commit --json
     aisland wheels build navigaitor --all --force --zip
     aisland wheels build navigaitor --all --zip --no-check
     """
     scope: wheels.WheelsScope = "all" if include_all else "needed" if include_published else "unpublished"
     report = wheels.vendor_wheels(
-        get_workspace_root(), project, scope=scope, commit=commit, make_zip=make_zip, force=force, check=not no_check
+        get_workspace_root(),
+        project,
+        scope=scope,
+        commit=commit,
+        make_zip=make_zip,
+        force=force,
+        check=not no_check,
+        include_project=include_project,
     )
     click.echo(json.dumps(report.to_dict(), indent=2) if as_json else wheels.render_report(report), nl=as_json)
     raise SystemExit(0 if report.ok else 1)
 
 
 @wheels_group.command(name="zip")
-@click.argument("project")
+@click.argument("project", shell_complete=_complete_zippable)
 def wheels_zip(project: str) -> None:
     """Pack PROJECT/wheels as it is into PROJECT/wheels/PROJECT-wheels.zip.
 
     The zip installs with plain Python, from PROJECT's folder on any machine: `python PROJECT-wheels.zip`
-    unpacks it into ./wheels and runs wheels/install.py (every other argument goes to install.py).
+    unpacks it into ./wheels and runs wheels/install.py (every other argument goes to install.py). A folder
+    that installs PROJECT's own wheel (built with --include-project) makes a zip that installs from any folder.
     """
     archive = wheels.zip_wheels(get_workspace_root(), project)
-    click.echo(f"{archive}\ninstall it from the {project} folder with: python {archive.name}")
+    where = "any folder" if wheels.installs_own_wheel(archive.parent) else f"the {project} folder"
+    click.echo(f"{archive}\ninstall it from {where} with: python {archive.name}")
 
 
 @wheels_group.command(name="install", context_settings={"ignore_unknown_options": True})

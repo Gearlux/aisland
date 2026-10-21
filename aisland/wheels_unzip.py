@@ -13,8 +13,10 @@ the zip ``aisland wheels zip`` writes installs with plain Python, from the proje
     python navigaitor-wheels.zip --into ../navigaitor --unpack-only
 
 The folder must be the project's: its ``pyproject.toml`` names the project this zip was built for, or nothing
-is unpacked. The ``*.whl`` already in ``wheels/`` are replaced; any other file there stays. Standard library
-only: it runs before anything is installed.
+is unpacked. A zip that carries the project's own wheel (``aisland wheels build <project> --include-project``)
+needs no source, so it also runs in a folder of no project — any folder without a ``pyproject.toml`` — unless its
+``wheels/`` holds another project's wheels. The ``*.whl`` already in ``wheels/`` are replaced; any other file
+there stays. Standard library only: it runs before anything is installed.
 """
 
 import re
@@ -27,6 +29,10 @@ from typing import List, Optional, Sequence, Tuple
 
 #: The project this zip was built for; the generated copy names it.
 PROJECT = "<project>"
+
+#: Whether this zip installs the project's own wheel, so it needs no source and runs from any folder; the
+#: generated copy says.
+STANDALONE = False
 
 #: The folder inside the zip (and inside the project) that holds the wheels.
 _FOLDER = "wheels"
@@ -66,6 +72,16 @@ def _project_name(pyproject: Path) -> Optional[str]:
     return name if isinstance(name, str) else None
 
 
+def _wheels_project(folder: Path) -> Optional[str]:
+    """The ``project:`` an unpacked ``wheels.yaml`` names (this script reads no YAML: aisland writes the line as
+    a JSON string), or None when the folder has none."""
+    listing = folder / "wheels.yaml"
+    if not listing.is_file():
+        return None
+    match = re.search(r'^project:\s*"([^"]*)"', listing.read_text(encoding="utf-8"), re.MULTILINE)
+    return match.group(1) if match else None
+
+
 def main(argv: Sequence[str], archive: Optional[Path] = None, cwd: Optional[Path] = None) -> int:
     """Unpack, then run install.py with the rest of the line; returns the exit status (2: usage or wrong folder)."""
     archive = archive or Path(__file__).resolve().parent  # run as `python x.zip`, __file__ is x.zip/__main__.py
@@ -75,21 +91,29 @@ def main(argv: Sequence[str], archive: Optional[Path] = None, cwd: Optional[Path
         return 2
     project_dir = Path(into_arg) if into_arg else (cwd or Path.cwd())
     pyproject = project_dir / "pyproject.toml"
-    if not pyproject.is_file():
-        print(
-            f"{archive.name}: run it from the {PROJECT} folder, or name it with --into ({pyproject} is missing)",
-            file=sys.stderr,
-        )
-        return 2
-    found = _project_name(pyproject)
-    if found is None or _canonical(found) != _canonical(PROJECT):
-        print(
-            f"{archive.name}: run it from the {PROJECT} folder, or name it with --into ({pyproject} names {found})",
-            file=sys.stderr,
-        )
+    where = f"the {PROJECT} folder or a folder of no project" if STANDALONE else f"the {PROJECT} folder"
+    if pyproject.is_file():
+        found = _project_name(pyproject)
+        if found is None or _canonical(found) != _canonical(PROJECT):
+            print(
+                f"{archive.name}: run it from {where}, or name it with --into ({pyproject} names {found})",
+                file=sys.stderr,
+            )
+            return 2
+    elif not STANDALONE:
+        print(f"{archive.name}: run it from {where}, or name it with --into ({pyproject} is missing)", file=sys.stderr)
         return 2
     folder = project_dir / _FOLDER
-    folder.mkdir(exist_ok=True)
+    if not pyproject.is_file() and any(folder.glob("*.whl")):
+        owner = _wheels_project(folder)
+        if owner is None or _canonical(owner) != _canonical(PROJECT):
+            print(
+                f"{archive.name}: {folder} holds the wheels of {owner or 'something else'}, which this zip would "
+                f"replace; run it from another folder, or name one with --into",
+                file=sys.stderr,
+            )
+            return 2
+    folder.mkdir(parents=True, exist_ok=True)
     for old in folder.glob("*.whl"):
         old.unlink()
     with zipfile.ZipFile(archive) as zipped:

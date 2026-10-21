@@ -130,6 +130,52 @@ class TestTheCommands:
             f"-e {folder.parent} {folder / 'extra-1.0-py3-none-any.whl'} {folder / 'libb-0.2.0-py3-none-any.whl'}"
         )
 
+    @staticmethod
+    def _with_own(tmp_path: Path, install: bool = True) -> Path:
+        """The folder with the project's own wheel listed last, as `--include-project` writes it."""
+        own = (
+            '  - wheel: "app-0.5.0-py3-none-any.whl"\n    project: "app"\n    commit: "dev/main 4444444"\n'
+            f"    needed: true\n    on_pypi: null\n    install: {'true' if install else 'false'}\n"
+        )
+        folder = _folder(tmp_path, _YAML.replace("not_built: []\n", own + "not_built: []\n"))
+        (folder / "app-0.5.0-py3-none-any.whl").write_text("")
+        return folder
+
+    def test_the_projects_own_wheel_is_installed_in_place_of_its_folder(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        folder = self._with_own(tmp_path)
+        liba, own = folder / "liba-0.1.0-py3-none-any.whl", folder / "app-0.5.0-py3-none-any.whl"
+        assert _dry(folder, capsys) == [f"$ {sys.executable} -m pip install --find-links {folder} {liba} {own}"]
+        assert _dry(folder, capsys, "--only", "libb")[0].endswith(
+            f"--find-links {folder} {folder / 'libb-0.2.0-py3-none-any.whl'} {own}"
+        )
+        assert _dry(folder, capsys, "--all")[0].count(str(own)) == 1, "the own wheel is the project's, listed once"
+        assert _dry(folder, capsys, "--no-project") == [
+            f"$ {sys.executable} -m pip install --find-links {folder} {liba}"
+        ]
+        assert _dry(folder, capsys, "--reinstall")[0].endswith(f"--force-reinstall --no-deps {liba} {own}")
+
+    def test_an_own_wheel_marked_install_false_leaves_the_folder_editable(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        folder = self._with_own(tmp_path, install=False)
+        assert _dry(folder, capsys) == [
+            f"$ {sys.executable} -m pip install --find-links {folder} -e {folder.parent} "
+            f"{folder / 'liba-0.1.0-py3-none-any.whl'}"
+        ]
+
+    def test_a_missing_own_wheel_is_named_with_its_line(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        folder = self._with_own(tmp_path)
+        (folder / "app-0.5.0-py3-none-any.whl").unlink()
+        assert wi.main(["--dry-run"], folder=folder) == 2
+        assert (
+            f"{folder / 'app-0.5.0-py3-none-any.whl'} is listed at wheels.yaml:22 but missing"
+            in capsys.readouterr().err
+        )
+
     def test_no_project_reinstall_and_the_passthrough(self, tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
         folder = _folder(tmp_path)
         wheel = folder / "liba-0.1.0-py3-none-any.whl"

@@ -13,6 +13,7 @@ from __future__ import annotations
 import hashlib
 import importlib.metadata
 import json
+import os
 import subprocess
 import sys
 import zipfile
@@ -776,16 +777,20 @@ class TestTheInstallScript:
             == template.split("# =========================================================================\n")[2]
         )
 
+    @pytest.mark.parametrize("include_project", [False, True])
     @pytest.mark.parametrize("scope", ["unpublished", "needed", "all"])
-    def test_each_files_regenerate_line_is_a_command_the_cli_accepts(self, scope: w.WheelsScope) -> None:
+    def test_each_files_regenerate_line_is_a_command_the_cli_accepts(
+        self, scope: w.WheelsScope, include_project: bool
+    ) -> None:
         """Parsed with the REAL `wheels` command (as the Jenkins scaffold's pin does), never string-matched."""
         from aisland.cli import wheels_build
 
         built = TestWheelsYaml._built()
+        own = _own_wheel() if include_project else None
         files = {
-            "README.md": w.render_readme("navigaitor", scope, built),
-            "wheels.yaml": w.render_wheels_yaml("navigaitor", scope, built, [], {}),
-            "install.py": w.render_install_script("navigaitor", scope),
+            "README.md": w.render_readme("navigaitor", scope, built, own),
+            "wheels.yaml": w.render_wheels_yaml("navigaitor", scope, built, [], {}, own),
+            "install.py": w.render_install_script("navigaitor", scope, include_project),
         }
         expected = {"unpublished": (False, False), "needed": (True, False), "all": (False, True)}[scope]
         for name, text in files.items():
@@ -795,6 +800,106 @@ class TestTheInstallScript:
             context = wheels_build.make_context("build", argv[3:])
             assert context.params["project"] == "navigaitor", name
             assert (context.params["include_published"], context.params["include_all"]) == expected, name
+            assert context.params["include_project"] is include_project, name
+
+
+def _own_wheel() -> w.BuiltWheel:
+    """The target's own wheel, as `--include-project` builds it."""
+    return w.BuiltWheel("navigaitor", "navigaitor", "0.5.0", "dev/main", "abcdef0", "navigaitor-0.5.0-py3-none-any.whl")
+
+
+class TestTheProjectsOwnWheelInTheFiles:
+    """`--include-project` in the generated files: the wheel listed last, installed in place of the folder."""
+
+    def test_wheels_yaml_lists_it_last_installed_and_says_what_that_means(self, tmp_path: Path) -> None:
+        text = w.render_wheels_yaml("navigaitor", "unpublished", TestWheelsYaml._built(), [], {}, _own_wheel())
+        assert "# To regenerate: aisland wheels build navigaitor --include-project\n" in text
+        assert (
+            "# The last wheel is navigaitor's own: while its `install:` is true, it is\n"
+            "# installed in place of navigaitor's folder.\n" in text
+        )
+        (tmp_path / "wheels.yaml").write_text(text)
+        project, entries = wi.read_wheels(tmp_path / "wheels.yaml")
+        assert [(e.project, e.install) for e in entries][-1] == ("navigaitor", True)
+        assert project == "navigaitor"
+
+    def test_a_kept_install_false_for_the_own_wheel_stays(self) -> None:
+        text = w.render_wheels_yaml("navigaitor", "unpublished", [], [], {"navigaitor": False}, _own_wheel())
+        assert text.endswith(
+            '    project: "navigaitor"\n    commit: "dev/main abcdef0"\n    needed: true\n    on_pypi: null\n'
+            "    install: false\nnot_built: []\n"
+        )
+
+    def test_the_readme_lists_it_and_says_it_installs_in_place_of_the_folder(self) -> None:
+        text = w.render_readme("navigaitor", "unpublished", [], _own_wheel())
+        assert "| navigaitor-0.5.0-py3-none-any.whl | navigaitor | dev/main | abcdef0 | yes |" in text
+        assert "navigaitor's own wheel is here too." in text
+        assert "Install navigaitor from its own folder, editable" not in text
+        assert "To regenerate: aisland wheels build navigaitor --include-project\n" in text
+
+    def test_without_it_every_file_is_what_it_was(self) -> None:
+        built = TestWheelsYaml._built()
+        assert w.render_readme("app", "all", built, None) == w.render_readme("app", "all", built)
+        assert w.render_wheels_yaml("app", "all", built, [], {}, None) == w.render_wheels_yaml(
+            "app", "all", built, [], {}
+        )
+        assert "# To regenerate: aisland wheels build app --all\n" in w.render_install_script("app", "all")
+        assert "Install app from its own folder, editable" in w.render_readme("app", "all", built)
+
+
+def _complete(monkeypatch: pytest.MonkeyPatch, root: Optional[Path], line: str) -> List[str]:
+    """What bash's TAB offers for `line` (the word being completed is its last, possibly empty), asked the way
+    the generated completion script asks: `_AISLAND_COMPLETE=bash_complete` with COMP_WORDS/COMP_CWORD."""
+    from aisland import cli
+
+    def _root() -> Path:
+        if root is None:
+            raise RuntimeError("no workspace here")
+        return root
+
+    monkeypatch.setattr(cli, "get_workspace_root", _root)
+    words = line.split(" ")
+    env = {"_AISLAND_COMPLETE": "bash_complete", "COMP_WORDS": line, "COMP_CWORD": str(len(words) - 1)}
+    result = CliRunner().invoke(main, [], env=env, prog_name="aisland")
+    assert result.exit_code == 0, result.output
+    return [item.split(",", 1)[1] for item in result.output.splitlines() if item]
+
+
+class TestShellCompletion:
+    """TAB after `aisland wheels build|zip` and after the short form `aisland wheels` offers the projects."""
+
+    @staticmethod
+    def _root(tmp_path: Path) -> Path:
+        root = _workspace(tmp_path, "app", "libx", "absent", "vendorcli")
+        for name in ("app", "libx", "vendorcli"):
+            _project(root, name)
+        (root / "libx" / "wheels").mkdir()
+        (root / "libx" / "wheels" / "wheels.yaml").write_text('project: "libx"\nwheels: []\n')
+        return root
+
+    def test_build_offers_every_project_checked_out_here(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+        root = self._root(tmp_path)
+        assert _complete(monkeypatch, root, "aisland wheels build ") == ["app", "libx", "vendorcli"]
+        assert _complete(monkeypatch, root, "aisland wheels build sai") == ["vendorcli"]
+
+    def test_zip_offers_only_the_projects_with_a_wheels_folder(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        assert _complete(monkeypatch, self._root(tmp_path), "aisland wheels zip ") == ["libx"]
+
+    def test_the_short_form_offers_the_commands_then_the_projects(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        root = self._root(tmp_path)
+        assert _complete(monkeypatch, root, "aisland wheels ") == ["build", "install", "zip", "app", "libx", "vendorcli"]
+        assert _complete(monkeypatch, root, "aisland wheels sai") == ["vendorcli"]
+        assert "--include-project" in _complete(monkeypatch, root, "aisland wheels vendorcli --inc")
+        options = _complete(monkeypatch, root, "aisland wheels --")
+        assert options and all(option.startswith("--") for option in options)
+
+    def test_a_workspace_that_cannot_be_read_offers_nothing(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        assert _complete(monkeypatch, None, "aisland wheels build ") == []
+        assert _complete(monkeypatch, None, "aisland wheels ") == ["build", "install", "zip"]
 
 
 class TestCli:
@@ -825,7 +930,14 @@ class TestCli:
         asked: List[str] = []
 
         def _vendor(
-            root: Path, project: str, scope: str, commit: bool, make_zip: bool, force: bool, check: bool
+            root: Path,
+            project: str,
+            scope: str,
+            commit: bool,
+            make_zip: bool,
+            force: bool,
+            check: bool,
+            include_project: bool,
         ) -> w.WheelsReport:
             asked.append(scope)
             return _report(import_failures=[])
@@ -862,6 +974,21 @@ class TestCli:
         result = CliRunner().invoke(main, ["wheels", "build", "navigaitor", *flags])
         assert result.exit_code == 0, result.output
         assert asked == [check]
+
+    @pytest.mark.parametrize("flags, include", [([], False), (["--include-project"], True)])
+    def test_include_project_is_handed_to_the_run(
+        self, monkeypatch: pytest.MonkeyPatch, flags: List[str], include: bool
+    ) -> None:
+        asked: List[bool] = []
+
+        def _vendor(root: Path, project: str, **kwargs: Any) -> w.WheelsReport:
+            asked.append(kwargs["include_project"])
+            return _report(import_failures=[])
+
+        monkeypatch.setattr(w, "vendor_wheels", _vendor)
+        result = CliRunner().invoke(main, ["wheels", "build", "navigaitor", *flags])
+        assert result.exit_code == 0, result.output
+        assert asked == [include]
 
     def test_the_groups_help_names_every_option_of_build(self) -> None:
         result = CliRunner().invoke(main, ["wheels", "--help"])
@@ -1114,6 +1241,77 @@ class TestTheRunWithFakedBuilds:
         assert f'    commit: "dev/main {lib_sha}+uncommitted"\n' in yaml_text
         assert f"| lib | dev/main | {lib_sha}+uncommitted |" in (root / "app" / "wheels" / "README.md").read_text()
         assert "  lib\n     M lib/__init__.py\n     D lib/gone.py\n    ?? lib/new.py\n" in w.render_report(report)
+
+    def test_include_project_builds_the_projects_own_wheel_once_and_checks_that_wheel(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        root = self._scoped_workspace(tmp_path, monkeypatch)
+        installs = self._fake_builds(monkeypatch, {"app": "0.5.0"})
+        fake_build = w.build_wheel
+        builds: List[str] = []
+
+        def _counted(uv: str, source: Path, out: Path, timestamp: Optional[int] = None) -> Path:
+            builds.append(source.name)
+            return fake_build(uv, source, out, timestamp)
+
+        monkeypatch.setattr(w, "build_wheel", _counted)
+
+        report = w.vendor_wheels(root, "app", include_project=True)
+
+        # pubdep is built to compare it with PyPI's; app once, the check installing the wheel just built.
+        assert builds == ["libx", "app", "pubdep"]
+        assert [b.project for b in report.built] == ["libx"]
+        app_sha = _git(root / "app", "rev-parse", "--short", "HEAD").strip()
+        own = report.project_wheel
+        assert own is not None and (own.project, own.version, own.commit) == ("app", "0.5.0", app_sha)
+        assert installs == [("app", "libx")]
+        folder = root / "app" / "wheels"
+        assert sorted(p.name for p in folder.glob("*.whl")) == [
+            "app-0.5.0-py3-none-any.whl",
+            "libx-0.1.0-py3-none-any.whl",
+        ]
+        assert report.wheels_bytes == sum(p.stat().st_size for p in folder.glob("*.whl"))
+        project, entries = wi.read_wheels(folder / "wheels.yaml")
+        assert (project, [(e.project, e.install) for e in entries]) == ("app", [("libx", True), ("app", True)])
+        assert "To regenerate: aisland wheels build app --include-project\n" in (folder / "install.py").read_text()
+        text = w.render_report(report)
+        assert "app needs 1 workspace project that is not on PyPI. Its wheel is in app/wheels" in text
+        assert (
+            f"app's own wheel (--include-project), installed in place of its folder:\n  app  0.5.0  dev/main {app_sha}\n"
+            in text
+        )
+        assert report.to_dict()["project_wheel"]["wheel"] == "app-0.5.0-py3-none-any.whl"
+
+    def test_without_include_project_the_project_has_no_wheel_in_the_folder(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        root = self._scoped_workspace(tmp_path, monkeypatch)
+        self._fake_builds(monkeypatch, {})
+
+        report = w.vendor_wheels(root, "app")
+
+        assert report.project_wheel is None
+        assert sorted(p.name for p in (root / "app" / "wheels").glob("*.whl")) == ["libx-0.1.0-py3-none-any.whl"]
+        assert "own wheel" not in w.render_report(report)
+
+    def test_include_project_refuses_the_project_dirty_and_force_builds_it_as_it_is(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        root = self._scoped_workspace(tmp_path, monkeypatch)
+        self._fake_builds(monkeypatch, {})
+        (root / "app" / "app" / "new.py").write_text("")
+        # The folder the command writes is no change of app's code: it is never listed.
+        (root / "app" / "wheels").mkdir()
+        (root / "app" / "wheels" / "notes.txt").write_text("mine")
+
+        with pytest.raises(click.ClickException, match=r"app has changes no commit holds(.|\n)*\?\? app/new\.py"):
+            w.vendor_wheels(root, "app", include_project=True)
+        report = w.vendor_wheels(root, "app", include_project=True, force=True)
+
+        own = report.project_wheel
+        assert own is not None and own.commit.endswith("+uncommitted") and own.uncommitted == ["?? app/new.py"]
+        assert "Built with changes no commit holds (--force)" in w.render_report(report)
+        assert "  app\n    ?? app/new.py\n" in w.render_report(report)
 
     def test_a_rerun_keeps_the_install_the_user_chose(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
         root = self._scoped_workspace(tmp_path, monkeypatch)
@@ -1605,3 +1803,45 @@ class TestEndToEnd:
         assert [(b.project, b.needed) for b in report.built] == [("libx", True), ("pubdep", True), ("unrelated", False)]
         assert report.ok, w.render_report(report)
         assert "unrelated" not in report.imported
+
+    def test_include_project_ships_the_project_as_a_wheel_that_installs_from_a_folder_of_no_project(
+        self, tmp_path: Path, offline_uv: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """The check installs app's own wheel; then the zip, run with plain Python in a folder holding no project,
+        installs app into a fresh venv from its wheel — no source anywhere near it."""
+        ws = _end_to_end_workspace(tmp_path, offline_uv, monkeypatch, released_new=True)
+
+        report = w.vendor_wheels(ws, "app", include_project=True, make_zip=True)
+
+        assert report.ok, w.render_report(report)
+        assert report.project_wheel is not None and report.project_wheel.wheel == "app-0.1.0-py3-none-any.whl"
+        assert report.imported == ["app", "app.core", "app.labelling", "libx"]
+        assert report.zip_standalone
+        uv = Path(sys.executable).with_name("uv")
+        anywhere, venv = tmp_path / "anywhere", tmp_path / "other-env"
+        anywhere.mkdir()
+        subprocess.run([str(uv), "venv", "--quiet", "--python", sys.executable, str(venv)], check=True, cwd=anywhere)
+        python = venv / "bin" / "python"
+        env = {k: v for k, v in os.environ.items() if k != "PYTHONPATH"}
+        env["PATH"] = os.pathsep.join([str(uv.parent), env.get("PATH", "")])
+        archive = ws / "app" / "wheels" / "app-wheels.zip"
+        index = ["--quiet", "--no-index", "--find-links", str(offline_uv)]
+
+        done = subprocess.run(
+            [str(python), str(archive), "--installer", "uv", "--", *index],
+            cwd=anywhere,
+            env=env,
+            capture_output=True,
+            text=True,
+        )
+
+        assert done.returncode == 0, done.stderr
+        found = subprocess.run(
+            [str(python), "-c", "import app.core, app; print(app.__file__)"],
+            cwd=anywhere,
+            env=env,
+            capture_output=True,
+            text=True,
+        )
+        assert found.returncode == 0, found.stderr
+        assert Path(found.stdout.strip()).is_relative_to(venv), "app comes from its wheel, installed in the venv"
