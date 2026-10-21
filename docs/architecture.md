@@ -2219,7 +2219,7 @@ when a git repository already marks one).
 
 - A checkout's behaviour is pinned path by path (`tests/test_locations.py`), so a change that lets
   the cwd leak into checkout mode fails there.
-- From a wheel, the aliases point into the venv: recreating it needs `aisland git aliases`.
+- From a wheel, the aliases point into the venv: recreating it needs `aisland setup` again, which installs them.
 - aisland's own system tools (process-compose, Homebrew's bash) come from its `pyproject.toml`
   `sys-dependencies`, which a wheel workspace does not discover: they are the user's to install.
 - The editor template is written for `acme`; its name is replaced by the workspace's, so the
@@ -2299,12 +2299,12 @@ does not).
 - From a folder that is neither a project nor its parent (`acme/docs`), there is no workspace:
   `AISLAND_WORKSPACE` names it.
 - The clones' aliases name the scripts and the root by path: moving the workspace or recreating the
-  venv needs `aisland git aliases` again.
+  venv needs `aisland setup` again.
 
 ### Example
 
 ```text
-$ cd acme/beta && aisland git aliases
+$ cd acme/beta && aisland setup        # among its steps:
 ==> Configuring Git Aliases (no .gitmodules: the clones alpha, beta)...
 $ git pull-all
 fetching 2 repositories…

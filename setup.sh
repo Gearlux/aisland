@@ -166,11 +166,7 @@ echo "==> Installing shell completion"
 "$VENV_DIR/bin/aisland" completion install \
     || echo "    (completion install failed; non-fatal — re-run 'aisland completion install')"
 
-# 6. Initialize Git Configuration
-echo "==> Setting up Git configurations..."
-bash "$WORKSPACE_ROOT/aisland/aisland/git/setup_git.sh"
-
-# 7. Link workspace .vscode/tasks.json to aisland/tasks.json so the integrated
+# 6. Link workspace .vscode/tasks.json to aisland/tasks.json so the integrated
 # Simple Browser shortcuts (Jenkins, MLflow, LabelStudio, FiftyOne, ...) are
 # available in every fresh checkout. The canonical, version-controlled copy
 # lives in aisland/tasks.json; idempotent `ln -sf` replaces any pre-existing

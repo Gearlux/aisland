@@ -78,7 +78,9 @@ The workspace's dev-infrastructure CLI, `aisland` (click, `aisland/cli.py`):
 - `harness.py` + `harness/`: the agent harness — the workspace commands, their helper script and the generic
   agent rules — installed into every workspace's `.agents/` by `aisland setup` and `aisland workspace init`.
 - `aisland/git/setup_git.sh`: the workspace git aliases, local config of the root and every active
-  submodule; `pull-all` runs `git_pull_all.sh`. `aisland git aliases` runs it with the root.
+  submodule; `pull-all` runs `git_pull_all.sh`. `aisland setup` runs it with the root on every run, whichever
+  way aisland is installed, and `workspace init` once; there is no command of its own (user request 2026-10-21:
+  fewer commands; `tests/test_setup_installs_git_aliases.py`).
 
 Invariants: only supervisor-started services exist (one started elsewhere is invisible; the
 start-time port pre-flight naming the PID is the only signal). All service state lives under

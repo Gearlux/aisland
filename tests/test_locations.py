@@ -224,27 +224,7 @@ def test_setup_from_a_wheel_without_a_venv_says_how_to_make_one(
     )
 
 
-# --- `aisland git aliases` ----------------------------------------------------------------------------------------
-
-
-@pytest.mark.parametrize("succeeded, exit_code", [(True, 0), (False, 1)])
-def test_the_aliases_command_exits_with_the_script_s_result(
-    monkeypatch: pytest.MonkeyPatch, succeeded: bool, exit_code: int
-) -> None:
-    from click.testing import CliRunner
-
-    from aisland import cli
-
-    seen: list = []
-
-    def install(root: Path) -> bool:
-        seen.append(root)
-        return succeeded
-
-    monkeypatch.setattr(cli, "install_git_aliases", install)
-    result = CliRunner().invoke(cli.main, ["git", "aliases"])
-    assert result.exit_code == exit_code
-    assert seen == [WORKSPACE]
+# --- the git aliases' install -----------------------------------------------------------------------------------
 
 
 def test_a_failing_alias_install_shows_the_script_s_output_when_quiet(

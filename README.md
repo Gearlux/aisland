@@ -34,8 +34,8 @@ All ports are configurable via `--port` flag.
 for project provisioning, installs shell completion for every workspace
 CLI into a workspace-local `.project.bashrc.completion`
 file (sourced by `project.bashrc`, gitignored — so the user's global
-`~/.bashrc` stays clean and re-running setup never dirties the tree),
-and finally runs `aisland/aisland/git/setup_git.sh` to configure submodule + git aliases.
+`~/.bashrc` stays clean and re-running setup never dirties the tree).
+`aisland setup` itself installs the git aliases (`git pull-all`, …) on every run.
 
 ### Another workspace: aisland from a wheel (`aisland workspace init`)
 
@@ -172,9 +172,9 @@ $ aisland status
 Error: No workspace here: /Users/you/Downloads is in no git repository and holds no project. Run aisland in your workspace or one of its projects, set AISLAND_WORKSPACE to it, or create one with `aisland workspace init <folder>`.
 ```
 
-From a wheel, `aisland setup` also installs the git aliases (`git pull-all`, …), which then name
-the scripts by their place in the venv: after recreating the venv, re-point them with
-`aisland git aliases`. The editor file names the workspace's own folder
+From a wheel, the git aliases `aisland setup` installs (`git pull-all`, …) name the scripts by
+their place in the venv: after recreating the venv or installing a new aisland, run
+`aisland setup` again. The editor file names the workspace's own folder
 (`${workspaceFolder:acme}`, the `acme-bash` terminal profile) and takes the bash on `PATH` when
 the template's is missing on the machine. aisland's own system tools (process-compose for the
 services, Homebrew's bash) are not provisioned from a wheel; install them yourself before
@@ -199,8 +199,7 @@ beta needs 1 workspace project that is not on PyPI. Its wheel is in beta/wheels 
   alpha  0.1.0  main 3a126e4
 ```
 
-The workspace git aliases work over the clones: `aisland git aliases` (or `aisland setup` from a
-wheel) installs them into every clone, and the root when it is a repository. Each clone
+The workspace git aliases work over the clones: `aisland setup` installs them into every clone, and the root when it is a repository. Each clone
 merges and pushes its OWN branch — independent clones share none — and the root goes last; there
 are no pointers to record:
 

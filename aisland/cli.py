@@ -16,7 +16,6 @@ from aisland.manager import (
     generate_gemini_settings,
     generate_mcp_json,
     get_workspace_root,
-    install_git_aliases,
     provision_system,
     reconcile_submodules,
     run_quality_gates,
@@ -275,25 +274,6 @@ def color_unset(role: Optional[editor.ColorRole]) -> None:
         editor.set_color(root, role, None)
     manager.write_code_workspace(root)
     click.echo(f"==> {role.capitalize() if role else 'Background and foreground'}: the theme's")
-
-
-# --- Git Commands ---
-
-
-@main.group("git")
-def git_group() -> None:
-    """The workspace git aliases (git pull-all, git push-all, ...)."""
-
-
-@git_group.command("aliases")
-def git_aliases() -> None:
-    """Install the workspace git aliases into the local config of the root and every active submodule.
-
-    From a checkout setup.sh does this; from a wheel `aisland setup` and `aisland workspace init` do, and this
-    command re-points them at the package after the venv is recreated.
-    """
-    if not install_git_aliases(get_workspace_root()):
-        raise SystemExit(1)
 
 
 # --- Notebook Commands ---

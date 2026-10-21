@@ -1765,9 +1765,9 @@ def setup_workspace(
     #    installed to be asked.
     write_code_workspace(workspace_root)
 
-    # 6. From a wheel, the git aliases — a checkout gets them from setup.sh, which a wheel does not carry.
-    if not locations.FROM_CHECKOUT:
-        install_git_aliases(workspace_root)
+    # 6. The git aliases, however aisland is installed: from a wheel they name the scripts by their path in the venv,
+    #    so a recreated venv or a new aisland is pointed at by the next setup; a newly activated submodule gets them.
+    install_git_aliases(workspace_root)
 
     click.echo("==> Workspace setup complete!")
 
@@ -1780,7 +1780,7 @@ def install_git_aliases(workspace_root: Path, quiet: bool = False) -> bool:
     """Install the workspace git aliases into the local config of ``workspace_root`` and each active submodule.
 
     Runs the packaged ``setup_git.sh`` with the root as its argument, so the scripts need not sit in the workspace:
-    from a wheel the aliases name them by their path in ``site-packages`` (re-run this after recreating the venv).
+    from a wheel the aliases name them by their path in ``site-packages`` (`aisland setup` runs it every time).
     Returns whether the script succeeded. Its output is passed through, or with ``quiet`` shown only on a failure.
     """
     result = subprocess.run(
