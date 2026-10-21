@@ -297,8 +297,24 @@ def test_the_shell_runs_in_a_terminal_and_its_status_comes_back(fake: Path, outp
     assert (fake / "connect.args").read_text() == "swift-dog-1.use"
 
 
+def test_the_shell_reads_its_interactive_start_up_file_and_is_no_login_shell(
+    fake: Path, output: Any, tmp_path: Path
+) -> None:
+    """As an editor's terminal starts it: ``~/.bashrc`` (or ``~/.zshrc``) runs — the colour prompt and
+    ``ls --color`` live there — whether or not the machine's ``~/.profile`` loads it."""
+    home = tmp_path / "home"
+    for rc in (".bashrc", ".zshrc"):
+        (home / rc).write_text("export FROM_RC=read\n")
+    (home / ".profile").write_text("export FROM_PROFILE=read\n")
+    _connect("box-one", 'echo "zero=$0 rc=$FROM_RC profile=$FROM_PROFILE"; exit\n', output)
+    line = next(text for text in _text(output[0]).splitlines() if text.startswith("zero="))
+    assert "rc=read" in line
+    assert "profile=read" not in line
+    assert not line.startswith("zero=-"), line  # a login shell's $0 starts with a dash
+
+
 def test_the_shell_starts_in_the_home_folder(fake: Path, output: Any) -> None:
-    _, home = tunnel_shell.login_shell()
+    _, home = tunnel_shell.account_shell()
     _connect("box-one", "pwd; exit\n", output)
     assert os.path.realpath(home) in _text(output[0])
 

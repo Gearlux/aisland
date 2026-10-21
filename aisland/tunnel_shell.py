@@ -1,11 +1,10 @@
-"""The terminal on the far side of ``aisland tunnel connect``: a login shell in a pseudo-terminal.
+"""The terminal on the far side of ``aisland tunnel connect``: the account's shell in a pseudo-terminal.
 
 The tunnel's ``spawn`` request starts a program on the remote machine with three plain pipes —
 stdin, stdout, stderr — and no terminal (measured on a remote box: ``tty`` printed ``not a tty``).
 A shell on pipes has no line editing, no job control, no Ctrl-C and no window size, so ``vim`` and
 ``top`` do not work. This module is the program ``connect`` spawns instead: it opens a
-pseudo-terminal, starts the account's login shell in it, and relays between the pipes and the
-terminal.
+pseudo-terminal, starts the account's shell in it, and relays between the pipes and the terminal.
 
 Two decisions follow from where it runs:
 
@@ -20,7 +19,11 @@ Two decisions follow from where it runs:
   back carries only the terminal's output, so stdout is the raw bytes.
 
 The shell comes from the account's password entry, not ``$SHELL``: the tunnel starts programs with
-an empty ``$SHELL`` (measured). It starts in the home folder unless a folder is given.
+an empty ``$SHELL`` (measured). It starts in the home folder unless a folder is given, and it is
+started **interactive, not as a login shell** — as an editor's terminal starts it on Linux — so it reads
+``~/.bashrc`` (``~/.zshrc``), where the colour prompt and ``ls --color`` live. A login shell reads
+``~/.profile`` instead, and a box whose ``~/.profile`` does not load ``~/.bashrc`` (measured on one)
+then had neither. The tunnel's own environment already carries the login's PATH.
 """
 
 from __future__ import annotations
@@ -89,7 +92,7 @@ def set_size(fd: int, rows: int, cols: int) -> None:
     fcntl.ioctl(fd, termios.TIOCSWINSZ, struct.pack("HHHH", rows, cols, 0, 0))
 
 
-def login_shell() -> Tuple[str, str]:
+def account_shell() -> Tuple[str, str]:
     """The account's shell and home folder, from its password entry."""
     entry = pwd.getpwuid(os.getuid())
     return entry.pw_shell or "/bin/sh", entry.pw_dir or "/"
@@ -147,10 +150,10 @@ def relay(child: int, master: int, stdin: int = 0, stdout: int = 1) -> int:
 
 
 def main(argv: List[str]) -> int:
-    """``rows cols [folder]``: run the login shell in a terminal of that size, in that folder."""
+    """``rows cols [folder]``: run the account's shell in a terminal of that size, in that folder."""
     rows, cols = int(argv[0]), int(argv[1])
     folder: Optional[str] = argv[2] if len(argv) > 2 and argv[2] else None
-    shell, home = login_shell()
+    shell, home = account_shell()
     start = folder or home
     if not os.path.isdir(start):
         sys.stderr.write(f"aisland: no such folder on the remote machine: {start}\n")
@@ -159,7 +162,7 @@ def main(argv: List[str]) -> int:
     if child == 0:  # pragma: no cover - the child replaces itself with the shell
         os.chdir(start)
         os.environ["SHELL"] = shell
-        os.execv(shell, ["-" + os.path.basename(shell)])
+        os.execv(shell, [os.path.basename(shell), "-i"])
     set_size(master, rows, cols)
     return relay(child, master)
 

@@ -2578,10 +2578,15 @@ stdin echoed back through `cat`.
   `streams_started`, `stream_data`, `stream_ended` and the spawn's result `{message, exit_code}`. `msgpack` is the
   `[connect]` extra: only the connecting machine needs it.
 - **A real terminal on the far side, from a helper sent as source** (`tunnel_shell.py`): `spawn` gives pipes, so the
-  program spawned is `python3 -c <the helper's source>`, which opens a pseudo-terminal and runs the account's login
-  shell (from its password entry — `$SHELL` is empty there) in the home folder or `--cwd`. The box needs a Python and
+  program spawned is `python3 -c <the helper's source>`, which opens a pseudo-terminal and runs the account's shell
+  (from its password entry — `$SHELL` is empty there) in the home folder or `--cwd`. The box needs a Python and
   nothing else; the helper imports only the standard library. Its stdin is framed — one-byte kind, four-byte length —
   so one stream carries keystrokes and window sizes; its stdout is the terminal's bytes.
+- **The shell is interactive, not a login shell** (user choice 2026-10-21), as an editor's terminal starts it on
+  Linux. Started as a login shell it read `~/.profile` only, and on a box whose `~/.profile` was trimmed of the block
+  that loads `~/.bashrc` it had no colour prompt and no `ls --color` (measured: `PS1` was `/etc/bash.bashrc`'s,
+  `alias ls` not found); interactive, `~/.bashrc` runs. `~/.profile`'s PATH lines are not lost: the tunnel's
+  environment, inherited from the shell `aisland tunnel start` ran in, already carries them.
 - **When the input ends the shell gets Ctrl-D, not a hang-up**, so what was typed before still runs; a program that
   ignores it is hung up 10 s later.
 - **A taken port 31545 is refused**, naming its process: a forward started by hand reaches a machine nothing names.

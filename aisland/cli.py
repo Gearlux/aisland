@@ -2119,7 +2119,8 @@ def tunnel_connect(ctx: click.Context, target: Optional[str], folder: Optional[s
     """A terminal on a remote machine, through the VS Code tunnel `aisland tunnel start` runs there.
 
     Run it on YOUR machine. With no name it lists the VS Code tunnels of your account; with one it
-    opens your login shell over there, in a real terminal (editors, Ctrl-C and resizing work), and
+    opens your shell over there, in a real terminal (editors, Ctrl-C, resizing and your ~/.bashrc's
+    colours work), and
     exits with the shell's status:
 
     \b
