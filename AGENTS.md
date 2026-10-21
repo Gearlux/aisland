@@ -17,7 +17,8 @@ is push-only, fast-forward-only, and copies the primary · [wheel-mode] from a c
 is found from aisland's place, from a wheel from where it runs · [folders-as-submodules] a folder of
 projects is a workspace, its subfolders read as submodules · [workspace-file] a workspace is written down in a
 file a machine without aisland reads · [harness] every workspace gets aisland's agent commands and rules · [editor] the editor's theme and colours are a per-machine choice laid over the
-generated workspace file.
+generated workspace file ·
+[tunnel-terminal] a terminal on the remote machine rides the VS Code tunnel it already runs.
 
 ## Current state
 
@@ -57,6 +58,16 @@ The workspace's dev-infrastructure CLI, `aisland` (click, `aisland/cli.py`):
   (it has none; the sign-in runs first, separately). The remembered workspaces back `open`'s shell
   completion — aisland's first dynamic completion — so every reader of that file treats a bad file
   as empty rather than raising.
+- `tunnel_connect.py` + `tunnel_shell.py`: `aisland tunnel connect`, a terminal through the SAME VS Code tunnel
+  (user request 2026-10-21: no sshd on the box, no second tunnel). [tunnel-terminal] `devtunnel connect` on the
+  connecting machine forwards the tunnel's control port 31545; aisland's MessagePack client (`msgpack`, the
+  `[connect]` extra) `spawn`s `tunnel_shell.py` FROM ITS SOURCE (`python3 -c`), which runs the login shell in a
+  pseudo-terminal. `tunnel_shell.py` imports the standard library only — the box has a Python, not aisland
+  (`tests/test_tunnel_connect.py::test_the_helper_runs_on_a_python_without_site_packages`). A taken port 31545 is
+  refused, never reused (`::test_a_taken_control_port_is_refused_naming_its_process`); the forward aisland starts is
+  always stopped (`::test_the_forward_is_stopped_when_the_shell_ends`); raw mode is entered with `TCSADRAIN`, never
+  `tty.setraw`'s default flush, which drops typeahead (`::test_the_local_terminal_is_put_back_as_it_was`). The
+  control protocol is the VS Code CLI's: `tests/fake_devtunnel.py` speaks it and changes with it.
 - `services/`: `jenkins` (incl. `aisland jenkins scaffold`), `mlflow`, `labelstudio`,
   `fiftyone`, `aim`, `swiftbar` run under the supervisor; `docker` (Colima), `clearml`,
   `iqengine` run under Docker.

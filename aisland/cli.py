@@ -8,6 +8,7 @@ from click.shell_completion import CompletionItem
 from aisland import editor, locations, manager, nightly, pytest_stats
 from aisland import supervisor as supervisor_mod
 from aisland import tunnel as tunnel_mod
+from aisland import tunnel_connect as tunnel_connect_mod
 from aisland import wheels
 from aisland import workspace as workspace_mod
 from aisland.clean import DEFAULT_KEEP_DAYS
@@ -1961,6 +1962,11 @@ def tunnel() -> None:
     \b
         aisland tunnel open WS<TAB>
 
+    A terminal instead of the editor — the same tunnel, nothing added on the remote machine:
+
+    \b
+        aisland tunnel connect WS<TAB>
+
     `list` shows what is remembered, `clear` forgets one or all of them, and `status` says whether a
     tunnel runs on this machine, under which name and which account. None of this is part of
     `aisland start` / `stop`: a tunnel into your own laptop is nobody's intent, so it runs only where
@@ -2097,6 +2103,44 @@ def tunnel_clear(names_or_urls: Tuple[str, ...], clear_all: bool, yes: bool) -> 
             "Not remembered: " + ", ".join(f"'{name}'" for name in unknown) + " (`aisland tunnel list` shows what is)."
         )
     click.echo(f"{len(tunnel_mod.load_store())} workspace(s) remembered.")
+
+
+@tunnel.command(name="connect")
+@click.argument("target", required=False, shell_complete=tunnel_connect_mod.complete_tunnel)
+@click.option(
+    "--cwd",
+    "folder",
+    default=None,
+    help="Folder on the remote machine to start the shell in. Default: your home folder there.",
+)
+@click.option("--json", "as_json", is_flag=True, help="With no tunnel named: the list, machine-readable.")
+@click.pass_context
+def tunnel_connect(ctx: click.Context, target: Optional[str], folder: Optional[str], as_json: bool) -> None:
+    """A terminal on a remote machine, through the VS Code tunnel `aisland tunnel start` runs there.
+
+    Run it on YOUR machine. With no name it lists the VS Code tunnels of your account; with one it
+    opens your login shell over there, in a real terminal (editors, Ctrl-C and resizing work), and
+    exits with the shell's status:
+
+    \b
+        aisland tunnel connect
+        aisland tunnel connect WS<TAB>
+        aisland tunnel connect WS --cwd /mnt/workspace
+
+    Nothing is added on the remote machine: no sshd, no second tunnel. This machine needs Microsoft's
+    `devtunnel`, signed in with the account the remote tunnel runs under (`devtunnel user login`, or
+    `-g` for GitHub), and the [connect] extra (pip install 'aisland[connect]').
+    """
+    if target is None:
+        tunnels = tunnel_connect_mod.list_tunnels()
+        if as_json:
+            click.echo(json.dumps(tunnel_connect_mod.tunnels_payload(tunnels), indent=2))
+            return
+        click.echo(tunnel_connect_mod.render_tunnels(tunnels))
+        return
+    if as_json:
+        raise click.UsageError("--json lists the tunnels; it takes no tunnel name.")
+    ctx.exit(tunnel_connect_mod.connect(target, folder=folder))
 
 
 @tunnel.command(name="status")

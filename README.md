@@ -926,6 +926,34 @@ you would rather say it than be asked:
 aisland tunnel open 'https://<host>/<workspace>-prod/?folder=/mnt/workspace' --name <workspace>
 ```
 
+A terminal instead of the editor goes through the same tunnel — no sshd and nothing else on the
+remote machine. On your own machine it needs Microsoft's `devtunnel`, signed in with the account the
+remote tunnel runs under, and the `[connect]` extra:
+
+```bash
+brew install --cask devtunnel        # Linux: curl -sL https://aka.ms/DevTunnelCliInstall | bash
+devtunnel user login                 # -g for a GitHub account
+pip install 'aisland[connect]'
+```
+
+```bash
+aisland tunnel connect                                   # your VS Code tunnels
+aisland tunnel connect <workspace>                       # your login shell there, in your home folder
+aisland tunnel connect <workspace> --cwd /mnt/workspace  # … starting in that folder
+```
+
+```
+$ aisland tunnel connect
+NAME            TUNNEL ID                MACHINE
+<workspace>     swift-dog-64l000z.use    online
+Connect with: aisland tunnel connect <name>   (TAB completes)
+```
+
+The shell runs in a real terminal there — editors, Ctrl-C and resizing work — and `connect` exits with
+its status. Each session forwards the tunnel's control port, 31545, to this machine and closes the
+forward when the shell ends, so one session runs at a time; a `devtunnel connect` you started by hand
+holds that port and is named in the error until you stop it.
+
 `aisland tunnel status` reports the name the tunnel registered under and the account it holds — the
 two things to compare when the editor cannot find a tunnel that is running.
 
