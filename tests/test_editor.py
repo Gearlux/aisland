@@ -342,6 +342,8 @@ CODE_BACKGROUND = [
     "terminal.background",
 ]
 CODE_FOREGROUND = ["foreground", "editor.foreground", "sideBar.foreground", "terminal.foreground"]
+SIDEBAR_BACKGROUND = ["sideBar.background", "sideBarSectionHeader.background"]
+SIDEBAR_FOREGROUND = ["sideBar.foreground", "sideBarTitle.foreground"]
 
 
 def test_the_named_colours_are_the_148_of_css_color_4() -> None:
@@ -409,6 +411,28 @@ def test_area_both_colours_the_code_too_and_is_kept_for_later_colours(repo: Path
     assert set(_settings(repo)["workbench.colorCustomizations"]) == set(FRAME_BACKGROUND + FRAME_FOREGROUND)
 
 
+def test_area_sidebar_colours_the_frame_and_the_side_bar_and_leaves_the_code_to_the_theme(repo: Path) -> None:
+    """The side bar's title and section headers too: left out, each keeps the theme's colour as a stripe."""
+    result = _run("color", "set", "background", "navy", "--area", "sidebar")
+    assert result.exit_code == 0, result.output
+    assert "Background: navy (#000080), on the window frame and the side bar (this machine only)" in result.output
+    assert _run("color", "set", "foreground", "white").exit_code == 0  # no --area: the kept one
+    assert _settings(repo)["workbench.colorCustomizations"] == {
+        **{key: "#000080" for key in FRAME_BACKGROUND + SIDEBAR_BACKGROUND},
+        **{key: "#ffffff" for key in FRAME_FOREGROUND + SIDEBAR_FOREGROUND},
+    }
+    assert _local_config(repo).splitlines() == [
+        "aisland.editor.background navy",
+        "aisland.editor.area sidebar",
+        "aisland.editor.foreground white",
+    ]
+
+
+def test_area_sidebar_is_listed_in_the_colour_tables_header(repo: Path) -> None:
+    assert _run("color", "set", "background", "navy", "--area", "sidebar").exit_code == 0
+    assert _run("color", "list", "navy").output.splitlines()[0].endswith("area: sidebar")
+
+
 def test_color_unset_one_role_keeps_the_other(repo: Path) -> None:
     assert _run("color", "set", "background", "navy").exit_code == 0
     assert _run("color", "set", "foreground", "white").exit_code == 0
@@ -429,7 +453,11 @@ def test_color_unset_without_a_role_gives_every_colour_back_to_the_theme(repo: P
     ("key", "value", "warning"),
     [
         ("background", "bluish", "  - Warning: ignoring aisland.editor.background: 'bluish' is not a colour"),
-        ("area", "everywhere", "  - Warning: ignoring aisland.editor.area: 'everywhere' is not one of frame, both"),
+        (
+            "area",
+            "everywhere",
+            "  - Warning: ignoring aisland.editor.area: 'everywhere' is not one of frame, sidebar, both",
+        ),
     ],
 )
 def test_a_hand_edited_value_that_cannot_be_read_is_ignored_with_a_warning(

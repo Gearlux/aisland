@@ -17,7 +17,7 @@ is push-only, fast-forward-only, and copies the primary · [wheel-mode] from a c
 is found from aisland's place, from a wheel from where it runs · [folders-as-submodules] a folder of
 projects is a workspace, its subfolders read as submodules · [workspace-file] a workspace is written down in a
 file a machine without aisland reads · [harness] every workspace gets aisland's agent commands and rules · [editor] the editor's theme and colours are a per-machine choice laid over the
-generated workspace file · [aliases] a link to a folder of the workspace is a short name, never a project ·
+generated workspace file · [mcp-server] aisland's tools are its own server, a chosen set · [aliases] a link to a folder of the workspace is a short name, never a project ·
 [tunnel-terminal] a terminal on the remote machine rides the VS Code tunnel it already runs.
 
 ## Current state
@@ -31,6 +31,8 @@ The workspace's dev-infrastructure CLI, `aisland` (click, `aisland/cli.py`):
   then `[projects]`: each project's folder, `url`, `branch`), and `aisland workspace init <folder>`, a new
   workspace (its starting files, the `--from` file's projects and the `--add`
   submodules, the git aliases).
+- `server.py`: `aisland-mcp`, aisland's MCP server (the `[mcp]` extra) — a chosen set of tools, listed in
+  `.mcp.json` by setup's discovery.
 - `editor.py`: `aisland workspace theme|color`, this machine's VS Code theme and colours (`css_colors.py`: the CSS
   names), kept in `.git/config` and laid over the generated workspace file.
 - `config.py`: the one committed `config.toml`, written through `sources.py`
@@ -292,6 +294,21 @@ Root `AGENTS.md` "Two Test Runs" (user ruling 2026-10-05). [test-stats]
 - `.gemini/settings.json` and `.mcp.json` keep ABSOLUTE venv paths (clients launch from any
   cwd). MCP discovery matches a `<pkg>.server:main` whose module imports `mcp.server`, never a
   class name.
+- **aisland's MCP server is aisland's own, never navigaitor's (user ruling 2026-10-21).** [mcp-server] `aisland-mcp`
+  (`server.py`, the `[mcp]` extra — never a base dependency) serves a CHOSEN set of tools (user choice 2026-10-21):
+  reading `doctor`, `tests_report`, `editor_themes`, `editor_colors`, `sources`, `services_status`, `tunnel_list`;
+  changing (`destructive_hint=False`) `editor_set_theme`, `editor_set_color`, `editor_unset` and
+  `service_start|stop|restart` for `jenkins` and `mlflow` ONLY. Never a tool for what prompts, runs for minutes or
+  deletes (`setup`, `clean`, `backups prune`, `* reset`, `jenkins init`, `source set`), and never every click
+  command generated as tools. A tool returns ONE JSON object — the data its command prints with `--json`, from the
+  same function; a service tool runs the `aisland` command itself (`_run_aisland`: this interpreter, `-P`, the
+  workspace root). An anticipated refusal (a `ToolRefusal`, aisland's own `click.ClickException`) is raised as the
+  SDK's `ToolError` (`_refusals_reach_the_client`): from mcp 2.1 any other exception reaches the client as `Error
+  executing tool <name>` alone (`::test_an_anticipated_refusal_reaches_the_client_as_a_tool_error_in_its_own_words`).
+  Not a copy of `_LLMSafeMCPServer` (no confluid here): a plain `MCPServer` with the
+  resources/prompts handlers dropped. (`tests/test_server.py::test_the_tools_are_the_agreed_set`,
+  `::test_a_reading_tool_says_it_only_reads_and_a_changing_one_that_it_destroys_nothing`,
+  `::test_over_stdio_a_print_goes_to_stderr_and_the_tools_still_answer`)
 - **Every MCP server is started with the workspace's environment (user request 2026-10-21).**
   With a `project.bashrc` at the root and bash on PATH, each entry of both client files is
   `bash -c 'source "$0" >/dev/null; exec "$@"' <root>/project.bashrc <server>`

@@ -38,7 +38,9 @@ requires-python = ">=3.12"
 # `aisland tunnel connect` speaks the VS Code tunnel's MessagePack messages (aisland/tunnel_connect.py);
 # only the machine you connect FROM needs it, so it stays out of the base install.
 connect = ["msgpack>=1.2"]
-# What CI installs (`.[dev]`): the [connect] extra's msgpack, so its tests run — spelled out, not
+# `aisland-mcp`, the MCP server (aisland/server.py): only a machine whose AI client calls aisland's tools needs it.
+mcp = ["mcp>=2.0"]
+# What CI installs (`.[dev]`): the [connect] and [mcp] extras' packages, so their tests run — spelled out, not
 # `<name>[connect]`, so the line never depends on the distribution's name.
 dev = ["msgpack>=1.2"]
 
@@ -49,6 +51,8 @@ Issues = "https://github.com/Gearlux/aisland/issues"
 
 [project.scripts]
 aisland = "aisland.cli:main"
+# The MCP server; `aisland setup` lists it in `.mcp.json` (a `<pkg>.server:main` script importing `mcp.server`).
+aisland-mcp = "aisland.server:main"
 
 # Every pytest run in the workspace `.venv` loads this plugin, which records each run of a
 # workspace project to `aisland/data/test-stats/` (aisland rules → "Two Test Runs"; read back by

@@ -249,6 +249,53 @@ gitignore it, like `pyrightconfig.json` and `.mcp.json`:
 
 ---
 
+## aisland's tools are its own MCP server, a chosen set (2026-10-21)
+
+### Context
+
+An AI client working in the workspace should check the environment, read test statistics, start Jenkins or MLflow
+and set the editor's colours without parsing terminal text. navigaitor is the workspace's MCP server for the ML
+libraries (confluid, liquifai, matrainer); the user ruled that aisland's commands never become navigaitor tools —
+aisland runs where navigaitor is not installed, and it installs the projects navigaitor needs. liquifai, which turns
+one signature into a command and a tool, is out for the same reason: `aisland setup` installs it.
+
+### Decision
+
+`aisland/server.py` is a stdio MCP server, `aisland-mcp`, behind the `[mcp]` extra. Its tools are a list chosen with
+the user, not the CLI generated: seven that read and six that change this machine without destroying anything
+(the editor's theme and colours, starting and stopping Jenkins and MLflow). Each returns one JSON object: the data
+its command prints with `--json`, from the same function (`doctor.run_checks`, `pytest_stats.build_report`,
+`sources.describe`, `tunnel.store_payload`, `editor.*`). A service tool runs the `aisland` command as a subprocess
+(this interpreter, `-P`, the workspace root), so it starts a service exactly as a person does. The server drops
+the resources/prompts handlers so it advertises tools only; it needs no schema sanitizing (flat arguments), so it
+is not a copy of the `_LLMSafeMCPServer` the confluid-based servers share.
+
+### Consequences
+
+- What prompts, runs for minutes or deletes stays a command; an agent cannot `clean` or `reset`.
+- `.mcp.json` lists the server through the existing discovery — no registration code.
+- A print in a tool lands on stderr: the SDK's stdio transport serves the protocol from a private copy of stdout.
+- The base install is unchanged: without the extra, `aisland-mcp` says what to install.
+
+### Example
+
+```text
+→ tools/call editor_set_color {"role": "background", "color": "navy"}
+← {"theme": "Monokai Pro", "background": "navy", "foreground": "white", "area": "frame"}
+→ tools/call service_start {"name": "clearml"}
+← error: Error executing tool service_start: … name: Input should be 'jenkins' or 'mlflow' …
+```
+
+### What you may change
+
+- Add a tool: a function returning one JSON object, in `_READING` or `_CHANGING`, its command's `--json` the same
+  data; `tests/test_server.py::READ_ONLY`/`CHANGING` name it.
+- The services a tool controls (`SERVICES`).
+- What must not change: no tool that prompts, runs for minutes or deletes; the extra stays optional; aisland's
+  tools stay out of navigaitor.
+
+---
+
 ## The editor's theme and colours are a per-machine choice laid over the generated workspace file (2026-10-21)
 
 ### Context
@@ -272,8 +319,9 @@ ruled it must stay on the machine and never reach a committed file.
   theme — `theme set` is refused there rather than writing a name nothing can check.
 - The colours are written unscoped (no `"[Theme]"` key), so VS Code lays them over whichever theme is active.
   A colour is one of CSS Color 4's 148 names (`css_colors.py`, copied from the W3C table) or a hex form VS Code
-  reads. `frame` colours what Peacock colours — the title bar, activity bar and status bar; `both` adds the editor,
-  gutter, side bar, panel and terminal (key lists from VS Code's theme colour reference).
+  reads. `frame` colours what Peacock colours — the title bar, activity bar and status bar; `sidebar` adds the side
+  bar with its title and section headers (left out, each keeps the theme's colour, a stripe across the side bar);
+  `both` adds the editor, gutter, side bar, panel and terminal (key lists from VS Code's theme colour reference).
 - A value hand-edited into `.git/config` that cannot be read is skipped with a warning: setup still writes the
   file.
 
@@ -303,7 +351,8 @@ aisland.editor.background navy
 
 ### What you may change
 
-- The keys each area colours (`editor._FRAME`, `editor._CODE`), and new areas beside `frame`/`both`.
+- The keys each area colours (`editor._FRAME`, `editor._SIDEBAR`, `editor._CODE`), and new areas beside
+  `frame`/`sidebar`/`both`.
 - The places VS Code is looked for (`editor.INSTALL_FOLDERS`).
 - What must not change: the choice stays per machine and out of every committed file, and the colours stay
   unscoped so they hold whatever the theme.

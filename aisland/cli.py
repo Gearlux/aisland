@@ -216,7 +216,8 @@ def color_group() -> None:
     """This machine's background and foreground colour for the workspace window, over any theme.
 
     Kept in .git/config (never committed). The colours go on the window frame — title bar, activity bar, status
-    bar — or, with --area both, on the code too: editor, side bar, panel and terminal.
+    bar — and, with --area sidebar, on the side bar too, or, with --area both, on the code too: editor, side bar,
+    panel and terminal.
     """
 
 
@@ -245,8 +246,8 @@ def color_list(part: str) -> None:
     "--area",
     type=click.Choice(editor.COLOR_AREAS),
     default=None,
-    help="frame: the title bar, activity bar and status bar; both: those and the editor, side bar, panel and "
-    "terminal. Kept for later colours. Default: the kept one, else frame.",
+    help="frame: the title bar, activity bar and status bar; sidebar: those and the side bar; both: those and the "
+    "editor, side bar, panel and terminal. Kept for later colours. Default: the kept one, else frame.",
 )
 def color_set(role: editor.ColorRole, color: str, area: Optional[editor.ColorArea]) -> None:
     """Colour the workspace window's ROLE (background or foreground) COLOR, whatever the theme.
@@ -258,7 +259,11 @@ def color_set(role: editor.ColorRole, color: str, area: Optional[editor.ColorAre
     editor.set_color(root, role, color, area)
     manager.write_code_workspace(root)
     choice = editor.read_choice(root)
-    where = "the window frame" if choice.area == "frame" else "the window frame and the code"
+    where = {
+        "frame": "the window frame",
+        "sidebar": "the window frame and the side bar",
+        "both": "the window frame and the code",
+    }[choice.area]
     click.echo(f"==> {role.capitalize()}: {editor.describe(choice.color(role))}, on {where} (this machine only)")
 
 

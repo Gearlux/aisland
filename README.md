@@ -357,6 +357,7 @@ aisland workspace theme unset
 aisland workspace color list slate            # CSS's 148 colour names with a swatch; a part of the name filters
 aisland workspace color set background navy   # title bar, activity bar and status bar
 aisland workspace color set foreground '#e0e0e0' --area both   # the frame and the editor, side bar, panel, terminal
+aisland workspace color set background navy --area sidebar     # the frame and the side bar; the code keeps the theme's
 aisland workspace color unset background      # without a role: both colours go back to the theme
 ```
 
@@ -374,7 +375,7 @@ Code is not installed — `theme set` is refused there. A colour is a CSS name
 (`navy`, `dark slate blue`) or `#RGB`, `#RGBA`, `#RRGGBB`, `#RRGGBBAA`. The
 colours hold whatever the theme: they are written unscoped into
 `workbench.colorCustomizations`, which VS Code lays over the active theme.
-`--area` (`frame`, the default, or `both`) is kept for later colours.
+`--area` (`frame`, the default; `sidebar`, the frame and the side bar; or `both`) is kept for later colours.
 
 The root **`mypy.ini`** is the opposite: committed, hand-maintained policy
 (the per-module `[mypy-*]` sections). Setup only keeps its `mypy_path`
@@ -1939,6 +1940,34 @@ Claude Code reads `.mcp.json` when a session starts in the workspace and asks on
 to use the project's servers (`enableAllProjectMcpServers` in its settings skips the prompt);
 `claude mcp list` then shows them. A server whose annotaide, say, is not running still starts
 — its tools answer in-band with the command that starts the service.
+
+### aisland's own server (`aisland-mcp`)
+
+aisland ships an MCP server too, so an AI client can check and drive this workspace. It needs
+the `mcp` extra; once installed, `aisland setup` (or `aisland mcp claude`) lists it as
+`aisland` in `.mcp.json`:
+
+```bash
+pip install 'aisland[mcp]'
+```
+
+| tool | what it does |
+| --- | --- |
+| `doctor` | `aisland doctor`'s checks: each one's result and the command that fixes it |
+| `tests_report(project, days)` | `aisland tests report PROJECT --json` |
+| `sources` | `aisland source list`'s rows |
+| `services_status` | every supervised service: running, PID, ports |
+| `tunnel_list` | `aisland tunnel list --json` |
+| `editor_themes`, `editor_colors(part)` | the VS Code themes here, the CSS colour names, this window's choice |
+| `editor_set_theme(name)`, `editor_set_color(role, color, area)`, `editor_unset(what)` | `aisland workspace theme\|color set\|unset` |
+| `service_start(name)`, `service_stop(name)`, `service_restart(name)` | `aisland jenkins\|mlflow start\|stop\|restart`, in the background |
+
+Every tool answers with one JSON object, and a refusal is the tool's error in the command's own
+words (`no installed VS Code theme is named 'Solarzed Dark' (did you mean 'Solarized Dark'?)`).
+The first seven only read; the others change this machine and are marked as such for the
+client. What prompts, runs for minutes or deletes — `setup`, `clean`, `backups prune`, the
+`reset` commands, `jenkins init`, `source set` — is not a tool: run it yourself. Without the
+extra, `aisland-mcp` stops with `Error: aisland-mcp needs the mcp extra: pip install 'aisland[mcp]'`.
 
 ## Submodule Management
 

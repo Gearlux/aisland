@@ -26,8 +26,8 @@ from aisland.css_colors import NAMED_COLORS
 ColorRole = Literal["background", "foreground"]
 COLOR_ROLES: Tuple[ColorRole, ...] = get_args(ColorRole)
 #: Where a colour goes: the window frame (title bar, activity bar, status bar — what the Peacock extension colours),
-#: or the frame and the code (editor, side bar, panel, terminal).
-ColorArea = Literal["frame", "both"]
+#: the frame and the side bar, or the frame and the code (editor, side bar, panel, terminal).
+ColorArea = Literal["frame", "sidebar", "both"]
 COLOR_AREAS: Tuple[ColorArea, ...] = get_args(ColorArea)
 DEFAULT_AREA: ColorArea = "frame"
 
@@ -55,6 +55,11 @@ _FRAME: Dict[ColorRole, Tuple[str, ...]] = {
         "activityBar.foreground",
         "statusBar.foreground",
     ),
+}
+#: The side bar with its title and section headers: left out, each keeps the theme's colour, a stripe across it.
+_SIDEBAR: Dict[ColorRole, Tuple[str, ...]] = {
+    "background": ("sideBar.background", "sideBarSectionHeader.background"),
+    "foreground": ("sideBar.foreground", "sideBarTitle.foreground"),
 }
 _CODE: Dict[ColorRole, Tuple[str, ...]] = {
     "background": (
@@ -324,7 +329,7 @@ def workspace_settings(choice: EditorChoice) -> Dict[str, Any]:
         key = choice.color(role)
         if key is None:
             continue
-        keys = _FRAME[role] + (_CODE[role] if choice.area == "both" else ())
+        keys = _FRAME[role] + {"frame": (), "sidebar": _SIDEBAR[role], "both": _CODE[role]}[choice.area]
         customizations.update({name: hex_value(key) for name in keys})
     if customizations:
         settings["workbench.colorCustomizations"] = customizations
