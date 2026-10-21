@@ -30,11 +30,11 @@ def _project(root: Path, folder: str, name: Optional[str] = None, deps: Optional
 
 @pytest.fixture
 def workspace(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
-    """`acme/` holding loggair <- confluid, aisland (distribution `aisland-manager`) and an empty `vendorcli/`."""
+    """`acme/` holding loggair <- confluid, aisland and an empty `vendorcli/`."""
     root = tmp_path / "acme"
     _project(root, "loggair")
     _project(root, "confluid", deps=["loggair>=0.2.0"])
-    _project(root, "aisland", name="aisland-manager", deps=["click>=8.0.0"])
+    _project(root, "aisland", deps=["click>=8.0.0"])
     (root / "vendorcli").mkdir()  # an inactive submodule: its folder is empty
     monkeypatch.setattr(manager, "_loggair_log_dir", lambda workspace_root: None)
     return root

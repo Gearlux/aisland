@@ -11,4 +11,4 @@ import aisland
 
 
 def test_version_is_the_installed_distribution_version() -> None:
-    assert aisland.__version__ == version("aisland-manager")
+    assert aisland.__version__ == version("aisland")

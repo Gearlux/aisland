@@ -128,7 +128,7 @@ _SECTION_DOC: Dict[str, str] = {
 #                              at `ref`. Same pin as local, without a working tree.
 #   source       = "pypi"   -> submodule is deinit'd (empty dir) and installed from PyPI.
 #   distribution = the PyPI/dist name; recorded because a deinit'd directory no longer has a
-#                  pyproject.toml to read it from (e.g. aisland -> "aisland-manager").
+#                  pyproject.toml to read it from (e.g. acme -> "acme-tools").
 #   ref          = local/github only; branch or tag. Omitted => "main".
 #   version      = pypi only; a PEP 440 specifier such as ">=0.1.0". Omitted => latest.
 #

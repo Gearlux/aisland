@@ -352,7 +352,7 @@ def init_workspace(
 
 def aisland_wheel_name() -> str:
     """The file name ``uv build --wheel aisland`` gives this aisland's wheel (pure Python, any platform)."""
-    return f"aisland_manager-{__version__}-py3-none-any.whl"
+    return f"aisland-{__version__}-py3-none-any.whl"
 
 
 def _export_header(name: str, file_name: str) -> str:
@@ -364,20 +364,20 @@ def _export_header(name: str, file_name: str) -> str:
 # =========================================================================
 # A workspace aisland creates on a new machine. From the folder that will hold it:
 #
-#   1. A virtual environment with aisland-manager in it. aisland finds it at .venv in this folder;
+#   1. A virtual environment with aisland in it. aisland finds it at .venv in this folder;
 #      --prompt names it, so the shell shows ({name}) once it is activated. With uv:
 #        uv venv --seed --prompt {name} .venv
-#        uv pip install --python .venv/bin/python aisland-manager
+#        uv pip install --python .venv/bin/python aisland
 #      or with pip:
 #        python3 -m venv --prompt {name} .venv
-#        .venv/bin/pip install aisland-manager
+#        .venv/bin/pip install aisland
 #
 #      A venv kept elsewhere under a name of its own, linked here as .venv:
 #        python3 -m venv ~/venvs/{name}
 #        ln -s ~/venvs/{name} .venv
-#        .venv/bin/pip install aisland-manager
+#        .venv/bin/pip install aisland
 #
-#      From a wheel instead of PyPI, name the file in place of aisland-manager:
+#      From a wheel instead of PyPI, name the file in place of aisland:
 #        .venv/bin/pip install ./{aisland_wheel_name()}
 #      (built in a checkout of aisland with: uv build --wheel aisland -o dist)
 #

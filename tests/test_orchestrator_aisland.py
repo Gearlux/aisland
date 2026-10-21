@@ -1,9 +1,7 @@
-"""Regression test: the orchestrator job MUST include aisland.
+"""The orchestrator job maps each pyproject name to the workspace folder whose job it runs.
 
-Pre-fix, ``_to_dir_name`` in ``_create_orchestrator_job`` tried
-``aisland-manager`` and ``aislandmanager`` against the initialized-jobs set
-(which contains the workspace-dir name ``aisland``) and silently dropped
-aisland from the orchestrator's build phases.
+A name that maps to no initialized job is silently left out of the orchestrator's build phases, so
+every project's job — aisland's included — must be found from its pyproject name.
 """
 
 from __future__ import annotations
@@ -27,14 +25,10 @@ def test_pyproject_to_workspace_dir_dashed_pypi_name() -> None:
     assert pyproject_to_workspace_dir("recordstream", initialized) == "recordstream"
 
 
-def test_pyproject_to_workspace_dir_handles_aisland_manager_suffix() -> None:
-    """Regression: aisland's pyproject name is `aisland-manager` but the dir is `aisland`.
-
-    Without this mapping, the orchestrator silently skipped aisland's own
-    job, leaving its test suite out of the workspace-wide CI gate.
-    """
+def test_pyproject_to_workspace_dir_finds_aisland() -> None:
+    """The orchestrator runs aisland's own job: without it aisland's suite is out of the workspace-wide CI gate."""
     initialized = {"aisland", "loggair"}
-    assert pyproject_to_workspace_dir("aisland-manager", initialized) == "aisland"
+    assert pyproject_to_workspace_dir("aisland", initialized) == "aisland"
 
 
 def test_pyproject_to_workspace_dir_unknown_passes_through() -> None:
@@ -46,12 +40,10 @@ def test_pyproject_to_workspace_dir_unknown_passes_through() -> None:
 @pytest.mark.parametrize(
     "pyproject_name,initialized,expected",
     [
-        # Pre-trim takes priority over dashless rewrite.
-        ("aisland-manager", {"aisland", "aisland-manager"}, "aisland-manager"),
         # Dashless only kicks in when the identity check fails.
         ("raidar-ultralytics", {"raidar-ultralytics"}, "raidar-ultralytics"),
     ],
 )
 def test_pyproject_to_workspace_dir_priority(pyproject_name: str, initialized: set, expected: str) -> None:
-    """Identity match wins; dashless and ``-manager`` trim are fallbacks."""
+    """Identity match wins; the dashless rewrite is a fallback."""
     assert pyproject_to_workspace_dir(pyproject_name, initialized) == expected

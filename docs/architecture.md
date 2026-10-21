@@ -92,7 +92,7 @@ introducing the mechanism changed no behaviour anywhere until a source was actua
   install](#the-local-pipeline-tests-the-venv-it-does-not-install)). A per-machine override is
   therefore honoured there for free, and no source change of any kind can rewrite the file.
 - **Order of operations in a `pypi` switch is fixed by information loss.** The distribution name
-  (`aisland` → `aisland-manager`) can only be read from `pyproject.toml`, which the deinit
+  (`acme` → `acme-tools`) can only be read from `pyproject.toml`, which the deinit
   removes — so it is resolved first and then *persisted* into the committed registry.
 - **Provenance, not existence, is what gets validated.** PyPI names are global, so a workspace
   project can share a name with an unrelated package; checking only that the name resolves would
@@ -1890,7 +1890,7 @@ report.not_built                                      # []: a needed project wit
 A `--all` build of one project is 26 wheels and 5.1 MB, rebuilt whenever a dependency moves. The folder sat
 in the project's tree with nothing ignoring it, so every `/commit-all` swept the wheels into history, and the
 user wanted them out unless asked for. The wheels also have to reach a machine that has neither the
-workspace nor aisland (`aisland-manager` is not on PyPI), so carrying them must not need aisland there.
+workspace nor aisland (`aisland` is not on PyPI), so carrying them must not need aisland there.
 
 ### Decision
 
@@ -2332,7 +2332,7 @@ record above), how to install aisland into it, and every project's address and b
 One file, `<name>.workspace.toml`, holds both halves:
 
 - **Comments for the machine that has no aisland yet**: the venv with uv and with pip (`--prompt <name>` names it;
-  a venv kept elsewhere is linked in as `.venv`), aisland-manager from PyPI or from a wheel, then
+  a venv kept elsewhere is linked in as `.venv`), aisland from PyPI or from a wheel, then
   `aisland workspace init . --from <file>` and `aisland setup`. They are comments because nothing can read the file
   before aisland is installed.
 - **`[projects]` for aisland**: one `name = { url = …, branch = … }` per project, `name` the folder it is cloned into.

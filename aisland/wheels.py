@@ -181,7 +181,7 @@ class WorkspaceProject:
 
     Args:
         name: Its folder (= its ``.gitmodules`` path), the name a user types.
-        distribution: Its distribution name (``aisland-manager`` for ``aisland``).
+        distribution: Its distribution name (``acme-tools`` for a folder ``acme``).
         path: Its folder on this machine.
         pyproject: Its parsed ``pyproject.toml``; ``None`` when the folder is empty (a detached
             source or an inactive submodule) — then ``distribution`` comes from ``config.toml``,

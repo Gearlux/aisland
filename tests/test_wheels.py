@@ -189,26 +189,26 @@ class TestDependencyClosure:
         assert [p.name for p in w.dependency_closure(projects, projects["app"])] == ["lib"]
 
     def test_a_distribution_name_unlike_its_folder_is_matched(self, tmp_path: Path) -> None:
-        """`aisland` the folder is `aisland-manager` the distribution; requirements use the latter."""
-        root = _workspace(tmp_path, "app", "aisland")
-        _project(root, "app", deps=["Aisland_Manager"])
-        _project(root, "aisland", name="aisland-manager")
+        """`acme` the folder is `acme-tools` the distribution; requirements use the latter."""
+        root = _workspace(tmp_path, "app", "acme")
+        _project(root, "app", deps=["Acme_Tools"])
+        _project(root, "acme", name="acme-tools")
 
         projects = w.workspace_projects(root)
 
-        assert [p.name for p in w.dependency_closure(projects, projects["app"])] == ["aisland"]
+        assert [p.name for p in w.dependency_closure(projects, projects["app"])] == ["acme"]
 
     def test_an_empty_folder_is_a_project_without_a_checkout(self, tmp_path: Path) -> None:
         """A detached project keeps its distribution name in config.toml; an inactive one, its folder name."""
-        root = _workspace(tmp_path, "app", "aisland", "vendorcli")
-        (root / "config.toml").write_text('[sources.aisland]\nsource = "pypi"\ndistribution = "aisland-manager"\n')
-        _project(root, "app", deps=["aisland-manager", "vendorcli"])
+        root = _workspace(tmp_path, "app", "acme", "vendorcli")
+        (root / "config.toml").write_text('[sources.acme]\nsource = "pypi"\ndistribution = "acme-tools"\n')
+        _project(root, "app", deps=["acme-tools", "vendorcli"])
 
         projects = w.workspace_projects(root)
         closure = w.dependency_closure(projects, projects["app"])
 
         assert [(p.name, p.distribution, p.checked_out) for p in closure] == [
-            ("aisland", "aisland-manager", False),
+            ("acme", "acme-tools", False),
             ("vendorcli", "vendorcli", False),
         ]
 
@@ -377,10 +377,10 @@ class TestRefusals:
         assert "aisland setup --activate navigaitor" in error.value.message
 
     def test_a_project_named_by_its_distribution_is_found_and_named_by_its_folder(self, tmp_path: Path) -> None:
-        root = _workspace(tmp_path, "aisland")
-        (root / "config.toml").write_text('[sources.aisland]\nsource = "pypi"\ndistribution = "aisland-manager"\n')
-        with pytest.raises(click.ClickException, match="aisland is not checked out on this machine"):
-            w.vendor_wheels(root, "aisland-manager")
+        root = _workspace(tmp_path, "acme")
+        (root / "config.toml").write_text('[sources.acme]\nsource = "pypi"\ndistribution = "acme-tools"\n')
+        with pytest.raises(click.ClickException, match="acme is not checked out on this machine"):
+            w.vendor_wheels(root, "acme-tools")
 
     def test_a_needed_project_without_a_checkout_is_refused(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch

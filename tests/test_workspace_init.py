@@ -454,7 +454,7 @@ def test_an_exported_file_says_how_to_create_the_workspace_from_it(tmp_path: Pat
     assert lines[1] == "# Written by: aisland workspace export (aisland/aisland/workspace.py)"
     assert "#        uv venv --seed --prompt acme .venv" in lines
     assert "#        python3 -m venv --prompt acme .venv" in lines
-    assert "#        .venv/bin/pip install aisland-manager" in lines
+    assert "#        .venv/bin/pip install aisland" in lines
     assert f"#        .venv/bin/pip install ./{workspace.aisland_wheel_name()}" in lines
     assert "#        .venv/bin/aisland workspace init . --from acme.workspace.toml" in lines
 

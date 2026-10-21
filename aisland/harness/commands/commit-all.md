@@ -21,7 +21,7 @@ When the user invokes the `/commit-all` command (or requests to commit all chang
    and ask the user whether to commit them too or to wait until that session is done. Run `ListAgents` first and name the busy sessions, so the user can see whose they likely are. Go on only on the user's answer.
 
 1. **Dependency Analysis:** Determine the project processing order to ensure submodules are committed before the root repository update.
-   - Command, run with the workspace `.venv` active: `python3 -c "from aisland.manager import get_install_order, get_workspace_root; print([p['path'].name for p in get_install_order(get_workspace_root())])"` — it prints the project FOLDERS, dependencies first (`aisland`, not its distribution name `aisland-manager`).
+   - Command, run with the workspace `.venv` active: `python3 -c "from aisland.manager import get_install_order, get_workspace_root; print([p['path'].name for p in get_install_order(get_workspace_root())])"` — it prints the project FOLDERS, dependencies first (not their distribution names).
 
 2. **Per-Project Processing:** For each submodule in the resolved order:
    a. **Status Check:** Check for uncommitted changes (`git status --short`).

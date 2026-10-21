@@ -46,8 +46,8 @@ class TestProjectSource:
             s.ProjectSource.parse("svn:trunk")
 
     def test_requirement_uses_distribution_over_project(self) -> None:
-        src = s.ProjectSource(kind="pypi", version=">=0.1.0", distribution="aisland-manager")
-        assert src.requirement("aisland") == "aisland-manager>=0.1.0"
+        src = s.ProjectSource(kind="pypi", version=">=0.1.0", distribution="acme-tools")
+        assert src.requirement("acme") == "acme-tools>=0.1.0"
 
     def test_requirement_unpinned_when_no_version(self) -> None:
         assert s.ProjectSource(kind="pypi").requirement("loggair") == "loggair"
@@ -192,11 +192,11 @@ class TestEffectiveSource:
 
     def test_override_inherits_committed_distribution(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
         """A compact override carries no dist name; without inheritance a pypi switch would
-        install the DIRECTORY name (`aisland`) instead of `aisland-manager`."""
-        monkeypatch.setattr(s.subprocess, "run", self._fake_config({"aisland.source.aisland": "pypi"}))
-        s.write_committed_sources(tmp_path, {"aisland": s.ProjectSource(kind="local", distribution="aisland-manager")})
-        effective = s.effective_source(tmp_path, "aisland")
-        assert effective is not None and effective.requirement("aisland") == "aisland-manager"
+        install the DIRECTORY name (`acme`) instead of `acme-tools`."""
+        monkeypatch.setattr(s.subprocess, "run", self._fake_config({"aisland.source.acme": "pypi"}))
+        s.write_committed_sources(tmp_path, {"acme": s.ProjectSource(kind="local", distribution="acme-tools")})
+        effective = s.effective_source(tmp_path, "acme")
+        assert effective is not None and effective.requirement("acme") == "acme-tools"
 
     def test_unmanaged_project_is_none(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.setattr(s.subprocess, "run", self._fake_config({}))

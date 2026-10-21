@@ -98,7 +98,7 @@ class ProjectSource:
         ref: Branch or tag for the ``local`` / ``github`` kinds. Ignored by ``pypi``.
         version: PEP 440 specifier for the ``pypi`` kind (``">=0.1.0"``). ``None`` => latest.
         distribution: The PyPI / distribution name, which differs from the directory name for
-            at least one project (``aisland`` -> ``aisland-manager``). Recorded in the committed
+            at least one project (``acme`` -> ``acme-tools``). Recorded in the committed
             file because a detached project's directory is empty and can no longer be read for it.
     """
 
@@ -241,7 +241,7 @@ def effective_source(
 
     A compact override (``"pypi"``) carries no distribution name, so it inherits the committed
     entry's — otherwise switching a machine to PyPI would try to install the directory name
-    (``aisland``) instead of the distribution (``aisland-manager``).
+    (``acme``) instead of the distribution (``acme-tools``).
     """
     if committed is None:
         committed = read_committed_sources(workspace_root)

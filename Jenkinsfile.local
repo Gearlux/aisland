@@ -52,7 +52,7 @@ pipeline {
                 // This pipeline installs nothing: it tests the checkout against the workspace venv
                 // exactly as `aisland setup` left it. A missing dependency means `aisland setup`
                 // has not run since it was added — run it, never an install step here.
-                sh """${VENV_BIN}/python3 -P - 'aisland-manager' "${env.WORKSPACE_ROOT}/aisland" <<'PY'
+                sh """${VENV_BIN}/python3 -P - 'aisland' "${env.WORKSPACE_ROOT}/aisland" <<'PY'
 import importlib.metadata, json, pathlib, sys
 dist, checkout = sys.argv[1], pathlib.Path(sys.argv[2]).resolve()
 try:

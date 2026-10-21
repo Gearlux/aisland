@@ -43,7 +43,7 @@ aisland also runs installed from a wheel, in a workspace of your own. Built here
 carries everything aisland reads (the editor-file template, the git alias scripts, the shell init):
 
 ```bash
-python -m pip wheel --no-deps -w dist ./aisland   # → dist/aisland_manager-0.1.0-py3-none-any.whl
+python -m pip wheel --no-deps -w dist ./aisland   # → dist/aisland-0.1.0-py3-none-any.whl
 ```
 
 Make a workspace, give it a venv holding aisland, and set it up:
@@ -51,7 +51,7 @@ Make a workspace, give it a venv holding aisland, and set it up:
 ```bash
 aisland workspace init ~/work/acme --add git@github.com:acme/models.git
 cd ~/work/acme
-uv venv --seed .venv && .venv/bin/pip install aisland_manager-0.1.0-py3-none-any.whl
+uv venv --seed .venv && .venv/bin/pip install aisland-0.1.0-py3-none-any.whl
 .venv/bin/aisland setup
 ```
 
@@ -105,9 +105,9 @@ Edit the list as you like; the file's first lines say how to create the workspac
 # acme.workspace.toml
 # Written by: aisland workspace export (aisland/aisland/workspace.py)
 # ...
-#   1. A virtual environment with aisland-manager in it. ...
+#   1. A virtual environment with aisland in it. ...
 #        uv venv --seed --prompt acme .venv
-#        uv pip install --python .venv/bin/python aisland-manager
+#        uv pip install --python .venv/bin/python aisland
 #   2. ...
 #        .venv/bin/aisland workspace init . --from acme.workspace.toml
 #   3. ...

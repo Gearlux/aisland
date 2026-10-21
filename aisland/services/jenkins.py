@@ -185,11 +185,7 @@ def discover_gearlux_projects(workspace_root: Path) -> list[str]:
             continue
         dist_name = (data.get("project") or {}).get("name")
         if isinstance(dist_name, str) and dist_name:
-            # Match the ``-manager`` strip convention used elsewhere in this file
-            # (search for ``metadata["name"].replace("-manager", "")``). aisland's
-            # pyproject distribution is ``aisland-manager`` but the repo, and what
-            # consumers actually list as a dep, is ``aisland``.
-            names.append(dist_name.removesuffix("-manager"))
+            names.append(dist_name)
     # Dedup: a detached project may ALSO still have a checkout on the machine running the
     # scaffold (a `local` per-machine override), in which case both passes contribute its name.
     return sorted(set(names))
@@ -257,11 +253,9 @@ def _parse_dotenv(env_path: Path) -> dict[str, str]:
 def pyproject_to_workspace_dir(pyproject_name: str, initialized_set: set) -> str:
     """Map a pyproject distribution name to its workspace directory name.
 
-    Handles three conventions in use across acme:
+    Handles two conventions:
       1. Identity (most projects): ``confluid`` -> ``confluid``.
-      2. Dashed PyPI name -> dashless dir: ``loggair`` -> ``loggair``,
-         ``recordstream`` -> ``recordstream``.
-      3. ``-manager`` suffix dropped: ``aisland-manager`` -> ``aisland``.
+      2. Dashed PyPI name -> dashless dir: ``acme-tools`` -> ``acmetools``.
 
     Returns the input unchanged if no rule matches (caller decides whether
     that unknown name is a problem).
@@ -271,10 +265,6 @@ def pyproject_to_workspace_dir(pyproject_name: str, initialized_set: set) -> str
     dashless = pyproject_name.replace("-", "")
     if dashless in initialized_set:
         return dashless
-    if pyproject_name.endswith("-manager"):
-        trimmed = pyproject_name[: -len("-manager")]
-        if trimmed in initialized_set:
-            return trimmed
     return pyproject_name
 
 
@@ -1054,7 +1044,7 @@ pipeline {{
             return
 
         metadata = get_project_metadata(pyproject_path)
-        pkg_name = metadata["name"].replace("-manager", "")
+        pkg_name = metadata["name"]
         # Detect actual package directory.
         #   Step 1: try the literal distribution name (e.g. "confluid").
         #   Step 2: try the PEP 503 module form — distribution names allow dashes

@@ -142,7 +142,8 @@ def test_a_release_build_puts_the_shell_init_into_the_wheel(released: Path) -> N
     (built,) = released.glob("*.whl")
     with zipfile.ZipFile(built) as archive:
         assert archive.read("aisland/project.bashrc") == (PROJECT / "project.bashrc").read_bytes()
-    assert source_package.name.startswith("aisland_manager-")
+    assert source_package.name.startswith("aisland-")
+    assert built.name.startswith("aisland-")
 
 
 def test_a_release_build_prints_no_deprecation_warning(release_build: Tuple[Path, str]) -> None:

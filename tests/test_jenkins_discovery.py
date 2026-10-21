@@ -64,10 +64,10 @@ class TestDiscoverGearluxProjects:
         )
         assert discover_gearlux_projects(tmp_path) == []
 
-    def test_strips_manager_suffix(self, tmp_path: Path) -> None:
-        """aisland's pyproject distribution is ``aisland-manager`` but the repo is ``aisland``."""
-        _write_submodule(tmp_path, "aisland", "git@github.com:Gearlux/aisland.git", "aisland-manager")
-        assert discover_gearlux_projects(tmp_path) == ["aisland"]
+    def test_a_distribution_named_unlike_its_folder_is_listed_by_its_distribution(self, tmp_path: Path) -> None:
+        """What a consumer lists as a dependency is the distribution, so that is the name returned."""
+        _write_submodule(tmp_path, "acme", "git@github.com:Gearlux/acme.git", "acme-tools")
+        assert discover_gearlux_projects(tmp_path) == ["acme-tools"]
 
     def test_returns_sorted(self, tmp_path: Path) -> None:
         _write_submodule(tmp_path, "zzz", "git@github.com:Gearlux/zzz.git", "zzz")
