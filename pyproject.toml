@@ -1,13 +1,28 @@
 [build-system]
-requires = ["setuptools>=61.0", "wheel"]
+# setuptools>=77 is the PEP 639 floor: `license` as a plain SPDX string below requires it (the TOML-table
+# form is deprecated). Pinned by tests/test_packaging.py::test_a_release_build_prints_no_deprecation_warning.
+requires = ["setuptools>=77.0", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [project]
 name = "aisland-manager"
 version = "0.1.0"
-description = "Development Infrastructure Aisland Manager"
-authors = [{name = "Acme"}]
-license = {text = "MIT"}
+description = "One workspace of many Python projects: a shared venv, local services, generated CI and git aliases."
+readme = "README.md"
+authors = [{name = "Gert Behiels"}]
+# PEP 639 SPDX expression; no `License ::` classifier (setuptools warns on one beside this field).
+license = "MIT"
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Environment :: Console",
+    "Intended Audience :: Developers",
+    "Operating System :: MacOS",
+    "Operating System :: POSIX :: Linux",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Topic :: Software Development :: Build Tools",
+]
 dependencies = [
     "click>=8.0.0",
     # Generates the process-compose desired-state document (aisland/supervisor.py).
@@ -18,6 +33,11 @@ dependencies = [
     "packaging>=23.0",
 ]
 requires-python = ">=3.12"
+
+[project.urls]
+Homepage = "https://github.com/Gearlux/aisland"
+Repository = "https://github.com/Gearlux/aisland.git"
+Issues = "https://github.com/Gearlux/aisland/issues"
 
 [project.scripts]
 aisland = "aisland.cli:main"

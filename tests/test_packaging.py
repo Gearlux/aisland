@@ -6,15 +6,18 @@ alias scripts) that is missing from the wheel works in the editable checkout and
 aisland is installed from a wheel — so the wheel is built and its members checked here.
 """
 
+import email
 import json
 import os
 import shutil
 import subprocess
 import sys
+import tomllib
 import zipfile
+from email.message import Message
 from pathlib import Path
 from subprocess import CompletedProcess
-from typing import Dict, List, Optional
+from typing import Dict, List, Optional, Tuple
 
 import pytest
 
@@ -93,10 +96,11 @@ def test_the_wheel_carries_the_shell_init_beside_the_package(wheel_members: List
 
 
 @pytest.fixture(scope="module")
-def released(tmp_path_factory: pytest.TempPathFactory) -> Path:
+def release_build(tmp_path_factory: pytest.TempPathFactory) -> Tuple[Path, str]:
     """The source package and the wheel built the way a release builds them: ``python -m build`` makes the source
     package, then the wheel FROM it — so a file the build needs that the source package leaves out fails here, not
-    in the release workflow. Built from the files git would release (tracked, or new and not ignored)."""
+    in the release workflow. Built from the files git would release (tracked, or new and not ignored). Returns the
+    folder holding both and everything the build printed."""
     listed = subprocess.run(
         ["git", "-C", str(PROJECT), "ls-files", "--cached", "--others", "--exclude-standard"],
         capture_output=True,
@@ -115,7 +119,21 @@ def released(tmp_path_factory: pytest.TempPathFactory) -> Path:
         text=True,
     )
     assert result.returncode == 0, result.stdout + result.stderr
-    return dist
+    return dist, result.stdout + result.stderr
+
+
+@pytest.fixture(scope="module")
+def released(release_build: Tuple[Path, str]) -> Path:
+    return release_build[0]
+
+
+@pytest.fixture(scope="module")
+def release_metadata(released: Path) -> Message:
+    """The wheel's ``METADATA``: what PyPI shows for the release."""
+    (built,) = released.glob("*.whl")
+    with zipfile.ZipFile(built) as archive:
+        (name,) = [member for member in archive.namelist() if member.endswith(".dist-info/METADATA")]
+        return email.message_from_bytes(archive.read(name))
 
 
 def test_a_release_build_puts_the_shell_init_into_the_wheel(released: Path) -> None:
@@ -125,6 +143,66 @@ def test_a_release_build_puts_the_shell_init_into_the_wheel(released: Path) -> N
     with zipfile.ZipFile(built) as archive:
         assert archive.read("aisland/project.bashrc") == (PROJECT / "project.bashrc").read_bytes()
     assert source_package.name.startswith("aisland_manager-")
+
+
+def test_a_release_build_prints_no_deprecation_warning(release_build: Tuple[Path, str]) -> None:
+    """A deprecated spelling in `pyproject.toml` (the `license = {text = ...}` table) builds today and stops building
+    on the date setuptools names."""
+    _, log = release_build
+    assert "Deprecat" not in log
+
+
+def test_twine_accepts_the_release_strictly(released: Path) -> None:
+    """PyPI's own check: a warning (a missing long description, an unknown content type) fails the upload step."""
+    result = subprocess.run(
+        [sys.executable, "-m", "twine", "check", "--strict", *sorted(str(path) for path in released.iterdir())],
+        capture_output=True,
+        text=True,
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
+
+
+def test_the_release_page_shows_the_readme_as_markdown(release_metadata: Message) -> None:
+    assert release_metadata["Description-Content-Type"] == "text/markdown"
+    description = release_metadata.get_payload(decode=True)
+    assert isinstance(description, bytes)
+    assert description.decode("utf-8").strip() == (PROJECT / "README.md").read_text(encoding="utf-8").strip()
+
+
+def test_the_licence_is_an_spdx_expression_and_no_licence_classifier(release_metadata: Message) -> None:
+    """PEP 639: the `License-Expression` field replaces the `License ::` classifiers, which setuptools then warns on."""
+    assert release_metadata["License-Expression"] == "MIT"
+    assert [c for c in release_metadata.get_all("Classifier", []) if c.startswith("License ::")] == []
+
+
+def test_the_release_names_its_author_and_where_it_lives(release_metadata: Message) -> None:
+    assert release_metadata["Author"] == "Gert Behiels"
+    urls = dict(entry.split(", ", 1) for entry in release_metadata.get_all("Project-URL", []))
+    assert urls == {
+        "Homepage": "https://github.com/Gearlux/aisland",
+        "Repository": "https://github.com/Gearlux/aisland.git",
+        "Issues": "https://github.com/Gearlux/aisland/issues",
+    }
+
+
+def test_the_development_status_follows_the_version() -> None:
+    """The workspace's convention: a pre-release (`a`, `b`, `rc`) is Alpha, a final release Beta."""
+    project = tomllib.loads((PROJECT / "pyproject.toml").read_text(encoding="utf-8"))["project"]
+    status = [c for c in project["classifiers"] if c.startswith("Development Status ::")]
+    is_prerelease = any(marker in project["version"] for marker in ("a", "b", "rc"))
+    assert status == ["Development Status :: " + ("3 - Alpha" if is_prerelease else "4 - Beta")]
+
+
+def test_the_python_classifiers_follow_requires_python() -> None:
+    """Every `Programming Language :: Python :: 3.N` classifier is a version `requires-python` admits, the floor
+    included."""
+    project = tomllib.loads((PROJECT / "pyproject.toml").read_text(encoding="utf-8"))["project"]
+    floor = project["requires-python"].removeprefix(">=")
+    versions = [
+        c.rsplit(" :: ", 1)[1] for c in project["classifiers"] if c.startswith("Programming Language :: Python :: 3.")
+    ]
+    assert floor in versions
+    assert all(tuple(map(int, v.split("."))) >= tuple(map(int, floor.split("."))) for v in versions)
 
 
 # --- the wheel, run in a workspace that is not this one --------------------------------------------------------
