@@ -30,7 +30,7 @@ from typing import Callable, List, Optional, Tuple
 
 import click
 
-from aisland import tunnel
+from aisland import tunnel, tunnel_connect
 from aisland.services.docker import DockerService
 from aisland.services.jenkins import JenkinsService
 from aisland.services.jenkins_java import JenkinsJava
@@ -442,6 +442,51 @@ def check_tunnel_relay() -> CheckResult:
     )
 
 
+def check_tunnel_connect() -> CheckResult:
+    """A machine that uses `aisland tunnel connect` has what it needs: `devtunnel`, signed in, and msgpack.
+
+    `connect` refuses at once without any of them, naming the fix — but only when someone runs it; the
+    doctor says it ahead of time, the way `tunnel-relay` does for the remote side. In the order a first
+    `connect` meets them: the program, the extra, the sign-in.
+
+    Runs ONLY where `connect` has been used (its last list or its forward left a file), so a machine that
+    never connects neither needs `devtunnel` nor pays for asking the service. The sign-in question goes
+    over the network; when `devtunnel` cannot answer it the check passes with that note, as a probe that
+    cannot run does.
+    """
+    if not tunnel_connect.used_here():
+        return CheckResult(
+            "tunnel-connect", True, f"`aisland tunnel connect` not used here (nothing in {tunnel.state_dir()})"
+        )
+    if shutil.which("devtunnel") is None:
+        return CheckResult(
+            "tunnel-connect",
+            False,
+            "no `devtunnel` on PATH — `aisland tunnel connect` reaches the tunnel through it",
+            tunnel_connect.install_hint(),
+        )
+    imported, error = _import_probe("import msgpack")
+    if not imported:
+        return CheckResult(
+            "tunnel-connect",
+            False,
+            f"msgpack does not import ({error}) — `aisland tunnel connect` speaks the tunnel's messages with it",
+            "pip install 'aisland[connect]'",
+        )
+    try:
+        account = tunnel_connect.account()
+    except click.ClickException as exc:
+        return CheckResult("tunnel-connect", True, f"could not ask devtunnel whether it is signed in: {exc.message}")
+    if account is None:
+        return CheckResult(
+            "tunnel-connect",
+            False,
+            "devtunnel is not signed in — `aisland tunnel connect` lists and reaches tunnels as that account",
+            "devtunnel user login   # -g for a GitHub account; the account the remote tunnel runs under",
+        )
+    return CheckResult("tunnel-connect", True, f"devtunnel ready: {account}")
+
+
 #: Every check the doctor runs, in report order.
 CHECKS: Tuple[Callable[[], CheckResult], ...] = (
     check_opencv_single_variant,
@@ -452,6 +497,7 @@ CHECKS: Tuple[Callable[[], CheckResult], ...] = (
     check_jenkins_java,
     check_torch_extension_lock,
     check_tunnel_relay,
+    check_tunnel_connect,
 )
 
 

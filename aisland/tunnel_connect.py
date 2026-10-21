@@ -65,6 +65,9 @@ _SERVICE_LABEL_PREFIXES = ("protocolv", "_flag")
 FORWARD_TIMEOUT_S = 30.0
 _POLL_INTERVAL_S = 0.1
 
+#: How long ``devtunnel user show`` / ``list`` may take: both ask the service over the network.
+_RUN_TIMEOUT_S = 60.0
+
 #: How long a forward gets to stop on its own before it is killed.
 _STOP_GRACE_S = 5.0
 
@@ -108,8 +111,11 @@ def devtunnel() -> str:
 
 
 def _run(*args: str) -> str:
-    """``devtunnel <args>``'s standard output; a refusal quoting it when it fails."""
-    completed = subprocess.run([devtunnel(), *args], capture_output=True, text=True)
+    """``devtunnel <args>``'s standard output; a refusal quoting it when it fails or hangs."""
+    try:
+        completed = subprocess.run([devtunnel(), *args], capture_output=True, text=True, timeout=_RUN_TIMEOUT_S)
+    except subprocess.TimeoutExpired as exc:
+        raise click.ClickException(f"`devtunnel {' '.join(args)}` gave no answer within {_RUN_TIMEOUT_S:g} s") from exc
     if completed.returncode != 0:
         said = (completed.stderr or completed.stdout or "").strip().splitlines()
         raise click.ClickException(f"`devtunnel {' '.join(args)}` failed: {said[-1] if said else completed.returncode}")
@@ -244,6 +250,16 @@ def complete_tunnel(ctx: Any, param: Any, incomplete: str) -> List[Any]:
 # --------------------------------------------------------------------------------------------------
 
 
+def log_path() -> Path:
+    """What the last ``devtunnel connect`` printed."""
+    return state_dir() / "connect.log"
+
+
+def used_here() -> bool:
+    """Whether ``connect`` has been used on this machine: its list or its forward left a file."""
+    return cache_path().exists() or log_path().exists()
+
+
 def port_holder(port: int) -> Optional[str]:
     """Who listens on ``port`` here — ``pid 123 (devtunnel)`` — or None when nobody does."""
     with socket.socket() as probe:
@@ -288,7 +304,7 @@ def forward(target: Tunnel, timeout: float = FORWARD_TIMEOUT_S) -> Iterator[None
             f"Port {port} on this machine is already taken by {holder} — a `devtunnel connect` started "
             "by hand forwards that same port, to a machine aisland cannot tell. Stop it and run this again."
         )
-    log = state_dir() / "connect.log"
+    log = log_path()
     log.parent.mkdir(parents=True, exist_ok=True)
     with open(log, "wb") as handle:
         process = subprocess.Popen(

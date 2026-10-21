@@ -115,6 +115,9 @@ account it holds — the two things to compare when your editor or `connect` can
 is running. `connect` names the tunnels your `devtunnel` account sees; a tunnel listed `offline` is not
 running on its machine.
 
+On your machine, `aisland doctor` checks what `connect` needs once you have used it — `devtunnel` on
+the PATH, the `[connect]` extra, the sign-in — and prints the command that fixes a gap.
+
 `aisland tunnel` is deliberately not part of `aisland start` / `stop`: a tunnel into your own laptop
 is nobody's intent, so it runs only where you ask for it. `aisland doctor` probes the relay only on a
 machine that has used the tunnel.

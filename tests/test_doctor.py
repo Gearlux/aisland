@@ -330,6 +330,118 @@ class TestTunnelRelayCheck:
         assert doctor.tunnel.RELAY_HOST in result.remedy
 
 
+class TestTunnelConnectCheck:
+    """Where `aisland tunnel connect` has been used, what it needs here is checked, each gap with its fix."""
+
+    @staticmethod
+    def _used_here() -> None:
+        doctor.tunnel_connect.cache_path().parent.mkdir(parents=True, exist_ok=True)
+        doctor.tunnel_connect.cache_path().write_text("[]\n")
+
+    @staticmethod
+    def _devtunnel(monkeypatch: pytest.MonkeyPatch, tmp_path: Path, user_show: str, status: int = 0) -> None:
+        """A `devtunnel` on PATH whose `user show` prints ``user_show`` and exits with ``status``."""
+        bin_dir = tmp_path / "bin"
+        bin_dir.mkdir()
+        script = bin_dir / "devtunnel"
+        script.write_text(f"#!/bin/sh\necho '{user_show}'\nexit {status}\n")
+        script.chmod(0o755)
+        monkeypatch.setenv("PATH", f"{bin_dir}:/usr/bin:/bin")
+
+    @pytest.fixture()
+    def msgpack_imports(self, monkeypatch: pytest.MonkeyPatch) -> List[str]:
+        asked: List[str] = []
+
+        def fake(statement: str) -> Any:
+            asked.append(statement)
+            return True, ""
+
+        monkeypatch.setattr(doctor, "_import_probe", fake)
+        return asked
+
+    def test_a_machine_that_never_connected_passes_without_asking(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path, msgpack_imports: List[str]
+    ) -> None:
+        monkeypatch.setenv("PATH", str(tmp_path))  # no devtunnel at all
+
+        result = doctor.check_tunnel_connect()
+
+        assert result.ok
+        assert "`aisland tunnel connect` not used here" in result.detail
+        assert msgpack_imports == []
+
+    def test_a_forward_alone_counts_as_used(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path, msgpack_imports: List[str]
+    ) -> None:
+        doctor.tunnel_connect.log_path().parent.mkdir(parents=True, exist_ok=True)
+        doctor.tunnel_connect.log_path().write_text("Connected to tunnel: x\n")
+        monkeypatch.setenv("PATH", str(tmp_path))
+
+        assert not doctor.check_tunnel_connect().ok
+
+    def test_without_devtunnel_the_fix_is_its_install(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path, msgpack_imports: List[str]
+    ) -> None:
+        self._used_here()
+        monkeypatch.setenv("PATH", str(tmp_path))
+
+        result = doctor.check_tunnel_connect()
+
+        assert not result.ok
+        assert "no `devtunnel` on PATH" in result.detail
+        assert result.remedy == doctor.tunnel_connect.install_hint()
+
+    def test_without_msgpack_the_fix_is_the_extra(self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+        self._used_here()
+        self._devtunnel(monkeypatch, tmp_path, "Logged in as someone@example.com using Microsoft.")
+        monkeypatch.setattr(
+            doctor, "_import_probe", lambda s: (False, "ModuleNotFoundError: No module named 'msgpack'")
+        )
+
+        result = doctor.check_tunnel_connect()
+
+        assert not result.ok
+        assert "No module named 'msgpack'" in result.detail
+        assert result.remedy == "pip install 'aisland[connect]'"
+
+    def test_not_signed_in_the_fix_is_the_sign_in(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path, msgpack_imports: List[str]
+    ) -> None:
+        self._used_here()
+        self._devtunnel(monkeypatch, tmp_path, "Not logged in.")
+
+        result = doctor.check_tunnel_connect()
+
+        assert not result.ok
+        assert "devtunnel is not signed in" in result.detail
+        assert result.remedy.startswith("devtunnel user login")
+
+    def test_signed_in_passes_naming_the_account(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path, msgpack_imports: List[str]
+    ) -> None:
+        self._used_here()
+        self._devtunnel(monkeypatch, tmp_path, "Logged in as someone@example.com using Microsoft.")
+
+        result = doctor.check_tunnel_connect()
+
+        assert result.ok
+        assert "Logged in as someone@example.com using Microsoft." in result.detail
+        assert msgpack_imports == ["import msgpack"]
+
+    def test_a_devtunnel_that_cannot_answer_passes_with_a_note(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path, msgpack_imports: List[str]
+    ) -> None:
+        """The sign-in question goes to the service; offline, the doctor says so rather than failing."""
+        self._used_here()
+        self._devtunnel(monkeypatch, tmp_path, "Unable to reach the tunnel service.", status=1)
+
+        result = doctor.check_tunnel_connect()
+
+        assert result.ok
+        assert "could not ask devtunnel" in result.detail
+        assert "Unable to reach the tunnel service." in result.detail
+
+
 class TestReporting:
     def test_exit_code_is_zero_when_everything_passes(self, monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.setattr(doctor, "CHECKS", (lambda: doctor.CheckResult("x", True, "fine"),))

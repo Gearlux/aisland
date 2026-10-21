@@ -267,6 +267,17 @@ def test_a_forward_that_fails_reports_what_devtunnel_said(fake: Path) -> None:
         tunnel_connect.connect("box-one")
 
 
+def test_a_devtunnel_that_hangs_is_given_up_on(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    bin_dir = tmp_path / "slow-bin"
+    bin_dir.mkdir()
+    (bin_dir / "devtunnel").write_text("#!/bin/sh\nexec sleep 30\n")
+    (bin_dir / "devtunnel").chmod(0o755)
+    monkeypatch.setenv("PATH", f"{bin_dir}{os.pathsep}/usr/bin:/bin")
+    monkeypatch.setattr(tunnel_connect, "_RUN_TIMEOUT_S", 0.5)
+    with pytest.raises(click.ClickException, match="`devtunnel user show` gave no answer within 0.5 s"):
+        tunnel_connect.account()
+
+
 def test_without_msgpack_the_error_names_the_extra(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setitem(sys.modules, "msgpack", None)
     with pytest.raises(click.ClickException, match=r"pip install 'aisland\[connect\]'"):
