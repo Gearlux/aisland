@@ -97,8 +97,12 @@ start-time port pre-flight naming the PID is the only signal). All service state
     settings exports nothing — a bare `export` lists every variable (`::test_an_env_file_without_settings_prints_nothing`).
     `.env` is SOURCED under `set -a`, never word-split through `xargs` (which cut `"/a b"` at the space and left
     `$VAR` unexpanded) (`::test_a_quoted_value_with_a_space_is_exported_whole_and_a_variable_in_a_value_expanded`).
-    Each shell function it defines (`cdp`, `cdd`, `cdm`, `cdr`, `h`) is `unalias`ed first: an alias of that name is
-    expanded inside the definition and breaks the file (`::test_h_is_defined_even_where_an_alias_h_exists`).
+    Each shell function it defines (`cdp`, `cdd`, `cdm`, `cdr`, `h`, `tm`) is `unalias`ed first: an alias of that
+    name is expanded inside the definition and breaks the file (`::test_h_is_defined_even_where_an_alias_h_exists`).
+    `tm` hands `tmux new-session` the current folder and every exported variable but the terminal's and tmux's own,
+    read NUL-separated (`env -0`): a running server otherwise gives a new session the environment it started with
+    (`::test_tm_starts_a_session_in_the_current_folder_with_every_exported_variable`,
+    `::test_tm_leaves_the_terminal_and_tmuxs_own_variables_to_tmux`).
 - From a checkout, `get_workspace_root()` (`locations.checkout_workspace_root`) returns the directory
   holding `.gitmodules` (+ `TASKS.md`); without submodules the OUTERMOST `TASKS.md`, then the outermost
   `.git`; last resort `parents[2]`.

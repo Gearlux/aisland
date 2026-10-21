@@ -134,6 +134,51 @@ def test_h_is_defined_even_where_an_alias_h_exists(tmp_path: Path) -> None:
     assert out.strip() == "function"
 
 
+def _tm_arguments(root: Path, script: str) -> list:
+    """The arguments `tm` hands tmux when `script` runs after sourcing, read from a stub `tmux` that records them."""
+    stub = root / "stub-bin"
+    stub.mkdir()
+    record = root / "tmux-args"
+    (stub / "tmux").write_text(f"#!/bin/bash\nprintf '%s\\0' \"$@\" > '{record}'\n")
+    (stub / "tmux").chmod(0o755)
+    _bash(root, f"source ./project.bashrc && {script}", {"PATH": f"{stub}:/usr/bin:/bin"})
+    return record.read_text().split("\0")[:-1]
+
+
+def test_tm_starts_a_session_in_the_current_folder_with_every_exported_variable(tmp_path: Path) -> None:
+    root = (tmp_path / "acme").resolve()
+    _layout(root, ".aisland")
+    (root / "sub dir").mkdir()
+    args = _tm_arguments(
+        root, "cd 'sub dir' && export SPACED=$'a b\\nc' && UNEXPORTED=1 && tm -s work && : \"$UNEXPORTED\""
+    )
+    assert args[:3] == ["new-session", "-c", f"{root}/sub dir"]
+    assert args[-2:] == ["-s", "work"]
+    passed = args[3:-2]
+    assert passed[0::2] == ["-e"] * (len(passed) // 2)
+    names = {kv.split("=", 1)[0]: kv.split("=", 1)[1] for kv in passed[1::2]}
+    assert names["SPACED"] == "a b\nc"
+    assert names["PROJECT_ROOT"] == str(root)
+    assert names["PATH"].startswith(f"{root}/.aisland/bin:")
+    assert "UNEXPORTED" not in names
+
+
+def test_tm_leaves_the_terminal_and_tmuxs_own_variables_to_tmux(tmp_path: Path) -> None:
+    root = (tmp_path / "acme").resolve()
+    _layout(root, ".aisland")
+    script = "export TERM=xterm TERM_PROGRAM=iTerm.app TMUX=/tmp/s,1,0 TMUX_PANE=%1 OLDPWD=/ KEPT=1 && tm"
+    names = {kv.split("=", 1)[0] for kv in _tm_arguments(root, script)[4::2]}
+    assert "KEPT" in names
+    assert not names & {"TERM", "TERM_PROGRAM", "TMUX", "TMUX_PANE", "SHLVL", "PWD", "OLDPWD", "_"}
+
+
+def test_tm_is_defined_even_where_an_alias_tm_exists(tmp_path: Path) -> None:
+    root = (tmp_path / "acme").resolve()
+    _layout(root, ".aisland")
+    out = _bash(root, "shopt -s expand_aliases; alias tm='echo alias'; source ./project.bashrc && type -t tm")
+    assert out.strip() == "function"
+
+
 def test_variables_set_after_the_env_file_are_not_exported(tmp_path: Path) -> None:
     root = (tmp_path / "acme").resolve()
     _layout(root, ".aisland")

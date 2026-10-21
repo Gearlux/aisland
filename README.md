@@ -266,6 +266,7 @@ Enable it by starting a shell that sources `project.bashrc`:
 ```bash
 source project.bashrc      # activates .venv AND exports .env AND loads completion
                            # (and defines cdp/cdd/cdm/cdr, and h [word]: the history, filtered)
+                           # (and tm [tmux new-session options]: a tmux session here, with this shell's environment)
 aisland <TAB>              # check docker fiftyone info jenkins labelstudio mcp mlflow ...
 aisland wheels build vendorcli <TAB>   # --include-published --all --include-project --zip ... --help
 streamstudio exp<TAB>      # export export-workflow
