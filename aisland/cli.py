@@ -110,7 +110,7 @@ def workspace_group() -> None:
     type=click.Path(path_type=Path),
     metavar="FILE",
     help="A workspace file (`aisland workspace export` writes one): each of its projects is added as a submodule, "
-    "on its branch, before the --add ones.",
+    "on its branch and in its alias folder when it has one, before the --add ones.",
 )
 @click.option(
     "--rewrite",
@@ -143,6 +143,8 @@ def workspace_export(file: Optional[Path]) -> None:
 
     Each submodule's folder, address and branch — without .gitmodules, each clone's — under [projects], after comments
     saying how to create the venv, install aisland and run `aisland workspace init . --from FILE` on another machine.
+    A project's short name — a link in the workspace folder to it, or its folder when that differs from its
+    repository's name — is written as its alias, the folder `init --from` clones it into.
     """
     if not locations.workspace_found():
         raise click.ClickException(locations.missing_workspace_message())

@@ -18,7 +18,7 @@ command (:func:`workspace_found`, :func:`missing_workspace_message`) before anyt
 
 import os
 from pathlib import Path
-from typing import List, Mapping, Optional
+from typing import Dict, List, Mapping, Optional
 
 #: The installed package's folder: ``<workspace>/aisland/aisland`` in a checkout, ``site-packages/aisland`` from a wheel.
 PACKAGE_DIR = Path(__file__).parent.absolute()
@@ -73,6 +73,30 @@ def checkout_workspace_root(package_file: Optional[Path] = None) -> Path:
 
     # 4. Absolute fallback: <root>/aisland/aisland/manager.py -> <root>.
     return start.parents[2]
+
+
+def is_alias(folder: Path, workspace: Path) -> bool:
+    """Whether ``folder`` is a symbolic link to a folder inside ``workspace`` — a second name for a folder the
+    workspace already holds (``ml -> machine_learning``), never a project of its own: every reader of the workspace's
+    projects skips it, and the folder it names is found under its own name. A link to a folder OUTSIDE the workspace
+    is no alias: it is how a checkout kept elsewhere joins the workspace. Both sides are resolved, so a workspace
+    entered through a link of its own (``~/acme -> /build/acme``) tells its aliases all the same."""
+    if not folder.is_symlink():
+        return False
+    target = folder.resolve()
+    inside = workspace.resolve()
+    return target == inside or inside in target.parents
+
+
+def alias_names(workspace: Path) -> Dict[Path, str]:
+    """The short name each folder of ``workspace`` goes by: for every non-hidden link in the workspace's root that is
+    an alias (:func:`is_alias`) of a folder, that folder's resolved path -> the link's name. Of two links to one
+    folder the first by name gives it. The generated VS Code workspace file shows a project under this name."""
+    names: Dict[Path, str] = {}
+    for child in sorted(workspace.iterdir(), key=lambda c: c.name):
+        if not child.name.startswith(".") and child.is_dir() and is_alias(child, workspace):
+            names.setdefault(child.resolve(), child.name)
+    return names
 
 
 def holds_projects(folder: Path) -> bool:

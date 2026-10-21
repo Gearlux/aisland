@@ -21,13 +21,14 @@ types the addresses; ``init --from`` reads it. It is TOML because the workspace'
 """
 
 import json
+import os
 import re
 import subprocess
 import sys
 import tomllib
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Dict, List, Literal, Optional, Sequence, Tuple, get_args
+from typing import Dict, List, Literal, Optional, Sequence, Set, Tuple, get_args
 
 import click
 
@@ -132,7 +133,7 @@ def _submodules(root: Path) -> List[Tuple[str, str, Optional[str]]]:
 
 
 #: The settings a project of a workspace file takes, in the order ``export`` writes them.
-_PROJECT_KEYS = ("url", "branch")
+_PROJECT_KEYS = ("url", "branch", "alias")
 
 #: A project's name is the folder it is cloned into: one plain, visible folder name.
 _FOLDER_NAME = re.compile(r"[A-Za-z0-9_][A-Za-z0-9_.-]*")
@@ -140,11 +141,18 @@ _FOLDER_NAME = re.compile(r"[A-Za-z0-9_][A-Za-z0-9_.-]*")
 
 @dataclass(frozen=True)
 class FileProject:
-    """One project of a workspace file: the folder it is cloned into, its address and the branch to check out."""
+    """One project of a workspace file: its name, its address, the branch to check out and its alias — a short name,
+    the folder it is cloned into instead of its name (``ksai`` for ``company_ai``)."""
 
     name: str
     url: str
     branch: Optional[str] = None
+    alias: Optional[str] = None
+
+    @property
+    def folder(self) -> str:
+        """The folder the project is cloned into: its alias, else its name."""
+        return self.alias or self.name
 
 
 def _line_of(text: str, name: str) -> Optional[int]:
@@ -190,15 +198,39 @@ def read_workspace_file(path: Path) -> List[FileProject]:
         if unknown:
             raise click.ClickException(
                 f"{where}: project {name!r} has the unknown setting {unknown[0]!r} (a project takes "
-                f"{' and '.join(_PROJECT_KEYS)})."
+                f"{', '.join(_PROJECT_KEYS[:-1])} and {_PROJECT_KEYS[-1]})."
             )
         for key, value in settings.items():
             if not isinstance(value, str):
                 raise click.ClickException(f'{where}: project {name!r}: {key} must be text, as in {key} = "<text>".')
         if "url" not in settings:
             raise click.ClickException(f"{where}: project {name!r} has no url.")
-        projects.append(FileProject(name, settings["url"], settings.get("branch")))
+        alias = settings.get("alias")
+        if alias is not None and not _FOLDER_NAME.fullmatch(alias):
+            raise click.ClickException(f"{where}: project {name!r}: alias {alias!r} is not a folder name.")
+        projects.append(FileProject(name, settings["url"], settings.get("branch"), alias))
+    _refuse_a_shared_folder(path, text, projects)
     return projects
+
+
+def _refuse_a_shared_folder(path: Path, text: str, projects: Sequence[FileProject]) -> None:
+    """Names and aliases are one set of folders: an alias may be neither another project's name nor another's alias.
+    Raises :class:`click.ClickException` naming the line of the project whose alias is taken."""
+    names = {project.name for project in projects}
+    alias_of: Dict[str, str] = {}
+    for project in projects:
+        alias = project.alias
+        if alias is None or alias == project.name:
+            continue
+        line = _line_of(text, project.name)
+        where = f"{path}:{line}" if line else str(path)
+        if alias in names:
+            raise click.ClickException(f"{where}: project {project.name!r}: alias {alias!r} is another project's name.")
+        if alias in alias_of:
+            raise click.ClickException(
+                f"{where}: project {project.name!r}: alias {alias!r} is already {alias_of[alias]}'s alias."
+            )
+        alias_of[alias] = project.name
 
 
 def _add_submodule(root: Path, url: str, path: Optional[str] = None, branch: Optional[str] = None) -> None:
@@ -288,7 +320,7 @@ def init_workspace(
     rows = [_row(".git/", "git init")]
 
     for project in listed:
-        _add_submodule(root, project.url, project.name, project.branch)
+        _add_submodule(root, project.url, project.folder, project.branch)
     for url in add:
         _add_submodule(root, url)
     submodules = _submodules(root)
@@ -356,8 +388,9 @@ def _export_header(name: str, file_name: str) -> str:
 #        .venv/bin/aisland setup
 # =========================================================================
 
-# One entry per project: the folder name, its address and, if you want, a branch to check out
-# (without one, the repository's default branch).
+# One entry per project: its name (the folder it is cloned into), its address and, if you want, a branch to check
+# out (without one, the repository's default branch) and an alias: a short name, the folder it is cloned into
+# instead of its name.
 [projects]
 """
 
@@ -375,6 +408,8 @@ def _projects_table(projects: Sequence[FileProject]) -> str:
         settings = [f"url = {json.dumps(project.url)}"]
         if project.branch:
             settings.append(f"branch = {json.dumps(project.branch)}")
+        if project.alias:
+            settings.append(f"alias = {json.dumps(project.alias)}")
         lines.append(f"{key.ljust(width)} = {{ {', '.join(settings)} }}")
     return "\n".join(lines) + "\n"
 
@@ -385,19 +420,27 @@ def _git_out(folder: Path, *args: str) -> Optional[str]:
     return result.stdout.strip() if result.returncode == 0 else None
 
 
+def _repository_name(url: str) -> Optional[str]:
+    """The repository's own name, read from its address (``…/company_ai.git`` -> ``company_ai``), or None when the
+    address ends in no folder name."""
+    last = re.split(r"[/:]", url.rstrip("/"))[-1]
+    name = last[: -len(".git")] if last.endswith(".git") else last
+    return name if _FOLDER_NAME.fullmatch(name) else None
+
+
 def exportable_projects(root: Path) -> Tuple[List[FileProject], List[Tuple[str, str]]]:
     """The projects of the workspace at ``root`` a workspace file lists, and a ``(name, row)`` per folder considered.
 
     With ``.gitmodules``, its submodules: a branch of ``.`` (follow the superproject's) is written as the root's
     branch, since a new workspace has no superproject branch to follow yet. Without one, each direct subfolder that is
     a git clone, by its ``origin`` and the branch it is on (`aisland.manager.workspace_folders`' reading of such a
-    workspace); a project folder that is no clone, and a clone without ``origin``, are left out with the reason."""
-    projects: List[FileProject] = []
-    rows: List[Tuple[str, str]] = []
+    workspace); a project folder that is no clone, and a clone without ``origin``, are left out with the reason.
 
-    def take(project: FileProject) -> None:
-        projects.append(project)
-        rows.append((project.name, project.url + (f" ({project.branch})" if project.branch else "")))
+    A project's alias is its short name (:func:`_with_aliases`): a link in the workspace folder to its folder, or the
+    folder itself when the project is checked out under a name other than its repository's. A link no project takes
+    is left out with the reason."""
+    found: List[Tuple[str, str, Optional[str]]] = []
+    rows: List[Tuple[str, str]] = []  # in folder order; a project's row is filled in once its name is known
 
     if (root / ".gitmodules").is_file():
         root_branch = _git_out(root, "branch", "--show-current") or None
@@ -407,19 +450,69 @@ def exportable_projects(root: Path) -> Tuple[List[FileProject], List[Tuple[str, 
             elif not url:
                 rows.append((path, "left out: it has no url in .gitmodules"))
             else:
-                take(FileProject(path, url, root_branch if branch == "." else branch))
-        return projects, rows
+                found.append((path, url, root_branch if branch == "." else branch))
+                rows.append((path, ""))
+    else:
+        for child in sorted(root.iterdir(), key=lambda c: c.name):
+            if not child.is_dir() or child.name.startswith(".") or locations.is_alias(child, root):
+                continue
+            if (child / ".git").exists():
+                origin = _git_out(child, "remote", "get-url", "origin")
+                if not origin:
+                    rows.append((child.name, "left out: it has no origin remote"))
+                else:
+                    found.append((child.name, origin, _git_out(child, "branch", "--show-current") or None))
+                    rows.append((child.name, ""))
+            elif (child / "pyproject.toml").is_file():
+                rows.append((child.name, "left out: not a git clone"))
+    projects, link_rows = _with_aliases(root, found, {name for name, _row in rows})
+    said = iter(
+        (
+            project.name,
+            project.url
+            + (f" ({project.branch})" if project.branch else "")
+            + (f", checked out as {project.alias}/" if project.alias else ""),
+        )
+        for project in projects
+    )
+    return projects, [next(said) if not row else (name, row) for name, row in rows] + link_rows
+
+
+def _with_aliases(
+    root: Path, found: Sequence[Tuple[str, str, Optional[str]]], reported: Set[str]
+) -> Tuple[List[FileProject], List[Tuple[str, str]]]:
+    """Each ``(folder, url, branch)`` as a project of the file, with its alias, and a row per link left out (but the
+    ``reported`` folders, which already have one).
+
+    The project is named after its repository (:func:`_repository_name`) unless that name is no folder name or is
+    another project's folder; its alias is the link in the workspace folder that names its folder
+    (:func:`aisland.locations.alias_names`), else the folder itself when it differs from that name. A workspace made
+    from the file checks each project out straight into its alias: a link becomes a direct checkout."""
+    folders = {folder for folder, _url, _branch in found}
+    short = locations.alias_names(root)
+    projects: List[FileProject] = []
+    used: Set[str] = set()
+    for folder, url, branch in found:
+        repository = _repository_name(url)
+        name = repository if repository and repository not in used and repository not in folders - {folder} else folder
+        used.add(name)
+        link = short.get((root / folder).resolve())
+        alias = link or (folder if folder != name else None)
+        projects.append(FileProject(name, url, branch, alias))
+    taken = {project.alias for project in projects} | reported
+    rows: List[Tuple[str, str]] = []
     for child in sorted(root.iterdir(), key=lambda c: c.name):
-        if not child.is_dir() or child.name.startswith("."):
+        if child.name.startswith(".") or not child.is_symlink() or not child.is_dir() or child.name in taken:
             continue
-        if (child / ".git").exists():
-            origin = _git_out(child, "remote", "get-url", "origin")
-            if not origin:
-                rows.append((child.name, "left out: it has no origin remote"))
-            else:
-                take(FileProject(child.name, origin, _git_out(child, "branch", "--show-current") or None))
-        elif (child / "pyproject.toml").is_file():
-            rows.append((child.name, "left out: not a git clone"))
+        target = child.resolve()
+        if not locations.is_alias(child, root):
+            rows.append((child.name, f"left out: it points outside the workspace ({os.readlink(child)})"))
+        elif short.get(target) != child.name:
+            rows.append(
+                (child.name, f"left out: {short[target]} already names {os.path.relpath(target, root.resolve())}")
+            )
+        else:
+            rows.append((child.name, f"left out: it names no project ({os.path.relpath(target, root.resolve())})"))
     return projects, rows
 
 

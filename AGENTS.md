@@ -598,6 +598,14 @@ User choice 2026-10-08: an aisland command, only the named project's closure, bo
   submodules only: activation, deinit, mirrors). What needs a submodule is refused naming the
   reason: a `github`/`pypi` source (it would empty the folder for good), a mirror, a wheel of a
   project in no git repository. (`tests/test_folder_workspace.py`)
+- **A link to a folder inside the workspace is a short name, never a project (user request 2026-10-21).** [aliases]
+  Every reader of the workspace's projects skips a folder for which `locations.is_alias(folder, workspace)` holds
+  (`discover_projects`, `workspace_folders`, `harness._project_folders`, `sources.known_projects`,
+  `workspace.exportable_projects`); a new reader does the same, never an `is_symlink` test of its own. A link to a
+  folder OUTSIDE the workspace stays a project. The generated `.code-workspace` names such a folder by its link
+  (`locations.alias_names`: root links, non-hidden, the first by name), its `path` the real folder; `workspace export`
+  writes it as the project's `alias` ([workspace-file]). (`tests/test_symlinked_folders.py`,
+  `tests/test_workspace_init.py::test_export_writes_a_link_to_a_project_as_its_alias`)
 - Without `.gitmodules`, `setup_git.sh` gives every subfolder that is its own clone (and the root
   when it is a repository) every workspace alias with the root baked in (`GIT_PULL_ALL_ROOT`):
   `git_pull_all.sh`'s `folder_main` merges each clone on ITS OWN branch, the root last, and records

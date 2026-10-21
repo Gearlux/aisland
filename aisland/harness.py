@@ -170,11 +170,15 @@ def _link_claude_commands(root: Path, folder: Path) -> Optional[str]:
 
 def _project_folders(root: Path) -> List[Path]:
     """The workspace's project folders: each direct, non-hidden subfolder holding a ``pyproject.toml`` (a submodule
-    whose source is detached has an empty folder and gets nothing)."""
+    whose source is detached has an empty folder and gets nothing; a link to another folder of the workspace is none,
+    :func:`aisland.locations.is_alias`)."""
     return sorted(
         child
         for child in root.iterdir()
-        if child.is_dir() and not child.name.startswith(".") and (child / "pyproject.toml").is_file()
+        if child.is_dir()
+        and not child.name.startswith(".")
+        and (child / "pyproject.toml").is_file()
+        and not locations.is_alias(child, root)
     )
 
 

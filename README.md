@@ -119,12 +119,31 @@ tools  = { url = "git@github.com:acme/tools.git" }
 
 Edit the list, take the file to the new machine and follow its three steps in the folder that will
 hold the workspace. `init --from` clones each project as a submodule on its `branch` (without one,
-the repository's default branch), before any `--add`. A project takes `url` and `branch` and nothing
-else; a file aisland cannot read is refused before anything is written, naming the line:
+the repository's default branch), before any `--add`. A project takes `url`, `branch` and `alias` and
+nothing else; a file aisland cannot read is refused before anything is written, naming the line:
 
 ```text
 $ .venv/bin/aisland workspace init . --from acme.workspace.toml
 Error: acme.workspace.toml:4: project 'tools' has no url.
+```
+
+An `alias` is a project's short name: `init --from` clones the project straight into that folder.
+`export` writes one for a link in the workspace folder to a project (`ml -> machine_learning`) and for a
+project checked out under a name other than its repository's, so a workspace that uses links comes back
+with direct checkouts. A link to a folder outside the workspace is left out, with the reason:
+
+```text
+$ aisland workspace export
+==> Wrote /Users/you/work/acme/acme.workspace.toml: 2 projects
+    machine_learning          git@github.com:acme/machine_learning.git (dev/main), checked out as ml/
+    tools                     git@github.com:acme/tools.git
+    logs                      left out: it points outside the workspace (/Users/you/logs)
+```
+
+```toml
+[projects]
+machine_learning = { url = "git@github.com:acme/machine_learning.git", branch = "dev/main", alias = "ml" }
+tools            = { url = "git@github.com:acme/tools.git" }
 ```
 
 aisland finds the venv at `.venv` in the workspace. To give it a name, use `--prompt` (the shell
@@ -311,6 +330,13 @@ is asked from loggair itself (`python -m loggair --json`, from the workspace
 root with `.env` loaded), so a `log_dir` in `~/.config/loggair/config.yaml` or
 a `LOGGAIR_DIR` in `.env` decides it. A project set to `pypi` or `github`, or
 an inactive optional submodule, has no checkout and is not listed.
+A short name you give a project folder with a link in the workspace root
+(`ln -s machine_learning ml`) is the name the folder shows under, its path still
+the real folder; with two links to one folder the first by name wins. Such a
+link is never a project of its own: setup, its extras prompt, `aisland source`
+list the folder once, under its real name, and `aisland workspace export` writes
+the link as the project's `alias`. A link to a folder outside the workspace is a
+project like any other.
 `aisland source set|unset|apply` rewrite the file too, `--machine-only`
 included. The settings and extension recommendations come from
 `aisland/aisland/code-workspace.json` (inside the package, so a wheel carries it): change a shared setting there and re-run

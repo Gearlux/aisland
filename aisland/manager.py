@@ -342,20 +342,24 @@ def get_workspace_name(root: Optional[Path] = None) -> str:
     return root.name
 
 
-def discover_projects(root: Path) -> List[Path]:
-    """Recursively discover pyproject.toml files, but only in directories that are identified as projects."""
+def discover_projects(root: Path, workspace_root: Optional[Path] = None) -> List[Path]:
+    """Recursively discover pyproject.toml files, but only in directories that are identified as projects.
+
+    A link to a folder inside the workspace (``workspace_root``, default ``root``) is skipped: it is a second name for
+    a folder found under its own (:func:`aisland.locations.is_alias`)."""
+    workspace_root = workspace_root or root
     projects = []
     # Skip standard ignored directories
     if any(p in str(root) for p in [".venv", "aisland/data"]):
         return []
 
     for item in root.iterdir():
-        if item.is_dir():
+        if item.is_dir() and not locations.is_alias(item, workspace_root):
             pyproject = item / "pyproject.toml"
             if pyproject.exists():
                 projects.append(pyproject)
                 # If it's a project, also check for sub-projects (submodules)
-                projects.extend(discover_projects(item))
+                projects.extend(discover_projects(item, workspace_root))
     return projects
 
 
@@ -1210,7 +1214,9 @@ def write_code_workspace(workspace_root: Path) -> Optional[Path]:
     Generated and gitignored like ``pyrightconfig.json``: the folder list follows what is checked out HERE, so a
     per-machine source override shows in the editor without dirtying a tracked file. Folders: the workspace, then
     every project with a checkout in dependency order (sorted by folder name first, so the disk's listing order
-    never reorders it), then loggair's log folder when it exists. Settings and extensions come from
+    never reorders it), then loggair's log folder when it exists. A project a link in the workspace's root names
+    (``ml -> machine_learning``) shows under that short name (:func:`aisland.locations.alias_names`), its path still the
+    real folder. Settings and extensions come from
     :data:`CODE_WORKSPACE_TEMPLATE`, with this machine's editor theme and colours over them (:mod:`aisland.editor`).
     An unchanged file is not rewritten, so VS Code does not reload it.
     """
@@ -1218,9 +1224,13 @@ def write_code_workspace(workspace_root: Path) -> Optional[Path]:
     projects = sorted(
         (get_project_metadata(p) for p in discover_projects(workspace_root)), key=lambda p: p["path"].name
     )
+    short_names = locations.alias_names(workspace_root)
     folders = [{"name": name, "path": "."}]
     folders += [
-        {"name": p["path"].name, "path": os.path.relpath(p["path"], workspace_root)}
+        {
+            "name": short_names.get(p["path"].resolve(), p["path"].name),
+            "path": os.path.relpath(p["path"], workspace_root),
+        }
         for p in _dependency_order(projects)
     ]
     log_dir = _loggair_log_dir(workspace_root)
@@ -1276,14 +1286,18 @@ def workspace_folders(workspace_root: Path) -> List[Tuple[str, str, bool]]:
 
     With ``.gitmodules``, its submodules (:func:`submodule_active_map`). Without one, every direct, non-hidden
     subfolder holding a ``pyproject.toml``, active and named by its folder — the workspace is read as if each were
-    a submodule (`aisland.locations.holds_projects` is the same test).
+    a submodule (`aisland.locations.holds_projects` is the same test). A link to another folder of the workspace is
+    none of them (:func:`aisland.locations.is_alias`).
     """
     if (workspace_root / ".gitmodules").is_file():
         return submodule_active_map(workspace_root)
     return [
         (child.name, child.name, True)
         for child in sorted(workspace_root.iterdir(), key=lambda c: c.name)
-        if child.is_dir() and not child.name.startswith(".") and (child / "pyproject.toml").is_file()
+        if child.is_dir()
+        and not child.name.startswith(".")
+        and (child / "pyproject.toml").is_file()
+        and not locations.is_alias(child, workspace_root)
     ]
 
 

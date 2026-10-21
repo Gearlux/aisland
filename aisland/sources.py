@@ -58,6 +58,7 @@ from typing import Any, Dict, List, Literal, Optional, Tuple, cast, get_args
 import click
 from packaging.version import InvalidVersion, Version
 
+from aisland import locations
 from aisland.config import CONFIG_FILE
 from aisland.config import load as load_config
 from aisland.config import update as update_config
@@ -506,10 +507,11 @@ def checkout_state(workspace_root: Path, project: str) -> str:
 
 
 def known_projects(workspace_root: Path) -> List[str]:
-    """Every project ``aisland source`` can manage: declared submodules plus any sibling with a pyproject."""
+    """Every project ``aisland source`` can manage: declared submodules plus any sibling with a pyproject (a link to
+    another folder of the workspace is none, :func:`aisland.locations.is_alias`)."""
     names = {name for name, _path, _active in submodule_active_map(workspace_root)}
     for child in workspace_root.iterdir():
-        if child.is_dir() and (child / "pyproject.toml").exists():
+        if child.is_dir() and (child / "pyproject.toml").exists() and not locations.is_alias(child, workspace_root):
             names.add(child.name)
     return sorted(names)
 
