@@ -92,6 +92,41 @@ def test_the_wheel_carries_the_shell_init_beside_the_package(wheel_members: List
     assert "aisland/project.bashrc" not in _package_files_that_are_not_modules()
 
 
+@pytest.fixture(scope="module")
+def released(tmp_path_factory: pytest.TempPathFactory) -> Path:
+    """The source package and the wheel built the way a release builds them: ``python -m build`` makes the source
+    package, then the wheel FROM it — so a file the build needs that the source package leaves out fails here, not
+    in the release workflow. Built from the files git would release (tracked, or new and not ignored)."""
+    listed = subprocess.run(
+        ["git", "-C", str(PROJECT), "ls-files", "--cached", "--others", "--exclude-standard"],
+        capture_output=True,
+        text=True,
+        check=True,
+    ).stdout.splitlines()
+    source = tmp_path_factory.mktemp("release-source")
+    for name in listed:
+        if (PROJECT / name).is_file():
+            (source / name).parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy(PROJECT / name, source / name)
+    dist = tmp_path_factory.mktemp("release-dist")
+    result = subprocess.run(
+        [sys.executable, "-m", "build", "--no-isolation", "--outdir", str(dist), str(source)],
+        capture_output=True,
+        text=True,
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
+    return dist
+
+
+def test_a_release_build_puts_the_shell_init_into_the_wheel(released: Path) -> None:
+    """`setup.py` copies `project.bashrc` into the wheel, so the source package must carry it (`MANIFEST.in`)."""
+    (source_package,) = released.glob("*.tar.gz")
+    (built,) = released.glob("*.whl")
+    with zipfile.ZipFile(built) as archive:
+        assert archive.read("aisland/project.bashrc") == (PROJECT / "project.bashrc").read_bytes()
+    assert source_package.name.startswith("aisland_manager-")
+
+
 # --- the wheel, run in a workspace that is not this one --------------------------------------------------------
 
 

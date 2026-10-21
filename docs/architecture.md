@@ -1988,7 +1988,8 @@ One standard-library module, `aisland.locations`, decides, and every path asks i
 - **What a wheel cannot find beside itself, it carries.** The editor template, the git scripts and
   `init`'s templates are package data; `project.bashrc` stays at `aisland/project.bashrc` (its place
   there makes the root its parent) and `setup.py` copies it into a wheel, from which `aisland setup`
-  writes it to `.aisland/` — where its parent is again the root.
+  writes it to `.aisland/` — where its parent is again the root. `MANIFEST.in` keeps it in the source
+  package too: `python -m build` builds the wheel from the source package, not from the checkout.
 - **The scripts take the root from outside.** `setup_git.sh [root]`; installed elsewhere it writes a
   `pull-all` alias that names `git_pull_all.sh` by its path and passes the root in
   `GIT_PULL_ALL_ROOT`. In the checkout the alias keeps its old form.

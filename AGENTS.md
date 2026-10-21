@@ -85,7 +85,9 @@ start-time port pre-flight naming the PID is the only signal). All service state
     `_WORKSPACE_FREE`.
   - From a wheel, setup copies the packaged `project.bashrc` to `.aisland/` and links the root to it
     (`setup.py` puts it in the wheel; it stays at `aisland/project.bashrc` in the checkout, whose place
-    defines the root); the file finds `bin/` beside itself. (`tests/test_project_bashrc.py`)
+    defines the root); the file finds `bin/` beside itself. (`tests/test_project_bashrc.py`) `MANIFEST.in`
+    keeps it in the source package, from which `python -m build` builds the wheel — a release is built that way
+    (`tests/test_packaging.py::test_a_release_build_puts_the_shell_init_into_the_wheel`).
   - `project.bashrc` ALWAYS sets `PROJECT_ROOT` from its own place, never keeps an inherited one: an editor
     started from a shell that sourced another workspace passes that root down, and its `.venv` was activated
     (`::test_a_project_root_inherited_from_another_workspace_is_replaced_by_this_ones`). A `.env` with no
