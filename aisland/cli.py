@@ -3,8 +3,9 @@ from pathlib import Path
 from typing import List, Optional, Tuple
 
 import click
+from click.shell_completion import CompletionItem
 
-from aisland import locations, nightly, pytest_stats
+from aisland import editor, locations, manager, nightly, pytest_stats
 from aisland import supervisor as supervisor_mod
 from aisland import tunnel as tunnel_mod
 from aisland import wheels
@@ -124,6 +125,131 @@ def workspace_export(file: Optional[Path]) -> None:
     if not locations.workspace_found():
         raise click.ClickException(locations.missing_workspace_message())
     workspace_mod.export_workspace(get_workspace_root(), file)
+
+
+def _editor_root() -> Path:
+    """The workspace whose editor choice a `theme`/`color` command changes (`workspace` is workspace-free)."""
+    if not locations.workspace_found():
+        raise click.ClickException(locations.missing_workspace_message())
+    return get_workspace_root()
+
+
+def _complete_themes(ctx: click.Context, param: click.Parameter, incomplete: str) -> List[CompletionItem]:
+    """The installed VS Code themes whose name starts with ``incomplete``, case ignored; nothing when they cannot be
+    read — a completion callback must never break the shell."""
+    try:
+        themes = editor.list_themes()
+    except Exception:  # a completion callback must never break the shell
+        return []
+    return [CompletionItem(t.name) for t in themes if t.name.casefold().startswith(incomplete.casefold())]
+
+
+def _complete_colors(ctx: click.Context, param: click.Parameter, incomplete: str) -> List[CompletionItem]:
+    return [CompletionItem(name) for name, _ in editor.named_colors() if name.startswith(incomplete.lower())]
+
+
+@workspace_group.group("theme")
+def theme_group() -> None:
+    """This machine's VS Code theme for the workspace window, kept in .git/config (never committed).
+
+    The workspace file's `workbench.colorTheme`: this window only — every other window keeps your user setting.
+    """
+
+
+@theme_group.command("list")
+def theme_list() -> None:
+    """The themes VS Code offers on this machine: name, kind, the extension that brings it; * marks the
+    workspace's. Nothing when VS Code is not installed."""
+    chosen = editor.read_choice(_editor_root()).theme
+    themes = editor.list_themes()
+    width = max((len(t.name) for t in themes), default=0)
+    kind_width = max((len(t.kind) for t in themes), default=0)
+    for t in themes:
+        mark = "*" if t.name == chosen else " "
+        click.echo(f"{mark} {t.name:<{width}}  {t.kind:<{kind_width}}  {t.source}")
+
+
+@theme_group.command("set")
+@click.argument("name", shell_complete=_complete_themes)
+def theme_set(name: str) -> None:
+    """Show the workspace window in theme NAME (as `aisland workspace theme list` prints it, case ignored)."""
+    root = _editor_root()
+    theme = editor.set_theme(root, name)
+    manager.write_code_workspace(root)
+    click.echo(f"==> Theme: {theme.name if theme else name} (this machine only)")
+
+
+@theme_group.command("unset")
+def theme_unset() -> None:
+    """Forget the workspace's theme: the window shows your VS Code user setting again."""
+    root = _editor_root()
+    editor.set_theme(root, None)
+    manager.write_code_workspace(root)
+    click.echo("==> Theme: your VS Code user setting")
+
+
+@workspace_group.group("color")
+def color_group() -> None:
+    """This machine's background and foreground colour for the workspace window, over any theme.
+
+    Kept in .git/config (never committed). The colours go on the window frame — title bar, activity bar, status
+    bar — or, with --area both, on the code too: editor, side bar, panel and terminal.
+    """
+
+
+@color_group.command("list")
+@click.argument("part", required=False, default="")
+def color_list(part: str) -> None:
+    """The colour names to choose from (CSS's 148), each with its swatch and value; PART keeps the names holding
+    it. The first line is this workspace's choice; ← marks the chosen names."""
+    choice = editor.read_choice(_editor_root())
+    click.echo(
+        f"This workspace: background: {editor.describe(choice.background)}, "
+        f"foreground: {editor.describe(choice.foreground)}, area: {choice.area}"
+    )
+    width = max(len(name) for name, _ in editor.named_colors())
+    for name, value in editor.named_colors(part):
+        rgb = (int(value[1:3], 16), int(value[3:5], 16), int(value[5:7], 16))
+        roles = [role for role in editor.COLOR_ROLES if choice.color(role) == name]
+        mark = f"  ← {', '.join(roles)}" if roles else ""
+        click.echo(f"{click.style(' ' * 6, bg=rgb)} {name:<{width}}  {value}{mark}")
+
+
+@color_group.command("set")
+@click.argument("role", type=click.Choice(editor.COLOR_ROLES))
+@click.argument("color", shell_complete=_complete_colors)
+@click.option(
+    "--area",
+    type=click.Choice(editor.COLOR_AREAS),
+    default=None,
+    help="frame: the title bar, activity bar and status bar; both: those and the editor, side bar, panel and "
+    "terminal. Kept for later colours. Default: the kept one, else frame.",
+)
+def color_set(role: editor.ColorRole, color: str, area: Optional[editor.ColorArea]) -> None:
+    """Colour the workspace window's ROLE (background or foreground) COLOR, whatever the theme.
+
+    COLOR is a CSS name (`aisland workspace color list`: navy, dark slate blue) or #RGB, #RGBA, #RRGGBB,
+    #RRGGBBAA: `aisland workspace color set background navy --area both`.
+    """
+    root = _editor_root()
+    editor.set_color(root, role, color, area)
+    manager.write_code_workspace(root)
+    choice = editor.read_choice(root)
+    where = "the window frame" if choice.area == "frame" else "the window frame and the code"
+    click.echo(f"==> {role.capitalize()}: {editor.describe(choice.color(role))}, on {where} (this machine only)")
+
+
+@color_group.command("unset")
+@click.argument("role", required=False, type=click.Choice(editor.COLOR_ROLES))
+def color_unset(role: Optional[editor.ColorRole]) -> None:
+    """Give ROLE's colour back to the theme; without ROLE, both colours (and the area)."""
+    root = _editor_root()
+    if role is None:
+        editor.clear_colors(root)
+    else:
+        editor.set_color(root, role, None)
+    manager.write_code_workspace(root)
+    click.echo(f"==> {role.capitalize() if role else 'Background and foreground'}: the theme's")
 
 
 # --- Git Commands ---

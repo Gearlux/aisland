@@ -16,7 +16,8 @@ installed outside the workspace gets its unpublished dependencies as wheels · [
 is push-only, fast-forward-only, and copies the primary · [wheel-mode] from a checkout everything
 is found from aisland's place, from a wheel from where it runs · [folders-as-submodules] a folder of
 projects is a workspace, its subfolders read as submodules · [workspace-file] a workspace is written down in a
-file a machine without aisland reads · [harness] every workspace gets aisland's agent commands and rules.
+file a machine without aisland reads · [harness] every workspace gets aisland's agent commands and rules · [editor] the editor's theme and colours are a per-machine choice laid over the
+generated workspace file.
 
 ## Current state
 
@@ -29,6 +30,8 @@ The workspace's dev-infrastructure CLI, `aisland` (click, `aisland/cli.py`):
   then `[projects]`: each project's folder, `url`, `branch`), and `aisland workspace init <folder>`, a new
   workspace (its starting files, the `--from` file's projects and the `--add`
   submodules, the git aliases).
+- `editor.py`: `aisland workspace theme|color`, this machine's VS Code theme and colours (`css_colors.py`: the CSS
+  names), kept in `.git/config` and laid over the generated workspace file.
 - `config.py`: the one committed `config.toml`, written through `sources.py`
   (`aisland source`), `mirrors.py` (`aisland mirror`) and `selection.py`
   (`aisland framework|tracker`; `frameworks.py` is a facade over it).
@@ -283,6 +286,14 @@ Root `AGENTS.md` "Two Test Runs" (user ruling 2026-10-05). [test-stats]
     import of loggair. (`::test_the_real_loggair_report_names_its_log_folder`)
   - The real workspace ignores it and does not track it
     (`::test_the_real_workspace_keeps_the_file_out_of_git`).
+  - This machine's editor theme and colours (`aisland workspace theme|color`, `editor.py`; user request
+    2026-10-21) live in `git config --local aisland.editor.*` ONLY — never `config.toml`, the template or any
+    tracked file — and `write_code_workspace` lays them over the template's settings on every write. The colours
+    are written unscoped in `workbench.colorCustomizations` (they hold whatever the theme); a theme is VS Code's
+    `id || label`; without VS Code nothing is listed and `theme set` is refused; an unreadable hand-edited value is
+    skipped with a warning, never a failed setup. [editor]
+    (`tests/test_editor.py::test_the_choice_lives_in_git_config_local_and_in_no_committed_file`,
+    `::test_every_later_rewrite_keeps_the_choice`, `::test_the_colours_hold_whatever_the_theme`)
 
 ## Project Sources Are Two-Layered
 

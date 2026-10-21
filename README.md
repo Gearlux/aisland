@@ -313,6 +313,39 @@ included. The settings and extension recommendations come from
 in VS Code at *Workspace* scope is gone at the next setup — put a personal one
 in your *User* settings.
 
+#### This machine's theme and colours (`aisland workspace theme|color`)
+
+The workspace window can have its own theme and its own background and
+foreground colour, chosen on this machine only: the choice is kept in
+`.git/config` (`aisland.editor.*`), never in a committed file, and every
+rewrite of the workspace file carries it.
+
+```bash
+aisland workspace theme list                  # the themes VS Code offers here; * marks the workspace's
+aisland workspace theme set "Solarized Dark"  # this window only — the others keep your user setting
+aisland workspace theme unset
+aisland workspace color list slate            # CSS's 148 colour names with a swatch; a part of the name filters
+aisland workspace color set background navy   # title bar, activity bar and status bar
+aisland workspace color set foreground '#e0e0e0' --area both   # the frame and the editor, side bar, panel, terminal
+aisland workspace color unset background      # without a role: both colours go back to the theme
+```
+
+```text
+$ aisland workspace color list slate
+This workspace: background: navy (#000080), foreground: #e0e0e0, area: both
+       darkslateblue         #483d8b
+       darkslategray         #2f4f4f
+       ...
+```
+
+A theme is named as `theme list` prints it (case ignored); the list is read
+from VS Code's own folder and `~/.vscode/extensions`, and is empty where VS
+Code is not installed — `theme set` is refused there. A colour is a CSS name
+(`navy`, `dark slate blue`) or `#RGB`, `#RGBA`, `#RRGGBB`, `#RRGGBBAA`. The
+colours hold whatever the theme: they are written unscoped into
+`workbench.colorCustomizations`, which VS Code lays over the active theme.
+`--area` (`frame`, the default, or `both`) is kept for later colours.
+
 The root **`mypy.ini`** is the opposite: committed, hand-maintained policy
 (the per-module `[mypy-*]` sections). Setup only keeps its `mypy_path`
 line complete — any discovered project missing from it is **appended**

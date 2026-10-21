@@ -13,7 +13,7 @@ from typing import Any, Dict, List, Optional, Tuple
 import click
 from packaging.requirements import InvalidRequirement, Requirement
 
-from aisland import locations, supervisor
+from aisland import editor, locations, supervisor
 from aisland.harness import install_harness
 
 # Path Configuration (relative to the file itself)
@@ -1211,7 +1211,8 @@ def write_code_workspace(workspace_root: Path) -> Optional[Path]:
     per-machine source override shows in the editor without dirtying a tracked file. Folders: the workspace, then
     every project with a checkout in dependency order (sorted by folder name first, so the disk's listing order
     never reorders it), then loggair's log folder when it exists. Settings and extensions come from
-    :data:`CODE_WORKSPACE_TEMPLATE`. An unchanged file is not rewritten, so VS Code does not reload it.
+    :data:`CODE_WORKSPACE_TEMPLATE`, with this machine's editor theme and colours over them (:mod:`aisland.editor`).
+    An unchanged file is not rewritten, so VS Code does not reload it.
     """
     name = get_workspace_name(workspace_root)
     projects = sorted(
@@ -1227,6 +1228,8 @@ def write_code_workspace(workspace_root: Path) -> Optional[Path]:
         folders.append({"name": log_dir.name, "path": os.path.relpath(log_dir, workspace_root)})
 
     document = {"folders": folders, **_code_workspace_settings(name)}
+    # This machine's theme and colours (`aisland workspace theme|color`), kept in .git/config, never the template.
+    document["settings"].update(editor.workspace_settings(editor.read_choice(workspace_root)))
     text = _CODE_WORKSPACE_HEADER + json.dumps(document, indent=4) + "\n"
     out = code_workspace_path(workspace_root)
     if out.exists() and out.read_text() == text:

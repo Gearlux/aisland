@@ -249,6 +249,67 @@ gitignore it, like `pyrightconfig.json` and `.mcp.json`:
 
 ---
 
+## The editor's theme and colours are a per-machine choice laid over the generated workspace file (2026-10-21)
+
+### Context
+
+A window of one workspace should be told apart at a glance, or shown in a theme of its own. VS Code reads
+`workbench.colorTheme` and `workbench.colorCustomizations` from a `.code-workspace` file, but aisland rewrites
+that file on every `aisland setup` and `aisland source …`, so a choice made in VS Code at *Workspace* scope (or
+by the Peacock extension, which writes there) is lost at the next setup. A colour is a personal choice: the user
+ruled it must stay on the machine and never reach a committed file.
+
+### Decision
+
+`aisland/editor.py` keeps the choice in `git config --local aisland.editor.{theme,background,foreground,area}`
+— the per-machine layer `aisland source --machine-only` already uses — and `manager.write_code_workspace` adds
+`editor.workspace_settings(editor.read_choice(root))` over the template's settings on every write.
+
+- The theme is what VS Code stores in `workbench.colorTheme`: a contributed theme's `id`, else its label
+  (`settingsId = theme.id || label` in VS Code's `colorThemeData.ts`), a `%key%` label read from the extension's
+  `package.nls.json`. The list comes from VS Code's own extension folder (found from the `code` command, else the
+  standard install places) and `~/.vscode/extensions` (only what its `extensions.json` lists). No VS Code, no
+  theme — `theme set` is refused there rather than writing a name nothing can check.
+- The colours are written unscoped (no `"[Theme]"` key), so VS Code lays them over whichever theme is active.
+  A colour is one of CSS Color 4's 148 names (`css_colors.py`, copied from the W3C table) or a hex form VS Code
+  reads. `frame` colours what Peacock colours — the title bar, activity bar and status bar; `both` adds the editor,
+  gutter, side bar, panel and terminal (key lists from VS Code's theme colour reference).
+- A value hand-edited into `.git/config` that cannot be read is skipped with a warning: setup still writes the
+  file.
+
+### Consequences
+
+- The choice survives every rewrite and never dirties a tracked file; another checkout keeps its own.
+- A workspace that is no git repository cannot keep one (`theme|color set` say so).
+- Nothing chosen, the file is byte-identical to before.
+
+### Example
+
+```text
+$ git config --local --get-regexp '^aisland\.editor\.'
+aisland.editor.theme Solarized Dark
+aisland.editor.background navy
+```
+
+```jsonc
+"workbench.colorTheme": "Solarized Dark",
+"workbench.colorCustomizations": {
+    "titleBar.activeBackground": "#000080",
+    "titleBar.inactiveBackground": "#000080",
+    "activityBar.background": "#000080",
+    "statusBar.background": "#000080"
+}
+```
+
+### What you may change
+
+- The keys each area colours (`editor._FRAME`, `editor._CODE`), and new areas beside `frame`/`both`.
+- The places VS Code is looked for (`editor.INSTALL_FOLDERS`).
+- What must not change: the choice stays per machine and out of every committed file, and the colours stay
+  unscoped so they hold whatever the theme.
+
+---
+
 ## Framework selection is a second two-layer registry, and CI reads only the committed layer (2026-07-30)
 
 ### Context
