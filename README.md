@@ -1864,7 +1864,7 @@ calls it for you at provisioning time).
 
 ```
 ==> /path/to/workspace/.project.bashrc.completion (bash)
-    liquifai apps: annotaide, purifai, raidar, recordstream, sonair, wf, ...
+    liquifai apps: annotaide, curaitor, raidar, recordstream, sonair, wf, ...
     other CLIs:    aisland, streamstudio
     pruned stale:  matrainer
 ```

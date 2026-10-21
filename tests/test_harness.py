@@ -343,7 +343,7 @@ def test_the_ignore_lines_are_added_once(root: Path, shipped: Path) -> None:
 #: names no aisland file may carry at all are `test_no_private_names.FORBIDDEN`'s, checked beside these.
 PRIVATE = re.compile(
     r"acme|company|gearlux|vendorcli|platform|annotaide|navigaitor|confluid|recordstream|matrainer"
-    r"|liquifai|loggair|streamstudio|sonair|raidar|deltaid|purifai|torpaido|distilaide|torchsig",
+    r"|liquifai|loggair|streamstudio|sonair|raidar|deltaid|curaitor|torpaido|distilaide|torchsig",
     re.IGNORECASE,
 )
 
