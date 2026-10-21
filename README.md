@@ -197,7 +197,7 @@ beta                   pushed main (1 commit)
 
 `git pull-all` lists what needs you (edits in the way, `--autostash`, a detached clone, a
 conflict) as it does for submodules, and `git push-all` pushes the root only when every clone
-pushed. The others loop over the clones too, the root first for `status-all` and last otherwise:
+pushed. A root repository with no `origin` remote is neither pulled nor pushed. The others loop over the clones too, the root first for `status-all` and last otherwise:
 
 ```text
 $ git status-all
@@ -2058,11 +2058,21 @@ What it cannot do is listed under `needs you:` and it exits 1; fix the item and 
 
 `--autostash` sets aside only the files the merge needs, in a stash named `git pull-all autostash`, merges, and puts them back. If the merge itself conflicts, your edits stay aside until you commit the merge; the next `git pull-all` puts them back.
 
+A root with no `origin` remote — the one `aisland workspace init` makes — has nothing to pull: it is neither fetched nor merged, and each submodule is pulled on the branch it is on, whatever the root's branch. What came in is still recorded in the root:
+
+```text
+$ git pull-all
+fetching 2 submodules (the root has no origin remote)…
+alpha                  merged origin/dev/feature (2 commits)
+beta                   merged origin/dev/main (1 commit)
+root                   recorded submodule pointers: alpha, beta
+```
+
 The merges are explicit (`git fetch` + `git merge`, never `git pull`), so the result does not depend on a machine's `pull.rebase` setting. The logic lives in [`git_pull_all.sh`](aisland/git/git_pull_all.sh) (why it is shaped this way: [docs/architecture.md](docs/architecture.md), "`pull-all` settles a submodule pointer only to a commit holding both sides"). In Claude Code, `/pull-all` runs it and finishes the listed conflicts for you; `/push-all` runs `/pull-all`, pushes, and ends with `aisland mirror sync` (see [Project Mirrors](#project-mirrors-aisland-mirror)).
 
 ### Pushing Everything (`push-all`)
 
-`git push-all` pushes the current branch of every submodule, then the root's — the root only when every submodule push succeeded, so the root on origin never records a submodule commit origin does not have.
+`git push-all` pushes the current branch of every submodule, then the root's — the root only when every submodule push succeeded, so the root on origin never records a submodule commit origin does not have. A root with no `origin` remote is skipped, ending with `root: no origin remote — not pushed`.
 
 ```bash
 git push-all

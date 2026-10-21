@@ -431,6 +431,54 @@ def test_a_submodule_off_the_roots_branch_is_not_pulled(ws: Workspace, checkout:
     assert ws.head(ws.B / "alpha") == before
 
 
+# --- a root without a remote ------------------------------------------------------------------
+# `aisland workspace init` makes the root with `git init` and adds no remote: nothing to fetch or merge
+# there, and its branch is a local name only, so each submodule is pulled on the branch it is on.
+
+
+def test_a_root_without_origin_pulls_the_submodules_and_records_what_came_in(ws: Workspace) -> None:
+    ws.git(ws.B, "remote", "remove", "origin")
+    a_sha = _publish(ws, "alpha", 1, "A", record=False)
+    rc, out = ws.pull_all(ws.B)
+    assert rc == 0, out
+    assert out.splitlines() == [
+        "fetching 2 submodules (the root has no origin remote)…",
+        "alpha                  merged origin/dev/main (1 commit)",
+        "root                   recorded submodule pointers: alpha",
+    ]
+    assert ws.head(ws.B / "alpha") == a_sha
+    assert ws.recorded(ws.B, "alpha") == a_sha
+    assert ws.status(ws.B) == []
+
+
+def test_a_root_without_origin_pulls_each_submodule_on_its_own_branch(ws: Workspace) -> None:
+    ws.git(ws.B, "remote", "remove", "origin")
+    ws.git(ws.B, "-c", "submodule.recurse=false", "checkout", "-q", "-b", "feature")
+    ws.git(ws.A / "alpha", "checkout", "-q", "-b", "feature")
+    feature = ws.change(ws.A / "alpha", "f.txt", 3, "feature")
+    ws.git(ws.A / "alpha", "push", "-q", "origin", "feature")
+    beta = _publish(ws, "beta", 1, "A", record=False)
+    ws.git(ws.B / "alpha", "checkout", "-q", "-b", "feature")
+    rc, out = ws.pull_all(ws.B)
+    assert rc == 0, out
+    assert "alpha                  merged origin/feature (1 commit)" in out
+    assert "beta                   merged origin/dev/main (1 commit)" in out
+    assert ws.head(ws.B / "alpha") == feature and ws.head(ws.B / "beta") == beta
+    assert ws.recorded(ws.B, "alpha") == feature and ws.recorded(ws.B, "beta") == beta
+
+
+def test_a_root_without_origin_leaves_unrecorded_local_commits_alone(ws: Workspace) -> None:
+    ws.git(ws.B, "remote", "remove", "origin")
+    ws.git(ws.B, "submodule", "deinit", "-q", "beta")
+    ws.change(ws.B / "alpha", "f.txt", 1, "B local")
+    before = ws.head(ws.B)
+    rc, out = ws.pull_all(ws.B)
+    assert rc == 0, out
+    assert out.splitlines() == ["fetching 1 submodule (the root has no origin remote)…", "everything up to date"]
+    assert ws.head(ws.B) == before
+    assert ws.status(ws.B) == [" M alpha"]
+
+
 def test_an_inactive_submodule_is_left_untouched(ws: Workspace) -> None:
     ws.git(ws.B, "submodule", "deinit", "-q", "beta")
     ws.git(ws.B, "config", "submodule.beta.active", "false")
@@ -539,3 +587,14 @@ def test_the_push_all_alias_pushes_the_submodules_before_the_root(ws: Workspace)
     assert pushed.returncode == 0, pushed.stdout + pushed.stderr
     assert ws.git(origin / "root.git", "rev-parse", BRANCH) == root
     assert ws.git(origin / "alpha.git", "rev-parse", BRANCH) == ws.head(ws.B / "alpha")
+
+
+def test_the_push_all_alias_pushes_the_submodules_of_a_root_without_origin(ws: Workspace) -> None:
+    _install_aliases(ws, ws.B)
+    ws.git(ws.B, "remote", "remove", "origin")
+    ws.change(ws.B / "alpha", "f.txt", 1, "B")
+    ws.record(ws.B, "alpha")
+    pushed = subprocess.run(["git", "push-all"], cwd=ws.B, env=ws.env, capture_output=True, text=True)
+    assert pushed.returncode == 0, pushed.stdout + pushed.stderr
+    assert pushed.stdout.splitlines()[-1] == "root: no origin remote — not pushed"
+    assert ws.git(ws.tmp / "origin" / "alpha.git", "rev-parse", BRANCH) == ws.head(ws.B / "alpha")

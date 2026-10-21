@@ -11,6 +11,7 @@ because from inside a clone git cannot find it. A workspace with `.gitmodules` k
 from __future__ import annotations
 
 import os
+import shutil
 import subprocess
 from pathlib import Path
 from typing import Dict, Optional
@@ -300,7 +301,40 @@ def test_pull_all_pulls_a_root_that_is_a_repository_last(repo_root: Folder) -> N
     ]
 
 
+def test_pull_all_skips_a_root_repository_without_origin(repo_root: Folder) -> None:
+    repo_root.git(repo_root.root, "remote", "remove", "origin")
+    repo_root.publish("alpha", "two\n")
+    result = repo_root.run("pull-all")
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert result.stdout.splitlines() == [
+        "fetching 2 repositories (the root has no origin remote)…",
+        "alpha                  merged origin/main (1 commit)",
+    ]
+
+
+def test_pull_all_in_a_root_without_origin_and_no_clone_pulls_nothing(repo_root: Folder) -> None:
+    repo_root.git(repo_root.root, "remote", "remove", "origin")
+    for name in ("alpha", "beta"):
+        shutil.rmtree(repo_root.root / name)
+    result = repo_root.run("pull-all", repo_root.root)
+    assert result.returncode == 1
+    assert result.stdout.splitlines() == ["the root has no origin remote and no subfolder is a clone — nothing pulled"]
+
+
 # --- push-all -----------------------------------------------------------------------------------------------------
+
+
+def test_push_all_skips_a_root_repository_without_origin(repo_root: Folder) -> None:
+    repo_root.git(repo_root.root, "remote", "remove", "origin")
+    (repo_root.root / "alpha" / "f.txt").write_text("local\n")
+    repo_root.git(repo_root.root / "alpha", "commit", "-q", "-am", "local")
+    result = repo_root.run("push-all")
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert result.stdout.splitlines() == [
+        "alpha                  pushed main (1 commit)",
+        "beta                   dev up to date",
+        "root                   no origin remote — not pushed",
+    ]
 
 
 def test_push_all_pushes_each_clone_s_branch(plain: Folder) -> None:

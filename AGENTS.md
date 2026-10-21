@@ -624,6 +624,12 @@ User choice 2026-10-08: an aisland command, only the named project's closure, bo
     takes only its pointers (`::test_recording_pointers_leaves_other_staged_changes_staged_and_out`).
   - `git fetch` + `git merge`, never `git pull` (`pull.*` settings, `submodule.recurse`).
   - Uncommitted edits are touched only under `--autostash`, only the files the merge needs.
+  - **A root without an `origin` remote (what `workspace init` makes; user request 2026-10-21)** is neither
+    fetched nor merged, each submodule is pulled on ITS OWN branch, and what came in is still recorded;
+    `push-all` (both forms) skips that root and says so. With an origin, a submodule off the root's
+    branch stays listed, never pulled (`::test_a_root_without_origin_pulls_each_submodule_on_its_own_branch`,
+    `::test_the_push_all_alias_pushes_the_submodules_of_a_root_without_origin`,
+    `tests/test_folder_git_aliases.py::test_pull_all_skips_a_root_repository_without_origin`).
   - bash 3.2 (`/bin/bash` on macOS): no `wait -n`, associative arrays, `mapfile`; the tests run
     it under `/bin/bash`.
 - `git push-all` pushes every submodule before the root, and the root only when they all pushed

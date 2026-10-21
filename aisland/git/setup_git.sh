@@ -145,8 +145,9 @@ else
 fi
 
 # push-all: the submodules first, the root last and only when they all pushed, so the root
-# on origin never records a submodule commit origin does not have.
-set_alias push-all '!git submodule foreach "git push origin \$(git branch --show-current)" && git push origin $(git branch --show-current)'
+# on origin never records a submodule commit origin does not have. A root with no origin remote (the
+# one `aisland workspace init` makes) is skipped and says so.
+set_alias push-all '!git submodule foreach "git push origin \$(git branch --show-current)" && if git remote get-url origin >/dev/null 2>&1; then git push origin $(git branch --show-current); else echo "root: no origin remote — not pushed"; fi'
 
 set_alias switch-all '!f() { git checkout "$1" && git submodule foreach "branch=\$(git config -f \"\$toplevel/.gitmodules\" submodule.\$name.branch); [ \"\$branch\" = \".\" ] && branch=\"$1\"; git checkout \${branch:-main}"; }; f'
 

@@ -21,6 +21,9 @@
 #   4. record, in one root commit, each submodule holding commits from origin that the root
 #      does not record yet. A pointer never moves backwards, and a submodule whose only
 #      unrecorded commits are local ones is left for whoever made them.
+# A root with no origin remote (the one `aisland workspace init` makes) has nothing to pull: it is
+# neither fetched nor merged, and since its branch is then a local name only, each submodule is
+# pulled on the branch it is on (step 2); step 4 still records what came in.
 # Whatever it cannot do is listed under "needs you:" with exit status 1; a rerun after
 # fixing it continues where this run stopped (it also finishes a root merge left on pointer
 # conflicts, e.g. by a plain `git pull`).
@@ -64,6 +67,10 @@ for arg in "$@"; do
             ;;
     esac
 done
+
+# Whether the root has an origin to pull from; without one, only the submodules (or clones) are pulled.
+ROOT_REMOTE=1
+git -C "$WORKSPACE_ROOT" remote get-url origin >/dev/null 2>&1 || ROOT_REMOTE=0
 
 # --- output -------------------------------------------------------------------------------
 
@@ -261,20 +268,24 @@ root_step() {
 # One root commit recording each submodule that holds commits from origin the root does not
 # record yet. Only once the root holds everything origin has and no merge is in progress.
 record_pointers() {
-    local sm sub up rec head names
+    local sm sub up rec head names branch
     local -a paths=()
     mid_merge "$WORKSPACE_ROOT" && return 0
-    git -C "$WORKSPACE_ROOT" merge-base --is-ancestor "origin/$BRANCH" HEAD 2>/dev/null || return 0
+    if [ "$ROOT_REMOTE" = 1 ]; then
+        git -C "$WORKSPACE_ROOT" merge-base --is-ancestor "origin/$BRANCH" HEAD 2>/dev/null || return 0
+    fi
     for sm in "${SUBMODULES[@]}"; do
         listed "$sm" && continue
         sub="$WORKSPACE_ROOT/$sm"
-        [ "$(git -C "$sub" branch --show-current)" = "$BRANCH" ] || continue
-        up=$(git -C "$sub" rev-parse -q --verify "refs/remotes/origin/$BRANCH") || continue
+        branch=$(git -C "$sub" branch --show-current)
+        [ -n "$branch" ] || continue
+        if [ "$ROOT_REMOTE" = 1 ] && [ "$branch" != "$BRANCH" ]; then continue; fi
+        up=$(git -C "$sub" rev-parse -q --verify "refs/remotes/origin/$branch") || continue
         rec=$(git -C "$WORKSPACE_ROOT" rev-parse -q --verify "HEAD:$sm") || continue
         head=$(git -C "$sub" rev-parse HEAD)
         [ "$rec" = "$head" ] && continue
         if ! git -C "$sub" merge-base --is-ancestor "$rec" "$head" 2>/dev/null; then
-            need "$sm" "the root records ${rec:0:7}, which $sm's $BRANCH does not contain — pointer left as recorded"
+            need "$sm" "the root records ${rec:0:7}, which $sm's $branch does not contain — pointer left as recorded"
             continue
         fi
         # origin brought nothing the root lacks: the unrecorded commits are local work.
@@ -304,6 +315,7 @@ finish() {
 # Fetch the root (label `root`) and the folders named after it, in parallel; a failure is listed.
 fetch_all() {
     local fails
+    [ $# -gt 0 ] || return 0
     fails=$(mktemp)
     printf '%s\0' "$@" | xargs -0 -n 1 -P "$FETCH_JOBS" sh -c '
         dir="$2/$3"; [ "$3" = root ] && dir="$2"
@@ -327,11 +339,16 @@ folder_main() {
         [ -e "$dir/.git" ] && clones+=("$(basename "$dir")")
     done
     if [ ${#clones[@]} -eq 1 ]; then noun="1 repository"; else noun="${#clones[@]} repositories"; fi
-    if [ -d "$WORKSPACE_ROOT/.git" ]; then
+    if [ -d "$WORKSPACE_ROOT/.git" ] && [ "$ROOT_REMOTE" = 1 ]; then
         labels=(root)
         echo "fetching the root and ${noun}…"
+    elif [ ${#clones[@]} -gt 0 ] && [ -d "$WORKSPACE_ROOT/.git" ]; then
+        echo "fetching ${noun} (the root has no origin remote)…"
     elif [ ${#clones[@]} -gt 0 ]; then
         echo "fetching ${noun}…"
+    elif [ -d "$WORKSPACE_ROOT/.git" ]; then
+        echo "the root has no origin remote and no subfolder is a clone — nothing pulled"
+        exit 1
     else
         echo "no git repository in $WORKSPACE_ROOT — nothing pulled"
         exit 1
@@ -357,7 +374,7 @@ folder_main() {
         fi
     done
 
-    if [ -d "$WORKSPACE_ROOT/.git" ]; then
+    if [ -d "$WORKSPACE_ROOT/.git" ] && [ "$ROOT_REMOTE" = 1 ]; then
         BRANCH=$(git -C "$WORKSPACE_ROOT" branch --show-current)
         if [ -z "$BRANCH" ]; then
             need root "detached HEAD — not pulled"
@@ -390,10 +407,17 @@ done <<<"$SUBMODULE_PATHS"
 
 # 1. Fetch everything first, so an unreachable remote is known before anything merges.
 #    --no-recurse-submodules: each submodule is fetched here once, not again by the root.
-if [ ${#SUBMODULES[@]} = 1 ]; then echo "fetching the root and 1 submodule…"; else echo "fetching the root and ${#SUBMODULES[@]} submodules…"; fi
-fetch_all root "${SUBMODULES[@]}"
+if [ ${#SUBMODULES[@]} = 1 ]; then NOUN="1 submodule"; else NOUN="${#SUBMODULES[@]} submodules"; fi
+if [ "$ROOT_REMOTE" = 1 ]; then
+    echo "fetching the root and ${NOUN}…"
+    fetch_all root "${SUBMODULES[@]}"
+else
+    echo "fetching ${NOUN} (the root has no origin remote)…"
+    fetch_all "${SUBMODULES[@]}"
+fi
 
-# 2. The submodules.
+# 2. The submodules: each on the root's branch, or, when the root has no origin, on its own.
+ROOT_BRANCH="$BRANCH"
 SUBMODULE_MID_MERGE=0
 for sm in "${SUBMODULES[@]}"; do
     sub="$WORKSPACE_ROOT/$sm"
@@ -412,7 +436,9 @@ for sm in "${SUBMODULES[@]}"; do
         need "$sm" "detached HEAD — not pulled"
         continue
     fi
-    if [ "$branch" != "$BRANCH" ]; then
+    if [ "$ROOT_REMOTE" = 0 ]; then
+        BRANCH="$branch"
+    elif [ "$branch" != "$BRANCH" ]; then
         need "$sm" "on $branch, the root is on $BRANCH — not pulled"
         continue
     fi
@@ -423,7 +449,9 @@ for sm in "${SUBMODULES[@]}"; do
     fi
 done
 
-# 3. The root, then 4. its pointers.
-root_step
+BRANCH="$ROOT_BRANCH"
+
+# 3. The root (when it has an origin), then 4. its pointers.
+[ "$ROOT_REMOTE" = 1 ] && root_step
 record_pointers
 finish

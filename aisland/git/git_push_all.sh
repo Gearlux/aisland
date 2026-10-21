@@ -1,7 +1,8 @@
 #!/bin/bash
 # git push-all for a workspace without .gitmodules — every subfolder that is its own git repository
 # (a clone) pushes its current branch to origin, then the root, when it is a repository and every
-# clone pushed (so origin's root never names work its clones' origins lack, as with submodules).
+# clone pushed (so origin's root never names work its clones' origins lack, as with submodules). A root
+# with no origin remote (one made by `git init`) is skipped and says so.
 #
 # Installed as the `git push-all` alias by setup_git.sh, which passes the workspace root in
 # GIT_PULL_ALL_ROOT: from inside a clone git cannot find it. A workspace WITH .gitmodules keeps the
@@ -60,7 +61,9 @@ done
 
 if [ -d "$WORKSPACE_ROOT/.git" ]; then
     FOUND=1
-    if [ "$FAILED" = 1 ]; then
+    if ! git -C "$WORKSPACE_ROOT" remote get-url origin >/dev/null 2>&1; then
+        report root "no origin remote — not pushed"
+    elif [ "$FAILED" = 1 ]; then
         report root "not pushed: a repository above did not push"
     else
         push_repo "$WORKSPACE_ROOT" root || FAILED=1
