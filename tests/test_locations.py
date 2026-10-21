@@ -9,7 +9,9 @@ its `.aisland/`.
 
 from __future__ import annotations
 
+import os
 from pathlib import Path
+from typing import Iterator
 
 import pytest
 
@@ -127,6 +129,52 @@ def test_from_a_wheel_outside_a_workspace_the_message_says_how_to_get_one(
         "your workspace or one of its projects, set AISLAND_WORKSPACE to it, or create one with "
         "`aisland workspace init <folder>`."
     )
+
+
+# --- from a wheel: a folder you may not enter --------------------------------------------------------------------
+
+needs_permissions = pytest.mark.skipif(os.geteuid() == 0, reason="root enters a chmod 000 folder all the same")
+
+
+@pytest.fixture
+def locked(tmp_path: Path) -> Iterator[Path]:
+    """`start/locked/`, a folder nobody may enter (`chmod 000`, as `/tmp/snap-private-tmp` is on Linux); its mode is
+    put back afterwards so pytest can delete it."""
+    folder = tmp_path / "start" / "locked"
+    folder.mkdir(parents=True)
+    folder.chmod(0o000)
+    yield folder
+    folder.chmod(0o755)
+
+
+@needs_permissions
+def test_from_a_wheel_a_subfolder_you_may_not_enter_counts_as_no_project(
+    locked: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Importing `aisland.manager` from `/tmp` raised `PermissionError` on `snap-private-tmp/pyproject.toml`."""
+    start = locked.parent
+    (start / "alpha").mkdir()
+    (start / "alpha" / "pyproject.toml").write_text("")
+    monkeypatch.setattr(locations, "FROM_CHECKOUT", False)
+    monkeypatch.chdir(start)
+    monkeypatch.delenv("AISLAND_WORKSPACE", raising=False)
+    assert locations.holds_projects(start) is True
+    assert locations.workspace_root() == start
+    assert locations.state_dir() == start / ".aisland"
+
+
+@needs_permissions
+def test_from_a_wheel_a_folder_holding_only_a_locked_subfolder_is_no_workspace(locked: Path) -> None:
+    assert locations.holds_projects(locked.parent) is False
+    assert locations.find_workspace(locked.parent) is None
+
+
+@needs_permissions
+def test_from_a_wheel_a_start_folder_you_may_not_read_is_looked_past(locked: Path) -> None:
+    """Its own markers count as absent, so the lookup goes on to the folders above it."""
+    assert locations.find_workspace(locked) is None
+    assert locations.alias_names(locked) == {}
+    assert locations.is_alias(locked / "ml", locked.parent) is False
 
 
 # --- the CLI from a wheel, outside a workspace ------------------------------------------------------------------
