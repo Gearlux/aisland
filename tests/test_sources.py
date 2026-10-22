@@ -175,21 +175,6 @@ class TestCommittedSources:
         assert set(s.read_committed_sources(tmp_path)) == {"confluid"}
         assert f"{tmp_path / 'workspace.toml'}:1: project 'loggair' has source 'svn'" in capsys.readouterr().out
 
-    def test_the_old_sources_tables_of_config_toml_are_refused_naming_their_line(self, tmp_path: Path) -> None:
-        (tmp_path / CONFIG_FILE).write_text('frameworks = ["torch"]\n\n[sources.loggair]\nsource = "pypi"\n')
-        with pytest.raises(workspace_file.FileError) as refused:
-            s.read_committed_sources(tmp_path)
-        assert refused.value.message == (
-            f"{tmp_path / CONFIG_FILE}:3: [sources.loggair] is no longer read — its settings go in "
-            'workspace.toml [project."loggair"] (source, branch, version, distribution)'
-        )
-
-    def test_a_config_toml_without_sources_or_unreadable_is_left_to_its_own_reader(self, tmp_path: Path) -> None:
-        (tmp_path / CONFIG_FILE).write_text('frameworks = ["torch"]\n')
-        assert s.read_committed_sources(tmp_path) == {}
-        (tmp_path / CONFIG_FILE).write_text("[sources.loggair\n")
-        assert s.read_committed_sources(tmp_path) == {}
-
 
 # --- layering -----------------------------------------------------------------------------
 
@@ -258,13 +243,6 @@ class TestEffectiveSource:
         monkeypatch.setattr(s.subprocess, "run", self._fake_config({"aisland.source.loggair.source": "svn"}))
         assert s.local_override(tmp_path, "loggair") is None
 
-    def test_the_old_one_key_override_is_not_read_but_named(
-        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
-        monkeypatch.setattr(s.subprocess, "run", self._fake_config({"aisland.source.loggair": "pypi"}))
-        assert s.local_override(tmp_path, "loggair") is None
-        assert s.old_overrides(tmp_path) == {"loggair": "pypi"}
-
     def test_setting_an_override_writes_one_key_each_and_clearing_removes_them(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
@@ -280,10 +258,9 @@ class TestEffectiveSource:
         assert store == {}
 
     def test_other_aisland_settings_are_no_source(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-        store = {"aisland.frameworks": "torch", "aisland.source.loggair.source": "pypi"}
+        store = {"aisland.frameworks": "torch", "aisland.source.loggair": "pypi", "aisland.source.alpha.source": "pypi"}
         monkeypatch.setattr(s.subprocess, "run", self._fake_config(store))
-        assert s.old_overrides(tmp_path) == {}
-        assert s._overridden_projects(tmp_path) == ["loggair"]
+        assert s._overridden_projects(tmp_path) == ["alpha"]
 
 
 # --- applying -----------------------------------------------------------------------------

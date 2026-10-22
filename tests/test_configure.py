@@ -122,6 +122,12 @@ def test_an_unknown_plugin_is_refused_naming_the_plugins(fake: List[Any]) -> Non
 # --- source ----------------------------------------------------------------------------------------------------
 
 
+def test_mirror_is_a_plugin_of_configure() -> None:
+    plugin = configure.PLUGINS["mirror"]
+    assert (plugin.main.name, plugin.main.choices, plugin.options) == ("mirror", None, ())
+    assert plugin.usage() == "set PROJECT MIRROR [--machine-only]"
+
+
 def test_source_is_a_plugin_of_configure() -> None:
     plugin = configure.PLUGINS["source"]
     assert plugin.main.name == "source" and plugin.main.choices == ("local", "github", "pypi")
@@ -131,23 +137,11 @@ def test_source_is_a_plugin_of_configure() -> None:
 def test_configure_source_lists_each_projects_source(root: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     row = {"project": "loggair", "committed": "pypi", "override": "-", "effective": "pypi", "state": "detached"}
     monkeypatch.setattr(s, "describe", lambda workspace_root=None: [row])
-    monkeypatch.setattr(s, "old_overrides", lambda workspace: {})
     result = _run("source")
     assert result.exit_code == 0, result.output
     assert result.output.splitlines() == [
         "  PROJECT  COMMITTED  OVERRIDE  EFFECTIVE  STATE",
         "  loggair  pypi       -         pypi       detached",
-    ]
-
-
-def test_configure_source_names_this_machines_old_settings(root: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr(s, "describe", lambda workspace_root=None: [])
-    monkeypatch.setattr(s, "old_overrides", lambda workspace: {"loggair": "local:dev/main"})
-    assert _run("source").output.splitlines() == [
-        "No project has a source: each one is checked out and installed editable.",
-        "Set one with: aisland workspace configure source set <project> pypi",
-        "This machine's aisland.source.loggair = local:dev/main is no longer read; set it again with:",
-        "  aisland workspace configure source set loggair local --branch dev/main --machine-only",
     ]
 
 
@@ -197,13 +191,3 @@ def test_the_source_group_is_gone(command: List[str]) -> None:
     result = CliRunner().invoke(cli.main, command)
     assert result.exit_code == 2
     assert "No such command 'source'" in result.output
-
-
-def test_an_old_setting_that_cannot_be_read_still_gets_the_command_to_set_it(
-    root: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    monkeypatch.setattr(s, "describe", lambda workspace_root=None: [])
-    monkeypatch.setattr(s, "old_overrides", lambda workspace: {"a": "svn:trunk", "b": "pypi:>=1"})
-    lines = _run("source").output.splitlines()
-    assert "  aisland workspace configure source set a <local|github|pypi> --machine-only" in lines
-    assert "  aisland workspace configure source set b pypi --version >=1 --machine-only" in lines

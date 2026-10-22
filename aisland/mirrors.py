@@ -1,8 +1,8 @@
-"""Per-project push mirrors (``aisland mirror``).
+"""Per-project push mirrors (``aisland workspace configure mirror``, ``aisland workspace mirror sync``).
 
 A submodule's PRIMARY is the remote ``.gitmodules`` names — the one every machine clones from,
 pulls from and pushes to (``origin``). A MIRROR is a second host that receives a copy of the
-primary and nothing else: ``aisland mirror sync`` pushes the primary's ``dev/main``, ``main`` and
+primary and nothing else: ``aisland workspace mirror sync`` pushes the primary's ``dev/main``, ``main`` and
 tags to it, and nothing is ever pulled from it. The use is a project that must be visible on two
 hosts (a GitHub organisation and a Bitbucket server, say) while one of them stays the place work
 happens.
@@ -29,13 +29,13 @@ can only ever differ by the mirror being behind.
 
 Two configuration layers, the same split as :mod:`aisland.sources`:
 
-* **committed** — the ``[mirrors.<project>]`` tables of ``<workspace>/config.toml`` (``url``),
-  shared between machines;
-* **per-machine** — ``git config --local aisland.mirror.<project> <url>`` in the workspace
-  root, which replaces the committed URL on this machine only.
+* **committed** — the project's ``mirror`` in its table of ``<workspace>/workspace.toml``, shared between
+  machines;
+* **per-machine** — ``git config --local aisland.mirror.<project>.mirror <url>`` in the workspace root, which
+  replaces the committed URL on this machine only.
 
 The effective URL is kept as a remote named ``mirror`` inside the submodule's checkout, marked
-``remote.mirror.aislandManaged`` so that ``aisland setup`` and ``aisland mirror unset`` only ever
+``remote.mirror.aislandManaged`` so that ``aisland setup`` and ``… configure mirror unset`` only ever
 remove a remote aisland created; ``remote.mirror.tagOpt = --no-tags`` keeps a fetch from the
 mirror from importing its tags. Every network call runs with ``GIT_TERMINAL_PROMPT=0``: a host
 whose credentials are missing fails the sync with git's message instead of stalling it on a
@@ -56,13 +56,12 @@ from urllib.parse import urlparse
 
 import click
 
-from aisland.config import CONFIG_FILE
-from aisland.config import load as load_config
-from aisland.config import update as update_config
+from aisland import workspace_file
 from aisland.manager import get_workspace_root, submodule_active_map
 
-#: The registry's key in the committed ``config.toml`` — one ``[mirrors.<project>]`` table each.
-MIRRORS_KEY = "mirrors"
+#: The project's setting this module owns in its ``[project."<name>"]`` table of ``workspace.toml``, and the last part
+#: of this machine's ``aisland.mirror.<project>.mirror``.
+MIRROR_KEY = "mirror"
 
 #: The name of the remote that carries the mirror inside a submodule's checkout.
 MIRROR_REMOTE = "mirror"
@@ -111,35 +110,34 @@ class ProjectSync:
     note: str = ""
 
 
-# --- committed layer: the [mirrors.*] tables of <workspace>/config.toml --------------------
+# --- committed layer: each project's `mirror` in <workspace>/workspace.toml -----------------
 
 
 def read_committed_mirrors(workspace_root: Path) -> Dict[str, str]:
-    """``{project: url}`` from ``config.toml``; a malformed entry is warned about and skipped."""
-    data = load_config(workspace_root).get(MIRRORS_KEY)
-    if not isinstance(data, dict):
-        return {}
+    """``{project: url}`` from ``workspace.toml``; a mirror that is no text is warned about, naming its line."""
     result: Dict[str, str] = {}
-    for project, entry in data.items():
-        url = entry.get("url") if isinstance(entry, dict) else None
-        if not isinstance(url, str) or not url.strip():
-            click.echo(f"  - Warning: {CONFIG_FILE}: [{MIRRORS_KEY}.{project}] has no url; ignored")
+    for name, project in workspace_file.load(workspace_root).projects.items():
+        url = project.others.get(MIRROR_KEY)
+        if url is None:
             continue
-        result[project] = url.strip()
+        if not isinstance(url, str) or not url.strip():
+            click.echo(f"  - Warning: {project.where}: project {name!r} has a mirror that is no address; ignored")
+            continue
+        result[name] = url.strip()
     return result
 
 
 def write_committed_mirrors(workspace_root: Path, mirrors: Dict[str, str]) -> Path:
-    """Rewrite the ``[mirrors.*]`` tables, leaving the other sections of the file intact."""
-    table = {project: {"url": url} for project, url in sorted(mirrors.items())}
-    return update_config(workspace_root, MIRRORS_KEY, table or None)
+    """Set each project's ``mirror`` in ``workspace.toml`` to ``mirrors``, leaving every other setting alone."""
+    values = {project: {MIRROR_KEY: url} for project, url in mirrors.items()}
+    return workspace_file.set_settings(workspace_root, (MIRROR_KEY,), values)
 
 
-# --- per-machine layer: .git/config aisland.mirror.<project> -----------------------------
+# --- per-machine layer: .git/config aisland.mirror.<project>.mirror ---------------------------
 
 
 def _override_key(project: str) -> str:
-    return f"aisland.mirror.{project}"
+    return f"aisland.mirror.{project}.{MIRROR_KEY}"
 
 
 def local_override(workspace_root: Path, project: str) -> Optional[str]:
@@ -158,8 +156,9 @@ def set_local_override(workspace_root: Path, project: str, url: Optional[str]) -
 
 def _overridden_projects(workspace_root: Path) -> List[str]:
     listing = _git_out(workspace_root, "config", "--local", "--get-regexp", r"^aisland\.mirror\.")
-    prefix = "aisland.mirror."
-    return sorted(line.split(" ", 1)[0][len(prefix) :] for line in listing.splitlines() if line.startswith(prefix))
+    prefix, suffix = "aisland.mirror.", f".{MIRROR_KEY}"
+    keys = [line.split(" ", 1)[0] for line in listing.splitlines()]
+    return sorted(key[len(prefix) : -len(suffix)] for key in keys if key.startswith(prefix) and key.endswith(suffix))
 
 
 def effective_mirror(workspace_root: Path, project: str, committed: Optional[Dict[str, str]] = None) -> Optional[str]:
@@ -344,7 +343,7 @@ def set_mirror(
         committed = read_committed_mirrors(root)
         committed[project] = url
         write_committed_mirrors(root, committed)
-        where = f"recorded in {CONFIG_FILE} (commit it)"
+        where = f"recorded in {workspace_file.FILE_NAME} (commit it)"
     apply_mirror(root, project)
 
     click.echo(f"==> {project}: mirror → {url}")
@@ -355,7 +354,7 @@ def set_mirror(
         f"    Note: each sync copies {project}'s {branches} and tags from {host_of(primary)} to {host_of(url)}"
         " — make sure its code may live there."
     )
-    click.echo(f"    Push to it with: aisland mirror sync {project}")
+    click.echo(f"    Push to it with: aisland workspace mirror sync {project}")
     return 0
 
 
@@ -509,7 +508,7 @@ def sync(project: Optional[str] = None, workspace_root: Optional[Path] = None, p
 
 
 def _sync_line(result: RefResult) -> str:
-    """One row of ``aisland mirror sync``: ``dev/main  pushed (3 commits)``."""
+    """One row of ``aisland workspace mirror sync``: ``dev/main  pushed (3 commits)``."""
     if result.outcome == "refused":
         first, *rest = result.detail.splitlines()
         text = f"REFUSED: {first}" + "".join(f"\n{'':14}{line}" for line in rest)
@@ -526,7 +525,7 @@ def _sync_line(result: RefResult) -> str:
 
 
 def _state_word(result: RefResult) -> str:
-    """One ref's state in ``aisland mirror list``: ``dev/main 3 behind``."""
+    """One ref's state in ``aisland workspace configure mirror``: ``dev/main 3 behind``."""
     if result.ref == "tags":
         if result.outcome == "refused":
             return "tags differ"
@@ -543,10 +542,10 @@ def _state_word(result: RefResult) -> str:
 
 
 def run_sync(project: Optional[str] = None) -> int:
-    """``aisland mirror sync``: push and report. Exit 1 when anything was refused or failed."""
+    """``aisland workspace mirror sync``: push and report. Exit 1 when anything was refused or failed."""
     results = sync(project)
     if not results:
-        click.echo("No mirrors configured. Set one with: aisland mirror set <project> <url>")
+        click.echo("No mirrors configured. Set one with: aisland workspace configure mirror set <project> <url>")
         return 0
     for result in results:
         click.echo(f"==> {result.project} → {result.url}")
@@ -560,22 +559,19 @@ def run_sync(project: Optional[str] = None) -> int:
     return 1 if any(r.state in ("refused", "failed") for r in results) else 0
 
 
-def run_list() -> int:
-    """``aisland mirror list``: both layers and what a sync would do. Pushes nothing."""
-    root = get_workspace_root()
-    projects = mirrored_projects(root)
-    if not projects:
-        click.echo("No mirrors configured. Set one with: aisland mirror set <project> <url>")
-        return 0
-    committed = read_committed_mirrors(root)
-    click.echo(click.style(f"  {'PROJECT':<22} {'COMMITTED':<46} {'OVERRIDE':<20} STATE", bold=True))
-    for project in projects:
-        result = sync_project(root, project, push=False)
+def rows(workspace_root: Path) -> List[Dict[str, str]]:
+    """One row per mirrored project for ``aisland workspace configure mirror``: both layers and what a sync would do.
+    Pushes nothing."""
+    committed = read_committed_mirrors(workspace_root)
+    found = []
+    for project in mirrored_projects(workspace_root):
+        result = sync_project(workspace_root, project, push=False)
         if result.state in ("skipped", "failed"):
             state = f"{result.state}: {result.note}"
         else:
             state = " · ".join(_state_word(ref) for ref in result.refs)
-        click.echo(
-            f"  {project:<22} {committed.get(project, '-'):<46} {local_override(root, project) or '-':<20} {state}"
+        override = local_override(workspace_root, project) or "-"
+        found.append(
+            {"project": project, "committed": committed.get(project, "-"), "override": override, "state": state}
         )
-    return 0
+    return found

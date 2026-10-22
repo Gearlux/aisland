@@ -61,8 +61,6 @@ import click
 from packaging.version import InvalidVersion, Version
 
 from aisland import locations, workspace_file
-from aisland.config import CONFIG_FILE
-from aisland.discovery import Where, table_line
 from aisland.manager import _set_local_submodule_active, get_workspace_root, submodule_active_map
 from aisland.selection import editable_target
 
@@ -142,33 +140,12 @@ class ProjectSource:
 # --- committed layer: each project's table in <workspace>/workspace.toml ------------------
 
 
-def _refuse_the_old_tables(workspace_root: Path) -> None:
-    """The ``[sources.*]`` tables of ``config.toml`` are no longer read: refuse them, naming the line, rather than
-    read every project as unmanaged."""
-    path = workspace_root / CONFIG_FILE
-    if not path.is_file():
-        return
-    text = path.read_text()
-    try:
-        old = tomllib.loads(text).get("sources")
-    except tomllib.TOMLDecodeError:
-        return  # config.toml's own reader reports it
-    if not isinstance(old, dict) or not old:
-        return
-    name = next(iter(old))
-    raise workspace_file.FileError(
-        f"{Where(path, table_line(text, 'sources', name))}: [sources.{name}] is no longer read — its settings go in "
-        f'{workspace_file.FILE_NAME} [project."{name}"] (source, branch, version, distribution)'
-    )
-
-
 def read_committed_sources(workspace_root: Path) -> Dict[str, ProjectSource]:
     """Each project of ``workspace.toml`` that has a ``source``; its ``branch`` is a git source's ref.
 
-    An unknown kind is skipped with a warning naming its line; a file aisland cannot read, and the old ``[sources]``
-    tables of ``config.toml``, are refused (:class:`aisland.workspace_file.FileError`).
+    An unknown kind is skipped with a warning naming its line; a file aisland cannot read is refused
+    (:class:`aisland.workspace_file.FileError`).
     """
-    _refuse_the_old_tables(workspace_root)
     result: Dict[str, ProjectSource] = {}
     for name, project in workspace_file.load(workspace_root).projects.items():
         if "source" not in project.others:
@@ -195,37 +172,27 @@ def write_committed_sources(workspace_root: Path, sources: Dict[str, ProjectSour
     """Set each project's source settings in ``workspace.toml`` to ``sources``, leaving every other setting alone.
 
     Nothing is written twice: a ``distribution`` only where it differs from the project's name, a ``version`` only for
-    ``pypi``; a git source's ref is the project's ``branch``. A project left with nothing but what a source gave it (no
-    url, no other setting) is dropped, so a rolled-back ``set`` leaves the workspace as it found it.
+    ``pypi``; a git source's ref is the project's ``branch``. A project left with nothing but what a source gave it is
+    dropped (:func:`aisland.workspace_file.set_settings`).
     """
-    current = workspace_file.load(workspace_root)
-    projects: Dict[str, workspace_file.Project] = {}
-    for name in [*current.projects, *sorted(set(sources) - set(current.projects))]:
-        old = current.projects.get(name) or workspace_file.Project(name, name)
-        others = {key: value for key, value in old.others.items() if key not in SOURCE_KEYS}
-        branch = old.branch
-        src = sources.get(name)
-        if src is not None:
-            others["source"] = src.kind
-            if src.kind in REF_KINDS:
-                branch = src.ref
-            elif src.version:
-                others["version"] = src.version
-            if src.distribution and src.distribution != name:
-                others["distribution"] = src.distribution
-        if old.url is None and not others:
-            continue
-        projects[name] = workspace_file.Project(name, old.path, old.url, branch, others)
-    workspace_file.write(workspace_root, workspace_file.WorkspaceFile(dict(current.settings), projects))
-    return workspace_root / workspace_file.FILE_NAME
+    values: Dict[str, Dict[str, Any]] = {}
+    for name, src in sources.items():
+        given: Dict[str, Any] = {"source": src.kind}
+        if src.kind in REF_KINDS:
+            given["branch"] = src.ref
+        elif src.version:
+            given["version"] = src.version
+        if src.distribution and src.distribution != name:
+            given["distribution"] = src.distribution
+        values[name] = given
+    return workspace_file.set_settings(workspace_root, SOURCE_KEYS, values)
 
 
 # --- per-machine layer: .git/config aisland.source.<project>.<key> ------------------------
 
 
 def _machine_settings(workspace_root: Path) -> Dict[str, Dict[str, str]]:
-    """Every ``aisland.source.*`` entry of ``.git/config``: ``{project: {key: value}}``, the old one-key spelling
-    (``aisland.source.<project> = local:dev/main``) under the key ``""``."""
+    """Every ``aisland.source.<project>.<key>`` entry of ``.git/config``: ``{project: {key: value}}``."""
     res = subprocess.run(
         ["git", "config", "--local", "--get-regexp", r"^aisland\.source\."],
         cwd=str(workspace_root),
@@ -237,17 +204,10 @@ def _machine_settings(workspace_root: Path) -> Dict[str, Dict[str, str]]:
         key, _, value = line.partition(" ")
         if not key.startswith("aisland.source."):
             continue
-        rest = key[len("aisland.source.") :]
-        project, dot, setting = rest.rpartition(".")
-        if not dot or setting not in _MACHINE_KEYS:
-            project, setting = rest, ""
-        found.setdefault(project, {})[setting] = value.strip()
+        project, dot, setting = key[len("aisland.source.") :].rpartition(".")
+        if dot and setting in _MACHINE_KEYS:
+            found.setdefault(project, {})[setting] = value.strip()
     return found
-
-
-def old_overrides(workspace_root: Path) -> Dict[str, str]:
-    """This machine's settings in the old one-key spelling, which are no longer read: ``{project: value}``."""
-    return {project: settings[""] for project, settings in _machine_settings(workspace_root).items() if "" in settings}
 
 
 def local_override(workspace_root: Path, project: str) -> Optional[ProjectSource]:

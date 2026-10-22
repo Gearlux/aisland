@@ -1,4 +1,4 @@
-"""Tests for project mirrors (`aisland mirror`, aisland/mirrors.py).
+"""Tests for project mirrors (`aisland workspace configure mirror`, `aisland workspace mirror sync`, aisland/mirrors.py).
 
 Every test builds a throwaway workspace: a root repository holding two real submodules,
 ``alpha`` and ``beta``, whose primaries are bare repositories under ``origin/``, plus an empty
@@ -6,12 +6,12 @@ bare ``mirror/alpha.git``. ``GIT_CONFIG_GLOBAL`` points at a sandbox file, so th
 own git configuration is neither read nor touched.
 
 What a mirror must guarantee, each pinned below:
-- the two configuration layers (committed ``[mirrors.<project>]``, per-machine
-  ``aisland.mirror.<project>``) and the ``mirror`` remote that follows the effective one;
+- the two configuration layers (committed: the project's ``mirror`` in ``workspace.toml``; per-machine:
+  ``aisland.mirror.<project>.mirror``) and the ``mirror`` remote that follows the effective one;
 - a sync pushes the primary's ``dev/main``, ``main`` and tags, fast-forward only;
 - it never forces, never deletes, never overwrites a tag, and refuses a branch the mirror moved;
 - a project without a mirror is never contacted, one without a checkout is skipped;
-- ``aisland mirror list`` pushes nothing.
+- ``aisland workspace configure mirror`` (the listing) pushes nothing.
 """
 
 from __future__ import annotations
@@ -28,7 +28,7 @@ from click.testing import CliRunner
 
 from aisland import mirrors as m
 from aisland.cli import main as cli_main
-from aisland.config import CONFIG_FILE
+from aisland.workspace_file import FILE_NAME
 
 BRANCH = "dev/main"
 
@@ -153,12 +153,19 @@ class TestSetAndUnset:
     ) -> None:
         assert m.set_mirror("alpha", ws.mirror_url(), workspace_root=ws.root) == 0
 
-        data = tomllib.loads((ws.root / CONFIG_FILE).read_text())
-        assert data["mirrors"] == {"alpha": {"url": ws.mirror_url()}}
+        data = tomllib.loads((ws.root / FILE_NAME).read_text())
+        assert data["project"] == {"alpha": {"mirror": ws.mirror_url()}}
         assert ws.remote_url() == ws.mirror_url()
         out = capsys.readouterr().out
-        assert "recorded in config.toml" in out
-        assert "aisland mirror sync alpha" in out
+        assert "recorded in workspace.toml" in out
+        assert "aisland workspace mirror sync alpha" in out
+
+    def test_a_project_without_a_mirror_has_none_and_one_that_is_no_address_is_warned_about(
+        self, ws: Workspace, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        (ws.root / FILE_NAME).write_text('[project."alpha"]\nurl = "u"\n\n[project."beta"]\nurl = "v"\nmirror = 3\n')
+        assert m.read_committed_mirrors(ws.root) == {}
+        assert f"{ws.root / FILE_NAME}:4: project 'beta' has a mirror that is no address" in capsys.readouterr().out
 
     def test_the_remote_never_imports_the_mirrors_tags(self, ws: Workspace) -> None:
         m.set_mirror("alpha", ws.mirror_url(), workspace_root=ws.root)
@@ -172,11 +179,11 @@ class TestSetAndUnset:
         out = capsys.readouterr().out
         assert "bitbucket.example.com" in out and "github.com" in out
 
-    def test_machine_only_writes_git_config_and_leaves_config_toml_alone(self, ws: Workspace) -> None:
+    def test_machine_only_writes_git_config_and_leaves_workspace_toml_alone(self, ws: Workspace) -> None:
         assert m.set_mirror("alpha", ws.mirror_url(), machine_only=True, workspace_root=ws.root) == 0
 
-        assert not (ws.root / CONFIG_FILE).exists()
-        assert ws.git(ws.root, "config", "--local", "--get", "aisland.mirror.alpha") == ws.mirror_url()
+        assert not (ws.root / FILE_NAME).exists()
+        assert ws.git(ws.root, "config", "--local", "--get", "aisland.mirror.alpha.mirror") == ws.mirror_url()
         assert m.effective_mirror(ws.root, "alpha") == ws.mirror_url()
         assert ws.remote_url() == ws.mirror_url()
 
@@ -199,7 +206,7 @@ class TestSetAndUnset:
         m.set_mirror("alpha", ws.mirror_url(), workspace_root=ws.root)
         assert m.unset_mirror("alpha", workspace_root=ws.root) == 0
 
-        assert not (ws.root / CONFIG_FILE).exists()
+        assert not (ws.root / FILE_NAME).exists()
         assert ws.remote_url() == ""
 
     def test_unset_leaves_a_remote_aisland_did_not_create(self, ws: Workspace) -> None:
@@ -212,12 +219,12 @@ class TestSetAndUnset:
     ) -> None:
         assert m.set_mirror("gamma", ws.mirror_url(), workspace_root=ws.root) == 1
         assert "'gamma' is not a submodule" in capsys.readouterr().err
-        assert not (ws.root / CONFIG_FILE).exists()
+        assert not (ws.root / FILE_NAME).exists()
 
     def test_set_refuses_the_primary_itself(self, ws: Workspace, capsys: pytest.CaptureFixture[str]) -> None:
         assert m.set_mirror("alpha", str(ws.origin / "alpha.git"), workspace_root=ws.root) == 1
         assert "is alpha's primary" in capsys.readouterr().err
-        assert not (ws.root / CONFIG_FILE).exists()
+        assert not (ws.root / FILE_NAME).exists()
 
     def test_set_refuses_to_take_over_a_remote_it_did_not_create(
         self, ws: Workspace, capsys: pytest.CaptureFixture[str]
@@ -229,7 +236,7 @@ class TestSetAndUnset:
         assert "already has a remote named `mirror`" in err
         assert "git -C alpha remote rename mirror" in err
         assert ws.remote_url() == "/hand/made.git"
-        assert not (ws.root / CONFIG_FILE).exists()
+        assert not (ws.root / FILE_NAME).exists()
 
     def test_setup_adds_the_remote_a_committed_mirror_names(self, ws: Workspace) -> None:
         m.set_mirror("alpha", ws.mirror_url(), workspace_root=ws.root)
@@ -240,7 +247,7 @@ class TestSetAndUnset:
 
     def test_setup_removes_a_remote_whose_mirror_was_unset_elsewhere(self, ws: Workspace) -> None:
         m.set_mirror("alpha", ws.mirror_url(), workspace_root=ws.root)
-        (ws.root / CONFIG_FILE).unlink()  # another machine's `aisland mirror unset`, pulled
+        (ws.root / FILE_NAME).unlink()  # another machine's `aisland workspace configure mirror unset`, pulled
 
         m.apply_all(ws.root)
         assert ws.remote_url() == ""
@@ -399,12 +406,18 @@ class TestCli:
     @pytest.fixture(autouse=True)
     def _root(self, ws: Workspace, monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.setattr(m, "get_workspace_root", lambda: ws.root)
+        monkeypatch.setattr("aisland.cli.get_workspace_root", lambda: ws.root)
+
+    @staticmethod
+    def _set(runner: CliRunner, ws: Workspace) -> None:
+        result = runner.invoke(cli_main, ["workspace", "configure", "mirror", "set", "alpha", ws.mirror_url()])
+        assert result.exit_code == 0, result.output
 
     def test_sync_prints_a_row_per_ref_and_exits_0(self, ws: Workspace) -> None:
         runner = CliRunner()
-        assert runner.invoke(cli_main, ["mirror", "set", "alpha", ws.mirror_url()]).exit_code == 0
+        self._set(runner, ws)
 
-        result = runner.invoke(cli_main, ["mirror", "sync"])
+        result = runner.invoke(cli_main, ["workspace", "mirror", "sync"])
         assert result.exit_code == 0, result.output
         assert f"==> alpha → {ws.mirror_url()}" in result.output
         assert f"{BRANCH:<10}pushed (new branch)" in result.output
@@ -412,38 +425,48 @@ class TestCli:
 
     def test_sync_exits_1_when_a_ref_is_refused(self, ws: Workspace) -> None:
         runner = CliRunner()
-        runner.invoke(cli_main, ["mirror", "set", "alpha", ws.mirror_url()])
-        runner.invoke(cli_main, ["mirror", "sync"])
+        self._set(runner, ws)
+        runner.invoke(cli_main, ["workspace", "mirror", "sync"])
         seed = ws.seeds["alpha"]
         ws.git(seed, "remote", "add", "mirror", ws.mirror_url())
         ws.commit("alpha", "mirror only")
         ws.git(seed, "push", "-q", "mirror", BRANCH)
 
-        result = runner.invoke(cli_main, ["mirror", "sync", "alpha"])
+        result = runner.invoke(cli_main, ["workspace", "mirror", "sync", "alpha"])
         assert result.exit_code == 1
         assert "REFUSED" in result.output
 
-    def test_list_shows_the_layers_and_the_state(self, ws: Workspace) -> None:
+    def test_the_listing_shows_the_layers_and_the_state(self, ws: Workspace) -> None:
         runner = CliRunner()
-        runner.invoke(cli_main, ["mirror", "set", "alpha", ws.mirror_url()])
-        runner.invoke(cli_main, ["mirror", "sync"])
+        self._set(runner, ws)
+        runner.invoke(cli_main, ["workspace", "mirror", "sync"])
         ws.publish("alpha", "two")
 
-        result = runner.invoke(cli_main, ["mirror", "list"])
+        result = runner.invoke(cli_main, ["workspace", "configure", "mirror"])
         assert result.exit_code == 0, result.output
-        assert "alpha" in result.output
-        assert f"{BRANCH} 1 behind" in result.output
-        assert "main in sync" in result.output
+        lines = result.output.splitlines()
+        assert lines[0].split() == ["PROJECT", "COMMITTED", "OVERRIDE", "STATE"]
+        assert lines[1].split()[:3] == ["alpha", ws.mirror_url(), "-"]
+        assert f"{BRANCH} 1 behind" in lines[1] and "main in sync" in lines[1]
         assert ws.mirror_refs()[f"refs/heads/{BRANCH}"] != ws.primary_refs()[f"refs/heads/{BRANCH}"]
 
-    def test_list_with_nothing_configured_says_how_to_start(self) -> None:
-        result = CliRunner().invoke(cli_main, ["mirror", "list"])
+    def test_the_listing_with_nothing_configured_says_how_to_start(self) -> None:
+        result = CliRunner().invoke(cli_main, ["workspace", "configure", "mirror"])
         assert result.exit_code == 0
-        assert "aisland mirror set <project> <url>" in result.output
+        assert result.output.splitlines() == [
+            "No project has a mirror.",
+            "Set one with: aisland workspace configure mirror set <project> <url>",
+        ]
 
     def test_unset_through_the_cli(self, ws: Workspace) -> None:
         runner = CliRunner()
-        runner.invoke(cli_main, ["mirror", "set", "alpha", ws.mirror_url()])
-        result = runner.invoke(cli_main, ["mirror", "unset", "alpha"])
+        self._set(runner, ws)
+        result = runner.invoke(cli_main, ["workspace", "configure", "mirror", "unset", "alpha"])
         assert result.exit_code == 0
         assert ws.remote_url() == ""
+
+    @pytest.mark.parametrize("command", [["mirror", "list"], ["mirror", "sync"]])
+    def test_the_mirror_group_is_gone(self, command: List[str]) -> None:
+        result = CliRunner().invoke(cli_main, command)
+        assert result.exit_code == 2
+        assert "No such command 'mirror'" in result.output

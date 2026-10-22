@@ -1,7 +1,7 @@
 ---
 description: Per project (and the root workspace) in dependency order — run local quality gates, push, merge to main, push main, merge main back. Real GH Actions verifies post-push. Stop on any failure. Does NOT commit (use /commit-all first).
 model: sonnet
-allowed-tools: [Bash(aisland mirror sync:*), Bash(git add:*), Bash(git commit:*), Bash(git push:*), Bash(git pull:*), Bash(git checkout:*), Bash(git merge:*), Bash(git -c submodule.recurse=false:*), Bash(git -C * add:*), Bash(git -C * commit:*), Bash(git -C * push:*), Bash(git -C * pull:*), Bash(git -C * checkout:*), Bash(git -C * merge:*), Bash(cd:*), Bash(source:*), Bash(for *), Bash(while *), Bash(if *)]
+allowed-tools: [Bash(aisland workspace mirror sync:*), Bash(git add:*), Bash(git commit:*), Bash(git push:*), Bash(git pull:*), Bash(git checkout:*), Bash(git merge:*), Bash(git -c submodule.recurse=false:*), Bash(git -C * add:*), Bash(git -C * commit:*), Bash(git -C * push:*), Bash(git -C * pull:*), Bash(git -C * checkout:*), Bash(git -C * merge:*), Bash(cd:*), Bash(source:*), Bash(for *), Bash(while *), Bash(if *)]
 ---
 <!-- Shipped by aisland (aisland/harness/commands/ship.md), installed into .agents/workflows/ by `aisland setup` (aisland/harness.py). Change it in aisland; the rules it cites are aisland's (.agents/aisland/AGENTS.md). -->
 
@@ -117,7 +117,7 @@ Fast-forward is guaranteed because main now contains current's tip plus the merg
 
 ## 3e. Mirrors (once, after the last project)
 
-After the last project — or after the failure that stopped the workflow, since it copies only what reached the primary — run `aisland mirror sync` from the workspace root. It pushes each mirrored submodule's `dev/main`, `main` and tags to its second host (`aisland/README.md` → "Project Mirrors"); with no mirror configured it prints one line and does nothing. Its exit 1 (a branch or tag REFUSED, a host unreachable) changes no project's `STATUS`: it is reported below, never retried, never forced — the refusal line names the merge that fixes it, and that merge is the user's.
+After the last project — or after the failure that stopped the workflow, since it copies only what reached the primary — run `aisland workspace mirror sync` from the workspace root. It pushes each mirrored submodule's `dev/main`, `main` and tags to its second host (`aisland/README.md` → "Project Mirrors"); with no mirror configured it prints one line and does nothing. Its exit 1 (a branch or tag REFUSED, a host unreachable) changes no project's `STATUS`: it is reported below, never retried, never forced — the refusal line names the merge that fixes it, and that merge is the user's.
 
 ## 4. Final summary
 
@@ -138,7 +138,7 @@ app              | push-main   | 9876543      | FAILED
 - `FAILED` — stopped here.
 - `NOT RUN` — skipped because an earlier project failed.
 
-Then one row per mirror from `aisland mirror sync`: project | dev/main | main | tags, in its own words (`pushed (3 commits)`, `in sync`, `REFUSED: …`).
+Then one row per mirror from `aisland workspace mirror sync`: project | dev/main | main | tags, in its own words (`pushed (3 commits)`, `in sync`, `REFUSED: …`).
 
 ## Stop-on-failure semantics
 

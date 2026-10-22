@@ -38,7 +38,7 @@ The workspace's dev-infrastructure CLI, `aisland` (click, `aisland/cli.py`):
 - `editor.py`: `aisland workspace theme|color`, this machine's VS Code theme and colours (`css_colors.py`: the CSS
   names), kept in `.git/config` and laid over the generated workspace file.
 - `config.py`: the one committed `config.toml`, written through `sources.py`
-  (`aisland workspace configure source`, through `configure.py`), `mirrors.py` (`aisland mirror`) and `selection.py`
+  (`aisland workspace configure source`, through `configure.py`), `mirrors.py` (`aisland workspace configure mirror`, `aisland workspace mirror sync`) and `selection.py`
   (`aisland framework|tracker`; `frameworks.py` is a facade over it).
 - `supervisor.py` (process-compose), `doctor.py` (`aisland doctor`), `completion.py`
   (`aisland completion install`), `clean.py` (`aisland clean`, `aisland backups`).
@@ -340,7 +340,7 @@ Root `AGENTS.md` "Two Test Runs" (user ruling 2026-10-05). [test-stats]
   `opencv-python-headless>=4.12,<5`) + each ACTIVATED project's `uv.toml`. A private index
   lives only in its project's `uv.toml`; never commit the root file or put an index in the
   base. (`tests/test_uv_activation.py`)
-- `config.toml` holds `frameworks`, `trackers` and `[mirrors.<project>]`; a project's source is in `workspace.toml`.
+- `config.toml` holds `frameworks` and `trackers`; a project's source and mirror are in `workspace.toml`.
   (`tests/test_config.py`) [config]
   - `config.py` owns the file, not the data; it imports nothing from aisland.
   - Writes are whole-file, keyed; scalars before tables (`::test_scalars_are_emitted_before_tables`).
@@ -378,12 +378,11 @@ Root `AGENTS.md` "Two Test Runs" (user ruling 2026-10-05). [test-stats]
   2026-10-22).** [sources] `source`, `version`, and `distribution` ONLY where it differs from the project's name — a
   git source's ref is the project's own `branch` (`set` without `--branch` keeps it; `--branch` writes it), and nothing
   the table already says is written again (a `path` equal to the name, a distribution equal to it). Per machine:
-  `.source`, `.branch`, `.version`, a missing `.branch` being the committed one. The old `[sources.*]` tables of
-  `config.toml` are REFUSED naming their line (`_refuse_the_old_tables`), never converted by code; the old one-key
-  `aisland.source.<project>` is not read and is named, with the command that sets it again, by `aisland workspace configure source`
-  (`old_overrides`). A failed `set` puts `workspace.toml` back byte for byte. The commands are the generic ones of
-  `aisland workspace configure` (`configure.py`: a `Plugin`'s keys build `set`/`unset`/the listing; there is no
-  `aisland workspace configure source` and no `source apply` — setup applies). (`tests/test_sources.py`, `tests/test_configure.py`)
+  `.source`, `.branch`, `.version`, a missing `.branch` being the committed one. No backward compatibility (user
+  ruling 2026-10-22): an old `[sources.*]` table or one-key `aisland.source.<project>` is simply not read — never
+  refused, named or converted by code. A failed `set` puts `workspace.toml` back byte for byte. The commands are the
+  generic ones of `aisland workspace configure` (`configure.py`: a `Plugin`'s keys build `set`/`unset`/the listing;
+  there is no `aisland source` group and no `source apply` — setup applies). (`tests/test_sources.py`, `tests/test_configure.py`)
   The effective one drives the checkout, the `.venv` and, through the checkout, the generated
   workspace file's folders. No CI file reads either. An override never reaches a tracked file.
 - `local` installs `selection.editable_target`, the same target as setup.
@@ -399,7 +398,7 @@ Root `AGENTS.md` "Two Test Runs" (user ruling 2026-10-05). [test-stats]
   (`::TestScaffoldAsksPypiNotTheSource::test_github_dep_survives_its_own_empty_directory`).
 - The remote comes from `.gitmodules`; `pip_vcs_url` rewrites `git@host:org/repo`.
 
-## Project mirrors (`aisland mirror`)
+## Project mirrors (`aisland workspace configure mirror`)
 
 User choice 2026-10-16: an aisland command, submodules only, run by `/push-all` and `/ship`.
 [mirror] (`tests/test_mirrors.py`)
@@ -410,12 +409,14 @@ User choice 2026-10-16: an aisland command, submodules only, run by `/push-all` 
   REFUSED with the remedy, a mirror-only ref is left (`TestSync::test_a_branch_the_mirror_moved_is_refused_and_left_alone`,
   `::test_a_tag_that_differs_on_the_mirror_is_refused_not_overwritten`,
   `::test_a_branch_or_tag_only_on_the_mirror_is_never_deleted`). Never add a `--force`.
-- Committed `[mirrors.<project>] url` + per-machine `aisland.mirror.<project>`; setup re-applies
+- Committed: the project's `mirror` in `workspace.toml`; per machine `aisland.mirror.<project>.mirror` (user rulings
+  2026-10-22: the plugin's key pattern, no backward compatibility — an old `[mirrors.*]` table or one-key setting is
+  simply not read); the commands are `configure.py`'s generic ones and the action `aisland workspace mirror sync`. Setup re-applies
   the remote. Only a remote marked `remote.mirror.aislandManaged` is changed or removed
   (`TestSetAndUnset::test_set_refuses_to_take_over_a_remote_it_did_not_create`).
 - Network calls run with `GIT_TERMINAL_PROMPT=0` (`TestSync::test_network_calls_never_wait_on_a_password_prompt`);
   a project without a mirror is never contacted.
-- `/push-all` and `/ship` call `aisland mirror sync` last; change its exit status or wording and
+- `/push-all` and `/ship` call `aisland workspace mirror sync` last; change its exit status or wording and
   those workflows together.
 
 ## What the projects declare (`discovery.py`)

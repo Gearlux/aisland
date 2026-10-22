@@ -17,7 +17,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Callable, Dict, List, Optional, Tuple
 
-from aisland import sources
+from aisland import mirrors, sources
 
 
 @dataclass(frozen=True)
@@ -95,25 +95,6 @@ def _source_unset(root: Path, project: str, machine_only: bool) -> int:
     return sources.unset_project_source(project=project, machine_only=machine_only, workspace_root=root)
 
 
-def _source_notes(root: Path) -> List[str]:
-    """This machine's settings in the old one-key spelling, each with the command that sets it again."""
-    lines: List[str] = []
-    for project, value in sources.old_overrides(root).items():
-        lines.append(f"This machine's aisland.source.{project} = {value} is no longer read; set it again with:")
-        try:
-            old = sources.ProjectSource.parse(value)
-        except ValueError:
-            lines.append(f"  aisland workspace configure source set {project} <local|github|pypi> --machine-only")
-            continue
-        detail = (
-            f" --branch {old.ref}"
-            if old.kind in sources.REF_KINDS
-            else f" --version {old.version}" if old.version else ""
-        )
-        lines.append(f"  aisland workspace configure source set {project} {old.kind}{detail} --machine-only")
-    return lines
-
-
 SOURCE = Plugin(
     name="source",
     summary="Where each project's package comes from.",
@@ -134,8 +115,29 @@ SOURCE = Plugin(
         "No project has a source: each one is checked out and installed editable.\n"
         "Set one with: aisland workspace configure source set <project> pypi"
     ),
-    notes=_source_notes,
+)
+
+# --- mirror ----------------------------------------------------------------------------------------------------------
+
+
+def _mirror_set(root: Path, project: str, url: str, options: Dict[str, Optional[str]], machine_only: bool) -> int:
+    return mirrors.set_mirror(project, url, machine_only=machine_only, workspace_root=root)
+
+
+def _mirror_unset(root: Path, project: str, machine_only: bool) -> int:
+    return mirrors.unset_mirror(project, machine_only=machine_only, workspace_root=root)
+
+
+MIRROR = Plugin(
+    name="mirror",
+    summary="A second host each project is copied to (`aisland workspace mirror sync` pushes it).",
+    main=Key("mirror", "The mirror's git address (ssh or https); the primary stays the .gitmodules remote."),
+    options=(),
+    rows=lambda root: mirrors.rows(root),
+    set=_mirror_set,
+    unset=_mirror_unset,
+    empty="No project has a mirror.\nSet one with: aisland workspace configure mirror set <project> <url>",
 )
 
 #: Every plugin of ``aisland workspace configure``, by name.
-PLUGINS: Dict[str, Plugin] = {SOURCE.name: SOURCE}
+PLUGINS: Dict[str, Plugin] = {plugin.name: plugin for plugin in (MIRROR, SOURCE)}

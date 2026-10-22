@@ -2794,9 +2794,10 @@ distribution often written equal to its name.
 [--machine-only]` and `unset PROJECT [--machine-only]` from a `configure.Plugin`'s keys; a plugin writes no command.
 `source` is the first: its settings go into the project's table of `workspace.toml` (`source`, `version`, and
 `distribution` only where it differs from the name; a git source's ref is the project's own `branch`), this machine's
-into `.git/config` as `aisland.source.<project>.source|branch|version`. The old tables are refused with their line,
-the old one-key override is named with the command that sets it again — no conversion code. `source apply` is gone:
-setup applies.
+into `.git/config` as `aisland.source.<project>.source|branch|version`. No backward compatibility: an old table or
+one-key override is simply not read (user ruling 2026-10-22, `mirror`'s step). `source apply` is gone: setup applies.
+`mirror` followed the same way: the project's `mirror`, `aisland.mirror.<project>.mirror`, the action
+`aisland workspace mirror sync` one level up.
 
 ### Consequences
 

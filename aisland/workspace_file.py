@@ -222,6 +222,27 @@ def write(root: Path, workspace: WorkspaceFile) -> Optional[Path]:
     return path
 
 
+def set_settings(root: Path, keys: Tuple[str, ...], values: Dict[str, Dict[str, Any]]) -> Path:
+    """Set one plugin's ``keys`` on the projects of ``<root>/workspace.toml``, leaving every other setting alone.
+
+    ``values[project]`` holds the project's values of ``keys`` — a key it leaves out is removed, and a project not in
+    ``values`` loses all of them; a ``branch`` among them sets the project's own branch. A project left with no url
+    and nothing else (it was in the file only for these keys) is dropped. Returns the file's path."""
+    current = load(root)
+    projects: Dict[str, Project] = {}
+    for name in [*current.projects, *sorted(set(values) - set(current.projects))]:
+        old = current.projects.get(name) or Project(name, name)
+        others = {key: value for key, value in old.others.items() if key not in keys}
+        given = dict(values.get(name, {}))
+        branch = given.pop("branch", old.branch)
+        others.update(given)
+        if old.url is None and not others:
+            continue
+        projects[name] = Project(name, old.path, old.url, branch, others)
+    write(root, WorkspaceFile(dict(current.settings), projects))
+    return root / FILE_NAME
+
+
 # --- the projects a workspace holds ----------------------------------------------------------------------------------
 
 
