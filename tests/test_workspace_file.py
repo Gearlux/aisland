@@ -121,7 +121,6 @@ def test_a_section_the_file_has_not_is_refused_naming_its_line(tmp_path: Path) -
 @pytest.mark.parametrize(
     "body, said",
     [
-        ('[project."models"]\npath = "m"\n', "project 'models' has no url"),
         ('[project."models"]\nurl = 1\n', "project 'models': url must be text, as url = \"<text>\""),
         (
             '[project."models"]\nurl = "x"\nbranch = ["dev"]\n',
@@ -369,3 +368,25 @@ def test_what_is_no_project_of_the_file_is_left_out(tmp_path: Path) -> None:
     (plain / "local").mkdir()
     _git(plain / "local", "init", "-q")
     assert workspace_file.workspace_projects(plain) == []
+
+
+# --- nothing written twice ---------------------------------------------------------------------------------------
+
+
+def test_a_path_equal_to_the_name_is_not_written(tmp_path: Path) -> None:
+    path = _file(
+        tmp_path, '[project."models"]\npath = "models"\nurl = "u"\n\n[project."tools"]\npath = "t"\nurl = "v"\n'
+    )
+    written = workspace_file.write(tmp_path, workspace_file.read(path))
+    assert written is not None
+    body = written.read_text().split("# =========================================================================\n")[
+        -1
+    ]
+    assert body == '\n[project."models"]\nurl = "u"\n\n[project."tools"]\npath = "t"\nurl = "v"\n'
+
+
+def test_a_project_without_a_url_is_read_its_settings_kept(tmp_path: Path) -> None:
+    """A source can be set for a project setup has not written yet; only `init --from`, which clones, needs a url."""
+    path = _file(tmp_path, '[project."loggair"]\nsource = "pypi"\n')
+    project = workspace_file.read(path).projects["loggair"]
+    assert (project.url, project.others) == (None, {"source": "pypi"})
