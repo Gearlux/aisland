@@ -14,6 +14,7 @@ from pathlib import Path
 import pytest
 
 from aisland import locations, manager
+from tests.workspace_layout import needs_workspace
 
 
 def _resolve_from(monkeypatch: pytest.MonkeyPatch, module_file: Path) -> Path:
@@ -61,6 +62,7 @@ def test_outermost_git_when_no_tasks_md(tmp_path: Path, monkeypatch: pytest.Monk
     assert _resolve_from(monkeypatch, pkg / "manager.py") == ws
 
 
+@needs_workspace
 def test_live_workspace_root_is_the_superproject() -> None:
     """Unmonkeypatched: the real checkout resolves to the dir holding .gitmodules."""
     root = manager.get_workspace_root()

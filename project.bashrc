@@ -56,6 +56,29 @@ cdd() { cd "${DATA_ROOT}${1:+/$1}"; }
 cdm() { cd "${MODEL_ROOT}${1:+/$1}"; }
 cdr() { cd "${RUN_DIR}${1:+/$1}"; }
 
+# Tab after one of them completes a folder under its root, at any depth; a name holding a space comes back
+# escaped. The word typed so far is unescaped by dropping its backslashes and an opening quote — never `eval`,
+# which would run a `$(…)` typed before Tab. Bash 3.2 has no `compopt`, so `nospace` is set at registration.
+_aisland_cd_complete() {
+    local root cur d
+    case "$1" in
+        cdp) root=$PROJECT_ROOT ;;
+        cdd) root=$DATA_ROOT ;;
+        cdm) root=$MODEL_ROOT ;;
+        cdr) root=$RUN_DIR ;;
+    esac
+    COMPREPLY=()
+    if [ -z "$root" ] || [ "$COMP_CWORD" -ne 1 ]; then
+        return 0
+    fi
+    cur=${2//\\/}
+    cur=${cur#[\'\"]}
+    while IFS= read -r d; do
+        COMPREPLY+=("$(printf '%q' "${d#"$root"/}")/")
+    done < <(compgen -d -- "$root/$cur")
+}
+complete -o nospace -F _aisland_cd_complete cdp cdd cdm cdr
+
 # The shell history; `h <word>` only the lines holding it, in any case.
 h() {
     if [ -z "$1" ]; then

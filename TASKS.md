@@ -30,7 +30,7 @@ workspace root `TASKS.md`. Completed items are not archived here — git history
   - Per-machine keys in `.git/config` are named after their plugin (`aisland.<plugin>.<key>`,
     `aisland.<plugin>.<project>.<key>`); acme's six are converted by hand, an unread old key is named by
     `aisland workspace show`.
-  - Steps, one commit each, tests first: (1) discovery core + `workspace show` — DONE (`discovery.py`); (2) `workspace.toml` + generated
+  - Steps, one commit each, tests first: (1) discovery core + `workspace show` — DONE (`discovery.py`); (2) `workspace.toml` (2a DONE: `workspace_file.py`, setup keeps it, `init --from`, no `export`) + generated
     `configure`, built-ins one per commit; (3) matrainer declares `framework`/`tracker`; (4) services protocol,
     `aisland services`, the moves; (5) conversion of the existing workspaces and every surface naming the old commands (MCP
     tools, `/push-all`, `/ship`, services' messages, other projects' docs, `docs/workspace.md`, `docs/services.md`,

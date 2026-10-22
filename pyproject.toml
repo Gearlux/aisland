@@ -42,7 +42,30 @@ connect = ["msgpack>=1.2"]
 mcp = ["mcp>=2.0"]
 # What CI installs (`.[dev]`): the [connect] and [mcp] extras' packages, so their tests run — spelled out, not
 # `<name>[connect]`, so the line never depends on the distribution's name.
-dev = ["msgpack>=1.2"]
+dev = [
+    "msgpack>=1.2",
+    "mcp>=2.0",
+    # `aisland completion install` hands liquifai apps to liquifai (aisland/completion.py), and its tests stub that.
+    "liquifai>=0.3.1",
+    # The quality gates ci.yml and the Jenkinsfiles run.
+    "pytest>=8.0,<9.0",
+    "pytest-cov>=6.0",
+    "black>=24.0,<25.0",
+    "isort>=5.13,<6.0",
+    "flake8>=7.0",
+    # Below 2.0, as the workspace's other projects pin it.
+    "mypy>=1.20,<2.0",
+    "types-PyYAML>=6.0",
+    # The release build and PyPI's own check (tests/test_packaging.py builds and checks the release).
+    "build>=1.5",
+    "twine>=7.0",
+    # Those tests (and tests/test_wheels.py's end-to-end ones) build WITHOUT isolation, so the build backend
+    # must already be in the venv — a fresh one has neither.
+    "setuptools>=77.0",
+    "wheel",
+    # tests/test_wheels.py's end-to-end tests run the real uv found beside the interpreter, where this puts it.
+    "uv>=0.12",
+]
 
 [project.urls]
 Homepage = "https://github.com/Gearlux/aisland"

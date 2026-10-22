@@ -1,43 +1,34 @@
-"""``aisland workspace init <folder>`` and ``aisland workspace export [file]``: a workspace made, and written down.
+"""``aisland workspace init <folder>``: a new workspace, from nothing or from a ``workspace.toml``.
 
 A workspace, as aisland sees it, is a git repository whose projects are folders holding a ``pyproject.toml`` —
-usually submodules. ``aisland setup`` then needs a ``.venv`` at the root and reads, when they exist, ``config.toml``
-(sources, frameworks, trackers), ``.env`` (exported by ``project.bashrc``) and ``mypy.ini`` (its ``mypy_path`` kept
-complete). ``init`` writes those starting files, runs ``git init``, adds each project of a ``--from`` workspace file
-and each ``--add`` repository as a submodule and installs the workspace git aliases. It works the same whichever way
-aisland is installed; the workspace it makes is one that aisland from a wheel works in (:mod:`aisland.locations`).
+usually submodules. ``aisland setup`` then needs a ``.venv`` at the root and reads, when they exist,
+``workspace.toml`` (its projects, kept current by setup: :mod:`aisland.workspace_file`), ``config.toml`` (sources,
+frameworks, trackers), ``.env`` (exported by ``project.bashrc``) and ``mypy.ini`` (its ``mypy_path`` kept complete).
+``init`` writes the starting files, runs ``git init``, adds each project of a ``--from`` file and each ``--add``
+repository as a submodule, writes ``workspace.toml`` and installs the workspace git aliases. It works the same
+whichever way aisland is installed; the workspace it makes is one that aisland from a wheel works in
+(:mod:`aisland.locations`).
 
 It never writes over a file that exists, and refuses a folder that already is a git repository: an existing
-repository is set up with ``aisland setup``, not re-created. A workspace file that cannot be read is refused before
-anything is written, naming the file and the line. The one exception is ``--rewrite <file>``: each starting file it
-names is written again from the template, the old copy kept as ``<file>.bak``; in an existing repository that is all
-init does.
-
-The workspace file is what a new machine starts from, before aisland is installed there: its comments say how to make
-the venv and install aisland, its ``[projects]`` table lists each project's folder, address and (optionally) branch.
-``export`` writes it from an existing workspace — its submodules, or without ``.gitmodules`` its clones — so nobody
-types the addresses; ``init --from`` reads it. It is TOML because the workspace's one committed config is
-(``config.toml``) and the standard library reads it.
+repository is set up with ``aisland setup``, not re-created. A ``--from`` file that cannot be read is refused before
+anything is written, naming the file and the line; the file it reads is copied in as the new workspace's
+``workspace.toml``. The one exception is ``--rewrite <file>``: each starting file it names is written again from the
+template, the old copy kept as ``<file>.bak``; in an existing repository that is all init does.
 """
 
-import json
-import os
-import re
 import subprocess
 import sys
-import tomllib
-from dataclasses import dataclass
 from pathlib import Path
-from typing import Dict, List, Literal, Optional, Sequence, Set, Tuple, get_args
+from typing import Dict, List, Literal, Optional, Sequence, Tuple, get_args
 
 import click
 
-from aisland import __version__, locations
+from aisland import locations, workspace_file
 from aisland.harness import install_harness
 from aisland.manager import install_git_aliases
 
 #: The files ``init`` starts a workspace with, in the order it writes them; ``--rewrite`` takes only these.
-StartingFile = Literal[".gitignore", ".env", "config.toml", "mypy.ini", "vscode-init-bash.sh"]
+StartingFile = Literal[".gitignore", ".env", "mypy.ini", "vscode-init-bash.sh"]
 STARTING_FILES: Tuple[StartingFile, ...] = get_args(StartingFile)
 
 #: The terminal init the editor file's profile runs (`${workspaceFolder:<name>}/vscode-init-bash.sh`).
@@ -84,15 +75,6 @@ _ENV = (
 """
 )
 
-_CONFIG = (
-    _HEADER
-    + """
-# The workspace's one committed configuration. Empty: every project is installed from its checkout, and
-# `aisland setup` asks once which frameworks and trackers to install. Written by
-# `aisland source set`, `aisland framework set` and `aisland tracker set`.
-"""
-)
-
 
 def _mypy_ini(folders: Sequence[str]) -> str:
     return (
@@ -114,125 +96,6 @@ def _row(name: str, what: str) -> str:
     return f"    {name.ljust(25)} {what}"
 
 
-def _submodules(root: Path) -> List[Tuple[str, str, Optional[str]]]:
-    """``(path, url, branch)`` of every submodule ``.gitmodules`` declares, in its order; no ``branch`` line is None."""
-    if not (root / ".gitmodules").is_file():
-        return []
-    listing = subprocess.run(
-        ["git", "config", "-f", ".gitmodules", "--get-regexp", r"^submodule\..*\.(path|url|branch)$"],
-        cwd=root,
-        capture_output=True,
-        text=True,
-    ).stdout
-    fields: Dict[str, Dict[str, str]] = {"path": {}, "url": {}, "branch": {}}
-    for line in listing.splitlines():
-        key, _, value = line.partition(" ")
-        name, field = key[len("submodule.") :].rsplit(".", 1)
-        fields[field][name] = value
-    return [(path, fields["url"].get(name, ""), fields["branch"].get(name)) for name, path in fields["path"].items()]
-
-
-#: The settings a project of a workspace file takes, in the order ``export`` writes them.
-_PROJECT_KEYS = ("url", "branch", "alias")
-
-#: A project's name is the folder it is cloned into: one plain, visible folder name.
-_FOLDER_NAME = re.compile(r"[A-Za-z0-9_][A-Za-z0-9_.-]*")
-
-
-@dataclass(frozen=True)
-class FileProject:
-    """One project of a workspace file: its name, its address, the branch to check out and its alias — a short name,
-    the folder it is cloned into instead of its name (``ksai`` for ``company_ai``)."""
-
-    name: str
-    url: str
-    branch: Optional[str] = None
-    alias: Optional[str] = None
-
-    @property
-    def folder(self) -> str:
-        """The folder the project is cloned into: its alias, else its name."""
-        return self.alias or self.name
-
-
-def _line_of(text: str, name: str) -> Optional[int]:
-    """The line of ``text`` where project ``name`` is written (``name = {…}`` or ``[projects.name]``), 1-based.
-
-    tomllib gives positions for a syntax error only; a project the file names but aisland refuses is located here, so
-    the message names the line (root ``AGENTS.md``: every diagnostic names the file and the line)."""
-    key = rf'(?:{re.escape(name)}|"{re.escape(name)}"|\'{re.escape(name)}\')'
-    pattern = re.compile(rf"^\s*(?:{key}\s*=|\[\s*projects\s*\.\s*{key}\s*\])")
-    for number, line in enumerate(text.splitlines(), start=1):
-        if pattern.match(line):
-            return number
-    return None
-
-
-def read_workspace_file(path: Path) -> List[FileProject]:
-    """The projects ``path`` lists, in its order. Raises :class:`click.ClickException` naming the file and line."""
-    if not path.is_file():
-        raise click.ClickException(f"{path} does not exist: name the workspace file to create the workspace from.")
-    text = path.read_text()
-    try:
-        data = tomllib.loads(text)
-    except tomllib.TOMLDecodeError as exc:
-        raise click.ClickException(f"{path}: {exc}") from exc
-    listed = data.get("projects")
-    if not isinstance(listed, dict) or not listed:
-        raise click.ClickException(
-            f'{path} lists no project: write each one under [projects], as  <folder> = {{ url = "<address>" }}'
-        )
-    projects = []
-    for name, settings in listed.items():
-        line = _line_of(text, name)
-        where = f"{path}:{line}" if line else str(path)
-        if not _FOLDER_NAME.fullmatch(name):
-            raise click.ClickException(
-                f"{where}: {name!r} is not a folder name: a project's name is the folder it is cloned into."
-            )
-        if not isinstance(settings, dict):
-            raise click.ClickException(
-                f'{where}: project {name!r} is not a table: write it as  {name} = {{ url = "<address>" }}'
-            )
-        unknown = [key for key in settings if key not in _PROJECT_KEYS]
-        if unknown:
-            raise click.ClickException(
-                f"{where}: project {name!r} has the unknown setting {unknown[0]!r} (a project takes "
-                f"{', '.join(_PROJECT_KEYS[:-1])} and {_PROJECT_KEYS[-1]})."
-            )
-        for key, value in settings.items():
-            if not isinstance(value, str):
-                raise click.ClickException(f'{where}: project {name!r}: {key} must be text, as in {key} = "<text>".')
-        if "url" not in settings:
-            raise click.ClickException(f"{where}: project {name!r} has no url.")
-        alias = settings.get("alias")
-        if alias is not None and not _FOLDER_NAME.fullmatch(alias):
-            raise click.ClickException(f"{where}: project {name!r}: alias {alias!r} is not a folder name.")
-        projects.append(FileProject(name, settings["url"], settings.get("branch"), alias))
-    _refuse_a_shared_folder(path, text, projects)
-    return projects
-
-
-def _refuse_a_shared_folder(path: Path, text: str, projects: Sequence[FileProject]) -> None:
-    """Names and aliases are one set of folders: an alias may be neither another project's name nor another's alias.
-    Raises :class:`click.ClickException` naming the line of the project whose alias is taken."""
-    names = {project.name for project in projects}
-    alias_of: Dict[str, str] = {}
-    for project in projects:
-        alias = project.alias
-        if alias is None or alias == project.name:
-            continue
-        line = _line_of(text, project.name)
-        where = f"{path}:{line}" if line else str(path)
-        if alias in names:
-            raise click.ClickException(f"{where}: project {project.name!r}: alias {alias!r} is another project's name.")
-        if alias in alias_of:
-            raise click.ClickException(
-                f"{where}: project {project.name!r}: alias {alias!r} is already {alias_of[alias]}'s alias."
-            )
-        alias_of[alias] = project.name
-
-
 def _add_submodule(root: Path, url: str, path: Optional[str] = None, branch: Optional[str] = None) -> None:
     args = ["git", "submodule", "add", "-q", *(["-b", branch] if branch else []), url, *([path] if path else [])]
     result = subprocess.run(args, cwd=root, capture_output=True, text=True)
@@ -248,11 +111,10 @@ def runs_from_venv_of(root: Path) -> bool:
 
 def _starting_files(root: Path) -> Dict[StartingFile, str]:
     """The text of each starting file for ``root``; ``mypy.ini`` lists the submodules holding a ``pyproject.toml``."""
-    submodules = _submodules(root)
+    submodules = workspace_file.submodules(root)
     return {
         ".gitignore": _GITIGNORE,
         ".env": _ENV,
-        "config.toml": _CONFIG,
         "mypy.ini": _mypy_ini(
             [path for path, _url, _branch in submodules if (root / path / "pyproject.toml").is_file()]
         ),
@@ -297,10 +159,12 @@ def init_workspace(
 ) -> None:
     """Make ``folder`` a new workspace (see the module docstring). Raises :class:`click.ClickException` on refusal.
 
-    The projects of ``from_file`` are added first, in its order, then each ``add``; the file is read before anything
-    is written, so a file aisland refuses leaves the folder as it was. Each of ``rewrite`` is written over its old
-    copy, kept as ``<file>.bak``; in a folder that already is a git repository only those files are written."""
-    listed = read_workspace_file(from_file) if from_file is not None else []
+    The projects of ``from_file`` (a ``workspace.toml``) are added first, in its order, each into its path on its
+    branch, then each ``add``; the file is read before anything is written, so a file aisland refuses leaves the folder
+    as it was, and it is copied in as the new workspace's ``workspace.toml``, which then lists the ``add`` ones too.
+    Each of ``rewrite`` is written over its old copy, kept as ``<file>.bak``; in a folder that already is a git
+    repository only those files are written."""
+    listed = list(workspace_file.read(from_file).projects.values()) if from_file is not None else []
     root = folder.absolute()
     if root.exists() and not root.is_dir():
         raise click.ClickException(f"{root} is a file, not a folder.")
@@ -320,15 +184,21 @@ def init_workspace(
     rows = [_row(".git/", "git init")]
 
     for project in listed:
-        _add_submodule(root, project.url, project.folder, project.branch)
+        _add_submodule(root, project.url, project.path, project.branch)
     for url in add:
         _add_submodule(root, url)
-    submodules = _submodules(root)
+    submodules = workspace_file.submodules(root)
     rows += [
         _row(f"{path}/", f"submodule {url}" + (f" ({branch})" if branch else "")) for path, url, branch in submodules
     ]
 
     rows += _write_starting_files(root, rewrite)
+
+    if from_file is not None:
+        (root / workspace_file.FILE_NAME).write_text(from_file.read_text())
+    workspace_file.refresh(root)
+    if (root / workspace_file.FILE_NAME).is_file():
+        rows.append(_row(workspace_file.FILE_NAME, "the projects, how to start another machine from them"))
 
     aliases = "pull-all, push-all, … in the local git config" if install_git_aliases(root, quiet=True) else "failed"
     rows.append(_row("git aliases", aliases))
@@ -348,192 +218,3 @@ def init_workspace(
     if not runs_from_venv_of(root):
         click.echo("    uv venv --seed .venv && .venv/bin/pip install <the aisland wheel>")
     click.echo("    .venv/bin/aisland setup")
-
-
-def aisland_wheel_name() -> str:
-    """The file name ``uv build --wheel aisland`` gives this aisland's wheel (pure Python, any platform)."""
-    return f"aisland-{__version__}-py3-none-any.whl"
-
-
-def _export_header(name: str, file_name: str) -> str:
-    """The how-to a workspace file starts with: it is read on a machine that has no aisland yet."""
-    return f"""\
-# {file_name}
-# Written by: aisland workspace export (aisland/aisland/workspace.py)
-# The {name} workspace's projects, yours to edit. To write it again: aisland workspace export <file>
-# =========================================================================
-# A workspace aisland creates on a new machine. From the folder that will hold it:
-#
-#   1. A virtual environment with aisland in it. aisland finds it at .venv in this folder;
-#      --prompt names it, so the shell shows ({name}) once it is activated. With uv:
-#        uv venv --seed --prompt {name} .venv
-#        uv pip install --python .venv/bin/python aisland
-#      or with pip:
-#        python3 -m venv --prompt {name} .venv
-#        .venv/bin/pip install aisland
-#
-#      A venv kept elsewhere under a name of its own, linked here as .venv:
-#        python3 -m venv ~/venvs/{name}
-#        ln -s ~/venvs/{name} .venv
-#        .venv/bin/pip install aisland
-#
-#      From a wheel instead of PyPI, name the file in place of aisland:
-#        .venv/bin/pip install ./{aisland_wheel_name()}
-#      (built in a checkout of aisland with: uv build --wheel aisland -o dist)
-#
-#   2. The workspace: each project below cloned as a submodule, the starting files, the git aliases:
-#        .venv/bin/aisland workspace init . --from {file_name}
-#
-#   3. The projects installed into .venv:
-#        .venv/bin/aisland setup
-# =========================================================================
-
-# One entry per project: its name (the folder it is cloned into), its address and, if you want, a branch to check
-# out (without one, the repository's default branch) and an alias: a short name, the folder it is cloned into
-# instead of its name.
-[projects]
-"""
-
-
-def _toml_key(name: str) -> str:
-    return name if re.fullmatch(r"[A-Za-z0-9_-]+", name) else json.dumps(name)
-
-
-def _projects_table(projects: Sequence[FileProject]) -> str:
-    """One aligned ``name = { url = …, branch = … }`` line per project; a JSON string is a TOML basic string."""
-    keys = [_toml_key(project.name) for project in projects]
-    width = max(len(key) for key in keys)
-    lines = []
-    for key, project in zip(keys, projects):
-        settings = [f"url = {json.dumps(project.url)}"]
-        if project.branch:
-            settings.append(f"branch = {json.dumps(project.branch)}")
-        if project.alias:
-            settings.append(f"alias = {json.dumps(project.alias)}")
-        lines.append(f"{key.ljust(width)} = {{ {', '.join(settings)} }}")
-    return "\n".join(lines) + "\n"
-
-
-def _git_out(folder: Path, *args: str) -> Optional[str]:
-    """``git -C folder <args>``'s output, or None when it fails."""
-    result = subprocess.run(["git", "-C", str(folder), *args], capture_output=True, text=True)
-    return result.stdout.strip() if result.returncode == 0 else None
-
-
-def _repository_name(url: str) -> Optional[str]:
-    """The repository's own name, read from its address (``…/company_ai.git`` -> ``company_ai``), or None when the
-    address ends in no folder name."""
-    last = re.split(r"[/:]", url.rstrip("/"))[-1]
-    name = last[: -len(".git")] if last.endswith(".git") else last
-    return name if _FOLDER_NAME.fullmatch(name) else None
-
-
-def exportable_projects(root: Path) -> Tuple[List[FileProject], List[Tuple[str, str]]]:
-    """The projects of the workspace at ``root`` a workspace file lists, and a ``(name, row)`` per folder considered.
-
-    With ``.gitmodules``, its submodules: a branch of ``.`` (follow the superproject's) is written as the root's
-    branch, since a new workspace has no superproject branch to follow yet. Without one, each direct subfolder that is
-    a git clone, by its ``origin`` and the branch it is on (`aisland.manager.workspace_folders`' reading of such a
-    workspace); a project folder that is no clone, and a clone without ``origin``, are left out with the reason.
-
-    A project's alias is its short name (:func:`_with_aliases`): a link in the workspace folder to its folder, or the
-    folder itself when the project is checked out under a name other than its repository's. A link no project takes
-    is left out with the reason."""
-    found: List[Tuple[str, str, Optional[str]]] = []
-    rows: List[Tuple[str, str]] = []  # in folder order; a project's row is filled in once its name is known
-
-    if (root / ".gitmodules").is_file():
-        root_branch = _git_out(root, "branch", "--show-current") or None
-        for path, url, branch in _submodules(root):
-            if not _FOLDER_NAME.fullmatch(path):
-                rows.append((path, "left out: not a direct subfolder of the workspace"))
-            elif not url:
-                rows.append((path, "left out: it has no url in .gitmodules"))
-            else:
-                found.append((path, url, root_branch if branch == "." else branch))
-                rows.append((path, ""))
-    else:
-        for child in sorted(root.iterdir(), key=lambda c: c.name):
-            if not child.is_dir() or child.name.startswith(".") or locations.is_alias(child, root):
-                continue
-            if (child / ".git").exists():
-                origin = _git_out(child, "remote", "get-url", "origin")
-                if not origin:
-                    rows.append((child.name, "left out: it has no origin remote"))
-                else:
-                    found.append((child.name, origin, _git_out(child, "branch", "--show-current") or None))
-                    rows.append((child.name, ""))
-            elif (child / "pyproject.toml").is_file():
-                rows.append((child.name, "left out: not a git clone"))
-    projects, link_rows = _with_aliases(root, found, {name for name, _row in rows})
-    said = iter(
-        (
-            project.name,
-            project.url
-            + (f" ({project.branch})" if project.branch else "")
-            + (f", checked out as {project.alias}/" if project.alias else ""),
-        )
-        for project in projects
-    )
-    return projects, [next(said) if not row else (name, row) for name, row in rows] + link_rows
-
-
-def _with_aliases(
-    root: Path, found: Sequence[Tuple[str, str, Optional[str]]], reported: Set[str]
-) -> Tuple[List[FileProject], List[Tuple[str, str]]]:
-    """Each ``(folder, url, branch)`` as a project of the file, with its alias, and a row per link left out (but the
-    ``reported`` folders, which already have one).
-
-    The project is named after its repository (:func:`_repository_name`) unless that name is no folder name or is
-    another project's folder; its alias is the link in the workspace folder that names its folder
-    (:func:`aisland.locations.alias_names`), else the folder itself when it differs from that name. A workspace made
-    from the file checks each project out straight into its alias: a link becomes a direct checkout."""
-    folders = {folder for folder, _url, _branch in found}
-    short = locations.alias_names(root)
-    projects: List[FileProject] = []
-    used: Set[str] = set()
-    for folder, url, branch in found:
-        repository = _repository_name(url)
-        name = repository if repository and repository not in used and repository not in folders - {folder} else folder
-        used.add(name)
-        link = short.get((root / folder).resolve())
-        alias = link or (folder if folder != name else None)
-        projects.append(FileProject(name, url, branch, alias))
-    taken = {project.alias for project in projects} | reported
-    rows: List[Tuple[str, str]] = []
-    for child in sorted(root.iterdir(), key=lambda c: c.name):
-        if child.name.startswith(".") or not child.is_symlink() or not child.is_dir() or child.name in taken:
-            continue
-        target = child.resolve()
-        if not locations.is_alias(child, root):
-            rows.append((child.name, f"left out: it points outside the workspace ({os.readlink(child)})"))
-        elif short.get(target) != child.name:
-            rows.append(
-                (child.name, f"left out: {short[target]} already names {os.path.relpath(target, root.resolve())}")
-            )
-        else:
-            rows.append((child.name, f"left out: it names no project ({os.path.relpath(target, root.resolve())})"))
-    return projects, rows
-
-
-def export_workspace(root: Path, target: Optional[Path] = None) -> Path:
-    """Write the workspace file of the workspace at ``root`` to ``target`` (default ``<root>/<name>.workspace.toml``).
-
-    Never writes over a file. Raises :class:`click.ClickException` on refusal; returns the file written."""
-    target = (target or root / f"{root.name}.workspace.toml").absolute()
-    if target.exists():
-        raise click.ClickException(f"{target} exists: name another file, or remove it first.")
-    projects, rows = exportable_projects(root)
-    if not projects:
-        why = "; ".join(f"{name} {row}" for name, row in rows)
-        raise click.ClickException(
-            f"{root} has no project to write: "
-            + (why if why else "no submodule in .gitmodules and no subfolder that is a git clone.")
-        )
-    target.write_text(_export_header(root.name, target.name) + _projects_table(projects))
-    count = f"{len(projects)} project" + ("" if len(projects) == 1 else "s")
-    click.echo(f"==> Wrote {target}: {count}")
-    for name, row in rows:
-        click.echo(_row(name, row))
-    click.echo("Edit the list as you like; the file's first lines say how to create the workspace from it.")
-    return target

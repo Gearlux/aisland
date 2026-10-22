@@ -1682,6 +1682,14 @@ def setup_workspace(
     for line in install_harness(workspace_root):
         click.echo(f"  - {line}")
 
+    # 0d. workspace.toml: its projects brought in line with .gitmodules (or the clones) — a new one added, a changed
+    #     url or folder followed, a gone one dropped. Imported here: workspace_file reads discovery, which imports
+    #     this module.
+    from aisland import workspace_file
+
+    for line in workspace_file.refresh(workspace_root):
+        click.echo(f"  - {line}")
+
     # 1. System Provisioning
     provision_system()
 

@@ -2726,3 +2726,51 @@ class Database:            # the project's own code — no aisland import
   its refusals and tests in `tests/test_discovery.py`.
 - The wording of `aisland workspace show`.
 - Never: a plugin that must import aisland, or loading an entry point no workspace project declares.
+
+---
+
+## `workspace.toml`: the workspace written down like `.gitmodules`, kept current by setup
+
+*2026-10-22* [workspace-file] — supersedes the `<name>.workspace.toml` written by `aisland workspace export`.
+
+### Context
+
+The workspace file of 2026-10-20 was written on request (`aisland workspace export`) and read only by `init --from`,
+so it went stale the moment a submodule was added, and it sat beside `config.toml` as a second committed description
+of the same workspace in a second format (`[projects]` with inline tables, an `alias`).
+
+### Decision
+
+One file, `workspace.toml`, at the root and committed, shaped like `.gitmodules`: `[workspace]`, then a
+`[project."<name>"]` per project with `path`, `url` and `branch`. `aisland setup` keeps the projects current
+(`workspace_file.refresh`): new ones added, a changed url or path followed, gone ones dropped, a branch written once
+kept. `init --from` clones from it and copies it in. `export` is gone. The later steps of the redesign move
+`config.toml`'s settings into the same tables, each a key of the plugin that owns it.
+
+Rejected: keeping `export` (a file nobody refreshes is wrong by the next submodule); generating `.gitmodules` from
+the file (git and every git tool read `.gitmodules`; the file follows it instead); keeping a project gone from the
+workspace with a flag (its entry would clone a project the workspace no longer has).
+
+### Consequences
+
+- Every workspace has the file after its next `aisland setup` (acme: 29 projects, 173 lines).
+- A branch changed in `.gitmodules` does not reach the file once a branch is written there; the source plugin
+  changes it (`TASKS.md`).
+
+### Example
+
+```toml
+[project."models"]
+path = "models"
+url = "git@github.com:acme/models.git"
+branch = "dev/main"
+```
+```python
+from aisland import workspace_file
+workspace_file.refresh(Path("~/work/acme").expanduser())   # ['workspace.toml: added models']
+```
+
+### What you may change
+
+- The how-to comments (`workspace_file._header`) and the wording of `refresh`'s lines.
+- A new key of a project belongs to a plugin of the redesign, never to `workspace_file.py`.

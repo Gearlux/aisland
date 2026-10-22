@@ -18,6 +18,7 @@ import pytest
 
 from aisland import manager
 from aisland.manager import _discover_mcp_servers, _write_gemini_settings, _write_mcp_json, get_workspace_root
+from tests.workspace_layout import needs_workspace
 
 
 def _project(root: Path, name: str, script: str, module_text: str) -> None:
@@ -47,6 +48,7 @@ class TestDiscovery:
         assert servers["modern"] == {"command": str(venv_bin / "modern-mcp")}
         assert servers["legacy"] == {"command": str(venv_bin / "legacy")}
 
+    @needs_workspace
     def test_the_real_workspace_lists_every_mcp_server_it_ships(self) -> None:
         root = get_workspace_root()
         servers = _discover_mcp_servers(root, root / ".venv" / "bin")
@@ -148,6 +150,7 @@ class TestTheServersGetTheWorkspaceEnvironment:
         _write_mcp_json(with_bashrc, with_bashrc / ".venv" / "bin")
         assert "modern's MCP command" in capsys.readouterr().out
 
+    @needs_workspace
     def test_the_real_shell_init_prints_nothing_and_gives_the_server_the_workspace_root(self, tmp_path: Path) -> None:
         root = get_workspace_root()
         if not (root / "project.bashrc").exists():
@@ -188,6 +191,7 @@ class TestTheWiring:
         mcp = main.commands["mcp"]
         assert set(mcp.commands) >= {"gemini", "claude"}  # type: ignore[attr-defined]
 
+    @needs_workspace
     def test_both_generated_files_are_gitignored_at_the_workspace_root(self) -> None:
         ignored = (get_workspace_root() / ".gitignore").read_text()
         assert re.search(r"^/\.gemini/settings\.json$", ignored, re.M)

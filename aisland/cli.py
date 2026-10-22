@@ -108,8 +108,8 @@ def workspace_group() -> None:
     "from_file",
     type=click.Path(path_type=Path),
     metavar="FILE",
-    help="A workspace file (`aisland workspace export` writes one): each of its projects is added as a submodule, "
-    "on its branch and in its alias folder when it has one, before the --add ones.",
+    help="A workspace.toml (`aisland setup` keeps one in every workspace): each of its projects is added as a "
+    "submodule in its path, on its branch, before the --add ones; the file becomes the new workspace's own.",
 )
 @click.option(
     "--rewrite",
@@ -125,29 +125,15 @@ def workspace_init(
 ) -> None:
     """Make FOLDER a new workspace: git init, the starting files, the submodules and the git aliases.
 
-    Writes .gitignore, .env, config.toml, mypy.ini and vscode-init-bash.sh, never over a file that exists, and
-    refuses a folder that already is a git repository (set that one up with `aisland setup`). A --from file that
-    cannot be read is refused, naming its line, before anything is written.
+    Writes .gitignore, .env, mypy.ini and vscode-init-bash.sh, never over a file that exists, and refuses a folder
+    that already is a git repository (set that one up with `aisland setup`). --from names a workspace.toml: each of
+    its projects is cloned into its path on its branch and the file is copied in as the new workspace's own; a file
+    that cannot be read is refused, naming its line, before anything is written.
 
     --rewrite FILE writes FILE again over the one there, keeping it as FILE.bak (refused when FILE.bak exists);
     in an existing repository it is all init does: `aisland workspace init . --rewrite vscode-init-bash.sh`.
     """
     workspace_mod.init_workspace(folder, add, from_file, rewrite)
-
-
-@workspace_group.command("export")
-@click.argument("file", required=False, type=click.Path(path_type=Path))
-def workspace_export(file: Optional[Path]) -> None:
-    """Write this workspace's projects into FILE (default <workspace>/<name>.workspace.toml), never over a file.
-
-    Each submodule's folder, address and branch — without .gitmodules, each clone's — under [projects], after comments
-    saying how to create the venv, install aisland and run `aisland workspace init . --from FILE` on another machine.
-    A project's short name — a link in the workspace folder to it, or its folder when that differs from its
-    repository's name — is written as its alias, the folder `init --from` clones it into.
-    """
-    if not locations.workspace_found():
-        raise click.ClickException(locations.missing_workspace_message())
-    workspace_mod.export_workspace(get_workspace_root(), file)
 
 
 @workspace_group.command("show")

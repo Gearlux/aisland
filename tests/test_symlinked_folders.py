@@ -16,7 +16,7 @@ from typing import Any, Dict, List
 
 import pytest
 
-from aisland import harness, locations, manager, selection, sources, workspace
+from aisland import harness, locations, manager, selection, sources, workspace_file
 
 
 def _project(folder: Path, name: str, extras: str = "dev") -> Path:
@@ -95,10 +95,10 @@ def test_the_agent_commands_go_into_each_project_folder_once(acme: Path) -> None
 
 
 def test_the_workspace_file_lists_each_clone_once(acme: Path) -> None:
-    projects, rows = workspace.exportable_projects(acme)
+    """ext is a project but no clone, logs a link to a folder outside the workspace: neither is a project of the
+    file, and each clone is listed once, never again under a link to it."""
+    projects = workspace_file.workspace_projects(acme)
     assert [project.name for project in projects] == ["machine_learning", "object_detection"]
-    # ext: a project but no clone; logs: a link to a folder outside the workspace
-    assert [name for name, _row in rows] == ["ext", "machine_learning", "object_detection", "logs"]
 
 
 def test_a_link_into_a_project_from_inside_another_is_no_project_either(acme: Path) -> None:

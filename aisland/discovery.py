@@ -139,7 +139,7 @@ def _part(name: str) -> str:
     return rf'(?:{escaped}|"{escaped}"|\'{escaped}\')'
 
 
-def _header_line(text: str, *parts: str) -> Optional[int]:
+def table_line(text: str, *parts: str) -> Optional[int]:
     """The 1-based line of the table header ``[a.b.c]`` (spaces and quoting allowed), or None."""
     dotted = r"\s*\.\s*".join(_part(part) for part in parts)
     pattern = re.compile(rf"^\s*\[\s*{dotted}\s*\]")
@@ -149,7 +149,7 @@ def _header_line(text: str, *parts: str) -> Optional[int]:
     return None
 
 
-def _key_line(text: str, header: int, key: str) -> Optional[int]:
+def key_line(text: str, header: int, key: str) -> Optional[int]:
     """The line of ``key = …`` below the table header on line ``header``: the table's own, since valid TOML keeps a
     table's keys under its header and cannot define the key again in a later table."""
     pattern = re.compile(rf"^\s*{_part(key)}\s*=")
@@ -193,7 +193,7 @@ def _selections(projects: List[Tuple[str, Path, str, Dict[str, Any]]], found: Di
         tables = data.get("tool", {}).get("aisland", {}).get("selection", {})
         extras = set(data.get("project", {}).get("optional-dependencies", {}))
         for name, table in tables.items():
-            where = Where(path, _header_line(text, "tool", "aisland", "selection", name))
+            where = Where(path, table_line(text, "tool", "aisland", "selection", name))
             if not isinstance(table, dict):
                 raise DeclarationError(f"{where}: selection {name!r} is not a table")
             unknown = [key for key in table if key not in _SELECTION_KEYS]
@@ -233,7 +233,7 @@ def _selections(projects: List[Tuple[str, Path, str, Dict[str, Any]]], found: Di
 def _services(projects: List[Tuple[str, Path, str, Dict[str, Any]]], found: Discovery) -> None:
     for project, path, text, data in projects:
         for name, table in data.get("tool", {}).get("aisland", {}).get("service", {}).items():
-            where = Where(path, _header_line(text, "tool", "aisland", "service", name))
+            where = Where(path, table_line(text, "tool", "aisland", "service", name))
             if not isinstance(table, dict):
                 raise DeclarationError(f"{where}: service {name!r} is not a table")
             unknown = [key for key in table if key not in _SERVICE_KEYS]
@@ -271,9 +271,9 @@ def _plugins(projects: List[Tuple[str, Path, str, Dict[str, Any]]], found: Disco
     for project, path, text, data in projects:
         declared = data.get("project", {}).get("entry-points", {}).get(ENTRY_POINT_GROUP, {})
         distribution = str(data.get("project", {}).get("name") or project)
-        header = _header_line(text, "project", "entry-points", ENTRY_POINT_GROUP)
+        header = table_line(text, "project", "entry-points", ENTRY_POINT_GROUP)
         for name, target in declared.items():
-            where = Where(path, _key_line(text, header, name) if header else None)
+            where = Where(path, key_line(text, header, name) if header else None)
             if name in found.plugins:
                 raise DeclarationError(
                     f"plugin {name!r} is declared twice: {found.plugins[name].where} and {where} "

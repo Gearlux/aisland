@@ -17,6 +17,7 @@ import pytest
 
 from aisland import locations, manager, pytest_stats, supervisor
 from aisland.services import jenkins
+from tests.workspace_layout import needs_workspace
 
 AISLAND_PROJECT = Path(__file__).resolve().parents[1]
 WORKSPACE = AISLAND_PROJECT.parent
@@ -29,6 +30,7 @@ def test_this_checkout_is_recognised_as_one() -> None:
     assert locations.FROM_CHECKOUT is True
 
 
+@needs_workspace
 def test_from_a_checkout_the_folder_you_run_in_and_the_variable_change_nothing(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -41,6 +43,7 @@ def test_from_a_checkout_the_folder_you_run_in_and_the_variable_change_nothing(
     assert locations.workspace_found() is True
 
 
+@needs_workspace
 def test_from_a_checkout_the_state_stays_in_aislands_own_folder() -> None:
     assert manager.BASE_DIR == AISLAND_PROJECT
     assert manager.DATA_DIR == AISLAND_PROJECT / "data"

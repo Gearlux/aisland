@@ -27,10 +27,11 @@ The workspace's dev-infrastructure CLI, `aisland` (click, `aisland/cli.py`):
   where aisland runs (standard library only; the pytest plugin imports it).
 - `manager.py`: workspace root, `aisland setup` (provisioning, submodule activation, editable
   installs, generated workspace files), `BaseService`.
-- `workspace.py`: `aisland workspace export [file]`, the workspace file (the how-to for a machine without aisland,
-  then `[projects]`: each project's folder, `url`, `branch`), and `aisland workspace init <folder>`, a new
-  workspace (its starting files, the `--from` file's projects and the `--add`
-  submodules, the git aliases).
+- `workspace.py`: `aisland workspace init <folder>`, a new workspace (its starting files, the `--from` file's
+  projects and the `--add` submodules, its `workspace.toml`, the git aliases).
+- `workspace_file.py`: `workspace.toml`, the workspace's committed file shaped like `.gitmodules` (the how-to for a
+  machine without aisland, then a `[project."<name>"]` per project: `path`, `url`, `branch`), kept current by
+  `aisland setup` (`refresh`) [workspace-file].
 - `server.py`: `aisland-mcp`, aisland's MCP server (the `[mcp]` extra) — a chosen set of tools, listed in
   `.mcp.json` by setup's discovery.
 - `discovery.py`: what the projects declare to aisland, found in two stages, and `aisland workspace show` [declarations].
@@ -114,6 +115,12 @@ start-time port pre-flight naming the PID is the only signal). All service state
     classifier, setuptools >= 77), the author and the GitHub URLs, a Development Status following the version and
     Python classifiers `requires-python` admits. The build prints no deprecation warning and `twine check --strict`
     passes (`tests/test_packaging.py::test_twine_accepts_the_release_strictly` and its neighbours).
+  - GitHub CI checks aisland out ALONE and installs only `.[dev]`, so `dev` holds everything the gates and the
+    suite need there: the tools, `liquifai`, and `setuptools`, `wheel` and `uv` (the build and wheels tests build
+    without isolation and run the uv beside the interpreter). A test asserting the REAL workspace (its root, the
+    servers it ships, its shell init) carries `needs_workspace` (`tests/workspace_layout.py`) and is skipped there
+    with its reason, never failed (`tests/test_workspace_layout.py`). Reproduce CI in a fresh venv holding only
+    `aisland[dev]`, with a copy of aisland alone, before changing either.
   - `project.bashrc` ALWAYS sets `PROJECT_ROOT` from its own place, never keeps an inherited one: an editor
     started from a shell that sourced another workspace passes that root down, and its `.venv` was activated
     (`::test_a_project_root_inherited_from_another_workspace_is_replaced_by_this_ones`). A `.env` with no
@@ -122,6 +129,10 @@ start-time port pre-flight naming the PID is the only signal). All service state
     `$VAR` unexpanded) (`::test_a_quoted_value_with_a_space_is_exported_whole_and_a_variable_in_a_value_expanded`).
     Each shell function it defines (`cdp`, `cdd`, `cdm`, `cdr`, `h`, `tm`) is `unalias`ed first: an alias of that
     name is expanded inside the definition and breaks the file (`::test_h_is_defined_even_where_an_alias_h_exists`).
+    Tab after `cdp`/`cdd`/`cdm`/`cdr` completes a folder under ITS root (`_aisland_cd_complete`), never the current
+    folder's, a spaced name escaped; it runs under `/bin/bash` 3.2 (no `compopt`: `nospace` at registration) and
+    unescapes the typed word without `eval`, which would run a `$(…)` typed before Tab
+    (`::test_tab_after_a_cd_helper_offers_the_folders_under_its_root_and_never_a_file`).
     `tm` hands `tmux new-session` the current folder and every exported variable but the terminal's and tmux's own,
     read NUL-separated (`env -0`): a running server otherwise gives a new session the environment it started with
     (`::test_tm_starts_a_session_in_the_current_folder_with_every_exported_variable`,
@@ -136,13 +147,19 @@ start-time port pre-flight naming the PID is the only signal). All service state
   INSIDE `aisland/aisland/` and is named in `[tool.setuptools.package-data]`, so a wheel carries
   it; never read one from the project folder beside the package.
   (`tests/test_packaging.py::test_the_wheel_carries_every_file_of_the_package`)
-- **A workspace is written down in one TOML file a machine without aisland reads (user request
-  2026-10-20).** [workspace-file] `export` writes the how-to comments (venv with pip and with uv, aisland
-  from PyPI or a wheel, `init --from`, `setup`) and `[projects]`; `init --from` reads it. A project takes `url`,
-  `branch` and `alias` only — an alias is the folder `init --from` clones it into, never a link (user ruling
-  2026-10-21: a workspace that uses links is exported as direct checkouts), and names and aliases are one set of
-  folders; the file is read BEFORE anything is written, and every refusal names `file:line`
-  (`_line_of`). `export` never writes over a file. `.venv` stays the one venv aisland finds — a link counts, and
+- **A workspace is written down in `workspace.toml`, shaped like `.gitmodules` (user rulings 2026-10-20/22).**
+  [workspace-file] `workspace_file.py`: the how-to comments (venv with pip and with uv, aisland from PyPI or a wheel,
+  `init --from`, `setup`), `[workspace]`, then a `[project."<name>"]` per project — `path` (its folder; the name when
+  left out), `url`, `branch`; other keys of a project (later steps' settings) are kept as written. `aisland setup`
+  keeps it current (`refresh`, from `.gitmodules` or the clones): a new project added, a changed url or path followed,
+  a gone project dropped, a branch written once KEPT (only a project without one gets `.gitmodules`' branch); a project
+  is matched by its path first, so a hand-written name survives; nothing changed, the file is not touched. `init
+  --from` clones each project into its path on its branch and copies the file in; there is no `export`. A link in the
+  workspace folder is written as the project's `path` (user ruling 2026-10-21: links come back as direct checkouts).
+  Every refusal is a `FileError` naming `file:line` — the old `[projects]` layout, a section the file has not, no url,
+  a value not text, a path that is no plain folder, two projects in one folder — and a `--from` file is read BEFORE
+  anything is written (`tests/test_workspace_file.py`, `tests/test_workspace_init.py`). `.venv` stays the one venv
+  aisland finds — a link counts, and
   `init`'s `.gitignore` says `.venv` (not `.venv/`) so the link is ignored; never add a venv-name setting without
   asking. (`tests/test_workspace_init.py`)
   - `init` writes over a starting file ONLY when `--rewrite <file>` names it (a closed set, `workspace.StartingFile`);
@@ -671,11 +688,11 @@ User choice 2026-10-08: an aisland command, only the named project's closure, bo
 - **A link to a folder inside the workspace is a short name, never a project (user request 2026-10-21).** [aliases]
   Every reader of the workspace's projects skips a folder for which `locations.is_alias(folder, workspace)` holds
   (`discover_projects`, `workspace_folders`, `harness._project_folders`, `sources.known_projects`,
-  `workspace.exportable_projects`); a new reader does the same, never an `is_symlink` test of its own. A link to a
+  `workspace_file.workspace_projects`); a new reader does the same, never an `is_symlink` test of its own. A link to a
   folder OUTSIDE the workspace stays a project. The generated `.code-workspace` names such a folder by its link
-  (`locations.alias_names`: root links, non-hidden, the first by name), its `path` the real folder; `workspace export`
-  writes it as the project's `alias` ([workspace-file]). (`tests/test_symlinked_folders.py`,
-  `tests/test_workspace_init.py::test_export_writes_a_link_to_a_project_as_its_alias`)
+  (`locations.alias_names`: root links, non-hidden, the first by name), its `path` the real folder; `workspace.toml`
+  writes it as the project's `path` ([workspace-file]). (`tests/test_symlinked_folders.py`,
+  `tests/test_workspace_file.py::test_without_gitmodules_each_clone_is_a_project_and_a_link_to_it_its_path`)
 - Without `.gitmodules`, `setup_git.sh` gives every subfolder that is its own clone (and the root
   when it is a repository) every workspace alias with the root baked in (`GIT_PULL_ALL_ROOT`):
   `git_pull_all.sh`'s `folder_main` merges each clone on ITS OWN branch, the root last, and records

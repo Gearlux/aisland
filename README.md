@@ -61,9 +61,9 @@ uv venv --seed .venv && .venv/bin/pip install aisland-0.1.0-py3-none-any.whl
     models/                   submodule git@github.com:acme/models.git
     .gitignore                written
     .env                      written
-    config.toml               written
     mypy.ini                  written
     vscode-init-bash.sh       written
+    workspace.toml            the projects, how to start another machine from them
     git aliases               pull-all, push-all, … in the local git config
 Next:
     cd /Users/you/work/acme
@@ -75,7 +75,8 @@ Next:
 repository (set that one up with `aisland setup`). Every file it writes is a starting point you
 own. A workspace is a folder whose projects are subfolders holding a `pyproject.toml` —
 submodules listed in `.gitmodules`, or, without one, every such subfolder (next section);
-`aisland setup` needs the `.venv` and reads `config.toml`, `.env` and `mypy.ini` when they exist.
+`aisland setup` needs the `.venv` and reads `workspace.toml`, `config.toml`, `.env` and `mypy.ini` when they
+exist.
 
 To take a newer template of a starting file, name it with `--rewrite` (repeat for several). In an
 existing repository that is all `init` does; the old copy is kept as `<file>.bak`, and the run is
@@ -87,63 +88,46 @@ $ aisland workspace init . --rewrite vscode-init-bash.sh
     vscode-init-bash.sh       rewritten (the old one kept as vscode-init-bash.sh.bak)
 ```
 
-#### The same workspace on another machine: a workspace file
+#### The same workspace on another machine: `workspace.toml`
 
-`aisland workspace export` writes the workspace's projects into one file — each submodule's folder,
-address and branch (without `.gitmodules`, each clone's `origin` and branch) — after comments saying
-how to start on a machine that has no aisland yet:
-
-```text
-$ aisland workspace export            # or: aisland workspace export ~/acme.workspace.toml
-==> Wrote /Users/you/work/acme/acme.workspace.toml: 2 projects
-    models                    git@github.com:acme/models.git (dev/main)
-    tools                     git@github.com:acme/tools.git
-Edit the list as you like; the file's first lines say how to create the workspace from it.
-```
+Every workspace keeps one committed file of its projects, `workspace.toml`, shaped like `.gitmodules`.
+`aisland setup` keeps it current — a new submodule is added, a changed url or folder followed, a project
+that is gone dropped — and its first lines say how to start on a machine that has no aisland yet:
 
 ```toml
-# acme.workspace.toml
-# Written by: aisland workspace export (aisland/aisland/workspace.py)
+# workspace.toml — the acme workspace: its projects and its choices, committed.
 # ...
 #   1. A virtual environment with aisland in it. ...
 #        uv venv --seed --prompt acme .venv
 #        uv pip install --python .venv/bin/python aisland
 #   2. ...
-#        .venv/bin/aisland workspace init . --from acme.workspace.toml
+#        .venv/bin/aisland workspace init . --from workspace.toml
 #   3. ...
 #        .venv/bin/aisland setup
-[projects]
-models = { url = "git@github.com:acme/models.git", branch = "dev/main" }
-tools  = { url = "git@github.com:acme/tools.git" }
+[project."models"]
+path = "models"
+url = "git@github.com:acme/models.git"
+branch = "dev/main"
+
+[project."machine_learning"]
+path = "ml"
+url = "git@github.com:acme/machine_learning.git"
 ```
 
-Edit the list, take the file to the new machine and follow its three steps in the folder that will
-hold the workspace. `init --from` clones each project as a submodule on its `branch` (without one,
-the repository's default branch), before any `--add`. A project takes `url`, `branch` and `alias` and
-nothing else; a file aisland cannot read is refused before anything is written, naming the line:
+A project is named after its repository; `path` is its folder (its name when left out) and `branch` the
+branch it is cloned on (without one, the repository's default branch). A branch already in the file is
+kept: setup only writes one for a project that has none. A link in the workspace folder to a project
+(`ml -> machine_learning`) is written as its `path`, so a workspace that uses links comes back with
+direct checkouts.
+
+Take the file to the new machine and follow its three steps in the folder that will hold the workspace.
+`init --from` clones each project as a submodule into its `path` on its `branch`, before any `--add`, and
+the file becomes the new workspace's own. A file aisland cannot read is refused before anything is
+written, naming the line:
 
 ```text
-$ .venv/bin/aisland workspace init . --from acme.workspace.toml
-Error: acme.workspace.toml:4: project 'tools' has no url.
-```
-
-An `alias` is a project's short name: `init --from` clones the project straight into that folder.
-`export` writes one for a link in the workspace folder to a project (`ml -> machine_learning`) and for a
-project checked out under a name other than its repository's, so a workspace that uses links comes back
-with direct checkouts. A link to a folder outside the workspace is left out, with the reason:
-
-```text
-$ aisland workspace export
-==> Wrote /Users/you/work/acme/acme.workspace.toml: 2 projects
-    machine_learning          git@github.com:acme/machine_learning.git (dev/main), checked out as ml/
-    tools                     git@github.com:acme/tools.git
-    logs                      left out: it points outside the workspace (/Users/you/logs)
-```
-
-```toml
-[projects]
-machine_learning = { url = "git@github.com:acme/machine_learning.git", branch = "dev/main", alias = "ml" }
-tools            = { url = "git@github.com:acme/tools.git" }
+$ .venv/bin/aisland workspace init . --from workspace.toml
+Error: workspace.toml:7: project 'tools' has no url
 ```
 
 aisland finds the venv at `.venv` in the workspace. To give it a name, use `--prompt` (the shell
@@ -153,9 +137,8 @@ then shows `(acme)`), or keep the venv elsewhere and link it in — `.gitignore`
 python3 -m venv ~/venvs/acme && ln -s ~/venvs/acme .venv
 ```
 
-Run from that `.venv`, `init` leaves the venv line out of its `Next:` steps. `export` never writes
-over a file; a branch of `.` in `.gitmodules` (follow the superproject's) is written as the root's
-branch.
+Run from that `.venv`, `init` leaves the venv line out of its `Next:` steps. A branch of `.` in
+`.gitmodules` (follow the superproject's) is written as the root's branch.
 
 How aisland finds its workspace depends on how it is installed:
 
@@ -318,7 +301,8 @@ Enable it by starting a shell that sources `project.bashrc`:
 
 ```bash
 source project.bashrc      # activates .venv AND exports .env AND loads completion
-                           # (and defines cdp/cdd/cdm/cdr, and h [word]: the history, filtered)
+                           # (and defines cdp/cdd/cdm/cdr — `cdm rai<TAB>` completes a folder under $MODEL_ROOT —
+                           #  and h [word]: the history, filtered)
                            # (and tm [tmux new-session options]: a tmux session here, with this shell's environment)
 aisland <TAB>              # check docker fiftyone info jenkins labelstudio mcp mlflow ...
 aisland wheels build vendorcli <TAB>   # --include-published --all --include-project --zip ... --help
@@ -368,9 +352,9 @@ A short name you give a project folder with a link in the workspace root
 (`ln -s machine_learning ml`) is the name the folder shows under, its path still
 the real folder; with two links to one folder the first by name wins. Such a
 link is never a project of its own: setup, its extras prompt, `aisland source`
-list the folder once, under its real name, and `aisland workspace export` writes
-the link as the project's `alias`. A link to a folder outside the workspace is a
-project like any other.
+list the folder once, under its real name, and `workspace.toml` writes the link as
+the project's `path`. A link to a folder outside the workspace is a project like
+any other.
 `aisland source set|unset|apply` rewrite the file too, `--machine-only`
 included. The settings and extension recommendations come from
 `aisland/aisland/code-workspace.json` (inside the package, so a wheel carries it): change a shared setting there and re-run

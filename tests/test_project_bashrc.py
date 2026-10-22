@@ -109,6 +109,68 @@ def test_a_quoted_value_with_a_space_is_exported_whole_and_a_variable_in_a_value
     assert out.split("\n") == ["/Volumes/Store/My Data", f"{root}/runs"]
 
 
+def _completions(root: Path, words: str, extra_env: Optional[Dict[str, str]] = None) -> list:
+    """What Tab offers after `words` (bash source text, the word under the cursor last) once the file is sourced."""
+    script = (
+        f"source ./project.bashrc && COMP_WORDS=({words}) && COMP_CWORD=$((${{#COMP_WORDS[@]}} - 1)) && "
+        'func=$(complete -p "${COMP_WORDS[0]}" | sed -n "s/.* -F \\([^ ]*\\) .*/\\1/p") && '
+        '"$func" "${COMP_WORDS[0]}" "${COMP_WORDS[COMP_CWORD]}" "${COMP_WORDS[COMP_CWORD-1]}" && '
+        'printf "%s\\n" "${COMPREPLY[@]}"'
+    )
+    return [line for line in _bash(root, script, extra_env).splitlines() if line]
+
+
+def _models(root: Path) -> Path:
+    """A model root holding two `rai…` folders (one with subfolders), a spaced name and a file."""
+    models = root / "models"
+    (models / "raidar" / "detector").mkdir(parents=True)
+    (models / "raidar" / "classifier").mkdir()
+    (models / "raidar-ultralytics").mkdir()
+    (models / "Signal Truth Set").mkdir()
+    (models / "raid.txt").write_text("")
+    return models
+
+
+@pytest.mark.parametrize(
+    "helper,variable", [("cdp", None), ("cdd", "DATA_ROOT"), ("cdm", "MODEL_ROOT"), ("cdr", "RUN_DIR")]
+)
+def test_tab_after_a_cd_helper_offers_the_folders_under_its_root_and_never_a_file(
+    tmp_path: Path, helper: str, variable: Optional[str]
+) -> None:
+    root = (tmp_path / "acme").resolve()
+    _layout(root, ".aisland")
+    models = _models(root)
+    if variable is None:
+        (root / "models" / "raid.txt").rename(root / "raid.txt")
+        for folder in ("raidar", "raidar-ultralytics"):
+            (models / folder).rename(root / folder)
+    env = {variable: str(models)} if variable else None
+    assert sorted(_completions(root, f"{helper} rai", env)) == ["raidar-ultralytics/", "raidar/"]
+
+
+def test_tab_after_a_folder_offers_the_folders_inside_it(tmp_path: Path) -> None:
+    root = (tmp_path / "acme").resolve()
+    _layout(root, ".aisland")
+    env = {"MODEL_ROOT": str(_models(root))}
+    assert sorted(_completions(root, "cdm raidar/", env)) == ["raidar/classifier/", "raidar/detector/"]
+
+
+def test_a_folder_name_holding_a_space_is_offered_escaped_and_completes_from_its_escaped_start(tmp_path: Path) -> None:
+    root = (tmp_path / "acme").resolve()
+    _layout(root, ".aisland")
+    env = {"MODEL_ROOT": str(_models(root))}
+    assert _completions(root, "cdm Sig", env) == ["Signal\\ Truth\\ Set/"]
+    assert _completions(root, "cdm 'Signal\\ Tr'", env) == ["Signal\\ Truth\\ Set/"]
+
+
+def test_a_second_argument_and_an_unset_root_are_offered_nothing(tmp_path: Path) -> None:
+    root = (tmp_path / "acme").resolve()
+    _layout(root, ".aisland")
+    env = {"MODEL_ROOT": str(_models(root))}
+    assert _completions(root, "cdm raidar rai", env) == []
+    assert _completions(root, "cdr rai") == []
+
+
 def test_h_lists_the_history_and_with_a_word_only_the_lines_holding_it_in_any_case(tmp_path: Path) -> None:
     root = (tmp_path / "acme").resolve()
     _layout(root, ".aisland")

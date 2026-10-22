@@ -1,9 +1,10 @@
-"""`aisland workspace init <folder>` and `aisland workspace export [file]`.
+"""`aisland workspace init <folder>`.
 
 `init` makes a folder a workspace aisland runs in: it writes the starting files — never over one that exists —, runs
-`git init`, adds each project of a `--from` workspace file and each `--add` repository as a submodule and installs
-the workspace git aliases. A folder that already is a git repository is refused untouched, and so is a workspace file
-that cannot be read, before anything is written. `export` writes the workspace file of an existing workspace.
+`git init`, adds each project of a `--from` workspace.toml and each `--add` repository as a submodule, writes the new
+workspace's `workspace.toml` (the `--from` file, copied in) and installs the workspace git aliases. A folder that
+already is a git repository is refused untouched, and so is a workspace file that cannot be read, before anything is
+written.
 """
 
 from __future__ import annotations
@@ -11,17 +12,15 @@ from __future__ import annotations
 import os
 import subprocess
 import sys
-import tomllib
 from pathlib import Path
-from typing import Dict
 
 import pytest
 from click.testing import CliRunner, Result
 
-from aisland import workspace
+from aisland import workspace, workspace_file
 from aisland.cli import main
 
-FILES = [".gitignore", ".env", "config.toml", "mypy.ini", "vscode-init-bash.sh"]
+FILES = [".gitignore", ".env", "mypy.ini", "vscode-init-bash.sh"]
 HARNESS = [".agents", ".claude", "AGENTS.md", "CLAUDE.md", "GEMINI.md"]
 
 
@@ -196,15 +195,15 @@ def test_rewrite_in_an_existing_repository_replaces_the_file_keeps_a_bak_and_wri
 
 def test_rewrite_of_several_files_and_of_one_that_is_missing(tmp_path: Path) -> None:
     root = _existing_workspace(tmp_path)
-    result = _init(tmp_path, "--rewrite", ".env", "--rewrite", "config.toml")
+    result = _init(tmp_path, "--rewrite", ".env", "--rewrite", "mypy.ini")
     assert result.exit_code == 0, result.output
     assert (root / ".env.bak").read_text() == "DATA_ROOT=/data\n"
     assert (root / ".env").read_text() == workspace._ENV
-    assert (root / "config.toml").read_text() == workspace._CONFIG
-    assert not (root / "config.toml.bak").exists()
+    assert (root / "mypy.ini").read_text() == workspace._mypy_ini([])
+    assert not (root / "mypy.ini.bak").exists()
     assert result.output.splitlines()[1:] == [
         "    .env                      rewritten (the old one kept as .env.bak)",
-        "    config.toml               written",
+        "    mypy.ini                  written",
     ]
 
 
@@ -225,9 +224,7 @@ def test_rewrite_of_a_file_init_does_not_write_is_refused_naming_the_ones_it_doe
     _existing_workspace(tmp_path)
     result = _init(tmp_path, "--rewrite", "project.bashrc")
     assert result.exit_code == 2
-    assert "'project.bashrc' is not one of '.gitignore', '.env', 'config.toml', 'mypy.ini', 'vscode-init-bash.sh'" in (
-        result.output
-    )
+    assert "'project.bashrc' is not one of '.gitignore', '.env', 'mypy.ini', 'vscode-init-bash.sh'" in result.output
 
 
 def test_rewrite_in_a_new_folder_writes_over_the_file_and_makes_the_workspace(tmp_path: Path) -> None:
@@ -270,19 +267,22 @@ def test_a_venv_kept_elsewhere_and_linked_in_is_ignored_by_git(tmp_path: Path) -
     assert subprocess.run(["git", "check-ignore", "-q", ".venv"], cwd=root).returncode == 0
 
 
-# --- init --from: a workspace file ---------------------------------------------------------------------------------
+# --- init --from: a workspace.toml --------------------------------------------------------------------------------
 
 
-def _projects_file(tmp_path: Path, body: str) -> Path:
-    return _write(tmp_path / "acme.workspace.toml", f"# A workspace.\n[projects]\n{body}")
+def _workspace_toml(tmp_path: Path, body: str) -> Path:
+    return _write(tmp_path / "source" / "workspace.toml", body)
+
+
+def _project(name: str, url: Path, branch: str = "", path: str = "") -> str:
+    lines = [f'[project."{name}"]', *([f'path = "{path}"'] if path else []), f'url = "{url}"']
+    return "\n".join(lines + ([f'branch = "{branch}"'] if branch else [])) + "\n\n"
 
 
 def test_a_workspace_file_clones_each_project_on_its_branch(tmp_path: Path) -> None:
     models = _remote(tmp_path, "models", branches=("dev",))
     tools = _remote(tmp_path, "tools")
-    listed = _projects_file(
-        tmp_path, f'models = {{ url = "{models}", branch = "dev" }}\ntools = {{ url = "{tools}" }}\n'
-    )
+    listed = _workspace_toml(tmp_path, _project("models", models, "dev") + _project("tools", tools))
     result = _init(tmp_path, "--from", str(listed))
     assert result.exit_code == 0, result.output
     root = tmp_path / "acme"
@@ -294,89 +294,74 @@ def test_a_workspace_file_clones_each_project_on_its_branch(tmp_path: Path) -> N
     lines = result.output.splitlines()
     assert f"    models/                   submodule {models} (dev)" in lines
     assert f"    tools/                    submodule {tools}" in lines
+    assert "    workspace.toml            the projects, how to start another machine from them" in lines
+
+
+def test_the_file_becomes_the_new_workspaces_own(tmp_path: Path) -> None:
+    models = _remote(tmp_path, "models", branches=("dev",))
+    body = '[workspace]\nframework = ["torch"]\n\n' + _project("models", models, "dev")
+    listed = _workspace_toml(tmp_path, body)
+    assert _init(tmp_path, "--from", str(listed)).exit_code == 0
+    made = workspace_file.load(tmp_path / "acme")
+    assert made.settings == {"framework": ["torch"]}
+    assert [(p.name, p.path, p.url, p.branch) for p in made.projects.values()] == [
+        ("models", "models", str(models), "dev")
+    ]
 
 
 def test_a_workspace_file_and_add_together_clone_the_files_projects_first(tmp_path: Path) -> None:
     models = _remote(tmp_path, "models")
     tools = _remote(tmp_path, "tools")
-    listed = _projects_file(tmp_path, f'models = {{ url = "{models}" }}\n')
+    listed = _workspace_toml(tmp_path, _project("models", models))
     result = _init(tmp_path, "--from", str(listed), "--add", str(tools))
     assert result.exit_code == 0, result.output
-    assert [path for path, _url, _branch in workspace._submodules(tmp_path / "acme")] == ["models", "tools"]
+    root = tmp_path / "acme"
+    assert [path for path, _url, _branch in workspace_file.submodules(root)] == ["models", "tools"]
+    assert list(workspace_file.load(root).projects) == ["models", "tools"]  # the added one is written in too
 
 
-def test_a_project_written_as_its_own_table_is_read_too(tmp_path: Path) -> None:
-    models = _remote(tmp_path, "models", branches=("dev",))
-    listed = _write(tmp_path / "w.toml", f'[projects.models]\nurl = "{models}"\nbranch = "dev"\n')
-    assert workspace.read_workspace_file(listed) == [workspace.FileProject("models", str(models), "dev")]
+def test_init_without_a_file_writes_one_listing_the_added_projects(tmp_path: Path) -> None:
+    tools = _remote(tmp_path, "tools")
+    assert _init(tmp_path, "--add", str(tools)).exit_code == 0
+    project = workspace_file.load(tmp_path / "acme").projects["tools"]
+    assert (project.path, project.url) == ("tools", str(tools))
+
+
+def test_a_new_workspace_without_projects_has_no_file(tmp_path: Path) -> None:
+    assert _init(tmp_path).exit_code == 0
+    assert not (tmp_path / "acme" / "workspace.toml").exists()
 
 
 @pytest.mark.parametrize(
     "body, message",
     [
-        ("models = { url = ", "{file}: Invalid value (at line 3, column 18)"),
-        ("", '{file} lists no project: write each one under [projects], as  <folder> = {{ url = "<address>" }}'),
-        ('models = "x"', "{file}:3: project 'models' is not a table: write it as  models = {{ url = \"<address>\" }}"),
-        ('models = { branch = "dev" }', "{file}:3: project 'models' has no url."),
-        (
-            'models = { url = "u", path = "p" }',
-            "{file}:3: project 'models' has the unknown setting 'path' (a project takes url, branch and alias).",
-        ),
-        (
-            'models = { url = "u", alias = "m/x" }',
-            "{file}:3: project 'models': alias 'm/x' is not a folder name.",
-        ),
-        (
-            'models = { url = "u" }\ntools = { url = "v", alias = "models" }',
-            "{file}:4: project 'tools': alias 'models' is another project's name.",
-        ),
-        (
-            'models = { url = "u", alias = "m" }\ntools = { url = "v", alias = "m" }',
-            "{file}:4: project 'tools': alias 'm' is already models's alias.",
-        ),
-        (
-            'models = { url = "u", branch = 2 }',
-            "{file}:3: project 'models': branch must be text, as in " 'branch = "<text>".',
-        ),
-        (
-            '"a/b" = { url = "u" }',
-            "{file}:3: 'a/b' is not a folder name: a project's name is the folder it is " "cloned into.",
-        ),
-        (
-            '".hidden" = { url = "u" }',
-            "{file}:3: '.hidden' is not a folder name: a project's name is the folder it " "is cloned into.",
-        ),
+        ('[project."models"]\nurl = \n', "{file}: Invalid value (at line 2, column 7)"),
+        ('[projects]\nmodels = { url = "u" }\n', "{file}:1: [projects] is the old workspace file"),
+        ('[project."models"]\nbranch = "dev"\n', "{file}:1: project 'models' has no url"),
+        ('[project."models"]\nurl = "u"\npath = "m/x"\n', "{file}:1: project 'models': path 'm/x' is not a folder"),
     ],
 )
 def test_a_workspace_file_that_cannot_be_read_stops_before_anything_is_written(
     tmp_path: Path, body: str, message: str
 ) -> None:
-    listed = _projects_file(tmp_path, body + "\n")
+    listed = _workspace_toml(tmp_path, body)
     result = _init(tmp_path, "--from", str(listed))
     assert result.exit_code == 1
-    assert result.output == "Error: " + message.format(file=listed) + "\n"
+    assert result.output.startswith("Error: " + message.format(file=listed))
     assert not (tmp_path / "acme").exists()
-
-
-def test_a_workspace_file_without_a_projects_table_is_refused(tmp_path: Path) -> None:
-    listed = _write(tmp_path / "w.toml", "# nothing here\n")
-    result = _init(tmp_path, "--from", str(listed))
-    assert result.exit_code == 1
-    assert result.output.startswith(f"Error: {listed} lists no project:")
 
 
 def test_a_missing_workspace_file_is_refused(tmp_path: Path) -> None:
     missing = tmp_path / "nowhere.toml"
     result = _init(tmp_path, "--from", str(missing))
     assert result.exit_code == 1
-    assert result.output == f"Error: {missing} does not exist: name the workspace file to create the workspace from.\n"
+    assert result.output == f"Error: {missing} does not exist: name the workspace.toml to create the workspace from.\n"
     assert not (tmp_path / "acme").exists()
 
 
-def test_a_project_with_an_alias_is_cloned_into_the_alias_folder(tmp_path: Path) -> None:
+def test_a_project_with_a_path_is_cloned_into_that_folder(tmp_path: Path) -> None:
     models = _remote(tmp_path, "models", branches=("dev",))
-    listed = _projects_file(tmp_path, f'models = {{ url = "{models}", branch = "dev", alias = "m" }}\n')
-    assert workspace.read_workspace_file(listed) == [workspace.FileProject("models", str(models), "dev", "m")]
+    listed = _workspace_toml(tmp_path, _project("models", models, "dev", path="m"))
     result = _init(tmp_path, "--from", str(listed))
     assert result.exit_code == 0, result.output
     root = tmp_path / "acme"
@@ -384,235 +369,40 @@ def test_a_project_with_an_alias_is_cloned_into_the_alias_folder(tmp_path: Path)
     assert not (root / "models").exists()
     assert not (root / "m").is_symlink()
     assert f"    m/                        submodule {models} (dev)" in result.output.splitlines()
-
-
-def test_an_alias_equal_to_its_own_name_is_the_name(tmp_path: Path) -> None:
-    models = _remote(tmp_path, "models")
-    listed = _projects_file(tmp_path, f'models = {{ url = "{models}", alias = "models" }}\n')
-    assert _init(tmp_path, "--from", str(listed)).exit_code == 0
-    assert (tmp_path / "acme" / "models").is_dir()
+    assert workspace_file.load(root).projects["models"].path == "m"
 
 
 def test_a_projects_branch_that_does_not_exist_stops_with_its_url(tmp_path: Path) -> None:
     models = _remote(tmp_path, "models")
-    listed = _projects_file(tmp_path, f'models = {{ url = "{models}", branch = "nope" }}\n')
+    listed = _workspace_toml(tmp_path, _project("models", models, "nope"))
     result = _init(tmp_path, "--from", str(listed))
     assert result.exit_code == 1
     assert f"Error: could not add {models} as a submodule:" in result.output
 
 
-# --- export --------------------------------------------------------------------------------------------------------
-
-
-def _workspace(tmp_path: Path, projects: Dict[str, Path], branches: Dict[str, str]) -> Path:
-    """A workspace made by `init --from`, its projects on the given branches."""
-    lines = []
-    for name, url in projects.items():
-        branch = f', branch = "{branches[name]}"' if name in branches else ""
-        lines.append(f'{name} = {{ url = "{url}"{branch} }}')
-    listed = _write(tmp_path / "source.toml", "[projects]\n" + "\n".join(lines) + "\n")
+def test_a_workspace_made_from_the_file_of_another_holds_the_same_projects(tmp_path: Path) -> None:
+    """What `export` used to check: the file one workspace keeps creates the same workspace again."""
+    models = _remote(tmp_path, "models", branches=("dev",))
+    tools = _remote(tmp_path, "tools")
+    listed = _workspace_toml(tmp_path, _project("models", models, "dev", path="m") + _project("tools", tools))
     assert _init(tmp_path, "--from", str(listed)).exit_code == 0
-    return tmp_path / "acme"
-
-
-def _export(root: Path, target: Path) -> Result:
-    return CliRunner().invoke(main, ["workspace", "export", str(target)], catch_exceptions=False)
-
-
-@pytest.fixture
-def at_root(monkeypatch: pytest.MonkeyPatch) -> Dict[str, Path]:
-    """Point the CLI at the workspace a test made (from a checkout it is always the one aisland is in)."""
-    holder: Dict[str, Path] = {}
-    monkeypatch.setattr("aisland.cli.get_workspace_root", lambda: holder["root"])
-    return holder
-
-
-def test_export_writes_each_submodule_with_its_branch(tmp_path: Path, at_root: Dict[str, Path]) -> None:
-    models = _remote(tmp_path, "models", branches=("dev",))
-    tools = _remote(tmp_path, "tools")
-    root = at_root["root"] = _workspace(tmp_path, {"models": models, "tools": tools}, {"models": "dev"})
-    result = CliRunner().invoke(main, ["workspace", "export"])
-    assert result.exit_code == 0, result.output
-    written = root / "acme.workspace.toml"
-    assert tomllib.loads(written.read_text()) == {
-        "projects": {"models": {"url": str(models), "branch": "dev"}, "tools": {"url": str(tools)}}
-    }
-    assert result.output.splitlines() == [
-        f"==> Wrote {written}: 2 projects",
-        f"    models                    {models} (dev)",
-        f"    tools                     {tools}",
-        "Edit the list as you like; the file's first lines say how to create the workspace from it.",
-    ]
-
-
-def test_an_exported_file_says_how_to_create_the_workspace_from_it(tmp_path: Path, at_root: Dict[str, Path]) -> None:
-    root = at_root["root"] = _workspace(tmp_path, {"models": _remote(tmp_path, "models")}, {})
-    target = tmp_path / "out" / "acme.workspace.toml"
-    target.parent.mkdir()
-    assert _export(root, target).exit_code == 0
-    lines = target.read_text().splitlines()
-    assert lines[1] == "# Written by: aisland workspace export (aisland/aisland/workspace.py)"
-    assert "#        uv venv --seed --prompt acme .venv" in lines
-    assert "#        python3 -m venv --prompt acme .venv" in lines
-    assert "#        .venv/bin/pip install aisland" in lines
-    assert f"#        .venv/bin/pip install ./{workspace.aisland_wheel_name()}" in lines
-    assert "#        .venv/bin/aisland workspace init . --from acme.workspace.toml" in lines
-
-
-def test_an_exported_file_creates_the_same_workspace_again(tmp_path: Path, at_root: Dict[str, Path]) -> None:
-    models = _remote(tmp_path, "models", branches=("dev",))
-    tools = _remote(tmp_path, "tools")
-    root = at_root["root"] = _workspace(tmp_path, {"models": models, "tools": tools}, {"models": "dev"})
-    target = tmp_path / "again.toml"
-    assert _export(root, target).exit_code == 0
-    again = CliRunner().invoke(main, ["workspace", "init", str(tmp_path / "again"), "--from", str(target)])
-    assert again.exit_code == 0, again.output
-    assert workspace._submodules(tmp_path / "again") == workspace._submodules(root)
-
-
-def test_a_submodule_following_the_roots_branch_is_written_with_that_branch(
-    tmp_path: Path, at_root: Dict[str, Path]
-) -> None:
-    root = at_root["root"] = _workspace(tmp_path, {"models": _remote(tmp_path, "models")}, {})
-    _git(root, "config", "-f", ".gitmodules", "submodule.models.branch", ".")
-    _git(root, "switch", "-q", "-c", "dev/main")
-    target = tmp_path / "w.toml"
-    assert _export(root, target).exit_code == 0
-    assert tomllib.loads(target.read_text())["projects"]["models"]["branch"] == "dev/main"
-
-
-def test_without_gitmodules_export_writes_the_clones(tmp_path: Path, at_root: Dict[str, Path]) -> None:
-    alpha = _remote(tmp_path, "alpha", branches=("dev",))
-    root = at_root["root"] = tmp_path / "acme"
-    root.mkdir()
-    subprocess.run(["git", "clone", "-q", "-b", "dev", str(alpha), str(root / "alpha")], check=True)
-    _write(root / "gamma" / "pyproject.toml", "")  # a project, no clone
-    subprocess.run(["git", "init", "-q", str(root / "delta")], check=True)  # a clone without origin
-    (root / "docs").mkdir()  # no project, no clone: not mentioned
-    target = tmp_path / "w.toml"
-    result = _export(root, target)
-    assert result.exit_code == 0, result.output
-    assert tomllib.loads(target.read_text()) == {"projects": {"alpha": {"url": str(alpha), "branch": "dev"}}}
-    assert result.output.splitlines()[1:4] == [
-        f"    alpha                     {alpha} (dev)",
-        "    delta                     left out: it has no origin remote",
-        "    gamma                     left out: not a git clone",
-    ]
-
-
-def test_export_never_writes_over_a_file(tmp_path: Path, at_root: Dict[str, Path]) -> None:
-    at_root["root"] = _workspace(tmp_path, {"models": _remote(tmp_path, "models")}, {})
-    target = _write(tmp_path / "w.toml", "mine\n")
-    result = CliRunner().invoke(main, ["workspace", "export", str(target)])
-    assert result.exit_code == 1
-    assert result.output == f"Error: {target} exists: name another file, or remove it first.\n"
-    assert target.read_text() == "mine\n"
-
-
-def test_a_workspace_with_nothing_to_export_is_refused(tmp_path: Path, at_root: Dict[str, Path]) -> None:
-    root = at_root["root"] = tmp_path / "acme"
-    root.mkdir()
-    result = CliRunner().invoke(main, ["workspace", "export"])
-    assert result.exit_code == 1
-    assert result.output == (
-        f"Error: {root} has no project to write: no submodule in .gitmodules and no subfolder that is a git clone.\n"
+    first = tmp_path / "acme"
+    again = CliRunner().invoke(
+        main, ["workspace", "init", str(tmp_path / "again"), "--from", str(first / "workspace.toml")]
     )
-    assert not (root / "acme.workspace.toml").exists()
-
-
-def test_export_outside_a_workspace_is_refused(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr("aisland.locations.workspace_found", lambda: False)
-    result = CliRunner().invoke(main, ["workspace", "export"])
-    assert result.exit_code == 1
-    assert result.output.startswith("Error: No workspace here:")
-
-
-def test_a_long_project_name_keeps_a_space_before_its_address(tmp_path: Path, at_root: Dict[str, Path]) -> None:
-    name = "a_project_name_longer_than_the_column"
-    remote = _remote(tmp_path, name)
-    root = at_root["root"] = _workspace(tmp_path, {name: remote}, {})
-    result = _export(root, tmp_path / "w.toml")
-    assert f"    {name} {remote}" in result.output.splitlines()
-
-
-# --- aliases: a project's short name, the folder it is checked out into -------------------------------------------
-
-
-def test_export_writes_a_link_to_a_project_as_its_alias(tmp_path: Path, at_root: Dict[str, Path]) -> None:
-    """`m -> models` in the workspace folder: the file checks `models` out straight into `m/` on the next machine."""
-    models = _remote(tmp_path, "models", branches=("dev",))
-    tools = _remote(tmp_path, "tools")
-    root = at_root["root"] = _workspace(tmp_path, {"models": models, "tools": tools}, {"models": "dev"})
-    os.symlink("models", root / "m")
-    (tmp_path / "logs").mkdir()
-    os.symlink(tmp_path / "logs", root / "logs")
-    target = tmp_path / "w.toml"
-    result = _export(root, target)
-    assert result.exit_code == 0, result.output
-    assert tomllib.loads(target.read_text()) == {
-        "projects": {"models": {"url": str(models), "branch": "dev", "alias": "m"}, "tools": {"url": str(tools)}}
-    }
-    assert result.output.splitlines() == [
-        f"==> Wrote {target}: 2 projects",
-        workspace._row("models", f"{models} (dev), checked out as m/"),
-        workspace._row("tools", str(tools)),
-        workspace._row("logs", f"left out: it points outside the workspace ({tmp_path / 'logs'})"),
-        "Edit the list as you like; the file's first lines say how to create the workspace from it.",
-    ]
-
-
-def test_a_workspace_exported_from_links_is_created_with_direct_checkouts(
-    tmp_path: Path, at_root: Dict[str, Path]
-) -> None:
-    models = _remote(tmp_path, "models")
-    root = at_root["root"] = _workspace(tmp_path, {"models": models}, {})
-    os.symlink("models", root / "m")
-    target = tmp_path / "w.toml"
-    assert _export(root, target).exit_code == 0
-    again = CliRunner().invoke(main, ["workspace", "init", str(tmp_path / "again"), "--from", str(target)])
     assert again.exit_code == 0, again.output
-    assert workspace._submodules(tmp_path / "again") == [("m", str(models), None)]
-    assert not (tmp_path / "again" / "m").is_symlink()
+    assert workspace_file.submodules(tmp_path / "again") == workspace_file.submodules(first)
+    assert workspace_file.load(tmp_path / "again").projects == workspace_file.load(first).projects
 
 
-def test_export_names_a_project_checked_out_under_its_alias_after_its_repository(
-    tmp_path: Path, at_root: Dict[str, Path]
-) -> None:
-    models = _remote(tmp_path, "models")
-    listed = _projects_file(tmp_path, f'models = {{ url = "{models}", alias = "m" }}\n')
-    assert _init(tmp_path, "--from", str(listed)).exit_code == 0
-    root = at_root["root"] = tmp_path / "acme"
-    target = tmp_path / "w.toml"
-    assert _export(root, target).exit_code == 0
-    assert tomllib.loads(target.read_text()) == {"projects": {"models": {"url": str(models), "alias": "m"}}}
-
-
-def test_without_gitmodules_a_link_to_a_clone_is_its_alias(tmp_path: Path, at_root: Dict[str, Path]) -> None:
-    alpha = _remote(tmp_path, "alpha")
-    root = at_root["root"] = tmp_path / "acme"
-    root.mkdir()
-    subprocess.run(["git", "clone", "-q", str(alpha), str(root / "alpha")], check=True)
-    os.symlink("alpha", root / "a")
-    target = tmp_path / "w.toml"
-    assert _export(root, target).exit_code == 0
-    assert tomllib.loads(target.read_text())["projects"] == {
-        "alpha": {"url": str(alpha), "branch": _git(root / "alpha", "branch", "--show-current"), "alias": "a"}
-    }
-
-
-def test_a_link_to_a_folder_of_the_workspace_that_is_no_project_is_left_out(
-    tmp_path: Path, at_root: Dict[str, Path]
-) -> None:
-    root = at_root["root"] = _workspace(tmp_path, {"models": _remote(tmp_path, "models")}, {})
-    (root / "docs").mkdir()
-    os.symlink("docs", root / "d")
-    result = _export(root, tmp_path / "w.toml")
-    assert workspace._row("d", "left out: it names no project (docs)") in result.output.splitlines()
-    assert "alias" not in tomllib.loads((tmp_path / "w.toml").read_text())["projects"]["models"]
+def test_there_is_no_export_command(tmp_path: Path) -> None:
+    result = CliRunner().invoke(main, ["workspace", "export"])
+    assert result.exit_code == 2
+    assert "No such command 'export'" in result.output
 
 
 def test_the_repository_name_comes_from_the_address() -> None:
-    assert workspace._repository_name("https://host/scm/team/machine_learning.git") == "machine_learning"
-    assert workspace._repository_name("git@github.com:Gearlux/aisland.git") == "aisland"
-    assert workspace._repository_name("/srv/git/models/") == "models"
-    assert workspace._repository_name("https://host/a b.git") is None
+    assert workspace_file.repository_name("https://host/scm/team/machine_learning.git") == "machine_learning"
+    assert workspace_file.repository_name("git@github.com:Gearlux/aisland.git") == "aisland"
+    assert workspace_file.repository_name("/srv/git/models/") == "models"
+    assert workspace_file.repository_name("https://host/a b.git") is None

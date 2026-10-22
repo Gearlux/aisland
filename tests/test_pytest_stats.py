@@ -20,6 +20,7 @@ from click.testing import CliRunner
 from aisland import pytest_stats
 from aisland.cli import main
 from aisland.manager import DATA_DIR
+from tests.workspace_layout import needs_workspace
 
 pytest_plugins = ["pytester"]
 
@@ -265,6 +266,7 @@ def test_the_plugin_is_declared_as_a_pytest11_entry_point() -> None:
     assert found.get("aisland_test_stats") == "aisland.pytest_stats"
 
 
+@needs_workspace
 def test_the_records_live_in_aislands_data_folder() -> None:
     """The module resolves the folder itself (no `aisland.manager` import in every pytest start); it must agree."""
     assert pytest_stats.STATS_DIR == DATA_DIR / "test-stats"
