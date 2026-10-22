@@ -5,7 +5,7 @@ from typing import List, Optional, Tuple
 import click
 from click.shell_completion import CompletionItem
 
-from aisland import discovery, editor, locations, manager, nightly, pytest_stats
+from aisland import configure, discovery, editor, locations, manager, nightly, pytest_stats
 from aisland import supervisor as supervisor_mod
 from aisland import tunnel as tunnel_mod
 from aisland import tunnel_connect as tunnel_connect_mod
@@ -34,7 +34,6 @@ from aisland.services.jenkins import JenkinsService
 from aisland.services.labelstudio import LabelStudioService
 from aisland.services.mlflow import MLflowService
 from aisland.services.swiftbar import SwiftBarService
-from aisland.sources import SOURCE_KINDS
 
 #: The commands that run outside a workspace: creating one, installing a project's wheels elsewhere, and the
 #: tunnel — which exists to be run on a remote box that has no workspace at all.
@@ -154,6 +153,95 @@ def workspace_show(as_json: bool) -> None:
         return
     for line in discovery.report_lines(found, loaded):
         click.echo(line)
+
+
+def _configure_root() -> Path:
+    """The workspace a `configure` command reads or changes (`workspace` is workspace-free)."""
+    if not locations.workspace_found():
+        raise click.ClickException(locations.missing_workspace_message())
+    return get_workspace_root()
+
+
+def _plugin_group(plugin: configure.Plugin) -> click.Group:
+    """`aisland workspace configure <plugin>`: its rows, and `set` / `unset` built from its keys."""
+
+    @click.group(name=plugin.name, cls=_Group, invoke_without_command=True, help=plugin.summary)
+    @click.option("--json", "as_json", is_flag=True, help="Print the rows and notes as one JSON object.")
+    @click.pass_context
+    def group(ctx: click.Context, as_json: bool) -> None:
+        if ctx.invoked_subcommand is not None:
+            return
+        root = _configure_root()
+        rows, notes = plugin.rows(root), plugin.notes(root)
+        if as_json:
+            click.echo(json.dumps({"rows": rows, "notes": notes}, indent=2))
+            return
+        for line in (configure.table(rows) if rows else plugin.empty.splitlines()) + notes:
+            click.echo(line)
+
+    def set_(project: str, machine_only: bool, **values: Optional[str]) -> None:
+        value = values.pop(plugin.main.name)
+        assert value is not None  # a required argument
+        options = {key.name: values.get(key.name) for key in plugin.options}
+        raise SystemExit(plugin.set(_configure_root(), project, value, options, machine_only))
+
+    def unset(project: str, machine_only: bool) -> None:
+        raise SystemExit(plugin.unset(_configure_root(), project, machine_only))
+
+    choices = click.Choice(plugin.main.choices) if plugin.main.choices else click.STRING
+    machine = click.Option(
+        ["--machine-only"], is_flag=True, help="Change this machine only (.git/config); commit nothing."
+    )
+    group.add_command(
+        _Command(
+            "set",
+            callback=set_,
+            help=f"Set PROJECT's {plugin.main.name}: {plugin.main.help}",
+            params=[
+                click.Argument(["project"]),
+                click.Argument([plugin.main.name], type=choices),
+                *(click.Option([f"--{key.name}"], default=None, help=key.help) for key in plugin.options),
+                machine,
+            ],
+        )
+    )
+    group.add_command(
+        _Command(
+            "unset",
+            callback=unset,
+            help=f"Remove PROJECT's {plugin.name} settings (with --machine-only, this machine's only).",
+            params=[click.Argument(["project"]), machine],
+        )
+    )
+    return group
+
+
+class _ConfigureGroup(_Group):
+    """`aisland workspace configure`: one subgroup per plugin of `configure.PLUGINS`, built when it is asked for."""
+
+    def list_commands(self, ctx: click.Context) -> List[str]:
+        return sorted(configure.PLUGINS)
+
+    def get_command(self, ctx: click.Context, cmd_name: str) -> Optional[click.Command]:
+        plugin = configure.PLUGINS.get(cmd_name)
+        return _plugin_group(plugin) if plugin else None
+
+
+@workspace_group.group("configure", cls=_ConfigureGroup, invoke_without_command=True)
+@click.pass_context
+def workspace_configure(ctx: click.Context) -> None:
+    """Each plugin's settings of the workspace (workspace.toml) and of this machine (.git/config).
+
+    \b
+    aisland workspace configure                                  every plugin, and how to set it
+    aisland workspace configure source                           where each project's package comes from
+    aisland workspace configure source set loggair pypi
+    aisland workspace configure source set loggair local --branch dev/main --machine-only
+    aisland workspace configure source unset loggair
+    """
+    if ctx.invoked_subcommand is None:
+        for line in configure.overview():
+            click.echo(line)
 
 
 def _editor_root() -> Path:
@@ -773,7 +861,7 @@ def wheels_install(zip_path: Path, python: Path, into: Optional[Path], rest: Tup
 
 # --- Workspace Configuration Commands ---
 #
-# `config.toml` is maintained by `aisland source/framework/tracker set` — this group only
+# `config.toml` is maintained by `aisland workspace configure source/framework/tracker set` — this group only
 # INSPECTS it and completes the one-time migration from the per-concern files it replaced.
 
 
@@ -783,7 +871,7 @@ def config() -> None:
 
     One tracked file at the workspace root holds every shared decision: the `frameworks` and
     `trackers` selections and the `[sources.*]` registry. It is written by `aisland framework
-    set` / `aisland tracker set` / `aisland source set`; per-machine deviations stay in
+    set` / `aisland tracker set` / `aisland workspace configure source set`; per-machine deviations stay in
     `.git/config` and never reach it.
 
     The workspace-root `uv.toml` is NOT part of it — uv only reads a file of its own settings,
@@ -800,7 +888,7 @@ def config_show() -> None:
     path = config_path(get_workspace_root())
     if not path.exists():
         click.echo(f"No {CONFIG_FILE} at {path.parent} — nothing is configured yet.")
-        click.echo("Create it with: aisland framework set <name>... | aisland source set <project> <kind>")
+        click.echo("Create it with: aisland framework set <name>... | aisland workspace configure source set <project> <kind>")
         return
     click.echo(click.style(str(path), bold=True))
     click.echo(path.read_text())
@@ -818,110 +906,6 @@ def config_migrate() -> None:
     click.echo(f"==> Folded {', '.join(folded)} into {CONFIG_FILE}. Commit the change.")
 
 
-# --- Project Source Commands ---
-
-
-@main.group()
-def source() -> None:
-    """Choose where each workspace project's package comes from.
-
-    \b
-    local   checked out on --ref, installed editable  (you develop it here)
-    github  no checkout, installed from the remote at --ref
-    pypi    no checkout, installed from the published wheel
-
-    `github` and `pypi` both deinit the submodule (empty directory) and drop it from the
-    *.code-workspace folder list. Both layers of configuration — the committed `[sources.*]`
-    tables of `config.toml` and the per-machine `.git/config` override — are honoured.
-    """
-    pass
-
-
-@source.command(name="list")
-def source_list() -> None:
-    """Show the committed source, the per-machine override, and the on-disk state per project."""
-    from aisland.sources import describe
-
-    rows = describe()
-    if not rows:
-        click.echo("No project sources configured — every project is unmanaged (checkout + editable install).")
-        click.echo("Set one with: aisland source set <project> pypi")
-        return
-    header = f"  {'PROJECT':<22} {'COMMITTED':<16} {'OVERRIDE':<16} {'EFFECTIVE':<16} STATE"
-    click.echo(click.style(header, bold=True))
-    for row in rows:
-        click.echo(
-            f"  {row['project']:<22} {row['committed']:<16} {row['override']:<16} "
-            f"{row['effective']:<16} {row['state']}"
-        )
-
-
-@source.command(name="set")
-@click.argument("project")
-@click.argument("kind", type=click.Choice(SOURCE_KINDS))
-@click.option("--ref", default=None, help="Branch or tag for a `local` / `github` source (default: main).")
-@click.option("--version", default=None, help="PEP 440 specifier for a `pypi` source (default: latest).")
-@click.option(
-    "--machine-only",
-    is_flag=True,
-    help="Record only the per-machine .git/config override; leave config.toml (and the "
-    "editor folder list it drives) untouched.",
-)
-def source_set(
-    project: str,
-    kind: str,
-    ref: Optional[str],
-    version: Optional[str],
-    machine_only: bool,
-) -> None:
-    """Set PROJECT's source to KIND and apply it (checkout, venv, editor folder list).
-
-    No CI file changes: a runner installs a RELEASED dependency from PyPI and an unreleased one
-    from GitHub `main`, whatever the source here (`aisland jenkins scaffold` asks PyPI).
-
-    \b
-    aisland source set loggair local  --ref dev/main  # develop it here, on dev/main
-    aisland source set loggair github --ref dev/main  # pin to that branch, no checkout
-    aisland source set loggair pypi                   # consume the published wheel
-    aisland source set loggair pypi --machine-only    # this machine only; nothing committed
-    """
-    from aisland.sources import set_project_source
-
-    raise SystemExit(
-        set_project_source(
-            project=project,
-            kind=kind,
-            ref=ref,
-            version=version,
-            machine_only=machine_only,
-        )
-    )
-
-
-@source.command(name="unset")
-@click.argument("project")
-@click.option("--machine-only", is_flag=True, help="Clear only this machine's override; keep the committed source.")
-def source_unset(project: str, machine_only: bool) -> None:
-    """Return PROJECT to unmanaged (historical behaviour: checkout + editable install).
-
-    The checkout and the venv are left as they are — unmanaged means aisland holds no opinion,
-    not that the current state is wrong. Use `aisland source set <project> local` to actively
-    restore a checkout.
-    """
-    from aisland.sources import unset_project_source
-
-    raise SystemExit(unset_project_source(project=project, machine_only=machine_only))
-
-
-@source.command(name="apply")
-@click.argument("project", required=False)
-def source_apply(project: Optional[str]) -> None:
-    """Re-apply the configured source(s) without changing the configuration (idempotent)."""
-    from aisland.sources import apply_configured
-
-    raise SystemExit(apply_configured(project))
-
-
 # --- Project Mirror Commands ---
 
 
@@ -935,7 +919,7 @@ def mirror() -> None:
     tags to it, fast-forward only. A branch the mirror moved is refused, a tag that differs is
     never overwritten, and nothing on the mirror is ever deleted.
 
-    Two layers, like `aisland source`: the committed `[mirrors.*]` tables of `config.toml`,
+    Two layers, like `aisland workspace configure source`: the committed `[mirrors.*]` tables of `config.toml`,
     and a per-machine `.git/config` override (`--machine-only`).
     """
     pass

@@ -844,7 +844,7 @@ def vendor_wheels(
         raise click.ClickException(
             "\n".join(
                 f"{p.name} is not on PyPI and not checked out here, so its wheel cannot be built. "
-                f"Check it out with: aisland source set {p.name} local"
+                f"Check it out with: aisland workspace configure source set {p.name} local"
                 for p in missing
             )
         )

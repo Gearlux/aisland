@@ -254,7 +254,7 @@ from the workspace root against the clone's folder — then commits and pushes t
 What only a submodule can do is refused with the reason:
 
 ```text
-$ aisland source set alpha pypi
+$ aisland workspace configure source set alpha pypi
 Error: 'alpha' is a folder of the workspace, not a submodule: a pypi source empties its folder, and nothing could check it out again. Keep it local.
 ```
 
@@ -351,11 +351,11 @@ an inactive optional submodule, has no checkout and is not listed.
 A short name you give a project folder with a link in the workspace root
 (`ln -s machine_learning ml`) is the name the folder shows under, its path still
 the real folder; with two links to one folder the first by name wins. Such a
-link is never a project of its own: setup, its extras prompt, `aisland source`
+link is never a project of its own: setup, its extras prompt, `aisland workspace configure source`
 list the folder once, under its real name, and `workspace.toml` writes the link as
 the project's `path`. A link to a folder outside the workspace is a project like
 any other.
-`aisland source set|unset|apply` rewrite the file too, `--machine-only`
+`aisland workspace configure source set|unset` rewrite the file too, `--machine-only`
 included. The settings and extension recommendations come from
 `aisland/aisland/code-workspace.json` (inside the package, so a wheel carries it): change a shared setting there and re-run
 `aisland setup`. The file is gitignored and rewritten, so a setting you change
@@ -651,7 +651,7 @@ root is left alone.
 | One project per run — there is no `--all` | "Delete every ignored file in the workspace" would take out the shared `.venv`, every service's data directory and `.env` in one keystroke |
 | The workspace **root** repo is refused | Its ignored set *is* that `.venv` / `.env` / generated `uv.toml` + `pyrightconfig.json` |
 | A directory that is not its repository's root is refused | `git status` there reports the **enclosing** repo's ignored set |
-| A project with no checkout (`github` / `pypi` source) is refused | Nothing to clean; see `aisland source list` |
+| A project with no checkout (`github` / `pypi` source) is refused | Nothing to clean; see `aisland workspace configure source` |
 | The backup store itself is never moved | Cleaning `aisland` matters here: its `.gitignore` ignores `data/` wholesale and the store lives at `data/backups`, so that one entry is split and everything *except* the store moves |
 
 Cleaning a project undoes work that has to be redone: `aisland clean aisland` takes away the
@@ -824,7 +824,7 @@ How each wheel is made, and what is refused:
 | `--no-check` builds and writes the folder as a checked run does, then compares nothing with PyPI and installs nothing in an empty venv; the report says so, and the exit status is 0 | A rebuild you do not need checked — the comparison downloads PyPI's wheels and the install needs the network — runs in the time the builds take |
 | `--no-check` with `--commit` is refused before anything is built | The folder is committed only once the install check passed |
 | An unreadable `wheels.yaml` stops the run at its line, before anything is built | Rewriting it would drop the `install:` values it holds |
-| A needed project that is not on PyPI and has no checkout here is refused | There is nothing to build it from; the message names `aisland source set <project> local` |
+| A needed project that is not on PyPI and has no checkout here is refused | There is nothing to build it from; the message names `aisland workspace configure source set <project> local` |
 | "On PyPI" counts pre-releases | pip installs `recordstream 0.1.0a2` when no final release exists — unlike `aisland jenkins scaffold`, which asks about final releases only |
 | A PyPI name owned by someone else is reported | pip takes the higher version of the two; the report says when that is theirs |
 | Every environment marker is followed | The wheels serve another machine, whose platform is not this one's |
@@ -1284,28 +1284,19 @@ act -j unit-tests
 ## Workspace configuration (`config.toml`)
 
 Every **shared** decision this workspace makes lives in one tracked file at the workspace root,
-`config.toml` — which frameworks to install, which tracking backends, and where each project's
-package comes from:
+`config.toml` — which frameworks to install and which tracking backends (where each project's package comes from
+is in [`workspace.toml`](#project-sources-aisland-workspace-configure-source)):
 
 ```toml
 frameworks = ["torch", "lightning", "keras"]
 trackers   = ["mlflow", "tensorboard", "aim"]
 
-[sources.confluid]
-source = "local"
-distribution = "confluid"
-ref = "main"
-
-[sources.loggair]
-source = "pypi"
-distribution = "loggair"
-
 [mirrors.navigaitor]
 url = "git@github.com:Org/navigaitor.git"
 ```
 
-You never edit it by hand: `aisland framework set` / `aisland tracker set` / `aisland source set`
-/ `aisland mirror set` each rewrite their own section and leave the others alone. Two commands exist for the file
+You never edit it by hand: `aisland framework set` / `aisland tracker set` / `aisland mirror set` each rewrite
+their own section and leave the others alone. Two commands exist for the file
 itself:
 
 ```bash
@@ -1314,7 +1305,7 @@ aisland config migrate   # fold a pre-2026-08 sources/frameworks/trackers.toml i
 ```
 
 **Per-machine deviations never land here.** They go to `.git/config` (`aisland.frameworks`,
-`aisland.trackers`, `aisland.source.<project>`, `aisland.mirror.<project>`), because this file is tracked and drives every
+`aisland.trackers`, `aisland.mirror.<project>`), because this file is tracked and drives every
 generated CI pipeline — one developer's local narrowing must not decide what a runner installs.
 
 > The workspace-root **`uv.toml` is a different file and stays separate.** uv reads only a file
@@ -1323,28 +1314,29 @@ generated CI pipeline — one developer's local narrowing must not decide what a
 > so it is gitignored rather than committed. See [Optional submodules & the generated
 > `uv.toml`](#optional-submodules--the-generated-uvtoml).
 
-## Project Sources (`aisland source`)
+## Project Sources (`aisland workspace configure source`)
 
 Each workspace project can be consumed either as a **local checkout** (developed here, installed
-editable) or as a **published wheel** (not checked out at all). `aisland source` owns that choice
+editable) or as a **published wheel** (not checked out at all). `aisland workspace configure source` owns that choice
 and drives every artifact that has to agree with it — the checkout, the shared `.venv` and the
 `*.code-workspace` folder list. It never touches a CI file: a runner installs what is **released**,
 whatever you checked out (see [What CI does with all this](#what-ci-does-with-all-this)).
 
-There are **three kinds**. `local` and `github` both take a `--ref` (branch or tag) and differ
-only in whether a working tree survives; `pypi` takes a `--version` instead:
+There are **three kinds**. `local` and `github` both take a `--branch` (a branch or tag; without one, the project's
+own branch in `workspace.toml`) and differ only in whether a working tree survives; `pypi` takes a `--version`
+instead:
 
 | source | directory | `.venv` | `*.code-workspace` |
 |---|---|---|---|
-| `local` | checked out, `git switch <ref>` | `uv pip install -e loggair[dev,…]` | listed |
-| `github` | **deinit'd — empty** | `uv pip install git+…@<ref>` | **not listed** |
+| `local` | checked out, `git switch <branch>` | `uv pip install -e loggair[dev,…]` | listed |
+| `github` | **deinit'd — empty** | `uv pip install git+…@<branch>` | **not listed** |
 | `pypi` | **deinit'd — empty** | `uv pip install -U loggair` | **not listed** |
 
 The `local` install target is the one `aisland setup` computes for that checkout — its `dev` extra
 plus every framework/tracker extra this machine selected (`sonair[dev,lightning]`) — so switching a
 project to `local` never drops a test dependency or a training backend from the venv.
 
-**CI never sees your source or your `--ref`.** They describe this machine; the CI files are
+**CI never sees your source or your `--branch`.** They describe this machine; the CI files are
 tracked and shared — see [What CI does with all this](#what-ci-does-with-all-this).
 
 Pick `local` when you edit the project here, `github` when you want a specific branch or tag but
@@ -1356,22 +1348,26 @@ differently, and CI keeps the historical `@main`. Setting the first source is th
 changes behaviour.
 
 ```bash
-aisland source list                                # what is configured, and what is on disk
-aisland source set loggair local  --ref dev/main   # develop it here, on dev/main
-aisland source set loggair github --ref dev/main   # pin to that branch, no checkout
-aisland source set loggair pypi                    # consume the published wheel
-aisland source set loggair pypi --machine-only     # this machine only; nothing committed
-aisland source unset loggair                       # back to unmanaged
-aisland source apply                               # re-apply the config (what `aisland setup` runs)
+aisland workspace configure source                                         # what is set, and what is on disk
+aisland workspace configure source set loggair local  --branch dev/main    # develop it here, on dev/main
+aisland workspace configure source set loggair github --branch dev/main    # pin to that branch, no checkout
+aisland workspace configure source set loggair pypi                        # consume the published wheel
+aisland workspace configure source set loggair pypi --machine-only         # this machine only; nothing committed
+aisland workspace configure source unset loggair                           # back to unmanaged
 ```
 
+`aisland setup` applies the sources on every run.
+
 ```text
-$ aisland source list
-  PROJECT                COMMITTED        OVERRIDE         EFFECTIVE        STATE
-  confluid               pypi             -                pypi             empty
-  loggair                github:dev/main  -                github:dev/main  empty
-  recordstream           local:dev/main   -                local:dev/main   on dev/main
+$ aisland workspace configure source
+  PROJECT       COMMITTED        OVERRIDE  EFFECTIVE        STATE
+  confluid      pypi             -         pypi             empty
+  loggair       github:dev/main  -         github:dev/main  empty
+  recordstream  local:dev/main   -         local:dev/main   on dev/main
 ```
+
+A setting this machine still has in an older spelling (`aisland.source.loggair = pypi`) is no longer read; the
+listing names it, with the command that sets it again.
 
 The `github` remote URL is read from `.gitmodules`, not assumed to be `github.com/Gearlux/…`, so
 it also works for the submodules hosted elsewhere; an `scp`-style `git@host:org/repo` remote is
@@ -1411,14 +1407,14 @@ a dependency's `dev` extra never reaches your pipeline.
 
 Two consequences worth knowing:
 
-- **`aisland source set` / `unset` regenerate nothing.** A source and a ref are development
+- **`aisland workspace configure source set` / `unset` regenerate nothing.** A source and a ref are development
   choices ("I'm working on liquifai here, on `dev/main`"); letting them decide what a runner builds
   would publish a personal choice to every consumer's CI *and* rewrite the committed files of every
   dependent on each switch. Releasing a dependency is what changes a CI file — on the next
   `aisland jenkins scaffold`.
 - **`Jenkinsfile.local` installs nothing and reads no configuration.** Every source decision was
   already applied to your `.venv` by `aisland setup`, so the local pipeline just runs the quality
-  gates and tests of the checkout against that venv — no `aisland source` change of any kind
+  gates and tests of the checkout against that venv — no `aisland workspace configure source` change of any kind
   rewrites it. Its `Initialize` stage only checks that the venv has *this* checkout installed:
 
   ```text
@@ -1496,18 +1492,22 @@ must never reach one:
   `*.code-workspace` file.
 - **neither** → `Jenkinsfile.local`, which installs nothing and tests the venv as setup left it.
 
-### The `[sources]` section of `config.toml`
+### The source settings in `workspace.toml`
 
-Written by `aisland source set`; hand edits are honoured, but the next command that writes
-re-renders the file (see [Workspace configuration](#workspace-configuration-configtoml)).
+Written by `aisland workspace configure source set` into the project's own table; nothing is written that the table already says:
 
 ```toml
-[sources.loggair]
-source = "github"         # "local" | "github" | "pypi"
-distribution = "loggair"  # PyPI/dist name — recorded because a deinit'd dir has no pyproject.toml
-ref = "dev/main"          # local/github only; omitted => "main"
-# version = ">=0.1.0"     # pypi only; omitted => latest
+[project."loggair"]
+url = "git@github.com:Gearlux/loggair.git"
+branch = "dev/main"          # the project's branch: what local checks out and github installs from
+source = "github"            # "local" | "github" | "pypi"
+# version = ">=0.1.0"        # pypi only; omitted => latest
+# distribution = "loggair-x" # only when the package name differs from the project's
 ```
+
+This machine's own choice goes to `.git/config`, one key each: `aisland.source.loggair.source`, `.branch`,
+`.version` — a missing `.branch` is the project's. A `config.toml` that still has `[sources.*]` tables stops
+`aisland setup`, naming the line to move into `workspace.toml`.
 
 ### Notes
 
@@ -1517,13 +1517,13 @@ ref = "dev/main"          # local/github only; omitted => "main"
     `github.com/Gearlux/…`. PyPI names are global, so a bare existence check would let a workspace
     project whose name is taken by someone else install that stranger's package into the shared
     venv.
-  - `github` — the `--ref` must resolve on the project's remote (`git ls-remote`).
+  - `github` — the `--branch` must resolve on the project's remote (`git ls-remote`).
 
   An unreachable index or remote warns and continues rather than blocking an offline machine.
 - `git switch` and `git submodule deinit` are never forced: a submodule with uncommitted work
   refuses, is reported, and neither the venv nor the registry is changed — a failed apply rolls
   the configuration back so the registry never claims a state the tree does not have.
-- `aisland source set` / `unset` never regenerate a CI file — see
+- `aisland workspace configure source set` / `unset` never regenerate a CI file — see
   [What CI does with all this](#what-ci-does-with-all-this).
 - `aisland setup` applies the configuration on every run, so a fresh clone converges without any
   manual step.
@@ -1974,7 +1974,7 @@ pip install 'aisland[mcp]'
 | --- | --- |
 | `doctor` | `aisland doctor`'s checks: each one's result and the command that fixes it |
 | `tests_report(project, days)` | `aisland tests report PROJECT --json` |
-| `sources` | `aisland source list`'s rows |
+| `sources` | `aisland workspace configure source`'s rows |
 | `services_status` | every supervised service: running, PID, ports |
 | `tunnel_list` | `aisland tunnel list --json` |
 | `editor_themes`, `editor_colors(part)` | the VS Code themes here, the CSS colour names, this window's choice |

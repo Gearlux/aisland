@@ -358,7 +358,7 @@ def test_there_is_no_reconcile_command() -> None:
 
 
 def test_a_deinit_for_a_package_source_records_no_choice(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    """A `pypi`/`github` source empties the folder without switching the project off: `aisland source unset` relies on
+    """A `pypi`/`github` source empties the folder without switching the project off: `aisland workspace configure source unset` relies on
     the next setup checking it out again, so no `active false` is written for it."""
     (tmp_path / "x").mkdir()
     (tmp_path / "x" / ".git").write_text("")  # checked out

@@ -178,7 +178,7 @@ def declarations(workspace_root: Path, axis: Axis) -> Dict[str, List[str]]:
     """``{project name: declared extras}`` for every project declaring any on ``axis``.
 
     Discovery goes through :func:`aisland.manager.discover_projects`, so a project detached
-    by ``aisland source set … pypi`` (empty directory, no pyproject) drops out on its own.
+    by ``aisland workspace configure source set … pypi`` (empty directory, no pyproject) drops out on its own.
     """
     from aisland.manager import discover_projects
 
@@ -455,7 +455,7 @@ def install_target(project_dir: Path, has_dev: bool, extras: Sequence[str]) -> s
 
 def editable_target(workspace_root: Path, project_dir: Path, project_name: str) -> str:
     """The ``uv pip install -e`` target for one CHECKOUT: its ``dev`` extra plus every selected
-    extra on both axes — the ONE spelling ``aisland setup`` and ``aisland source … local`` share.
+    extra on both axes — the ONE spelling ``aisland setup`` and ``aisland workspace configure source … local`` share.
 
     Before 2026-08-22 the source path installed the bare directory, so switching a project to
     ``local`` dropped ``[dev]`` (a dev-only test dependency vanished and its pin skipped) and a

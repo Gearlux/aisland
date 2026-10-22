@@ -251,7 +251,7 @@ def test_the_choice_lives_in_git_config_local_and_in_no_committed_file(vscode: D
 
 
 def test_every_later_rewrite_keeps_the_choice(vscode: Dict[str, Path], repo: Path) -> None:
-    """What `aisland setup` and `aisland source …` do: write the file again from the template."""
+    """What `aisland setup` and `aisland workspace configure source …` do: write the file again from the template."""
     assert _run("theme", "set", "Solarized Dark").exit_code == 0
     assert _run("color", "set", "background", "navy").exit_code == 0
     manager.code_workspace_path(repo).unlink()

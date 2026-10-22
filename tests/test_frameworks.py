@@ -239,7 +239,7 @@ class TestResolveForSetup:
 
 
 class TestScaffoldReadsTheCommittedLayerOnly:
-    """The same invariant `aisland source` documents: a per-machine choice must never reach a
+    """The same invariant `aisland workspace configure source` documents: a per-machine choice must never reach a
     tracked build file. Here the failure would be silent and severe — one developer narrowing to
     torch locally would stop every runner from testing the Keras backend."""
 

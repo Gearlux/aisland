@@ -1,4 +1,4 @@
-"""Per-project dependency-source management (``aisland source``).
+"""Per-project dependency-source management (``aisland workspace configure source``).
 
 A workspace project can be consumed in exactly three ways ON THIS MACHINE, and this module owns
 the choice plus the artifacts that have to agree with it — the checkout, the shared ``.venv``
@@ -16,7 +16,7 @@ source     directory                         ``.venv``
 unreleased one from GitHub ``main`` (:func:`released_on_pypi`, asked by
 :meth:`aisland.services.jenkins.JenkinsService.scaffold_pipelines`) — user ruling 2026-09-26:
 "it should always point to released packages, and to GitHub for non-released ones". So
-``aisland source set`` / ``unset`` never regenerate a CI file.
+``aisland workspace configure source set`` / ``unset`` never regenerate a CI file.
 
 ``local`` and ``github`` both carry a ``ref`` (branch or tag) and differ ONLY in whether the
 working tree survives: ``local`` is "I develop this here", ``github`` is "pin it to a remote
@@ -30,9 +30,11 @@ differently — so this module changes no behaviour until a source is set.
 Two configuration layers, mirroring the existing ``.gitmodules active`` +
 ``.git/config submodule.<name>.active`` split (:func:`aisland.manager._local_submodule_active`):
 
-* **committed** — the ``[sources.<project>]`` tables of ``<workspace>/config.toml``, the
-  workspace's single config file (tracked, shared between machines; see :mod:`aisland.config`);
-* **per-machine** — ``git config --local aisland.source.<project>`` (never committed).
+* **committed** — each project's ``source``, ``version`` and ``distribution`` (only where it differs from the
+  project's name) in its ``[project."<name>"]`` table of ``<workspace>/workspace.toml``, a git source's ref being the
+  project's own ``branch`` (tracked, shared between machines; see :mod:`aisland.workspace_file`);
+* **per-machine** — ``git config --local aisland.source.<project>.source`` (and ``.branch`` / ``.version``), never
+  committed; a missing ``.branch`` is the project's committed branch.
 
 Which layer drives what is load-bearing, because a machine-local choice must never reach a
 tracked file:
@@ -58,10 +60,9 @@ from typing import Any, Dict, List, Literal, Optional, Tuple, cast, get_args
 import click
 from packaging.version import InvalidVersion, Version
 
-from aisland import locations
+from aisland import locations, workspace_file
 from aisland.config import CONFIG_FILE
-from aisland.config import load as load_config
-from aisland.config import update as update_config
+from aisland.discovery import Where, table_line
 from aisland.manager import _set_local_submodule_active, get_workspace_root, submodule_active_map
 from aisland.selection import editable_target
 
@@ -78,9 +79,12 @@ REF_KINDS: Tuple[str, ...] = ("local", "github")
 #: :func:`detached_projects` -> :func:`aisland.manager.reconcile_submodules`.
 DETACHED_KINDS: Tuple[str, ...] = ("github", "pypi")
 
-#: The registry's key in the workspace's single committed ``config.toml`` — one
-#: ``[sources.<project>]`` table per managed project (see :mod:`aisland.config`).
-SOURCES_KEY = "sources"
+#: A project's settings this module owns in its ``[project."<name>"]`` table of ``workspace.toml`` (beside the
+#: project's own ``branch``, which a ``local`` / ``github`` source checks out or installs from).
+SOURCE_KEYS: Tuple[str, ...] = ("source", "version", "distribution")
+
+#: The settings a machine overrides, each ``aisland.source.<project>.<key>`` in ``.git/config``.
+_MACHINE_KEYS: Tuple[str, ...] = ("source", "branch", "version")
 
 #: Ref used by a ``local`` / ``github`` source that does not name one — matches the ``@main``
 #: that the CI scaffolder emitted unconditionally before this module existed, so an unmanaged
@@ -135,101 +139,156 @@ class ProjectSource:
         return f"{self.distribution or project}{self.version or ''}"
 
 
-# --- committed layer: the [sources.*] tables of <workspace>/config.toml ------------
+# --- committed layer: each project's table in <workspace>/workspace.toml ------------------
+
+
+def _refuse_the_old_tables(workspace_root: Path) -> None:
+    """The ``[sources.*]`` tables of ``config.toml`` are no longer read: refuse them, naming the line, rather than
+    read every project as unmanaged."""
+    path = workspace_root / CONFIG_FILE
+    if not path.is_file():
+        return
+    text = path.read_text()
+    try:
+        old = tomllib.loads(text).get("sources")
+    except tomllib.TOMLDecodeError:
+        return  # config.toml's own reader reports it
+    if not isinstance(old, dict) or not old:
+        return
+    name = next(iter(old))
+    raise workspace_file.FileError(
+        f"{Where(path, table_line(text, 'sources', name))}: [sources.{name}] is no longer read — its settings go in "
+        f'{workspace_file.FILE_NAME} [project."{name}"] (source, branch, version, distribution)'
+    )
 
 
 def read_committed_sources(workspace_root: Path) -> Dict[str, ProjectSource]:
-    """Parse the committed registry. A missing / unreadable entry yields ``{}`` (unmanaged).
+    """Each project of ``workspace.toml`` that has a ``source``; its ``branch`` is a git source's ref.
 
-    Never raises: a malformed registry must degrade to "nothing is managed" rather than break
-    ``aisland setup`` or a CI scaffold, both of which call this on every run.
+    An unknown kind is skipped with a warning naming its line; a file aisland cannot read, and the old ``[sources]``
+    tables of ``config.toml``, are refused (:class:`aisland.workspace_file.FileError`).
     """
-    data = load_config(workspace_root).get(SOURCES_KEY)
-    if not isinstance(data, dict):
-        return {}
-
+    _refuse_the_old_tables(workspace_root)
     result: Dict[str, ProjectSource] = {}
-    for project, entry in data.items():
-        if not isinstance(entry, dict):
+    for name, project in workspace_file.load(workspace_root).projects.items():
+        if "source" not in project.others:
             continue
-        kind = str(entry.get("source", "")).strip().lower()
+        kind = str(project.others["source"]).strip().lower()
         if kind not in SOURCE_KINDS:
-            expected = ", ".join(SOURCE_KINDS)
             click.echo(
-                f"  - Warning: {CONFIG_FILE}: [{SOURCES_KEY}.{project}] has source={kind!r}; expected one of {expected}"
+                f"  - Warning: {project.where}: project {name!r} has source {kind!r}; "
+                f"expected one of {', '.join(SOURCE_KINDS)}"
             )
             continue
-        result[project] = ProjectSource(
+        version = project.others.get("version")
+        distribution = project.others.get("distribution")
+        result[name] = ProjectSource(
             kind=cast(SourceKind, kind),
-            ref=str(entry.get("ref") or DEFAULT_REF),
-            version=str(entry["version"]) if entry.get("version") else None,
-            distribution=str(entry["distribution"]) if entry.get("distribution") else None,
+            ref=project.branch or DEFAULT_REF,
+            version=str(version) if version else None,
+            distribution=str(distribution) if distribution else None,
         )
     return result
 
 
 def write_committed_sources(workspace_root: Path, sources: Dict[str, ProjectSource]) -> Path:
-    """Rewrite the ``[sources.*]`` tables from ``sources``, leaving the other sections intact.
+    """Set each project's source settings in ``workspace.toml`` to ``sources``, leaving every other setting alone.
 
-    Only the plain TOML values are built here; :mod:`aisland.config` owns the file's layout and
-    its comments. An EMPTY mapping drops the section entirely — which is what makes a rolled-back
-    ``aisland source set`` leave a workspace that was previously unmanaged exactly as it found it.
+    Nothing is written twice: a ``distribution`` only where it differs from the project's name, a ``version`` only for
+    ``pypi``; a git source's ref is the project's ``branch``. A project left with nothing but what a source gave it (no
+    url, no other setting) is dropped, so a rolled-back ``set`` leaves the workspace as it found it.
     """
-    table = {
-        project: {
-            "source": src.kind,
-            **({"distribution": src.distribution} if src.distribution else {}),
-            **({"ref": src.ref} if src.kind in REF_KINDS else {"version": src.version} if src.version else {}),
-        }
-        for project, src in sorted(sources.items())
-    }
-    return update_config(workspace_root, SOURCES_KEY, table or None)
+    current = workspace_file.load(workspace_root)
+    projects: Dict[str, workspace_file.Project] = {}
+    for name in [*current.projects, *sorted(set(sources) - set(current.projects))]:
+        old = current.projects.get(name) or workspace_file.Project(name, name)
+        others = {key: value for key, value in old.others.items() if key not in SOURCE_KEYS}
+        branch = old.branch
+        src = sources.get(name)
+        if src is not None:
+            others["source"] = src.kind
+            if src.kind in REF_KINDS:
+                branch = src.ref
+            elif src.version:
+                others["version"] = src.version
+            if src.distribution and src.distribution != name:
+                others["distribution"] = src.distribution
+        if old.url is None and not others:
+            continue
+        projects[name] = workspace_file.Project(name, old.path, old.url, branch, others)
+    workspace_file.write(workspace_root, workspace_file.WorkspaceFile(dict(current.settings), projects))
+    return workspace_root / workspace_file.FILE_NAME
 
 
-# --- per-machine layer: .git/config aisland.source.<project> ------------------------------
+# --- per-machine layer: .git/config aisland.source.<project>.<key> ------------------------
 
 
-def _config_key(project: str) -> str:
-    return f"aisland.source.{project}"
-
-
-def local_override(workspace_root: Path, project: str) -> Optional[ProjectSource]:
-    """The per-machine source override for ``project``, or ``None`` when undecided.
-
-    Read from ``--local`` only, so the committed registry is NOT consulted here — that is the
-    caller's fallback (see :func:`effective_source`). Mirrors
-    :func:`aisland.manager._local_submodule_active`.
-    """
+def _machine_settings(workspace_root: Path) -> Dict[str, Dict[str, str]]:
+    """Every ``aisland.source.*`` entry of ``.git/config``: ``{project: {key: value}}``, the old one-key spelling
+    (``aisland.source.<project> = local:dev/main``) under the key ``""``."""
     res = subprocess.run(
-        ["git", "config", "--local", "--get", _config_key(project)],
+        ["git", "config", "--local", "--get-regexp", r"^aisland\.source\."],
         cwd=str(workspace_root),
         text=True,
         capture_output=True,
     )
-    if res.returncode != 0 or not res.stdout.strip():
+    found: Dict[str, Dict[str, str]] = {}
+    for line in res.stdout.splitlines():
+        key, _, value = line.partition(" ")
+        if not key.startswith("aisland.source."):
+            continue
+        rest = key[len("aisland.source.") :]
+        project, dot, setting = rest.rpartition(".")
+        if not dot or setting not in _MACHINE_KEYS:
+            project, setting = rest, ""
+        found.setdefault(project, {})[setting] = value.strip()
+    return found
+
+
+def old_overrides(workspace_root: Path) -> Dict[str, str]:
+    """This machine's settings in the old one-key spelling, which are no longer read: ``{project: value}``."""
+    return {project: settings[""] for project, settings in _machine_settings(workspace_root).items() if "" in settings}
+
+
+def local_override(workspace_root: Path, project: str) -> Optional[ProjectSource]:
+    """The per-machine source of ``project`` (``aisland.source.<project>.source`` and its ``.branch``/``.version``),
+    or ``None`` when this machine has none. A missing branch is the project's committed one (``workspace.toml``)."""
+    settings = _machine_settings(workspace_root).get(project, {})
+    kind = settings.get("source")
+    if not kind:
         return None
-    try:
-        return ProjectSource.parse(res.stdout.strip())
-    except ValueError as e:
-        click.echo(f"  - Warning: ignoring {_config_key(project)}: {e}")
+    if kind not in SOURCE_KINDS:
+        click.echo(
+            f"  - Warning: ignoring aisland.source.{project}.source = {kind!r}; expected one of {', '.join(SOURCE_KINDS)}"
+        )
         return None
+    committed = workspace_file.load(workspace_root).projects.get(project)
+    branch = settings.get("branch") or (committed.branch if committed else None) or DEFAULT_REF
+    return ProjectSource(kind=cast(SourceKind, kind), ref=branch, version=settings.get("version"))
 
 
 def set_local_override(workspace_root: Path, project: str, source: Optional[ProjectSource]) -> None:
-    """Record (or clear, when ``source`` is ``None``) the per-machine override. Never committed."""
-    if source is None:
+    """Record (or clear, when ``source`` is ``None``) the per-machine source, one key each. Never committed."""
+    for key in _MACHINE_KEYS:
         subprocess.run(
-            ["git", "config", "--local", "--unset", _config_key(project)],
+            ["git", "config", "--local", "--unset", f"aisland.source.{project}.{key}"],
             cwd=str(workspace_root),
             check=False,
             capture_output=True,
         )
+    if source is None:
         return
-    subprocess.run(
-        ["git", "config", "--local", _config_key(project), source.spec()],
-        cwd=str(workspace_root),
-        check=False,
-    )
+    values: Dict[str, str] = {"source": source.kind}
+    if source.kind in REF_KINDS:
+        values["branch"] = source.ref
+    elif source.version:
+        values["version"] = source.version
+    for key, value in values.items():
+        subprocess.run(
+            ["git", "config", "--local", f"aisland.source.{project}.{key}", value],
+            cwd=str(workspace_root),
+            check=False,
+        )
 
 
 def effective_source(
@@ -321,7 +380,7 @@ def _run(cmd: List[str], cwd: Path, *, quiet: bool = False) -> bool:
     """Run ``cmd``; return True on success. A failure is reported, never raised.
 
     One project's unreachable remote or dirty checkout must not abort a whole
-    ``aisland setup`` / ``aisland source apply`` sweep — the same non-fatal contract as
+    ``aisland setup`` sweep — the same non-fatal contract as
     :func:`aisland.manager.reconcile_submodules`.
     """
     try:
@@ -418,7 +477,7 @@ def apply_source(workspace_root: Path, project: str, source: ProjectSource, uv_c
         if url is None:
             click.echo(
                 f"Error: {project} has no submodule URL in .gitmodules, so a github source has "
-                f"nothing to install from. Use: aisland source set {project} local",
+                f"nothing to install from. Use: aisland workspace configure source set {project} local",
                 err=True,
             )
             return False
@@ -450,7 +509,7 @@ def apply_all(workspace_root: Path, uv_cmd: str) -> None:
     managed = sorted(set(committed) | set(_overridden_projects(workspace_root)))
     if not managed:
         return
-    click.echo(f"==> Applying per-project sources ({CONFIG_FILE} [sources] + local overrides)...")
+    click.echo(f"==> Applying per-project sources ({workspace_file.FILE_NAME} + local overrides)...")
     for project in managed:
         source = effective_source(workspace_root, project, committed)
         if source is not None:
@@ -458,18 +517,8 @@ def apply_all(workspace_root: Path, uv_cmd: str) -> None:
 
 
 def _overridden_projects(workspace_root: Path) -> List[str]:
-    """Project names carrying a per-machine ``aisland.source.*`` override in ``.git/config``."""
-    res = subprocess.run(
-        ["git", "config", "--local", "--get-regexp", r"^aisland\.source\."],
-        cwd=str(workspace_root),
-        text=True,
-        capture_output=True,
-    )
-    names: List[str] = []
-    for line in res.stdout.splitlines():
-        key, _, _value = line.partition(" ")
-        names.append(key[len("aisland.source.") :])
-    return names
+    """Project names carrying a per-machine source in ``.git/config`` (``aisland.source.<project>.source``)."""
+    return [project for project, settings in _machine_settings(workspace_root).items() if "source" in settings]
 
 
 def detached_projects(workspace_root: Path) -> set[str]:
@@ -507,7 +556,7 @@ def checkout_state(workspace_root: Path, project: str) -> str:
 
 
 def known_projects(workspace_root: Path) -> List[str]:
-    """Every project ``aisland source`` can manage: declared submodules plus any sibling with a pyproject (a link to
+    """Every project ``aisland workspace configure source`` can manage: declared submodules plus any sibling with a pyproject (a link to
     another folder of the workspace is none, :func:`aisland.locations.is_alias`)."""
     names = {name for name, _path, _active in submodule_active_map(workspace_root)}
     for child in workspace_root.iterdir():
@@ -699,7 +748,8 @@ def set_project_source(
         published, detail = _pypi_provenance(distribution)
         if published is False:
             click.echo(
-                f"Error: '{distribution}' {detail}. Publish it first, or use: " f"aisland source set {project} github",
+                f"Error: '{distribution}' {detail}. Publish it first, or use: "
+                f"aisland workspace configure source set {project} github",
                 err=True,
             )
             return 1
@@ -709,7 +759,9 @@ def set_project_source(
             click.echo(f"  - Verified {distribution} {detail} on PyPI (Gearlux provenance).")
         source = ProjectSource(kind="pypi", version=version, distribution=distribution)
     else:
-        source = ProjectSource(kind=cast(SourceKind, kind), ref=ref or DEFAULT_REF, distribution=distribution)
+        listed = workspace_file.load(root).projects.get(project)
+        branch = ref or (listed.branch if listed else None) or DEFAULT_REF  # no --branch: the project's own
+        source = ProjectSource(kind=cast(SourceKind, kind), ref=branch, distribution=distribution)
         # A github source DETACHES, so a bad ref would only surface after the directory was
         # already emptied — the same asymmetry the PyPI provenance check guards against.
         if kind == "github" and not _remote_ref_exists(root, project, source.ref):
@@ -721,6 +773,8 @@ def set_project_source(
             return 1
 
     committed = dict(original)
+    file = root / workspace_file.FILE_NAME
+    before = file.read_text() if file.is_file() else None
     if machine_only:
         set_local_override(root, project, source)
         click.echo(f"==> {project}: per-machine override set to {source.spec()} (nothing committed).")
@@ -735,9 +789,12 @@ def set_project_source(
     if not apply_source(root, project, effective_source(root, project, committed) or source, uv_cmd):
         set_local_override(root, project, previous_override)
         if not machine_only:
-            # Restoring the ORIGINAL mapping is the whole rollback: an empty one drops the
-            # `[sources]` section again, so a workspace that had no registry keeps none.
-            write_committed_sources(root, original)
+            # The file as it was, byte for byte: a branch the set wrote goes too, and a workspace that had no
+            # file keeps none.
+            if before is None:
+                file.unlink(missing_ok=True)
+            else:
+                file.write_text(before)
         click.echo(f"  - {project}: source change reverted; configuration is unchanged.", err=True)
         return 1
 
@@ -811,7 +868,7 @@ def apply_configured(project: Optional[str] = None, workspace_root: Optional[Pat
 
 
 def describe(workspace_root: Optional[Path] = None) -> List[Dict[str, str]]:
-    """One row per managed project for ``aisland source list``."""
+    """One row per managed project for ``aisland workspace configure source``."""
     root = workspace_root or get_workspace_root()
     committed = read_committed_sources(root)
     rows: List[Dict[str, str]] = []

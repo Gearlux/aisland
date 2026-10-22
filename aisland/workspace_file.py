@@ -1,6 +1,6 @@
 """``workspace.toml``: the workspace's one committed file, shaped like ``.gitmodules``.
 
-Each project is a ``[project."<name>"]`` table — ``path`` (the folder; its name when left out), ``url``, ``branch`` —
+Each project is a ``[project."<name>"]`` table — ``path`` (the folder, written only when it is not the name), ``url``, ``branch`` —
 as ``.gitmodules`` has ``[submodule "<name>"]``; ``[workspace]`` holds the workspace's own choices. Settings of the
 later steps (``active``, ``source``, …) sit in the same tables and are kept as written::
 
@@ -55,7 +55,7 @@ class Project:
 
     name: str
     path: str
-    url: str
+    url: Optional[str] = None
     branch: Optional[str] = None
     others: Dict[str, Any] = field(default_factory=dict)
     where: Optional[Where] = field(default=None, compare=False)
@@ -110,13 +110,11 @@ def read(path: Path) -> WorkspaceFile:
         for key in _PROJECT_KEYS:
             if key in table and not isinstance(table[key], str):
                 raise FileError(f'{where}: project {name!r}: {key} must be text, as {key} = "<text>"')
-        if "url" not in table:
-            raise FileError(f"{where}: project {name!r} has no url")
         folder = table.get("path", name)
         if not _FOLDER_NAME.fullmatch(folder):
             raise FileError(f"{where}: project {name!r}: path {folder!r} is not a folder of the workspace")
         others = {key: value for key, value in table.items() if key not in _PROJECT_KEYS}
-        projects[name] = Project(name, folder, table["url"], table.get("branch"), others, where)
+        projects[name] = Project(name, folder, table.get("url"), table.get("branch"), others, where)
     _refuse_a_shared_folder(projects)
     return WorkspaceFile(dict(data.get("workspace", {})), projects)
 
@@ -203,8 +201,10 @@ def render(workspace: WorkspaceFile, name: str) -> str:
         lines.append("")
     for project in workspace.projects.values():
         lines.append(f"[project.{json.dumps(project.name)}]")
-        lines.append(f"path = {_value(project.path)}")
-        lines.append(f"url = {_value(project.url)}")
+        if project.path != project.name:
+            lines.append(f"path = {_value(project.path)}")
+        if project.url is not None:
+            lines.append(f"url = {_value(project.url)}")
         if project.branch is not None:
             lines.append(f"branch = {_value(project.branch)}")
         lines += [f"{_key(key)} = {_value(value)}" for key, value in project.others.items()]

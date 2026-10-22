@@ -165,6 +165,11 @@ def init_workspace(
     Each of ``rewrite`` is written over its old copy, kept as ``<file>.bak``; in a folder that already is a git
     repository only those files are written."""
     listed = list(workspace_file.read(from_file).projects.values()) if from_file is not None else []
+    clones: List[Tuple[str, str, Optional[str]]] = []
+    for project in listed:
+        if project.url is None:  # the file reads one without (a source set before setup wrote it), init cannot clone it
+            raise click.ClickException(f"{project.where}: project {project.name!r} has no url")
+        clones.append((project.url, project.path, project.branch))
     root = folder.absolute()
     if root.exists() and not root.is_dir():
         raise click.ClickException(f"{root} is a file, not a folder.")
@@ -183,8 +188,8 @@ def init_workspace(
     subprocess.run(["git", "init", "-q"], cwd=root, check=True)
     rows = [_row(".git/", "git init")]
 
-    for project in listed:
-        _add_submodule(root, project.url, project.path, project.branch)
+    for url, path, branch in clones:
+        _add_submodule(root, url, path, branch)
     for url in add:
         _add_submodule(root, url)
     submodules = workspace_file.submodules(root)

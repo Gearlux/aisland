@@ -737,7 +737,7 @@ def _run_installs(workspace_root: Path, uv_cmd: str, projects: List[dict]) -> Tu
             skipped.extend(names)
             continue
         # Each target carries every extra the project DECLARES, narrowed to what the machine SELECTED
-        # (shared with `aisland source … local`, so the two installs cannot drift).
+        # (shared with `aisland workspace configure source … local`, so the two installs cannot drift).
         targets = [editable_target(workspace_root, p["path"], p["name"]) for p in group]
         suffix = " — a dependency cycle, installed together" if len(group) > 1 else ""
         click.echo(f"==> Installing {', '.join(names)} ({' '.join(targets)}){suffix}...")

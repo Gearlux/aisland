@@ -184,6 +184,12 @@ class TestCommittedSources:
             'workspace.toml [project."loggair"] (source, branch, version, distribution)'
         )
 
+    def test_a_config_toml_without_sources_or_unreadable_is_left_to_its_own_reader(self, tmp_path: Path) -> None:
+        (tmp_path / CONFIG_FILE).write_text('frameworks = ["torch"]\n')
+        assert s.read_committed_sources(tmp_path) == {}
+        (tmp_path / CONFIG_FILE).write_text("[sources.loggair\n")
+        assert s.read_committed_sources(tmp_path) == {}
+
 
 # --- layering -----------------------------------------------------------------------------
 
@@ -268,8 +274,16 @@ class TestEffectiveSource:
         assert store == {"aisland.source.loggair.source": "local", "aisland.source.loggair.branch": "feature"}
         s.set_local_override(tmp_path, "loggair", s.ProjectSource(kind="pypi", version=">=1"))
         assert store == {"aisland.source.loggair.source": "pypi", "aisland.source.loggair.version": ">=1"}
+        s.set_local_override(tmp_path, "loggair", s.ProjectSource(kind="pypi"))
+        assert store == {"aisland.source.loggair.source": "pypi"}
         s.set_local_override(tmp_path, "loggair", None)
         assert store == {}
+
+    def test_other_aisland_settings_are_no_source(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+        store = {"aisland.frameworks": "torch", "aisland.source.loggair.source": "pypi"}
+        monkeypatch.setattr(s.subprocess, "run", self._fake_config(store))
+        assert s.old_overrides(tmp_path) == {}
+        assert s._overridden_projects(tmp_path) == ["loggair"]
 
 
 # --- applying -----------------------------------------------------------------------------
@@ -675,10 +689,14 @@ class TestSourceChangesRewriteNoCI:
         assert not (ci_workspace / "confluid" / "Jenkinsfile").exists()
 
     def test_the_cli_has_no_scaffold_switch(self) -> None:
+        import click
+
         from aisland.cli import main
 
+        configure = main.commands["workspace"].commands["configure"]  # type: ignore[attr-defined]
+        source = configure.get_command(click.Context(configure), "source")
         for command in ("set", "unset"):
-            params = {p.name for p in main.commands["source"].commands[command].params}  # type: ignore[attr-defined]
+            params = {p.name for p in source.commands[command].params}
             assert "no_scaffold" not in params, command
 
 
@@ -872,6 +890,48 @@ class TestSetProjectSourceRollback:
     def test_unknown_project_writes_nothing(self, ci_workspace: Path) -> None:
         assert s.set_project_source("nosuchproj", "pypi", workspace_root=ci_workspace) == 1
         assert not (ci_workspace / workspace_file.FILE_NAME).exists()
+
+
+class TestSetALocalSource:
+    """`set <project> local` without --branch keeps the project's own branch; a failed set puts workspace.toml back
+    byte for byte, a branch it wrote included."""
+
+    @pytest.fixture
+    def stubbed(self, ci_workspace: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
+        (ci_workspace / ".venv" / "bin").mkdir(parents=True)
+        (ci_workspace / ".venv" / "bin" / "uv").touch(mode=0o755)
+        monkeypatch.setattr(s, "local_override", lambda root, name: None)
+        monkeypatch.setattr(s, "set_local_override", lambda *a, **k: None)
+        monkeypatch.setattr("aisland.manager.write_code_workspace", lambda root: None)
+        (ci_workspace / "workspace.toml").write_text('[project."loggair"]\nurl = "u"\nbranch = "dev/main"\n')
+        return ci_workspace
+
+    def test_without_a_branch_the_projects_own_is_kept(self, stubbed: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setattr(s, "apply_source", lambda *a, **k: True)
+        assert s.set_project_source("loggair", "local", workspace_root=stubbed) == 0
+        assert s.read_committed_sources(stubbed)["loggair"].ref == "dev/main"
+
+    def test_a_branch_given_is_written_as_the_projects_branch(
+        self, stubbed: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setattr(s, "apply_source", lambda *a, **k: True)
+        assert s.set_project_source("loggair", "local", ref="feature", workspace_root=stubbed) == 0
+        assert workspace_file.load(stubbed).projects["loggair"].branch == "feature"
+
+    def test_a_failed_set_puts_the_file_back_branch_and_all(
+        self, stubbed: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        before = (stubbed / "workspace.toml").read_text()
+        monkeypatch.setattr(s, "apply_source", lambda *a, **k: False)
+        assert s.set_project_source("loggair", "local", ref="feature", workspace_root=stubbed) == 1
+        assert (stubbed / "workspace.toml").read_text() == before
+
+    def test_a_github_branch_missing_on_the_remote_is_refused(
+        self, stubbed: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setattr(s, "_remote_ref_exists", lambda root, project, ref: False)
+        assert s.set_project_source("loggair", "github", workspace_root=stubbed) == 1
+        assert "source" not in workspace_file.load(stubbed).projects["loggair"].others
 
 
 class TestUnsetProjectSource:

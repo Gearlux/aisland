@@ -2,7 +2,7 @@
 
 A plugin declares its keys; the commands are built from them — `configure <plugin>` lists, `set PROJECT VALUE
 [--<key> VALUE…] [--machine-only]` and `unset PROJECT [--machine-only]` change — so a plugin writes no command of
-its own. The first plugin is `source`, where each project's package comes from: it replaced the `aisland source`
+its own. The first plugin is `source`, where each project's package comes from: it replaced the `aisland workspace configure source`
 group, its settings stored in `workspace.toml` and `.git/config` (`tests/test_sources.py`).
 """
 
@@ -197,3 +197,13 @@ def test_the_source_group_is_gone(command: List[str]) -> None:
     result = CliRunner().invoke(cli.main, command)
     assert result.exit_code == 2
     assert "No such command 'source'" in result.output
+
+
+def test_an_old_setting_that_cannot_be_read_still_gets_the_command_to_set_it(
+    root: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(s, "describe", lambda workspace_root=None: [])
+    monkeypatch.setattr(s, "old_overrides", lambda workspace: {"a": "svn:trunk", "b": "pypi:>=1"})
+    lines = _run("source").output.splitlines()
+    assert "  aisland workspace configure source set a <local|github|pypi> --machine-only" in lines
+    assert "  aisland workspace configure source set b pypi --version >=1 --machine-only" in lines

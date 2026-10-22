@@ -242,7 +242,7 @@ in that project's `AGENTS.md`. The commands in `.agents/workflows/` cite these r
   editable by `aisland setup`; one project alone is `uv pip install -e ./<project> --no-deps` from the root. Never
   plain `pip` into the workspace venv, never a `uv … || pip …` fallback: pip ignores the root `uv.toml` overrides.
   The committed `config.toml` declares each project's source — `local` (an editable checkout), `github` or `pypi`;
-  the last two leave its folder EMPTY, so check `aisland source list` before assuming a folder holds code.
+  the last two leave its folder EMPTY, so check `aisland workspace configure source` before assuming a folder holds code.
   Per-machine deviations live in `.git/config`, never a tracked file. Generated CI never reads a source or a `ref`.
 - **Mypy Runs From The Workspace Root (HARD RULE):** `cd "$PROJECT_ROOT" && mypy <project>/` — never from inside a
   project and never `-p <package>` (it skips `tests/`). The root `mypy.ini` carries every project's `mypy_path`

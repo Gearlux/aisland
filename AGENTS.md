@@ -38,7 +38,7 @@ The workspace's dev-infrastructure CLI, `aisland` (click, `aisland/cli.py`):
 - `editor.py`: `aisland workspace theme|color`, this machine's VS Code theme and colours (`css_colors.py`: the CSS
   names), kept in `.git/config` and laid over the generated workspace file.
 - `config.py`: the one committed `config.toml`, written through `sources.py`
-  (`aisland source`), `mirrors.py` (`aisland mirror`) and `selection.py`
+  (`aisland workspace configure source`, through `configure.py`), `mirrors.py` (`aisland mirror`) and `selection.py`
   (`aisland framework|tracker`; `frameworks.py` is a facade over it).
 - `supervisor.py` (process-compose), `doctor.py` (`aisland doctor`), `completion.py`
   (`aisland completion install`), `clean.py` (`aisland clean`, `aisland backups`).
@@ -281,7 +281,7 @@ Root `AGENTS.md` "Two Test Runs" (user ruling 2026-10-05). [test-stats]
   - pip is seeded with `ensurepip`; setup runs as `aisland setup -y`.
 - `aisland setup` re-applies each managed project's effective source, `ref` included, so a
   checkout switched by hand goes back. Keep a branch with
-  `aisland source set <p> local --ref <branch> --machine-only`; after a branch switch run
+  `aisland workspace configure source set <p> local --branch <branch> --machine-only`; after a branch switch run
   `uv pip install -e ./<p> --no-deps` to refresh the metadata.
 - Optional submodule = ships a `uv.toml` or is `active = false`. The answer is per machine in
   `.git/config`, never `.gitmodules`; an undecided one is prompted even under `-y`;
@@ -340,14 +340,14 @@ Root `AGENTS.md` "Two Test Runs" (user ruling 2026-10-05). [test-stats]
   `opencv-python-headless>=4.12,<5`) + each ACTIVATED project's `uv.toml`. A private index
   lives only in its project's `uv.toml`; never commit the root file or put an index in the
   base. (`tests/test_uv_activation.py`)
-- `config.toml` is the ONE committed config (`frameworks`, `trackers`, `[sources.<project>]`).
+- `config.toml` holds `frameworks`, `trackers` and `[mirrors.<project>]`; a project's source is in `workspace.toml`.
   (`tests/test_config.py`) [config]
   - `config.py` owns the file, not the data; it imports nothing from aisland.
   - Writes are whole-file, keyed; scalars before tables (`::test_scalars_are_emitted_before_tables`).
   - An absent key = unset; an empty document deletes the file.
   - `uv.toml` never joins it; never re-split it.
 - `<workspace>.code-workspace` is GENERATED and gitignored (user choice 2026-10-18), written by
-  `manager.write_code_workspace` on every `aisland setup` and `aisland source set|unset|apply`
+  `manager.write_code_workspace` on every `aisland setup` and `aisland workspace configure source set|unset`
   (`--machine-only` included). Folders: the workspace, each project with a checkout in
   dependency order (sorted by folder name first), then loggair's log folder when it exists.
   Settings and extensions come from `aisland/aisland/code-workspace.json` (strict JSON, no `folders`, no
@@ -374,12 +374,21 @@ Root `AGENTS.md` "Two Test Runs" (user ruling 2026-10-05). [test-stats]
 
 - Kinds `local` / `github` / `pypi`; branch on `REF_KINDS` / `DETACHED_KINDS`, never on a
   kind name. No `git`/`github` renaming: one word apart, and one deletes a checkout. [sources]
-- Committed `[sources.<project>]` + per-machine `git config --local aisland.source.<project>`.
+- **Committed: the project's table in `workspace.toml`; per machine: `aisland.source.<project>.<key>` (user rulings
+  2026-10-22).** [sources] `source`, `version`, and `distribution` ONLY where it differs from the project's name — a
+  git source's ref is the project's own `branch` (`set` without `--branch` keeps it; `--branch` writes it), and nothing
+  the table already says is written again (a `path` equal to the name, a distribution equal to it). Per machine:
+  `.source`, `.branch`, `.version`, a missing `.branch` being the committed one. The old `[sources.*]` tables of
+  `config.toml` are REFUSED naming their line (`_refuse_the_old_tables`), never converted by code; the old one-key
+  `aisland.source.<project>` is not read and is named, with the command that sets it again, by `aisland workspace configure source`
+  (`old_overrides`). A failed `set` puts `workspace.toml` back byte for byte. The commands are the generic ones of
+  `aisland workspace configure` (`configure.py`: a `Plugin`'s keys build `set`/`unset`/the listing; there is no
+  `aisland workspace configure source` and no `source apply` — setup applies). (`tests/test_sources.py`, `tests/test_configure.py`)
   The effective one drives the checkout, the `.venv` and, through the checkout, the generated
   workspace file's folders. No CI file reads either. An override never reaches a tracked file.
 - `local` installs `selection.editable_target`, the same target as setup.
   (`tests/test_sources.py::TestApplySource::test_local_installs_the_dev_extra_and_the_selected_frameworks`)
-- Before a deinit: `pypi` resolves and persists `distribution`; `_pypi_provenance` requires
+- Before a deinit: `pypi` resolves `distribution` (persisted only when it differs from the name); `_pypi_provenance` requires
   `github.com/Gearlux/` metadata; `_remote_ref_exists` checks a `github` ref. Unreachable =
   warn, never reject.
 - Never force `git switch` / `submodule deinit`. Report the remedy for the ACTUAL blocker
@@ -453,7 +462,7 @@ A bare `::` pin in this section is in `tests/test_jenkins_scaffold.py`.
   files ask PyPI per internal dep (`released_on_pypi`: a final, non-yanked version whose
   metadata points at `github.com/Gearlux/`): released → no install line; else
   `git+https://github.com/Gearlux/<dep>.git@main`. They never read a source or `ref`;
-  `aisland source set|unset` regenerates no CI file; an unreachable PyPI stops the scaffold
+  `aisland workspace configure source set|unset` regenerates no CI file; an unreachable PyPI stops the scaffold
   (`ReleaseProbeError`). Tests stub PyPI with the autouse `released_packages` fixture.
   (`tests/test_sources.py`: `TestScaffoldAsksPypiNotTheSource`, `TestSourceChangesRewriteNoCI`,
   `TestReleasedOnPypi`) [sources]
@@ -595,7 +604,7 @@ User choice 2026-10-08: an aisland command, only the named project's closure, bo
   every rebuild a new file (`TestEndToEnd::test_a_stale_pypi_release_breaks_the_import_and_is_named`,
   `::test_once_pypi_has_the_release_everything_imports`).
 - A project to ship with uncommitted changes is refused, naming its files; one with no checkout,
-  naming `aisland source set <project> local` (`TestRefusals`). Nothing is built after a refusal.
+  naming `aisland workspace configure source set <project> local` (`TestRefusals`). Nothing is built after a refusal.
   The one exception is `--force` (user choice 2026-10-20): a dirty project is then built from its
   working tree (`export_worktree`: `git ls-files --cached --others --exclude-standard`, never the bare
   folder, so an ignored `build/lib` stays out), its commit written `<sha>+uncommitted` and its

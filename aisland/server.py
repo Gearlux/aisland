@@ -208,7 +208,7 @@ def tool_editor_unset(what: EditorPart) -> Dict[str, Any]:
 
 
 def tool_sources() -> Dict[str, Any]:
-    """Each managed project's source (`aisland source list`): committed, this machine's override, the effective one
+    """Each managed project's source (`aisland workspace configure source`): committed, this machine's override, the effective one
     and the folder's state."""
     return {"sources": sources_mod.describe(get_workspace_root())}
 

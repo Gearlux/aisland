@@ -333,7 +333,7 @@ def _resolve_project_dir(project: str, workspace_root: Path, *, action: str = "c
     if not (project_dir / ".git").exists():
         raise click.ClickException(
             f"{project_dir} is not a git repository — nothing to {action}.\n"
-            "A project on a `github` or `pypi` source has no checkout; see: aisland source list"
+            "A project on a `github` or `pypi` source has no checkout; see: aisland workspace configure source"
         )
 
     result = subprocess.run(
@@ -365,7 +365,7 @@ def clean_project(
     """Move ``project``'s git-ignored content into a dated backup, then sweep old backups.
 
     Args:
-        project: Workspace project name (as listed by `aisland source list`).
+        project: Workspace project name (as listed by `aisland workspace configure source`).
         keep_days: Backups older than this many days are deleted on every run.
         dry_run: Report the plan and the expiring backups; change nothing on disk.
         assume_yes: Skip the confirmation prompt.

@@ -1200,7 +1200,7 @@ pipeline {{
         # resolves the release from PyPI. Not released -> the runner installs GitHub `main`
         # (`DEFAULT_REF`). A source (`local` / `github` / `pypi`, any `ref`) describes ONE
         # machine's checkout and venv; before this rule it also decided the runner's install line,
-        # so `aisland source set` rewrote every dependent's committed CI files and a released
+        # so `aisland workspace configure source set` rewrote every dependent's committed CI files and a released
         # package developed locally (liquifai) was built from GitHub `main` by every consumer.
         #
         # PyPI unreachable -> `ReleaseProbeError` stops the scaffold before any file of this
@@ -1432,8 +1432,8 @@ pipeline {{
         # Jenkinsfile.local — tests the checkout against the workspace venv exactly as `aisland setup`
         # left it, and INSTALLS NOTHING. Every workspace project is already editable-installed from
         # its own checkout, and which source each one comes from (local / github / pypi) is decided
-        # by `aisland source` when setup provisions the venv — so this file needs no dependency list
-        # and no source configuration, and no `aisland source` change can rewrite it.
+        # by `aisland workspace configure source` when setup provisions the venv — so this file needs no dependency list
+        # and no source configuration, and no `aisland workspace configure source` change can rewrite it.
         #
         # Installing into the shared venv from here added nothing but time: on 2026-09-13 an
         # Initialize stage that re-installed the project and its extras took 1430 s, re-resolving

@@ -71,7 +71,7 @@ def test_an_empty_submodule_folder_is_left_out(workspace: Path) -> None:
 
 
 def test_a_project_whose_checkout_is_removed_leaves_the_list(workspace: Path) -> None:
-    """What `aisland source set loggair pypi` does to the folder: its checkout is gone, so is its entry."""
+    """What `aisland workspace configure source set loggair pypi` does to the folder: its checkout is gone, so is its entry."""
     (workspace / "loggair" / "pyproject.toml").unlink()
     manager.write_code_workspace(workspace)
     assert _paths(workspace) == [".", "aisland", "confluid"]

@@ -199,9 +199,9 @@ class TestDependencyClosure:
         assert [p.name for p in w.dependency_closure(projects, projects["app"])] == ["acme"]
 
     def test_an_empty_folder_is_a_project_without_a_checkout(self, tmp_path: Path) -> None:
-        """A detached project keeps its distribution name in config.toml; an inactive one, its folder name."""
+        """A detached project keeps its distribution name in workspace.toml; an inactive one, its folder name."""
         root = _workspace(tmp_path, "app", "acme", "vendorcli")
-        (root / "config.toml").write_text('[sources.acme]\nsource = "pypi"\ndistribution = "acme-tools"\n')
+        (root / "workspace.toml").write_text('[project."acme"]\nsource = "pypi"\ndistribution = "acme-tools"\n')
         _project(root, "app", deps=["acme-tools", "vendorcli"])
 
         projects = w.workspace_projects(root)
@@ -378,7 +378,7 @@ class TestRefusals:
 
     def test_a_project_named_by_its_distribution_is_found_and_named_by_its_folder(self, tmp_path: Path) -> None:
         root = _workspace(tmp_path, "acme")
-        (root / "config.toml").write_text('[sources.acme]\nsource = "pypi"\ndistribution = "acme-tools"\n')
+        (root / "workspace.toml").write_text('[project."acme"]\nsource = "pypi"\ndistribution = "acme-tools"\n')
         with pytest.raises(click.ClickException, match="acme is not checked out on this machine"):
             w.vendor_wheels(root, "acme-tools")
 
@@ -393,7 +393,7 @@ class TestRefusals:
         with pytest.raises(click.ClickException) as error:
             w.vendor_wheels(root, "app")
         assert "lib is not on PyPI and not checked out here" in error.value.message
-        assert "aisland source set lib local" in error.value.message
+        assert "aisland workspace configure source set lib local" in error.value.message
 
     def test_a_project_with_uncommitted_changes_is_refused_naming_the_files(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
