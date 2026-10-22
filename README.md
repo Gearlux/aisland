@@ -180,6 +180,41 @@ the template's is missing on the machine. aisland's own system tools (process-co
 services, Homebrew's bash) are not provisioned from a wheel; install them yourself before
 `aisland start`.
 
+#### What the projects declare (`aisland workspace show`)
+
+A project tells aisland what it brings in its own `pyproject.toml` — nothing needs to be installed for aisland to
+read it, and the project never imports aisland:
+
+```toml
+[tool.aisland.selection.framework]        # the project that asks the question defines the selection
+question = "Which ML frameworks should this machine install?"
+choices = ["torch", "keras"]              # each one an extra of this project; other projects add their own
+
+[tool.aisland.service.aim]                # a service the project needs
+command = ["aim", "up", "--repo", "{data}", "--port", "{port}"]
+port = 43800
+ready = "/"
+
+[project.entry-points."aisland.plugins"]  # code, for what a declaration cannot say
+acme-db = "acme_plugin:Database"
+```
+
+`aisland workspace show` lists what every project of the workspace declares (`--json` for the same as one object):
+
+```text
+$ aisland workspace show
+Declared by the projects:
+  selection  framework  matrainer  choices: torch, keras (matrainer), torch (sonair)
+  service    aim        matrainer  port 43800
+  plugin     acme-db    acme       acme_plugin:Database — not installed
+```
+
+A declaration aisland cannot use stops it with one line naming the file and the line of the table:
+
+```text
+Error: /path/to/sonair/pyproject.toml:8: sonair offers 'jax' for selection 'framework', but defines no extra of that name
+```
+
 #### A workspace without `.gitmodules`: a folder of projects
 
 A folder whose subfolders are projects — plain folders, or each its own git clone — is a

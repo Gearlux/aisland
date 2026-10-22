@@ -3,6 +3,39 @@
 Open work for this project. Cross-cutting / multi-project initiatives live in the
 workspace root `TASKS.md`. Completed items are not archived here — git history is the record.
 
+- [ ] **The workspace redesign: one `workspace.toml`, everything under `aisland workspace`, projects bring their own
+  plugins and services** @high @feature — user rulings 2026-10-21/22, do not re-litigate:
+  - One committed file, `workspace.toml`, shaped like `.gitmodules`: `[workspace]` (the selections' values), then
+    `[project."<name>"]` with `path`, `url`, `branch` and the built-in plugins' keys (`active`, `source`,
+    `distribution`, `version`, `mirror`). It replaces `config.toml` and `<name>.workspace.toml`; `aisland setup` adds
+    a new submodule's `path`/`url`/`branch` from `.gitmodules`, and writes `branch` only while a project has none
+    (`aisland workspace configure source set … --ref` changes it). An old `config.toml` / `*.workspace.toml` is
+    refused naming its line, never converted by code; the existing workspaces' files are converted by hand.
+  - Two stages: STAGE 1 reads every project's `pyproject.toml` (`[tool.aisland.selection.<name>]` — the table with
+    `question` defines it, every project's `choices` are its menu; `[tool.aisland.service.<name>]` — a command,
+    port, readiness path; `[tool.aisland.sys-dependencies]`; the `[project.entry-points."aisland.plugins"]` it
+    declares) before anything is installed; STAGE 2 loads those entry points once installed. A project never
+    imports aisland: a code plugin fills a declared `Protocol`.
+  - `framework` and `tracker` become matrainer's selections (`selection.py`'s hard-coded axes go); `extras`,
+    `project`, `active`, `source`, `mirror`, `provision`, `editor` stay aisland's built-ins.
+  - Services: `jenkins`, `mlflow`, `docker`, `swiftbar` stay in aisland; `aim` and `clearml` move to matrainer,
+    `labelstudio` to annotaide, `fiftyone` to curaitor, `iqengine` to the signal-processing project that reads SigMF. Both spellings work:
+    `aisland services start [NAME…]` and a group per service (`aisland mlflow start`).
+  - Commands: `aisland setup` stays top-level; `aisland workspace configure <plugin> [list|set|unset]
+    [--machine-only]`, generated from the plugins found; a plugin's own action sits one level up
+    (`aisland workspace mirror sync`, `aisland workspace provision install`, `aisland jenkins init`);
+    `aisland workspace theme|color` stay as they are; `aisland workspace show [--json]`. The `config`, `framework`,
+    `tracker`, `source`, `mirror` and `provision` groups and `workspace export` go, with the pre-2026-08-01
+    migration (the legacy-fallback item below).
+  - Per-machine keys in `.git/config` are named after their plugin (`aisland.<plugin>.<key>`,
+    `aisland.<plugin>.<project>.<key>`); acme's six are converted by hand, an unread old key is named by
+    `aisland workspace show`.
+  - Steps, one commit each, tests first: (1) discovery core + `workspace show` — DONE (`discovery.py`); (2) `workspace.toml` + generated
+    `configure`, built-ins one per commit; (3) matrainer declares `framework`/`tracker`; (4) services protocol,
+    `aisland services`, the moves; (5) conversion of the existing workspaces and every surface naming the old commands (MCP
+    tools, `/push-all`, `/ship`, services' messages, other projects' docs, `docs/workspace.md`, `docs/services.md`,
+    architecture records).
+
 - [ ] **`aisland clean` does not sweep the tunnel's state** @low @maintenance — the tunnel keeps its CLI binary (~28 MB), log and account in `~/.aisland/tunnel` (per machine, so a `start` and a `status` run from different folders agree), which is outside the workspace state `clean` walks. Either teach `clean` that folder or leave it to `aisland tunnel stop` + a manual `rm`; nothing reclaims it today.
 - [ ] **From a wheel, aisland's own system tools are not provisioned** @low @infrastructure — `provision_system` reads `[tool.aisland.sys-dependencies]` from the discovered projects' `pyproject.toml`; aisland's own (process-compose for the services, swiftbar, colima, docker) sit in its `pyproject.toml`, which a wheel workspace does not discover and the wheel does not carry. Measured 2026-10-19: `aisland setup` in a workspace made by `aisland workspace init` printed `No system dependencies found.` Carry the list in the package (or read it from the distribution's metadata) and provision it in wheel mode; the README's "Another workspace" section says to install them by hand until then.
 - [ ] **aisland is not on PyPI** @low @release — `https://pypi.org/pypi/aisland/json` answers 404 (2026-10-21), so a wheel user builds it from this checkout (`python -m pip wheel --no-deps -w dist aisland`). Publishing it would make the README's install line `pip install aisland` and let `aisland workspace init` print a real install command instead of `<the aisland wheel>`.

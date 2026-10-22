@@ -17,7 +17,7 @@ is push-only, fast-forward-only, and copies the primary · [wheel-mode] from a c
 is found from aisland's place, from a wheel from where it runs · [folders-as-submodules] a folder of
 projects is a workspace, its subfolders read as submodules · [workspace-file] a workspace is written down in a
 file a machine without aisland reads · [harness] every workspace gets aisland's agent commands and rules · [editor] the editor's theme and colours are a per-machine choice laid over the
-generated workspace file · [mcp-server] aisland's tools are its own server, a chosen set · [aliases] a link to a folder of the workspace is a short name, never a project ·
+generated workspace file · [declarations] a project declares what it brings, aisland finds it in two stages and the project never imports aisland · [mcp-server] aisland's tools are its own server, a chosen set · [aliases] a link to a folder of the workspace is a short name, never a project ·
 [tunnel-terminal] a terminal on the remote machine rides the VS Code tunnel it already runs.
 
 ## Current state
@@ -33,6 +33,7 @@ The workspace's dev-infrastructure CLI, `aisland` (click, `aisland/cli.py`):
   submodules, the git aliases).
 - `server.py`: `aisland-mcp`, aisland's MCP server (the `[mcp]` extra) — a chosen set of tools, listed in
   `.mcp.json` by setup's discovery.
+- `discovery.py`: what the projects declare to aisland, found in two stages, and `aisland workspace show` [declarations].
 - `editor.py`: `aisland workspace theme|color`, this machine's VS Code theme and colours (`css_colors.py`: the CSS
   names), kept in `.git/config` and laid over the generated workspace file.
 - `config.py`: the one committed `config.toml`, written through `sources.py`
@@ -390,6 +391,26 @@ User choice 2026-10-16: an aisland command, submodules only, run by `/push-all` 
   a project without a mirror is never contacted.
 - `/push-all` and `/ship` call `aisland mirror sync` last; change its exit status or wording and
   those workflows together.
+
+## What the projects declare (`discovery.py`)
+
+The first step of the workspace redesign (`TASKS.md`, user rulings 2026-10-21/22). [declarations]
+(`tests/test_discovery.py`)
+- **Two stages, and a project never imports aisland.** STAGE 1 (`discover`) reads every project's
+  `pyproject.toml` through `manager.workspace_folders` — nothing installed: `[tool.aisland.selection.<name>]` (the
+  table with `question` DEFINES it; every project's `choices` are its menu and each must be an extra of its own),
+  `[tool.aisland.service.<name>]` (`command`, `port`, `ready`, `needs`) and the entry points a project declares in
+  `[project.entry-points."aisland.plugins"]`. STAGE 2 (`load`) loads only those, from the declaring project's own
+  distribution, once installed; a plugin is any object with a `kind` (`PLUGIN_KINDS`) and that kind's methods
+  (`_KIND_METHODS`) — never a subclass of an aisland type, so a project gains no dependency on aisland
+  (`::test_an_installed_plugin_is_loaded_and_has_its_kind`,
+  `::test_an_entry_point_of_a_package_outside_the_workspace_is_not_loaded`).
+- Every refusal is a `DeclarationError` naming the file and the line of the TABLE (`Where`): a selection or service
+  defined twice, a choice that is no extra, a missing command, an unknown setting, a value of the wrong shape, a
+  plugin missing a method. NOT refused: choices for a selection no project defines (`Discovery.undefined`, shown —
+  a workspace without the defining project still sets up), an empty project folder, a plugin not installed yet
+  (`::test_choices_for_a_selection_no_project_defines_are_reported_not_refused`).
+- A new plugin kind joins `PluginKind` and `_KIND_METHODS` together, with a contract test.
 
 ## Selection axes (`aisland framework` / `aisland tracker`)
 

@@ -5,7 +5,7 @@ from typing import List, Optional, Tuple
 import click
 from click.shell_completion import CompletionItem
 
-from aisland import editor, locations, manager, nightly, pytest_stats
+from aisland import discovery, editor, locations, manager, nightly, pytest_stats
 from aisland import supervisor as supervisor_mod
 from aisland import tunnel as tunnel_mod
 from aisland import tunnel_connect as tunnel_connect_mod
@@ -148,6 +148,26 @@ def workspace_export(file: Optional[Path]) -> None:
     if not locations.workspace_found():
         raise click.ClickException(locations.missing_workspace_message())
     workspace_mod.export_workspace(get_workspace_root(), file)
+
+
+@workspace_group.command("show")
+@click.option("--json", "as_json", is_flag=True, help="Print it as one JSON object.")
+def workspace_show(as_json: bool) -> None:
+    """What the workspace's projects declare: selections, services and code plugins, and from which project.
+
+    Read from each project's pyproject.toml ([tool.aisland.selection.*], [tool.aisland.service.*],
+    [project.entry-points."aisland.plugins"]) — nothing needs to be installed; a code plugin shows whether its
+    project is. A declaration aisland cannot use is refused, naming its file and line.
+    """
+    if not locations.workspace_found():
+        raise click.ClickException(locations.missing_workspace_message())
+    found = discovery.discover(get_workspace_root())
+    loaded = discovery.load(found)
+    if as_json:
+        click.echo(json.dumps(discovery.as_json(found, loaded), indent=2))
+        return
+    for line in discovery.report_lines(found, loaded):
+        click.echo(line)
 
 
 def _editor_root() -> Path:
