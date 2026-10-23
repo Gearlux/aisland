@@ -482,7 +482,7 @@ def test_untracked_hides_a_projects_new_commits_and_writes_it_down(tmp_path: Pat
     assert result.exit_code == 0, result.output
     root = tmp_path / "acme"
     assert _git(root, "config", "-f", ".gitmodules", "submodule.models.ignore") == "all"
-    assert workspace_file.load(root).projects["models"].others == {"track": False}
+    assert workspace_file.load(root).settings["track"] is False  # the projects to come follow it too
     assert "    models                    untracked: the root records none of its commits" in result.output.splitlines()
     assert _status(root) == []
     _move(root / "models")
@@ -505,7 +505,7 @@ def test_untracked_in_an_existing_repository_untracks_its_submodules(tmp_path: P
     result = _init(tmp_path, "--untracked")
     assert result.exit_code == 0, result.output
     assert _git(root, "config", "-f", ".gitmodules", "submodule.models.ignore") == "all"
-    assert workspace_file.load(root).projects["models"].others == {"track": False}
+    assert workspace_file.load(root).settings["track"] is False  # the projects to come follow it too
 
 
 def test_a_local_workspace_without_projects_makes_no_commit(tmp_path: Path, author: None) -> None:

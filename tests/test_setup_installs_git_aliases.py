@@ -63,17 +63,17 @@ def test_there_is_no_separate_command_for_the_aliases() -> None:
     assert "No such command 'git'" in result.output
 
 
-@pytest.mark.parametrize("non_interactive", [True, False], ids=["-y", "asking"])
-def test_setup_offers_the_clones_the_workspace_does_not_list(
+@pytest.mark.parametrize("non_interactive", [True, False], ids=["-y", "without -y"])
+def test_setup_adds_the_clones_the_workspace_does_not_list(
     stubbed_setup: List[Path], tmp_path: Path, monkeypatch: pytest.MonkeyPatch, non_interactive: bool
 ) -> None:
-    """`aisland.clones` adds them (tests/test_setup_adds_clones.py); setup hands it the root and `-y`."""
-    calls: List[tuple] = []
+    """`aisland.clones` adds them, with or without -y (tests/test_setup_adds_clones.py); setup hands it the root."""
+    calls: List[Path] = []
 
-    def add_unlisted(root: Path, y: bool) -> List[str]:
-        calls.append((root, y))
+    def add_unlisted(root: Path) -> List[str]:
+        calls.append(root)
         return ["added foo"]
 
     monkeypatch.setattr("aisland.clones.add_unlisted", add_unlisted)
     manager.setup_workspace(non_interactive=non_interactive)
-    assert calls == [(tmp_path, non_interactive)]
+    assert calls == [tmp_path]

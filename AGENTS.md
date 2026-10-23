@@ -38,20 +38,25 @@ The workspace's dev-infrastructure CLI, `aisland` (click, `aisland/cli.py`):
   and after `track|untrack`; a commit git refuses is said, never raised; an unmarked workspace is never touched; the
   `active` plugin adds a project there with `-f`. (`tests/test_local_workspace.py`,
   `tests/test_workspace_init.py::test_a_local_workspace_tracks_only_its_projects_and_has_nothing_to_commit`)
-- `clones.py`: `aisland setup` adds a clone the workspace does not list as a submodule (user choice 2026-10-23: it
-  ASKS, `-y` adds; tracked LIKE THE OTHERS). A clone: a direct, non-hidden subfolder with a `.git` FOLDER, an
+- `clones.py`: `aisland setup` adds a clone the workspace does not list as a submodule BY ITSELF, never asking (user
+  ruling 2026-10-23: "aisland setup MUST take care of this automatically" — do not add a prompt back); tracked as THE
+  WORKSPACE says (`tracking.workspace_default`). A clone: a direct, non-hidden subfolder with a `.git` FOLDER, an
   `origin` and a `pyproject.toml`, not in `.gitmodules`, no alias link; only in a workspace with `.gitmodules` or a
   local root (a folder of clones has none). `git submodule add -b <its branch> <its origin> <folder>` keeps the clone
-  as it is; `-f` only in a local root; a refused add is said and setup goes on. Untracked for everyone when every
-  other project is committed-untracked, on this machine when every other one is so here, else tracked. Runs before
-  `workspace_file.refresh` in setup. (`tests/test_setup_adds_clones.py`,
-  `tests/test_setup_installs_git_aliases.py::test_setup_offers_the_clones_the_workspace_does_not_list`)
+  as it is; `-f` only in a local root; a refused add is said and setup goes on. Its tracking is `tracking.apply`'s: the
+  workspace's `[workspace] track`, this machine's `aisland.track.default` — never inferred from the other projects. Runs before
+  `workspace_file.refresh` in setup. (`tests/test_setup_adds_clones.py::test_setup_never_asks`,
+  `tests/test_setup_installs_git_aliases.py::test_setup_adds_the_clones_the_workspace_does_not_list`)
 - `tracking.py`: `aisland workspace track|untrack [PROJECT…] [--machine-only]` (user choice 2026-10-23: two commands,
   no project = every submodule; not a `configure` plugin) — whether the root records a project's commits. Committed:
   the project's `track = false` in `workspace.toml`, written as `ignore = all` in `.gitmodules`; this machine:
   `aisland.track.<project>.track`, written as git's `submodule.<name>.ignore` (`all`/`none`) in `.git/config`, which
   git reads first — aisland's key because `submodule deinit` drops git's section, and `apply` (every
-  `activation.reconcile`) writes it back. A committed `track|untrack` drops this machine's choice for those projects.
+  `activation.reconcile`) writes it back. A committed `track|untrack` drops this machine's choice for those projects. **With no project named it is the
+  WORKSPACE's choice (user correction 2026-10-23):** `[workspace] track = false` (per machine `aisland.track.default`),
+  which every project without a `track` of its own follows, those added later included — so `init --untracked`, or
+  one `untrack`, then only `aisland setup`; a project's own `track` is written only where it differs, and `untrack`
+  with no submodules yet is allowed (it records the choice).
   An `ignore` value aisland does not write (`dirty`, `untracked`) is the user's and left alone. **An untracked
   project follows its branch (user request 2026-10-23):** one on no branch is fetched and switched to its branch —
   `.gitmodules`' `branch` (`.` = the root's), else origin's default; its local branch, fast-forwarded only when

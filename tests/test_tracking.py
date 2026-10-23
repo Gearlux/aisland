@@ -122,16 +122,18 @@ def test_untrack_hides_a_projects_new_commits_and_is_written_for_everyone(
 def test_untrack_without_a_project_untracks_every_project(ws: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     result = _run(ws, monkeypatch, "untrack")
     assert result.exit_code == 0, result.output
-    assert (
-        result.output.splitlines()[0]
-        == "==> untracked: models, tools (in workspace.toml and .gitmodules — commit them)"
+    assert result.output.splitlines()[0] == (
+        "==> untracked: every project, and every one added later (in workspace.toml and .gitmodules — commit them)"
     )
     for name in ("models", "tools"):
         assert _git(ws, "config", "-f", ".gitmodules", f"submodule.{name}.ignore") == "all"
+    # The workspace's choice, which a project added later follows too; no project carries one of its own.
+    assert workspace_file.load(ws).settings["track"] is False
+    assert all("track" not in project.others for project in workspace_file.load(ws).projects.values())
 
 
 def test_track_shows_the_commits_again_and_leaves_no_setting(ws: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    _run(ws, monkeypatch, "untrack")
+    _run(ws, monkeypatch, "untrack", "models")
     _move(ws, "models")
     result = _run(ws, monkeypatch, "track", "models")
     assert result.exit_code == 0, result.output
@@ -142,6 +144,19 @@ def test_track_shows_the_commits_again_and_leaves_no_setting(ws: Path, monkeypat
     assert "track" not in workspace_file.load(ws).projects["models"].others
     assert _get(ws, "config", "-f", ".gitmodules", "submodule.models.ignore") is None
     assert " M models" in _status(ws)
+
+
+def test_a_project_tracked_in_an_untracked_workspace_keeps_its_own_choice(
+    ws: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _run(ws, monkeypatch, "untrack")
+    _run(ws, monkeypatch, "track", "models")
+    assert workspace_file.load(ws).projects["models"].others == {"track": True}
+    assert _get(ws, "config", "-f", ".gitmodules", "submodule.models.ignore") is None
+    assert _git(ws, "config", "-f", ".gitmodules", "submodule.tools.ignore") == "all"
+    _run(ws, monkeypatch, "track")  # the whole workspace again: no choice of anyone's is left
+    assert "track" not in workspace_file.load(ws).settings
+    assert all("track" not in project.others for project in workspace_file.load(ws).projects.values())
 
 
 def test_doing_it_twice_changes_nothing_more(ws: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -217,13 +232,28 @@ def test_an_unknown_project_is_refused_naming_the_projects(ws: Path, monkeypatch
     assert "track" not in workspace_file.load(ws).projects["models"].others
 
 
-def test_a_workspace_without_submodules_is_refused(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_without_submodules_untrack_is_the_choice_for_the_projects_to_come(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     root = tmp_path / "plain"
     root.mkdir()
     _git(root, "init", "-q")
     result = _run(root, monkeypatch, "untrack")
+    assert result.exit_code == 0, result.output
+    assert workspace_file.load(root).settings["track"] is False
+    result = _run(root, monkeypatch, "untrack", "models")
     assert result.exit_code == 1
-    assert result.output == (f"Error: {root} has no submodules: only a submodule's commits are recorded by the root\n")
+    assert result.output == "Error: 'models' is no submodule of the workspace (the submodules: none)\n"
+
+
+def test_machine_only_for_every_project_covers_those_added_later(ws: Path, tmp_path: Path) -> None:
+    tracking.set_machine(ws, (), track=False)
+    assert _git(ws, "config", "--local", "aisland.track.default") == "false"
+    _git(ws, "submodule", "add", "-q", str(_remote(tmp_path, "extra")), "extra")
+    workspace_file.refresh(ws)
+    assert [change.line() for change in tracking.apply(ws)] == [
+        "extra: untracked on this machine (the root records none of its commits)"
+    ]
 
 
 # --- a local workspace commits its .gitmodules ----------------------------------------------------------------------

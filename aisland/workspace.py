@@ -257,7 +257,7 @@ def init_workspace(
         rows.append(_row("AGENTS.md", "written (imports the rules; CLAUDE.md and GEMINI.md link to it)"))
     rows += [_row("", note) for note in notes]
 
-    if untracked and workspace_file.submodules(root):
+    if untracked:  # `[workspace] track = false`: the projects of today and those added later
         changes = tracking.set_committed(root, (), track=False)
         rows += [_row(change.project, "untracked: the root records none of its commits") for change in changes]
     settled = local_workspace.settle(root)

@@ -67,16 +67,33 @@ def submodule_projects(root: Path) -> List[str]:
     return list(_submodules(root))
 
 
+#: This machine's choice for every project without one of its own (`untrack --machine-only`, no project named).
+_MACHINE_DEFAULT_KEY = "aisland.track.default"
+
+
+def workspace_default(root: Path) -> bool:
+    """Whether a project without a ``track`` of its own is tracked: ``[workspace] track`` in ``workspace.toml``, which
+    ``init --untracked`` and ``untrack`` with no project named write, else yes."""
+    return bool(workspace_file.load(root).settings.get(TRACK_KEY, True))
+
+
 def committed(root: Path, project: str) -> bool:
-    """Whether ``project`` is tracked for everyone: ``workspace.toml`` says ``track = false``, or it is."""
+    """Whether ``project`` is tracked for everyone: its own ``track``, else the workspace's (:func:`workspace_default`)."""
     found = workspace_file.load(root).projects.get(project)
-    return found is None or bool(found.others.get(TRACK_KEY, True))
+    if found is not None and TRACK_KEY in found.others:
+        return bool(found.others[TRACK_KEY])
+    return workspace_default(root)
+
+
+def _bool_key(root: Path, key: str) -> Optional[bool]:
+    value = _get(root, "--local", "--type=bool", "--get", key)
+    return None if value is None else value == "true"
 
 
 def machine_choice(root: Path, project: str) -> Optional[bool]:
-    """This machine's choice for ``project``, or ``None`` when it has made none."""
-    value = _get(root, "--local", "--type=bool", "--get", _machine_key(project))
-    return None if value is None else value == "true"
+    """This machine's choice for ``project`` — its own, else this machine's for every project — or ``None``."""
+    own = _bool_key(root, _machine_key(project))
+    return own if own is not None else _bool_key(root, _MACHINE_DEFAULT_KEY)
 
 
 def _set_machine_choice(root: Path, project: str, track: Optional[bool]) -> None:
@@ -137,38 +154,63 @@ def apply(root: Path) -> List[Change]:
     return changes
 
 
-def _chosen(root: Path, projects: Sequence[str]) -> List[str]:
-    """``projects``, or every submodule when none is named; refused before anything changes."""
+def _named(root: Path, projects: Sequence[str]) -> List[str]:
+    """``projects``, each a submodule of the workspace; refused before anything changes."""
     submodules = _submodules(root)
-    if not submodules:
-        raise click.ClickException(f"{root} has no submodules: only a submodule's commits are recorded by the root")
     unknown = [name for name in projects if name not in submodules]
     if unknown:
-        raise click.ClickException(
-            f"'{unknown[0]}' is no submodule of the workspace (the submodules: {', '.join(submodules)})"
-        )
-    return list(projects) or list(submodules)
+        listed = ", ".join(submodules) or "none"
+        raise click.ClickException(f"'{unknown[0]}' is no submodule of the workspace (the submodules: {listed})")
+    return list(projects)
+
+
+def _write_workspace_default(root: Path, track: bool) -> None:
+    """``[workspace] track = false``, or no key when tracked (the default), keeping every other setting."""
+    current = workspace_file.load(root)
+    settings = dict(current.settings)
+    if track:
+        settings.pop(TRACK_KEY, None)
+    else:
+        settings[TRACK_KEY] = False
+    workspace_file.write(root, workspace_file.WorkspaceFile(settings, current.projects))
 
 
 def set_committed(root: Path, projects: Sequence[str], track: bool) -> List[Change]:
-    """Track or untrack ``projects`` (none: every submodule) for everyone — ``workspace.toml``'s ``track``, and this
-    machine follows it again — then write what git reads."""
-    chosen = _chosen(root, projects)
-    values = {
-        name: {TRACK_KEY: False}
-        for name in _submodules(root)
-        if (name in chosen and not track) or (name not in chosen and not committed(root, name))
+    """Track or untrack ``projects`` for everyone — or, with none named, the whole workspace: ``[workspace] track``,
+    which every project without a ``track`` of its own follows, those added later included. A project's own ``track``
+    is written only where it differs from the workspace's; this machine follows the committed choice again. Then write
+    what git reads."""
+    named = _named(root, projects)
+    explicit = {
+        name: bool(project.others[TRACK_KEY])
+        for name, project in workspace_file.load(root).projects.items()
+        if TRACK_KEY in project.others
     }
+    if not named:
+        _write_workspace_default(root, track)
+        explicit = {}
+        _git(root, "config", "--local", "--unset", _MACHINE_DEFAULT_KEY)
+    default = workspace_default(root)
+    for name in named:
+        explicit[name] = track
+    values = {name: {TRACK_KEY: value} for name, value in explicit.items() if value != default}
     workspace_file.set_settings(root, (TRACK_KEY,), values)
-    for project in chosen:
+    for project in named or _submodules(root):
         _set_machine_choice(root, project, None)
     return apply(root)
 
 
 def set_machine(root: Path, projects: Sequence[str], track: bool) -> List[Change]:
-    """Track or untrack ``projects`` (none: every submodule) on this machine only, then write what git reads."""
-    for project in _chosen(root, projects):
-        _set_machine_choice(root, project, track)
+    """Track or untrack ``projects`` on this machine only — or, with none named, every project here, those added later
+    included (``aisland.track.default``). Then write what git reads."""
+    named = _named(root, projects)
+    if named:
+        for project in named:
+            _set_machine_choice(root, project, track)
+    else:
+        _git(root, "config", "--local", _MACHINE_DEFAULT_KEY, "true" if track else "false")
+        for project in _submodules(root):
+            _set_machine_choice(root, project, None)
     return apply(root)
 
 
@@ -218,17 +260,16 @@ def follow_branches(root: Path) -> List[str]:
 
 def track_command(root: Path, projects: Sequence[str], track: bool, machine_only: bool) -> List[str]:
     """``aisland workspace track|untrack``: the change and the report's lines; a local workspace commits it."""
-    chosen = _chosen(root, projects)
+    _named(root, projects)
     word = "tracked" if track else "untracked"
+    which = ", ".join(projects) if projects else "every project, and every one added later"
     if machine_only:
-        changes = set_machine(root, chosen, track)
-        header = f"==> {word} on this machine: {', '.join(chosen)} (nothing committed)"
+        changes = set_machine(root, projects, track)
+        header = f"==> {word} on this machine: {which} (nothing committed)"
     else:
-        changes = set_committed(root, chosen, track)
+        changes = set_committed(root, projects, track)
         local = local_workspace.is_local(root)
-        header = (
-            f"==> {word}: {', '.join(chosen)} (in workspace.toml and .gitmodules{'' if local else ' — commit them'})"
-        )
+        header = f"==> {word}: {which} (in workspace.toml and .gitmodules{'' if local else ' — commit them'})"
     lines = [header, *(f"  - {change.line()}" for change in changes)]
     lines += [f"  - {line}" for line in follow_branches(root)]
     lines += [f"  - {line}" for line in local_workspace.settle(root).lines()]

@@ -1,15 +1,18 @@
-"""``aisland setup`` adds a clone the workspace does not list as a submodule, after asking (user choice 2026-10-23).
+"""``aisland setup`` adds a clone the workspace does not list as a submodule, by itself (user ruling 2026-10-23).
 
 In a workspace of submodules, a repository cloned into the workspace folder by hand is invisible: discovery and
 ``workspace.toml`` read ``.gitmodules`` only, so it is neither listed nor installed. Setup finds each such CLONE — a
 direct, non-hidden subfolder that is its own repository (a ``.git`` folder; a submodule's is a file), with an
 ``origin`` and a ``pyproject.toml``, which ``.gitmodules`` does not list and which is no link to another folder
-(:func:`aisland.locations.is_alias`) — asks about it (``-y``: added without asking) and adds it with
+(:func:`aisland.locations.is_alias`) — and adds it, never asking (user ruling 2026-10-23: "aisland setup MUST take
+care of this automatically"), with
 ``git submodule add -b <the branch it is on> <its origin> <folder>``. git keeps the clone as it is (its history,
 checkout and uncommitted edits); ``-f`` is passed only in a local root, whose ``.gitignore`` is ``/*``.
 
-The new project is tracked like the others (:mod:`aisland.tracking`): untracked for everyone when every other project
-is, untracked on this machine when every other one is so here, tracked otherwise. A workspace without ``.gitmodules``
+The new project is tracked as the workspace says (:mod:`aisland.tracking`): untracked when ``workspace.toml`` has
+``[workspace] track = false`` (``init --untracked``, ``aisland workspace untrack``) or this machine untracks every
+project, tracked otherwise. So in such a workspace a clone needs only ``aisland setup``: it becomes a submodule, is
+listed in ``workspace.toml``, untracked, in the editor's workspace file, and committed in a local root. A workspace without ``.gitmodules``
 that is no local root is a folder of clones, where each clone already is a project: it has none to add.
 """
 
@@ -19,8 +22,6 @@ import subprocess
 from dataclasses import dataclass
 from pathlib import Path
 from typing import List, Optional
-
-import click
 
 from aisland import local_workspace, locations, tracking, workspace_file
 
@@ -56,33 +57,13 @@ def unlisted(root: Path) -> List[Clone]:
     return found
 
 
-def _like_the_others(root: Path, project: str) -> List[str]:
-    """Untrack ``project`` when every other project is untracked — for everyone, or on this machine only."""
-    others = [name for name in tracking.submodule_projects(root) if name != project]
-    if not others:
-        return []
-    if all(not tracking.committed(root, name) for name in others):
-        changes = tracking.set_committed(root, (project,), track=False)
-    elif all(tracking.machine_choice(root, name) is False for name in others):
-        changes = tracking.set_machine(root, (project,), track=False)
-    else:
-        return []
-    return [change.line() for change in changes if change.project == project]
-
-
-def add_unlisted(root: Path, non_interactive: bool) -> List[str]:
-    """Ask about each clone :func:`unlisted` finds and add the ones wanted as submodules; one line per thing done.
+def add_unlisted(root: Path) -> List[str]:
+    """Add each clone :func:`unlisted` finds as a submodule, without asking; one line per thing done.
 
     A clone git refuses to add is said and the others still added; ``workspace.toml`` lists each one added."""
     lines: List[str] = []
     force = ["-f"] if local_workspace.is_local(root) else []
     for clone in unlisted(root):
-        where = f"on {clone.branch}" if clone.branch else "on no branch"
-        if not non_interactive and not click.confirm(
-            f"  - {clone.path} is a clone the workspace does not list ({clone.url}, {where}). Add it as a submodule?",
-            default=True,
-        ):
-            continue
         branch = ["-b", clone.branch] if clone.branch else []
         added = subprocess.run(
             ["git", "submodule", "add", "-q", *force, *branch, clone.url, clone.path],
@@ -96,5 +77,6 @@ def add_unlisted(root: Path, non_interactive: bool) -> List[str]:
         lines.append(f"added {clone.path} as a submodule ({clone.url}, {clone.branch or 'on no branch'})")
         workspace_file.refresh(root)
         project = next(p.name for p in workspace_file.load(root).projects.values() if p.path == clone.path)
-        lines += _like_the_others(root, project)
+        # Tracked as the workspace says: `[workspace] track = false` (or this machine's choice) untracks it.
+        lines += [change.line() for change in tracking.apply(root) if change.project == project]
     return lines

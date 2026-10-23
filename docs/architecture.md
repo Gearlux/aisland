@@ -2955,7 +2955,7 @@ $ aisland workspace track models --machine-only
 
 ---
 
-## A clone the workspace does not list: setup asks, and adds it as a submodule
+## A clone the workspace does not list: setup adds it as a submodule
 
 *2026-10-23* [clones]
 
@@ -2966,9 +2966,12 @@ In a workspace of submodules, a repository cloned into its folder by hand was in
 
 ### Decision
 
-`aisland setup` finds each clone `.gitmodules` does not list (a `.git` folder, an `origin`, a `pyproject.toml`), asks
-`[Y/n]` (`-y` adds), and runs `git submodule add -b <its branch> <its origin> <folder>`, which keeps the clone as it
-is. The new project is tracked like the others — untracked when every other project is.
+`aisland setup` finds each clone `.gitmodules` does not list (a `.git` folder, an `origin`, a `pyproject.toml`) and runs
+`git submodule add -b <its branch> <its origin> <folder>`, which keeps the clone as it is — without asking (user ruling
+2026-10-23: a question about a project the workspace already lists in `workspace.toml` was the wrong default). The new project is tracked as the workspace says: `[workspace] track = false` in `workspace.toml` (`init --untracked`,
+`untrack` with no project named) untracks every project without a `track` of its own, those added later included —
+a workspace-wide choice, never inferred from the other projects (user correction 2026-10-23: the first rule, "like the
+others", left a workspace made untracked with its new projects tracked).
 
 ### Consequences
 
@@ -2978,13 +2981,13 @@ is. The new project is tracked like the others — untracked when every other pr
 ### Example
 
 ```text
-  - foo is a clone the workspace does not list (https://host/team/foo.git, on dev/main). Add it as a submodule? [Y/n]
+  - added foo as a submodule (https://host/team/foo.git, dev/main)
 ```
 
 ### What you may change
 
 - The question's wording.
-- Never: adding a clone without asking outside `-y`, or moving its checkout.
+- Never: a question before adding, or moving the clone's checkout.
 
 ---
 

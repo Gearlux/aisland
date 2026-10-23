@@ -115,19 +115,21 @@ In a `--local` root, add a project later with `git submodule add -f <url>` (git 
 
 #### A repository cloned into the workspace by hand
 
-`aisland setup` asks about each clone in the workspace folder that `.gitmodules` does not list — a folder that is its
-own repository, with an `origin` and a `pyproject.toml` — and adds it as a submodule on the branch it is on
-(`aisland setup -y` adds it without asking). git keeps the clone as it is, uncommitted edits included:
+`aisland setup` adds each clone in the workspace folder that `.gitmodules` does not list — a folder that is its own
+repository, with an `origin` and a `pyproject.toml` — as a submodule on the branch it is on, without asking. git keeps
+the clone as it is, uncommitted edits included:
 
 ```text
 $ .venv/bin/aisland setup
-  - foo is a clone the workspace does not list (https://host/team/foo.git, on dev/main). Add it as a submodule? [Y/n] y
   - added foo as a submodule (https://host/team/foo.git, dev/main)
   - foo: untracked (the root records none of its commits)
 ```
 
-It is tracked like the other projects: untracked when they all are (for everyone, or on this machine only), tracked
-otherwise. A `--local` root commits it with `.gitmodules`; in a shared root they are left for you to commit.
+It is tracked as the workspace says: untracked when `workspace.toml` has `[workspace] track = false` — written by
+`init --untracked` and by `aisland workspace untrack` with no project named — or this machine untracks every project,
+tracked otherwise. A `--local` root commits it with `.gitmodules`; in a shared root they are left for you to commit.
+So in a `--local --untracked` workspace, a project you clone into the folder needs only `aisland setup`: it becomes an
+untracked submodule, listed in `workspace.toml` and in the editor's workspace file, and committed.
 
 #### Track or untrack the projects: `aisland workspace track|untrack`
 
