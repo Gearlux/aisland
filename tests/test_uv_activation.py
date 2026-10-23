@@ -8,9 +8,15 @@ Which projects a machine has (the `active` plugin) is `tests/test_activation.py`
 
 from __future__ import annotations
 
+import os
+import subprocess
+import sys
 import tomllib
+import zipfile
 from pathlib import Path
 from typing import Any
+
+import pytest
 
 from aisland import manager as m
 
@@ -149,3 +155,80 @@ def test_merge_uv_unions_lists_and_last_wins_scalars() -> None:
 def test_emit_uv_toml_round_trips_supported_types() -> None:
     emitted = m._emit_uv_toml({"s": "x", "b": True, "n": 3, "lst": ["a", "b"]})
     assert tomllib.loads(emitted) == {"s": "x", "b": True, "n": 3, "lst": ["a", "b"]}
+
+
+# --- a project's wheels folder ------------------------------------------------
+def _wheels_folder(project: Path) -> Path:
+    """The folder `aisland wheels build` writes: wheels beside their `wheels.yaml`."""
+    folder = project / "wheels"
+    folder.mkdir(parents=True)
+    (folder / "wheels.yaml").write_text(f'project: "{project.name}"\nwheels: []\nnot_built: []\n')
+    return folder
+
+
+def _installable_wheel(folder: Path, name: str, version: str) -> None:
+    """A minimal wheel uv installs: one module, METADATA, WHEEL and a RECORD naming every member."""
+    info = f"{name}-{version}.dist-info"
+    members = {
+        f"{name}/__init__.py": "",
+        f"{info}/METADATA": f"Metadata-Version: 2.1\nName: {name}\nVersion: {version}\n",
+        f"{info}/WHEEL": "Wheel-Version: 1.0\nGenerator: test\nRoot-Is-Purelib: true\nTag: py3-none-any\n",
+    }
+    record = "".join(f"{member},,\n" for member in [*members, f"{info}/RECORD"])
+    with zipfile.ZipFile(folder / f"{name}-{version}-py3-none-any.whl", "w") as archive:
+        for member, text in {**members, f"{info}/RECORD": record}.items():
+            archive.writestr(member, text)
+
+
+class TestWheelsFolders:
+    def test_an_activated_projects_wheels_folder_is_a_find_links_path_from_the_root(self, tmp_path: Path) -> None:
+        bridge = tmp_path / "bridge"
+        _wheels_folder(bridge)
+        m._write_root_uv_toml(tmp_path, [{"name": "bridge", "path": bridge}])
+        assert tomllib.loads((tmp_path / "uv.toml").read_text())["find-links"] == ["bridge/wheels"]
+
+    def test_a_folder_without_wheels_yaml_is_no_wheels_folder(self, tmp_path: Path) -> None:
+        (tmp_path / "bridge" / "wheels").mkdir(parents=True)
+        m._write_root_uv_toml(tmp_path, [{"name": "bridge", "path": tmp_path / "bridge"}])
+        assert "find-links" not in tomllib.loads((tmp_path / "uv.toml").read_text())
+
+    def test_without_wheels_folders_the_file_is_what_it_was(self, tmp_path: Path) -> None:
+        (tmp_path / "plain").mkdir()
+        m._write_root_uv_toml(tmp_path, [{"name": "plain", "path": tmp_path / "plain"}])
+        assert tomllib.loads((tmp_path / "uv.toml").read_text()) == {"override-dependencies": _OVERRIDE}
+
+    def test_every_wheels_folder_is_listed_in_install_order_and_a_deactivated_one_goes(self, tmp_path: Path) -> None:
+        for name in ("tools", "bridge"):
+            _wheels_folder(tmp_path / name)
+        both = [{"name": "tools", "path": tmp_path / "tools"}, {"name": "bridge", "path": tmp_path / "bridge"}]
+        m._write_root_uv_toml(tmp_path, both)
+        assert tomllib.loads((tmp_path / "uv.toml").read_text())["find-links"] == ["tools/wheels", "bridge/wheels"]
+        m._write_root_uv_toml(tmp_path, both[1:])
+        assert tomllib.loads((tmp_path / "uv.toml").read_text())["find-links"] == ["bridge/wheels"]
+
+    def test_uv_run_in_the_workspace_installs_a_package_only_the_wheels_folder_has(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """The real uv, offline and without this machine's own uv settings, reads the root file from the workspace and
+        from a folder below it."""
+        bridge = tmp_path / "bridge"
+        _installable_wheel(_wheels_folder(bridge), "onlyhere", "0.3.0")
+        m._write_root_uv_toml(tmp_path, [{"name": "bridge", "path": bridge}])
+        uv = str(Path(sys.executable).with_name("uv"))
+        env = {
+            **os.environ,
+            "UV_OFFLINE": "1",
+            "UV_CACHE_DIR": str(tmp_path / "cache"),
+            "XDG_CONFIG_HOME": str(tmp_path),
+        }
+        subprocess.run([uv, "venv", "-q", "--python", sys.executable, str(tmp_path / "venv")], check=True, env=env)
+        for where in (tmp_path, bridge):
+            result = subprocess.run(
+                [uv, "pip", "install", "--python", str(tmp_path / "venv"), "--no-index", "--reinstall", "onlyhere"],
+                cwd=where,
+                env=env,
+                capture_output=True,
+                text=True,
+            )
+            assert result.returncode == 0, result.stderr
+            assert " onlyhere==0.3.0" in result.stderr  # + the first time, ~ (reinstalled) the second

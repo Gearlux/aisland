@@ -30,13 +30,17 @@ from typing import Any, Dict, List, Optional, Set, Tuple
 import click
 
 from aisland import __version__, locations
-from aisland.discovery import Where, table_line
+from aisland.discovery import Where, key_line, table_line
 
 #: The file, at the workspace root.
 FILE_NAME = "workspace.toml"
 
 #: The sections the file has.
 _SECTIONS = ("workspace", "project")
+
+#: The ``[workspace]`` key naming the workspace (else its origin's repository, else its folder:
+#: :func:`aisland.manager.get_workspace_name`); no selection may take it.
+NAME_KEY = "name"
 
 #: A project's own keys, in the order they are written; any other key of its table follows, as written.
 _PROJECT_KEYS = ("path", "url", "branch")
@@ -116,7 +120,29 @@ def read(path: Path) -> WorkspaceFile:
         others = {key: value for key, value in table.items() if key not in _PROJECT_KEYS}
         projects[name] = Project(name, folder, table.get("url"), table.get("branch"), others, where)
     _refuse_a_shared_folder(projects)
-    return WorkspaceFile(dict(data.get("workspace", {})), projects)
+    settings = dict(data.get("workspace", {}))
+    if NAME_KEY in settings and not (
+        isinstance(settings[NAME_KEY], str) and _FOLDER_NAME.fullmatch(settings[NAME_KEY])
+    ):
+        header = table_line(text, "workspace")
+        where = Where(path, key_line(text, header, NAME_KEY) if header else None)
+        raise FileError(
+            f'{where}: the workspace\'s name must be one plain name (letters, digits, _ . -), as {NAME_KEY} = "bridge"'
+        )
+    return WorkspaceFile(settings, projects)
+
+
+def name_of(root: Path) -> Optional[str]:
+    """The workspace's name its ``workspace.toml`` gives (``[workspace] name``), or None: no file, no name, or a file
+    aisland cannot read — setup's upkeep reports that one, and whoever only wants a name goes on without it."""
+    path = root / FILE_NAME
+    if not path.is_file():
+        return None
+    try:
+        name = read(path).settings.get(NAME_KEY)
+    except FileError:
+        return None
+    return name if isinstance(name, str) else None
 
 
 def _refuse_a_shared_folder(projects: Dict[str, Project]) -> None:
@@ -149,10 +175,13 @@ def _header(name: str) -> str:
 # =========================================================================
 # A workspace aisland creates on a new machine. From the folder that will hold it:
 #
-#   1. A virtual environment with aisland in it. aisland finds it at .venv in this folder;
+#   1. A virtual environment with pip and aisland in it. aisland finds it at .venv in this folder;
 #      --prompt names it, so the shell shows ({name}) once it is activated. With uv:
 #        uv venv --seed --prompt {name} .venv
 #        uv pip install --python .venv/bin/python aisland
+#      --seed puts pip in it: `aisland setup` installs uv into the venv with that pip and stops
+#      without it. A venv made without --seed gets it with:
+#        uv pip install --python .venv/bin/python pip
 #      or with pip:
 #        python3 -m venv --prompt {name} .venv
 #        .venv/bin/pip install aisland
@@ -164,6 +193,8 @@ def _header(name: str) -> str:
 #
 #      From a wheel instead of PyPI, name the file in place of aisland:
 #        .venv/bin/pip install ./aisland-{__version__}-py3-none-any.whl
+#      or with uv:
+#        uv pip install --python .venv/bin/python ./aisland-{__version__}-py3-none-any.whl
 #      (built in a checkout of aisland with: uv build --wheel aisland -o dist)
 #
 #   2. The workspace: each project below cloned on its branch, the starting files, the git aliases:
@@ -218,7 +249,7 @@ def write(root: Path, workspace: WorkspaceFile) -> Optional[Path]:
     if not workspace.settings and not workspace.projects:
         path.unlink(missing_ok=True)
         return None
-    path.write_text(render(workspace, root.name))
+    path.write_text(render(workspace, workspace.settings.get(NAME_KEY) or root.name))
     return path
 
 

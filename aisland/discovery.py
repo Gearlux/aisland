@@ -7,6 +7,9 @@ asks "which frameworks?" before the project that defines that question is instal
     question = "Which ML frameworks should this machine install?"
     choices = ["torch", "keras"]             # every project's `choices` are its menu: extras of its own
 
+    [tool.aisland]
+    manual-extras = ["remote"]               # extras setup installs only when named: never by blank, -y or --all
+
     [tool.aisland.service.aim]               # a service the project needs, run by aisland's supervisor
     command = ["aim", "up", "--repo", "{data}", "--port", "{port}"]
     port = 43800
@@ -41,6 +44,10 @@ ENTRY_POINT_GROUP = "aisland.plugins"
 PluginKind = Literal["service"]
 PLUGIN_KINDS: Tuple[str, ...] = get_args(PluginKind)
 _KIND_METHODS: Dict[str, Tuple[str, ...]] = {"service": ("start", "stop", "status")}
+
+#: ``workspace.toml``'s ``[workspace]`` key for the workspace's name (``workspace_file.NAME_KEY``, which imports this
+#: module): a selection's choice is committed under its own name in that table, so none may take this one.
+_WORKSPACE_NAME_KEY = "name"
 
 #: The settings a declared selection and a declared service take.
 _SELECTION_KEYS = ("question", "choices")
@@ -196,6 +203,11 @@ def _selections(projects: List[Tuple[str, Path, str, Dict[str, Any]]], found: Di
             where = Where(path, table_line(text, "tool", "aisland", "selection", name))
             if not isinstance(table, dict):
                 raise DeclarationError(f"{where}: selection {name!r} is not a table")
+            if name == _WORKSPACE_NAME_KEY:
+                raise DeclarationError(
+                    f"{where}: a selection cannot be called {name!r}: workspace.toml's [workspace] {name} is the "
+                    "workspace's name"
+                )
             unknown = [key for key in table if key not in _SELECTION_KEYS]
             if unknown:
                 raise DeclarationError(
@@ -228,6 +240,26 @@ def _selections(projects: List[Tuple[str, Path, str, Dict[str, Any]]], found: Di
             found.selections[name] = Selection(name, question, declared, offers)
         else:
             found.undefined[name] = list(offers)
+
+
+def _manual_extras(projects: List[Tuple[str, Path, str, Dict[str, Any]]]) -> None:
+    """Check each ``[tool.aisland] manual-extras``: a list of the project's own extras, which setup installs only when
+    they are named (:func:`aisland.selection.manual`)."""
+    for project, path, text, data in projects:
+        tool = data.get("tool", {}).get("aisland", {})
+        if "manual-extras" not in tool:
+            continue
+        header = table_line(text, "tool", "aisland")
+        where = Where(path, key_line(text, header, "manual-extras") if header else None)
+        names = _strings(tool["manual-extras"])
+        if names is None:
+            raise DeclarationError(f'{where}: manual-extras must be a list of extras, as ["a", "b"]')
+        extras = set(data.get("project", {}).get("optional-dependencies", {}))
+        for name in names:
+            if name not in extras:
+                raise DeclarationError(
+                    f"{where}: {project} marks {name!r} as installed only when named, but defines no extra of that name"
+                )
 
 
 def _services(projects: List[Tuple[str, Path, str, Dict[str, Any]]], found: Discovery) -> None:
@@ -287,6 +319,7 @@ def discover(root: Path) -> Discovery:
     projects = _project_tables(root)
     found = Discovery()
     _selections(projects, found)
+    _manual_extras(projects)
     _services(projects, found)
     _plugins(projects, found)
     return found

@@ -32,7 +32,7 @@ import click
 
 from aisland import local_workspace, locations, tracking, workspace_file
 from aisland.harness import install_harness
-from aisland.manager import install_git_aliases
+from aisland.manager import get_workspace_name, install_git_aliases
 
 #: The files ``init`` starts a workspace with, in the order it writes them; ``--rewrite`` takes only these.
 StartingFile = Literal[".gitignore", ".env", "mypy.ini", "vscode-init-bash.sh"]
@@ -265,7 +265,7 @@ def init_workspace(
         made = ", ".join(settled.committed) if settled.error is None else f"not made: {settled.error}"
         rows.append(_row("first commit", made))
 
-    click.echo(f"==> {'Set up' if existing else 'Created'} workspace {root.name} in {root}")
+    click.echo(f"==> {'Set up' if existing else 'Created'} workspace {get_workspace_name(root)} in {root}")
     for row in rows:
         click.echo(row)
     click.echo("Next:")

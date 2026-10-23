@@ -14,11 +14,11 @@ import os
 import subprocess
 import textwrap
 from pathlib import Path
-from typing import List
+from typing import List, Optional
 
 import pytest
 
-from aisland import manager, workspace_file
+from aisland import __version__, manager, workspace_file
 
 _AUTHOR = {"GIT_AUTHOR_NAME": "t", "GIT_AUTHOR_EMAIL": "t@t", "GIT_COMMITTER_NAME": "t", "GIT_COMMITTER_EMAIL": "t@t"}
 
@@ -207,6 +207,17 @@ def test_the_written_file_says_how_to_start_a_machine_from_it_and_reads_back_the
     assert again is not None and again.read_text() == text  # a rewrite changes nothing
 
 
+def test_the_how_to_makes_a_venv_with_pip_and_says_how_to_add_it_to_one_without(tmp_path: Path) -> None:
+    """`aisland setup` installs uv into the venv with the venv's pip, and a plain `uv venv` makes none."""
+    written = workspace_file.write(tmp_path, workspace_file.WorkspaceFile(settings={"framework": ["torch"]}))
+    assert written is not None
+    lines = written.read_text().splitlines()
+    uv_venv = [line for line in lines if line.lstrip("# ").startswith("uv venv")]
+    assert uv_venv == [f"#        uv venv --seed --prompt {tmp_path.name} .venv"]
+    assert "#        uv pip install --python .venv/bin/python pip" in lines
+    assert f"#        uv pip install --python .venv/bin/python ./aisland-{__version__}-py3-none-any.whl" in lines
+
+
 def test_a_workspace_with_nothing_to_write_has_no_file(tmp_path: Path) -> None:
     (tmp_path / "workspace.toml").write_text('[project."a"]\nurl = "x"\n')
     assert workspace_file.write(tmp_path, workspace_file.WorkspaceFile()) is None
@@ -389,3 +400,54 @@ def test_a_project_without_a_url_is_read_its_settings_kept(tmp_path: Path) -> No
     path = _file(tmp_path, '[project."loggair"]\nsource = "pypi"\n')
     project = workspace_file.read(path).projects["loggair"]
     assert (project.url, project.others) == (None, {"source": "pypi"})
+
+
+# --- the workspace's name -----------------------------------------------------------------------------------------
+
+
+def _repository(root: Path, origin: Optional[str] = None) -> Path:
+    root.mkdir(parents=True, exist_ok=True)
+    subprocess.run(["git", "init", "-q"], cwd=root, check=True)
+    if origin:
+        subprocess.run(["git", "remote", "add", "origin", origin], cwd=root, check=True)
+    return root
+
+
+def test_the_files_name_names_the_workspace_before_its_origin_and_its_folder(tmp_path: Path) -> None:
+    root = _repository(tmp_path / "workspace", "git@example.com:acme/models-root.git")
+    _file(root, '[workspace]\nname = "bridge"\n')
+    assert manager.get_workspace_name(root) == "bridge"
+    assert manager.code_workspace_path(root) == root / "bridge.code-workspace"
+
+
+def test_without_a_name_the_origin_then_the_folder_names_the_workspace(tmp_path: Path) -> None:
+    with_origin = _repository(tmp_path / "workspace", "git@example.com:acme/models-root.git")
+    _file(with_origin, '[workspace]\nframework = ["torch"]\n')
+    assert manager.get_workspace_name(with_origin) == "models-root"
+    assert manager.get_workspace_name(_repository(tmp_path / "plain")) == "plain"
+
+
+def test_the_how_to_uses_the_files_name(tmp_path: Path) -> None:
+    root = tmp_path / "workspace"
+    root.mkdir()
+    written = workspace_file.write(root, workspace_file.WorkspaceFile(settings={"name": "bridge"}))
+    assert written is not None
+    lines = written.read_text().splitlines()
+    assert lines[0] == "# workspace.toml — the bridge workspace: its projects and its choices, committed."
+    assert "#        uv venv --seed --prompt bridge .venv" in lines
+    assert lines[lines.index("[workspace]") + 1] == 'name = "bridge"'
+
+
+@pytest.mark.parametrize("value", ["3", '"a/b"', '""', '"two words"'])
+def test_a_name_that_is_no_plain_name_is_refused_naming_its_line(tmp_path: Path, value: str) -> None:
+    path = _file(tmp_path, f'[workspace]\nframework = ["torch"]\nname = {value}\n')
+    assert _refusal(path) == (
+        f'{path}:3: the workspace\'s name must be one plain name (letters, digits, _ . -), as name = "bridge"'
+    )
+
+
+def test_a_broken_file_leaves_the_name_to_the_origin_and_the_folder(tmp_path: Path) -> None:
+    """Setup's upkeep reports the file; everything that only wants a name goes on with the next answer."""
+    root = _repository(tmp_path / "plain")
+    _file(root, "[workspace]\nname = 3\n")
+    assert manager.get_workspace_name(root) == "plain"

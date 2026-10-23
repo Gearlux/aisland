@@ -180,6 +180,12 @@ start-time port pre-flight naming the PID is the only signal). All service state
   INSIDE `aisland/aisland/` and is named in `[tool.setuptools.package-data]`, so a wheel carries
   it; never read one from the project folder beside the package.
   (`tests/test_packaging.py::test_the_wheel_carries_every_file_of_the_package`)
+- **The workspace's name is `[workspace] name` in `workspace.toml`, else its origin's repository, else its folder
+  (user request 2026-10-23).** `manager.get_workspace_name` is the one reader (`workspace_file.name_of`); it names
+  `<name>.code-workspace`, the Jenkins jobs, the nightly report, the how-to and `init`'s first line. A name that is no
+  plain name is refused naming its line; a file aisland cannot read leaves the name to the origin and the folder;
+  discovery refuses a selection called `name`. (`tests/test_workspace_file.py::test_the_files_name_names_the_workspace_before_its_origin_and_its_folder`
+  and its neighbours)
 - **A workspace is written down in `workspace.toml`, shaped like `.gitmodules` (user rulings 2026-10-20/22).**
   [workspace-file] `workspace_file.py`: the how-to comments (venv with pip and with uv, aisland from PyPI or a wheel,
   `init --from`, `setup`), `[workspace]`, then a `[project."<name>"]` per project — `path` (its folder; the name when
@@ -384,6 +390,11 @@ Root `AGENTS.md` "Two Test Runs" (user ruling 2026-10-05). [test-stats]
   `opencv-python-headless>=4.12,<5`) + each ACTIVATED project's `uv.toml`. A private index
   lives only in its project's `uv.toml`; never commit the root file or put an index in the
   base. (`tests/test_uv_activation.py`)
+  - Each activated project's `wheels/` folder holding a `wheels.yaml` is a `find-links` path in it, relative to the
+    file (uv resolves it against the file's folder from anywhere below), so setup and every install in the workspace
+    find the wheels without `install.py` (user choice 2026-10-23, every such folder, tracked or not). uv takes a
+    find-links wheel over the index's of the same version (pip does not); an editable checkout still wins.
+    (`tests/test_uv_activation.py::TestWheelsFolders`, end to end with the real uv offline)
 - There is no `config.toml` and no `aisland config` (user ruling 2026-10-23): every committed setting is in
   `workspace.toml` — a project's in its table, a selection's choice under `[workspace]`. `uv.toml` never joins it:
   uv reads only a file of its own settings. [config]
@@ -500,6 +511,12 @@ User rulings 2026-10-23. [frameworks] (`tests/test_selection.py`)
   everything, `--all` takes every extra; an answer is committed. `set` takes the WHOLE list and reinstalls the
   offering projects at once (no `--no-apply`); an unknown name is refused before anything is written; the exit code
   is the number of failed installs. `setup` has no `--framework`/`--extra` (choose with `set` first).
+- **An extra a project marks in `[tool.aisland] manual-extras` is installed only when named (user choice
+  2026-10-23).** A blank answer, `-y` and `--all` leave it out; the menu marks it `(only when named)`; one project
+  marking a name is enough, since a selection is one name for every project. Discovery refuses a marked name that is
+  no extra of the project, and a value that is no list, naming the file and the line. A declaration, never a
+  structural guess. (`tests/test_selection.py::test_a_blank_answer_leaves_out_an_extra_installed_only_when_named`
+  and its neighbours)
 - A project that needs one framework outright (`raidar-ultralytics`) keeps it as a base dependency and offers no
   choice. Never fake an extra.
 

@@ -3079,3 +3079,114 @@ tracker = ["mlflow", "tensorboard", "aim", "clearml", "wandb"]
 - Never: a selection named in aisland's code (but `extras`), a second committed file, or a machine's choice
   reaching a generated CI file.
 
+
+## An extra a project marks is installed only when named (2026-10-23)
+
+*2026-10-23* [frameworks]
+
+### Context
+
+`aisland setup` offered every extra and took them all on a blank answer, `-y` or `--all`. One project's extra pinned
+two dependencies to their remote branch by URL — meant for a machine with no checkout of them — and a blank answer
+installed it in a workspace that had both checked out: uv replaced the local checkouts with the remote branch.
+
+### Decision
+
+A project marks such extras in `[tool.aisland] manual-extras`. They stay on the menu, marked `(only when named)`, but
+a blank answer, `-y` and `--all` leave them out; naming one (at the prompt or with `aisland workspace configure
+extras set`) installs it. The user chose the declaration over a structural rule (leave out an extra that pins a
+workspace project by URL): the project knows what its extra is for, and the declaration holds in every workspace.
+
+### Consequences
+
+- An extra marked by one project is left out for every project offering that name.
+- Discovery refuses a marked name that is no extra of the project, naming the file and the line, before setup
+  installs anything.
+
+### Example
+
+```toml
+[project.optional-dependencies]
+remote = ["acme-core @ git+https://example.com/acme/core.git@dev/main"]
+
+[tool.aisland]
+manual-extras = ["remote"]
+```
+
+### What you may change
+
+- The menu's marker and the prompt's wording.
+- Never: a marked extra taken by a blank answer, `-y` or `--all`.
+
+## A project's wheels folder is a find-links path of the generated `uv.toml` (2026-10-23)
+
+*2026-10-23* [wheels]
+
+### Context
+
+A project shipping the wheels of what PyPI lacks (`aisland wheels build`) already carried `[tool.uv] find-links =
+["wheels"]`, but uv reads a project's `[tool.uv]` only when it runs inside that folder. `aisland setup` runs uv from
+the workspace root, so the wheels were never seen: installing the project failed on a dependency only the folder held
+until `python wheels/install.py` had run by hand.
+
+### Decision
+
+The generated root `uv.toml` lists each activated project's `wheels/` folder (marked by its `wheels.yaml`) under
+`find-links`, relative to the file. Measured: uv resolves the relative path against the file's folder, from the root
+and from a folder below it; it installs a wheel only the folder has; and it takes the folder's `confluid-0.4.1` over
+PyPI's `confluid-0.4.1` whose files differ — pip, through `--find-links`, takes PyPI's. The user chose every such
+folder, tracked in git or not.
+
+### Consequences
+
+- Setup, `aisland workspace configure … set` and any `uv pip install` run in the workspace use the wheels.
+- A dependency taken from PyPI (`source = pypi`) comes from a wheels folder whenever the folder holds the same or a
+  newer version; a project checked out in the workspace still installs from its checkout.
+
+### Example
+
+```toml
+# <workspace>/uv.toml, generated
+find-links = ["bridge/wheels"]
+override-dependencies = ["opencv-python ; sys_platform == 'never'", "opencv-python-headless>=4.12,<5"]
+```
+
+### What you may change
+
+- Which folders count (the `wheels.yaml` marker).
+- Never: an absolute path in the generated file, or `install.py` named as a step of setup.
+
+## The workspace's name can be written in `workspace.toml` (2026-10-23)
+
+*2026-10-23* [workspace-file]
+
+### Context
+
+The name — the editor file, the Jenkins jobs, the how-to's `--prompt` — was the origin's repository name, else the
+folder's. A workspace in a folder called `workspace`, with no origin, was named `workspace` with no way to change it,
+and the how-to used the folder's name even where the origin gave another.
+
+### Decision
+
+`[workspace] name` in `workspace.toml` comes first, then the origin, then the folder, read in one place
+(`manager.get_workspace_name` through `workspace_file.name_of`); the how-to uses the file's name too. A name must be
+one plain name; a selection may not be called `name`, since a selection's choice is committed under its own name in
+the same table.
+
+### Consequences
+
+- Setting a name renames the editor file at the next setup (the old one stays until removed) and the Jenkins jobs.
+- A workspace without a name is named as before.
+
+### Example
+
+```toml
+[workspace]
+name = "bridge"
+extras = ["dev", "local"]
+```
+
+### What you may change
+
+- The order after the file's name.
+- Never: a second place a name is read from.

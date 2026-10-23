@@ -560,8 +560,9 @@ def provision() -> None:
     "--all",
     "install_all",
     is_flag=True,
-    help="Install every extra every project defines, without asking. Computed from the "
-    "projects' own [project.optional-dependencies]; does not need an extra named `all`.",
+    help="Install every extra every project defines, without asking, but those a project installs only when "
+    "named ([tool.aisland] manual-extras). Computed from the projects' own [project.optional-dependencies]; does "
+    "not need an extra named `all`.",
 )
 def setup(non_interactive: bool, install_all: bool) -> None:
     """Full workspace setup: provision tools, ask about the optional projects, install the active ones.

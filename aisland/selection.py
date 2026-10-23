@@ -123,6 +123,24 @@ def available(root: Path, axis: Axis) -> List[str]:
     return sorted({name for names in declarations(root, axis).values() for name in names})
 
 
+def manual(root: Path, axis: Axis) -> Set[str]:
+    """The choices of ``axis`` installed only when they are named: a blank answer, ``-y`` and ``--all`` leave them out.
+
+    A project marks them in ``[tool.aisland] manual-extras`` (checked by :mod:`aisland.discovery`) — an extra no
+    machine should get by default, such as one pinning a dependency to a remote branch that would replace a local
+    checkout of it. One project marking a name is enough: a selection is one name for every project. Only
+    :data:`EXTRAS` has them."""
+    if not axis.from_defined_extras:
+        return set()
+    from aisland.manager import discover_projects
+
+    out: Set[str] = set()
+    for pyproject in discover_projects(root):
+        names = _read(pyproject).get("tool", {}).get("aisland", {}).get("manual-extras", [])
+        out.update(str(name) for name in names if isinstance(names, list))
+    return out
+
+
 def _canonical(name: str) -> str:
     """PEP 503 normalisation, so ``my-project`` and ``my_project`` compare equal."""
     return re.sub(r"[-_.]+", "-", name).lower()
@@ -256,21 +274,27 @@ def prompt_for(root: Path, choices: Sequence[str], axis: Axis) -> List[str]:
     setup should work before it is trimmed."""
     click.echo(f"\n==> {axis.question}")
     offered = declarations(root, axis)
+    only_named = manual(root, axis)
     for index, name in enumerate(choices, start=1):
         users = [project for project, names in offered.items() if name in names]
-        click.echo(f"      [{index}] {name:<12} {', '.join(sorted(users))}")
+        mark = " (only when named)" if name in only_named else ""
+        click.echo(f"      [{index}] {name:<12} {', '.join(sorted(users))}{mark}")
+    blank = "all but those only when named" if only_named & set(choices) else "all"
     answer = click.prompt(
-        "    Select (names or numbers, comma/space separated; blank = all)", default="", show_default=False
+        f"    Select (names or numbers, comma/space separated; blank = {blank})", default="", show_default=False
     )
-    return parse_selection(answer, choices, axis)
+    return parse_selection(answer, choices, axis, blank=[name for name in choices if name not in only_named])
 
 
-def parse_selection(answer: str, choices: Sequence[str], axis: Axis) -> List[str]:
-    """An answer as names; blank is all of ``choices``. An unknown word is DROPPED with a warning: this runs in the
-    middle of a long setup, and stopping it over a typo would cost more than going on with what was understood."""
+def parse_selection(
+    answer: str, choices: Sequence[str], axis: Axis, blank: Optional[Sequence[str]] = None
+) -> List[str]:
+    """An answer as names; blank is ``blank`` (all of ``choices`` when not given). An unknown word is DROPPED with a
+    warning: this runs in the middle of a long setup, and stopping it over a typo would cost more than going on with
+    what was understood."""
     tokens = [token for token in answer.replace(",", " ").split() if token]
     if not tokens:
-        return list(choices)
+        return list(choices if blank is None else blank)
     chosen: List[str] = []
     for token in tokens:
         if token.isdigit() and 1 <= int(token) <= len(choices):
@@ -292,19 +316,23 @@ def resolve_for_setup(
 
     ``select_all`` (``setup --all``, for :data:`EXTRAS`) takes the whole menu and records it; else a recorded choice
     is used as it is; else setup asks — or, under ``-y``, takes everything, since a headless setup must neither hang
-    nor leave a workspace that cannot do its job. A new choice is committed."""
+    nor leave a workspace that cannot do its job. "Everything" and a blank answer leave out the choices installed
+    only when named (:func:`manual`). A new choice is committed."""
     choices = available(root, axis)
     if not choices:
         return [], False
+    only_named = [name for name in choices if name in manual(root, axis)]
+    everything = [name for name in choices if name not in only_named]
     if select_all:
-        write_committed(root, axis.name, choices)
-        return choices, True
+        write_committed(root, axis.name, everything)
+        return everything, True
     existing = effective(root, axis.name)
     if existing is not None:
         return list(existing), False
     if non_interactive:
-        click.echo(f"==> Nothing chosen for {axis.name}; installing all ({', '.join(choices)}).")
-        chosen = choices
+        left_out = f"; only when named: {', '.join(only_named)}" if only_named else ""
+        click.echo(f"==> Nothing chosen for {axis.name}; installing all ({', '.join(everything)}){left_out}.")
+        chosen = everything
     else:
         chosen = prompt_for(root, choices, axis)
         click.echo(f"  - {axis.name} = {', '.join(chosen) or '(none)'} (in {workspace_file.FILE_NAME})")

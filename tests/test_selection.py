@@ -294,6 +294,89 @@ def test_setup_all_takes_every_extra_over_a_recorded_choice(workspace: Path) -> 
     assert s.read_committed(workspace, "extras") == chosen
 
 
+def _manual(project: Path, names: List[str]) -> None:
+    """Mark ``names`` as extras ``project`` installs only when they are named (`[tool.aisland] manual-extras`)."""
+    with (project / "pyproject.toml").open("a") as f:
+        f.write("\n[tool.aisland]\nmanual-extras = [" + ", ".join(f'"{name}"' for name in names) + "]\n")
+
+
+def test_a_blank_answer_leaves_out_an_extra_installed_only_when_named(workspace: Path) -> None:
+    _manual(workspace / "trainer", ["aim"])
+
+    @click.command()
+    def ask() -> None:
+        click.echo(repr(s.resolve_for_setup(workspace, False, s.EXTRAS)))
+
+    result = CliRunner().invoke(ask, input="\n")
+    lines = result.output.splitlines()
+    assert "      [1] aim          trainer (only when named)" in lines
+    assert "      [2] dev          models, plain, trainer" in lines
+    assert "    Select (names or numbers, comma/space separated; blank = all but those only when named): " in lines
+    assert "(['dev', 'keras', 'lightning', 'mlflow', 'torch'], True)" in result.output
+    assert s.read_committed(workspace, "extras") == ["dev", "keras", "lightning", "mlflow", "torch"]
+
+
+def test_naming_an_extra_installed_only_when_named_takes_it(workspace: Path) -> None:
+    _manual(workspace / "trainer", ["aim"])
+
+    @click.command()
+    def ask() -> None:
+        click.echo(repr(s.resolve_for_setup(workspace, False, s.EXTRAS)))
+
+    assert "(['aim', 'torch'], True)" in CliRunner().invoke(ask, input="aim torch\n").output
+
+
+def test_setup_y_leaves_out_an_extra_installed_only_when_named_and_says_so(
+    workspace: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    _manual(workspace / "trainer", ["aim"])
+    assert s.resolve_for_setup(workspace, True, s.EXTRAS) == (["dev", "keras", "lightning", "mlflow", "torch"], True)
+    assert (
+        "==> Nothing chosen for extras; installing all (dev, keras, lightning, mlflow, torch); "
+        "only when named: aim." in capsys.readouterr().out
+    )
+
+
+def test_setup_all_leaves_out_an_extra_installed_only_when_named(workspace: Path) -> None:
+    _manual(workspace / "trainer", ["aim"])
+    chosen, _ = s.resolve_for_setup(workspace, True, s.EXTRAS, select_all=True)
+    assert chosen == ["dev", "keras", "lightning", "mlflow", "torch"]
+
+
+def test_an_extra_one_project_installs_only_when_named_is_left_out_for_every_project(workspace: Path) -> None:
+    _manual(workspace / "models", ["torch"])  # trainer offers torch too, and does not mark it
+    chosen, _ = s.resolve_for_setup(workspace, True, s.EXTRAS, select_all=True)
+    assert "torch" not in chosen
+
+
+def test_without_extras_installed_only_when_named_the_blank_answer_is_everything(workspace: Path) -> None:
+    @click.command()
+    def ask() -> None:
+        click.echo(repr(s.resolve_for_setup(workspace, False, s.EXTRAS)))
+
+    result = CliRunner().invoke(ask, input="\n")
+    assert "    Select (names or numbers, comma/space separated; blank = all): " in result.output.splitlines()
+    assert "(['aim', 'dev', 'keras', 'lightning', 'mlflow', 'torch'], True)" in result.output
+
+
+@pytest.mark.parametrize(
+    "value, said",
+    [
+        ('["nope"]', "trainer marks 'nope' as installed only when named, but defines no extra of that name"),
+        ('"aim"', 'manual-extras must be a list of extras, as ["a", "b"]'),
+    ],
+)
+def test_manual_extras_that_are_no_extras_are_refused_naming_the_file_and_line(
+    workspace: Path, value: str, said: str
+) -> None:
+    pyproject = workspace / "trainer" / "pyproject.toml"
+    pyproject.write_text(pyproject.read_text() + f"\n[tool.aisland]\nmanual-extras = {value}\n")
+    line = pyproject.read_text().splitlines().index("[tool.aisland]") + 2
+    with pytest.raises(DeclarationError) as raised:
+        s.axes(workspace)
+    assert str(raised.value.message) == f"{pyproject}:{line}: {said}"
+
+
 def test_a_selection_nobody_offers_anything_for_is_not_asked(tmp_path: Path) -> None:
     _project(tmp_path, "trainer", [], {"framework": []}, {"framework": QUESTION})
     assert s.resolve_for_setup(tmp_path, False, _axis(tmp_path, "framework")) == ([], False)
@@ -509,3 +592,15 @@ def test_the_real_workspace_declares_its_selections_without_a_fault() -> None:
 
 def test_the_overview_and_the_plugins_agree(workspace: Path) -> None:
     assert {"extras", "framework", "tracker", "active", "mirror", "source"} == set(configure.plugins(workspace))
+
+
+def test_a_selection_called_name_is_refused_since_the_workspaces_name_has_that_key(tmp_path: Path) -> None:
+    _project(tmp_path, "trainer", ["torch"], {"name": ["torch"]}, {"name": "Which name?"})
+    pyproject = tmp_path / "trainer" / "pyproject.toml"
+    line = pyproject.read_text().splitlines().index("[tool.aisland.selection.name]") + 1
+    with pytest.raises(DeclarationError) as raised:
+        s.axes(tmp_path)
+    assert str(raised.value.message) == (
+        f"{pyproject}:{line}: a selection cannot be called 'name': workspace.toml's [workspace] name is the "
+        "workspace's name"
+    )

@@ -178,9 +178,12 @@ that is gone dropped — and its first lines say how to start on a machine that 
 ```toml
 # workspace.toml — the acme workspace: its projects and its choices, committed.
 # ...
-#   1. A virtual environment with aisland in it. ...
+#   1. A virtual environment with pip and aisland in it. ...
 #        uv venv --seed --prompt acme .venv
 #        uv pip install --python .venv/bin/python aisland
+#      --seed puts pip in it: `aisland setup` installs uv into the venv with that pip and stops
+#      without it. A venv made without --seed gets it with:
+#        uv pip install --python .venv/bin/python pip
 #   2. ...
 #        .venv/bin/aisland workspace init . --from workspace.toml
 #   3. ...
@@ -216,6 +219,15 @@ then shows `(acme)`), or keep the venv elsewhere and link it in — `.gitignore`
 
 ```bash
 python3 -m venv ~/venvs/acme && ln -s ~/venvs/acme .venv
+```
+
+The workspace's name — the editor file `<name>.code-workspace`, the Jenkins jobs `<name>.local` and
+`<name>.nightly-check`, the how-to's `--prompt` — is its origin's repository name, else its folder's. A different
+one is written in the file, before the projects:
+
+```toml
+[workspace]
+name = "bridge"
 ```
 
 Run from that `.venv`, `init` leaves the venv line out of its `Next:` steps. A branch of `.` in
@@ -526,6 +538,17 @@ headless opencv is pinned to the one range every consumer shares) merged with ea
 a private index (the Company Artifactory in `vendorcli/uv.toml`) lands in the
 root file **only on a machine that activates that project** — a non-corporate
 machine that skips it never tries to contact the unreachable index.
+
+Each activated project's `wheels/` folder (one `aisland wheels build` wrote, with its `wheels.yaml`) joins it as a
+`find-links` path, relative to the file:
+
+```toml
+find-links = ["bridge/wheels"]
+```
+
+Every `uv pip install` run in the workspace — setup's, `aisland workspace configure … set`'s, your own — then finds
+the wheels of what PyPI lacks without a separate step, and takes the folder's wheel over PyPI's of the same version.
+A project checked out in the workspace still installs from its checkout.
 
 ### 1. Check Status
 Retrieve service information for all infrastructure components:
@@ -891,6 +914,9 @@ python wheels/install.py --dry-run       # print the command, run nothing
 python wheels/install.py --installer uv  # uv pip instead of pip
 python wheels/install.py -- --index-url https://…   # everything after -- goes to pip / uv
 ```
+
+In an aisland workspace holding the project, `aisland setup` finds the folder's wheels by itself (the generated
+`uv.toml`'s `find-links`); the script is for an environment aisland does not manage.
 
 It installs into the interpreter that runs it, and installs PyYAML first when it is missing.
 It names each chosen wheel by its FILE. That is what makes a wheel built from a checkout win over
@@ -1775,6 +1801,17 @@ project that asks the question, there is no such selection and the others' choic
 commits the answer (a blank answer is everything); `aisland setup -y` with nothing chosen takes everything rather
 than hanging. To choose beforehand, set it first: `aisland workspace configure framework set torch --machine-only &&
 aisland setup -y`. `aisland setup --all` takes every extra every project defines.
+
+An extra no machine should get by default — one that pins a dependency to a remote branch, which would replace a
+local checkout of it — is marked by its project:
+
+```toml
+[tool.aisland]
+manual-extras = ["remote"]
+```
+
+The menu then shows it as `[4] remote       models (only when named)`, and a blank answer, `-y` and `--all` leave it
+out; typing its name, or `aisland workspace configure extras set … remote`, installs it.
 
 ### The two layers
 
