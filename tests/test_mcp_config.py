@@ -13,12 +13,16 @@ import os
 import re
 import subprocess
 from pathlib import Path
+from typing import List
 
 import pytest
 
 from aisland import manager
 from aisland.manager import _discover_mcp_servers, _write_gemini_settings, _write_mcp_json, get_workspace_root
+from tests.test_setup_installs_git_aliases import stubbed_setup
 from tests.workspace_layout import needs_workspace
+
+__all__ = ["stubbed_setup"]  # the fixture that runs `aisland setup` with its machine steps stubbed
 
 
 def _project(root: Path, name: str, script: str, module_text: str) -> None:
@@ -91,12 +95,23 @@ class TestTheTwoClientFiles:
         assert "modern's MCP command" not in out
         assert set(json.loads((fake_workspace / ".mcp.json").read_text())["mcpServers"]) == {"modern", "legacy"}
 
-    def test_setup_writes_both_files(self) -> None:
-        import inspect
+    def test_setup_writes_both_files(
+        self, stubbed_setup: List[Path], tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """`aisland setup` itself, its machine steps stubbed (the fixture) but the two writers real, over a
+        workspace of the servers above: both client files appear, carrying both servers."""
+        monkeypatch.setattr(manager, "_write_gemini_settings", _write_gemini_settings)
+        monkeypatch.setattr(manager, "_write_mcp_json", _write_mcp_json)
+        _project(tmp_path, "modern", "modern-mcp", "from mcp.server.mcpserver import MCPServer\n")
+        _project(tmp_path, "legacy", "legacy", "from mcp.server.fastmcp import FastMCP\n")
 
-        source = inspect.getsource(manager.setup_workspace)
-        assert "_write_gemini_settings(workspace_root, venv_bin)" in source
-        assert "_write_mcp_json(workspace_root, venv_bin)" in source
+        manager.setup_workspace(non_interactive=True)
+
+        venv_bin = tmp_path / ".venv" / "bin"
+        for client_file in (tmp_path / ".gemini" / "settings.json", tmp_path / ".mcp.json"):
+            servers = json.loads(client_file.read_text())["mcpServers"]
+            assert set(servers) == {"modern", "legacy"}, client_file
+            assert servers["modern"]["command"] == str(venv_bin / "modern-mcp"), client_file
 
 
 class TestTheServersGetTheWorkspaceEnvironment:

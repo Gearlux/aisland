@@ -326,11 +326,8 @@ def test_the_check_job_runs_the_report_on_weekday_mornings(tmp_path: Path, monke
     assert "label 'built-in'" in config
 
 
-def test_only_a_local_setup_seeds_the_check_job() -> None:
-    import inspect
-
-    source = inspect.getsource(JenkinsService.init_pipelines)
-    assert "if local:\n            self._create_nightly_check_job()" in source
+# Only a local init seeds the check job: tests/test_jenkins_init_race.py::test_only_a_local_init_seeds_the_nightly_check_job,
+# which runs init_pipelines.
 
 
 # --------------------------------------------------------------------------
