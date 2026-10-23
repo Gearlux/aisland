@@ -374,7 +374,7 @@ class TestRefusals:
         with pytest.raises(click.ClickException) as error:
             w.vendor_wheels(root, "navigaitor")
         assert "navigaitor is not checked out on this machine" in error.value.message
-        assert "aisland setup --activate navigaitor" in error.value.message
+        assert "aisland workspace configure active set navigaitor true --machine-only" in error.value.message
 
     def test_a_project_named_by_its_distribution_is_found_and_named_by_its_folder(self, tmp_path: Path) -> None:
         root = _workspace(tmp_path, "acme")
@@ -938,6 +938,7 @@ class TestCli:
             force: bool,
             check: bool,
             include_project: bool,
+            bundle: bool,
         ) -> w.WheelsReport:
             asked.append(scope)
             return _report(import_failures=[])

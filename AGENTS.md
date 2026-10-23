@@ -45,7 +45,7 @@ The workspace's dev-infrastructure CLI, `aisland` (click, `aisland/cli.py`):
 - `pytest_stats.py`: the `aisland_test_stats` pytest plugin (entry point `pytest11`) that
   records every run of a workspace project, and `aisland tests report` reading it beside the
   Jenkins builds' JUnit results.
-- `wheels.py`: `aisland wheels build <project>`, the wheels of the workspace projects it needs that
+- `wheels.py`: `aisland wheels build <project>` (`--bundle`: one merged wheel, `wheels_bundle.py`), the wheels of the workspace projects it needs that
   are not on PyPI (or, by flag, every needed or every workspace project), written into
   `<project>/wheels/` with `wheels.yaml` and `install.py` (`wheels_install.py`), and the check of what it
   takes from PyPI; the folder git-ignored unless `--commit`, packed by `aisland wheels zip` into a zip that
@@ -672,6 +672,16 @@ User choice 2026-10-08: an aisland command, only the named project's closure, bo
   (`TestTheProjectsOwnWheelInTheFiles::test_without_it_every_file_is_what_it_was`,
   `TestEndToEnd::test_include_project_ships_the_project_as_a_wheel_that_installs_from_a_folder_of_no_project`,
   `tests/test_wheels_zip.py::TestRunningTheZip`).
+- `--bundle` (user choice 2026-10-23) merges the target's own wheel and the needed separate wheels into ONE wheel,
+  `<project>-bundle`, in `wheels/bundle/` (`wheels_bundle.py`): one `.dist-info` (pip refuses more), so pip knows
+  only that name — the user accepted that `pip show <dependency>` finds nothing and `__version__` falls back.
+  Its requirements come from each bundled project's `pyproject.toml` (a bundled project's requirement inlined
+  under its marker, the target's extras kept), never from METADATA; an unsatisfied requirement, a non-pure wheel,
+  a path with two contents, an entry point with two targets and `dynamic` dependencies are REFUSED, never resolved.
+  The target is held to its own wheel's rules; the bundle is checked alone (`install_bundle_and_import`) and its
+  failures exit 1 and block `--commit`. Without the flag every file is byte-identical and a stale bundle is removed;
+  the zip never holds it (`tests/test_wheels_bundle.py::TestTheRunWithABundle::test_without_bundle_every_file_is_what_it_was_and_an_old_bundle_goes`,
+  `::test_the_zip_leaves_the_bundle_out`, `TestEndToEnd::test_the_bundle_installs_alone_with_plain_pip_and_pip_knows_only_its_name`).
 - TAB after `wheels build` / `wheels zip` / the short form `wheels` offers the projects (`cli._complete_projects`:
   checked out here; `zip` only those with a `wheels.yaml`; the group's commands first). It reads folders and
   `pyproject.toml` only and an unreadable workspace offers nothing (`tests/test_wheels.py::TestShellCompletion`).

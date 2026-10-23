@@ -673,6 +673,7 @@ aisland wheels build navigaitor
 aisland wheels build navigaitor --include-published   # also the projects it needs that ARE on PyPI
 aisland wheels build navigaitor --all                 # every workspace project with a checkout here
 aisland wheels build navigaitor --include-project     # also navigaitor's own wheel: installs with no source
+aisland wheels build navigaitor --bundle              # also ONE wheel of navigaitor and what it needs
 aisland wheels build navigaitor --zip                 # also pack the folder into one zip
 aisland wheels build navigaitor --commit              # commit the folder in navigaitor
 aisland wheels build navigaitor --force               # build projects with uncommitted changes as they are
@@ -898,9 +899,51 @@ aisland wheels install navigaitor-wheels.zip --python ~/envs/navigaitor/bin/pyth
 aisland wheels install navigaitor-wheels.zip --python ~/envs/navigaitor/bin/python -- --dry-run
 ```
 
+#### One wheel: `--bundle`
+
+```bash
+aisland wheels build navigaitor --bundle                       # → navigaitor/wheels/bundle/navigaitor_bundle-<version>-py3-none-any.whl
+aisland wheels build navigaitor --include-published --bundle   # the projects on PyPI inside it too
+```
+
+`--bundle` merges the project and the wheels it needs into one wheel, `<project>-bundle`, that plain
+pip installs anywhere — no zip, no `install.py`, no checkout:
+
+```bash
+pip install navigaitor_bundle-0.1.0-py3-none-any.whl
+```
+
+The separate wheels and every other file in `wheels/` are written as without the flag; the bundle
+goes into `wheels/bundle/`, which the zip leaves out. It holds the wheels the project needs that the
+scope built (`--all`'s unneeded ones stay out); everything else it needs — outside packages, the
+workspace projects taken from PyPI — it requires, as the projects inside it do, so pip fetches
+them. The project's own extras are the bundle's: `pip install "./navigaitor_bundle-0.1.0-py3-none-any.whl[http]"`. The
+project is built from its last commit, as with `--include-project`. The run installs the bundle
+alone in an empty venv of its own and imports every module; a failure there exits 1 too:
+
+What `aisland wheels build navigaitor --include-published --bundle` printed last, on 2026-10-23:
+
+```text
+Bundle: navigaitor/wheels/bundle/navigaitor_bundle-0.1.0-py3-none-any.whl (852 kB) — 5 projects in one wheel (navigaitor, confluid, liquifai, loggair, recordstream); install it with: pip install navigaitor_bundle-0.1.0-py3-none-any.whl
+  Installed alone in an empty venv (it + PyPI): all 147 modules imported
+```
+
+A wheel holds ONE distribution, so pip knows only `navigaitor-bundle`:
+
+| On the other machine | Separate wheels | The bundle |
+|---|---|---|
+| `pip show confluid` | `Version: 0.4.1` | `WARNING: Package(s) not found: confluid` |
+| `confluid.__version__`, `navigaitor.__version__` | `0.4.1`, `0.1.0` | `0.0.0.dev0`, `0.0.0.dev0` (each reads its own distribution's version) |
+| a later `pip install X`, X requiring `confluid` | already satisfied | pip installs PyPI's confluid over the bundle's copy |
+| `pip uninstall` | one project | all of them |
+
+The merge refuses what would install wrongly, naming it: a wheel that is not pure Python, one path
+with different contents in two wheels, one entry point name pointing at two objects, a requirement
+the bundled version does not satisfy, a project whose `dependencies` are dynamic.
+
 Why it is built
 this way: [`docs/architecture.md`](docs/architecture.md) → "A project installed outside the
-workspace gets its unpublished dependencies as wheels".
+workspace gets its unpublished dependencies as wheels" and "`--bundle`: one wheel, one name".
 
 ### Reaching a remote machine (`aisland tunnel`)
 

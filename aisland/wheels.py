@@ -80,14 +80,14 @@ import urllib.request
 import zipfile
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
-from typing import Any, Dict, List, Literal, Optional, Set, Tuple
+from typing import Any, Callable, Dict, List, Literal, Optional, Set, Tuple
 
 import click
 from packaging.requirements import InvalidRequirement, Requirement
 from packaging.utils import canonicalize_name
 from packaging.version import InvalidVersion, Version
 
-from aisland import wheels_install, wheels_unzip
+from aisland import wheels_bundle, wheels_install, wheels_unzip
 from aisland.manager import ensure_uv_in_venv, workspace_folders
 from aisland.sources import _points_at_gearlux, _pypi_json, read_committed_sources
 from aisland.wheels_install import WheelsFileError, read_wheels
@@ -264,6 +264,19 @@ class ImportFailure:
 
 
 @dataclass
+class BundleWheel:
+    """The one wheel ``--bundle`` merged: the project and the wheels it needs (:mod:`aisland.wheels_bundle`)."""
+
+    #: The file, relative to the workspace.
+    wheel: str
+    distribution: str
+    version: str
+    #: The projects inside it, the target first.
+    projects: List[str]
+    bytes: int
+
+
+@dataclass
 class WheelsReport:
     """What ``aisland wheels <target>`` built and found."""
 
@@ -301,12 +314,18 @@ class WheelsReport:
     checked: bool = True
     #: The target's own wheel (``--include-project``); never in ``built``, which holds what the target needs.
     project_wheel: Optional[BuiltWheel] = None
+    #: The one wheel ``--bundle`` wrote, and its own check: installed alone in an empty venv, every module imported.
+    bundle: Optional[BundleWheel] = None
+    bundle_install_error: Optional[str] = None
+    bundle_import_failures: List[ImportFailure] = field(default_factory=list)
+    bundle_imported: List[str] = field(default_factory=list)
 
     @property
     def ok(self) -> bool:
         """The target installed in an empty venv, every package imported, and no module missed a workspace project
-        (an unchecked run: no failure, since nothing was checked)."""
-        return self.install_error is None and not self.import_failures
+        — and so did the bundle, when there is one (an unchecked run: no failure, since nothing was checked)."""
+        bundle_ok = self.bundle_install_error is None and not self.bundle_import_failures
+        return self.install_error is None and not self.import_failures and bundle_ok
 
     @property
     def release_first(self) -> List[str]:
@@ -594,6 +613,34 @@ def install_and_import(
     so nothing of the workspace leaks into the imports; ``uv``'s folder leads ``PATH``, where the script
     looks for it.
     """
+    script = [str(wheels_dir / INSTALL_SCRIPT), "--installer", "uv", "--needed", "--", "--quiet"]
+    return _install_and_import(
+        uv, target_dir, packages, scratch, lambda python, config: [str(python), *script, *config]
+    )
+
+
+def install_bundle_and_import(
+    uv: str, target_dir: Path, bundle: Path, packages: List[str], scratch: Path
+) -> Tuple[Optional[str], Dict[str, Dict[str, Any]], List[str]]:
+    """Install ``bundle`` ALONE in an empty venv (``uv pip install <bundle>``: the rest from PyPI) and import every
+    module of ``packages``; the venv, the configuration and the result as :func:`install_and_import`'s."""
+
+    def _command(python: Path, config: List[str]) -> List[str]:
+        return [uv, "pip", "install", "--python", str(python), "--quiet", *config, str(bundle)]
+
+    return _install_and_import(uv, target_dir, packages, scratch, _command)
+
+
+def _install_and_import(
+    uv: str,
+    target_dir: Path,
+    packages: List[str],
+    scratch: Path,
+    install: Callable[[Path, List[str]], List[str]],
+) -> Tuple[Optional[str], Dict[str, Dict[str, Any]], List[str]]:
+    """Make an empty venv in ``scratch``, run ``install(python, configuration)`` there, import every module of
+    ``packages``; ``configuration`` is the target's ``uv.toml`` (when it has one) and the index arguments."""
+    scratch.mkdir(parents=True, exist_ok=True)
     venv = scratch / "venv"
     python = venv / "bin" / "python"
     created = subprocess.run(
@@ -604,9 +651,8 @@ def install_and_import(
     config = ["--config-file", str(target_dir / "uv.toml")] if (target_dir / "uv.toml").is_file() else []
     env = {k: v for k, v in os.environ.items() if k != "PYTHONPATH"}
     env["PATH"] = os.pathsep.join([str(Path(uv).parent), env.get("PATH", "")])
-    script = [str(python), str(wheels_dir / INSTALL_SCRIPT), "--installer", "uv", "--needed"]
     installed = subprocess.run(
-        [*script, "--", "--quiet", *config, *_PYPI_INDEX_ARGS], cwd=scratch, env=env, capture_output=True, text=True
+        install(python, [*config, *_PYPI_INDEX_ARGS]), cwd=scratch, env=env, capture_output=True, text=True
     )
     if installed.returncode != 0:
         return (installed.stderr.strip() or installed.stdout.strip()), {}, []
@@ -771,10 +817,16 @@ def _refuse_uncommitted(
 
 
 def _write_wheels(folder: Path, staged: List[Path], files: Dict[str, str]) -> None:
-    """Replace the folder's ``*.whl`` with ``staged`` and write ``files`` (name: text); other files stay."""
+    """Replace the folder's ``*.whl`` with ``staged`` and write ``files`` (name: text); other files stay. A bundle an
+    earlier ``--bundle`` wrote goes too: built from older commits, it would sit beside the new wheels unchanged."""
     folder.mkdir(parents=True, exist_ok=True)
     for old in folder.glob("*.whl"):
         old.unlink()
+    bundle_dir = folder / wheels_bundle.BUNDLE_DIR
+    for old in bundle_dir.glob("*.whl"):
+        old.unlink()
+    if bundle_dir.is_dir() and not any(bundle_dir.iterdir()):
+        bundle_dir.rmdir()
     for wheel in staged:
         shutil.copy2(wheel, folder / wheel.name)
     for name, text in files.items():
@@ -809,12 +861,14 @@ def vendor_wheels(
     force: bool = False,
     check: bool = True,
     include_project: bool = False,
+    bundle: bool = False,
 ) -> WheelsReport:
     """``aisland wheels build <project_name>``: build, write, compare, install, import; then, when asked, commit
     the folder (only if the check passed) and zip it. ``force`` builds a project with uncommitted changes from
     its working tree instead of refusing it; ``check=False`` (``--no-check``) skips the comparison with PyPI and
-    the empty-venv install; ``include_project`` (``--include-project``) builds the project's own wheel too. See
-    the module docstring."""
+    the empty-venv install; ``include_project`` (``--include-project``) builds the project's own wheel too;
+    ``bundle`` (``--bundle``) merges the project's own wheel and the needed wheels into one, written into
+    ``wheels/bundle/`` and checked alone in an empty venv of its own. See the module docstring."""
     if force and commit:
         raise click.ClickException(
             "--force cannot be combined with --commit: a wheel built with uncommitted changes is one no commit "
@@ -866,7 +920,8 @@ def vendor_wheels(
             if not p.checked_out
         ]
     published = [p for p in needed if _published(p) and p not in to_build]
-    dirty = _refuse_uncommitted(to_build, force, target if include_project else None)
+    # The bundle holds the project's own code, so its project is held to the rules of its own wheel.
+    dirty = _refuse_uncommitted(to_build, force, target if include_project or bundle else None)
 
     folder = target.path / WHEELS_DIR
     choices = read_install_choices(folder / WHEELS_YAML)
@@ -911,9 +966,10 @@ def vendor_wheels(
             if state == "foreign" and payload is not None:
                 name_clashes.extend(_clash(project, payload, entry.version))
         own_wheel: Optional[Path] = None
-        project_wheel: Optional[BuiltWheel] = None
-        if include_project:
-            own_wheel, project_wheel = _build(target)
+        own_entry: Optional[BuiltWheel] = None
+        if include_project or bundle:
+            own_wheel, own_entry = _build(target)
+        project_wheel = own_entry if include_project else None
 
         files = {
             README_NAME: render_readme(target.name, scope, built, project_wheel),
@@ -921,12 +977,19 @@ def vendor_wheels(
             INSTALL_SCRIPT: render_install_script(target.name, scope, include_project),
             GITIGNORE: _IGNORE_ZIP if commit else _IGNORE_ALL,
         }
-        _write_wheels(folder, staged + ([own_wheel] if own_wheel else []), files)
+        _write_wheels(folder, staged + ([own_wheel] if own_wheel and include_project else []), files)
+        bundle_path: Optional[Path] = None
+        if bundle and own_wheel is not None and own_entry is not None:
+            command = bundle_command(target.name, scope, include_project)
+            bundle_path = _write_bundle(projects, target, own_wheel, own_entry, staged, built, folder, command)
 
         new_names: Dict[str, Set[str]] = {}
         install_error: Optional[str] = None
         failures: Dict[str, Dict[str, Any]] = {}
         imported: List[str] = []
+        bundle_install_error: Optional[str] = None
+        bundle_failures: Dict[str, Dict[str, Any]] = {}
+        bundle_imported: List[str] = []
         packages: List[str] = []
         if not check:
             compared = [
@@ -954,26 +1017,26 @@ def vendor_wheels(
             installed = [wheel for wheel, b in zip(staged, built) if b.needed]
             packages = sorted(set(own) | {m for wheel in installed for m in wheel_modules(wheel)})
             install_error, failures, imported = install_and_import(uv, target.path, folder, packages, scratch)
+            if bundle_path is not None:
+                click.echo(f"==> Installing the bundle {bundle_path.name} alone in an empty venv", err=True)
+                bundle_install_error, bundle_failures, bundle_imported = install_bundle_and_import(
+                    uv, target.path, bundle_path, packages, scratch / "bundle"
+                )
 
     behind = [p for p in compared if p.differing_files]
-    every_failure = []
-    for module, f in sorted(failures.items()):
-        named = f.get("missing")
-        owner = _owner(named, owners)
-        culprits = [] if owner else attribute_failure(f, owners, behind, new_names)
-        every_failure.append(ImportFailure(module, str(f.get("error")), named, owner, culprits))
-    # A package that fails, a module that misses a workspace project's module, or one that fails on a
-    # project behind PyPI is a break. A deeper module that misses something no workspace project ships
-    # is most often an optional extra's (the empty venv installs none), so it is reported without
-    # failing the run.
-    import_failures = [f for f in every_failure if f.module in packages or f.blamed]
-    import_warnings = [f for f in every_failure if f not in import_failures]
+    import_failures, import_warnings = _classify(failures, owners, behind, new_names, packages)
+    bundle_import_failures, _ = _classify(bundle_failures, owners, behind, new_names, packages)
     wheels_dir = str(folder.relative_to(workspace_root))
     committed: Optional[str] = None
     commit_note: Optional[str] = None
     tracked_warning: Optional[str] = None
     if commit:
-        if install_error is None and not import_failures:
+        if (
+            install_error is None
+            and not import_failures
+            and bundle_install_error is None
+            and not bundle_import_failures
+        ):
             committed = _commit_wheels(target, regenerate_command(target.name, scope, include_project))
             commit_note = None if committed else f"nothing new to commit in {wheels_dir}"
         else:
@@ -1010,6 +1073,115 @@ def vendor_wheels(
         tracked_warning=tracked_warning,
         checked=check,
         project_wheel=project_wheel,
+        bundle=_bundle_entry(bundle_path, workspace_root, target, built),
+        bundle_install_error=bundle_install_error,
+        bundle_import_failures=bundle_import_failures,
+        bundle_imported=bundle_imported,
+    )
+
+
+def _classify(
+    failures: Dict[str, Dict[str, Any]],
+    owners: Dict[str, str],
+    behind: List[PublishedDependency],
+    new_names: Dict[str, Set[str]],
+    packages: List[str],
+) -> Tuple[List[ImportFailure], List[ImportFailure]]:
+    """The import run's failures as ``(breaks, warnings)``.
+
+    A package that fails, a module that misses a workspace project's module, or one that fails on a project behind
+    PyPI is a break. A deeper module that misses something no workspace project ships is most often an optional
+    extra's (the empty venv installs none), so it is reported without failing the run.
+    """
+    every_failure = []
+    for module, f in sorted(failures.items()):
+        named = f.get("missing")
+        owner = _owner(named, owners)
+        culprits = [] if owner else attribute_failure(f, owners, behind, new_names)
+        every_failure.append(ImportFailure(module, str(f.get("error")), named, owner, culprits))
+    breaks = [f for f in every_failure if f.module in packages or f.blamed]
+    return breaks, [f for f in every_failure if f not in breaks]
+
+
+def bundle_command(target: str, scope: WheelsScope, include_project: bool = False) -> str:
+    """The command that writes a bundle — its METADATA's ``Generated by:`` and ``To regenerate:``."""
+    return f"{regenerate_command(target, scope, include_project)} --bundle"
+
+
+def _write_bundle(
+    projects: Dict[str, WorkspaceProject],
+    target: WorkspaceProject,
+    own_wheel: Path,
+    own_entry: BuiltWheel,
+    staged: List[Path],
+    built: List[BuiltWheel],
+    folder: Path,
+    command: str,
+) -> Path:
+    """Merge the target's wheel and the wheels it needs into ``<folder>/bundle/`` (:mod:`aisland.wheels_bundle`).
+
+    A wheel ``--all`` built that the target does not need stays out. What the bundle requires is read from the
+    ``pyproject.toml`` of each project inside it.
+    """
+    inside = [(wheel, b) for wheel, b in zip(staged, built) if b.needed]
+    members = [(target, own_wheel, own_entry)] + [
+        (projects[canonicalize_name(b.distribution)], wheel, b) for wheel, b in inside
+    ]
+    for project, _, _ in members:
+        if "dependencies" in ((project.pyproject or {}).get("project") or {}).get("dynamic", []):
+            raise click.ClickException(
+                f"{project.name}/pyproject.toml declares its dependencies dynamic; a bundle reads them from "
+                "[project] dependencies"
+            )
+    tables = [((p.pyproject or {}).get("project") or {}) for p, _, _ in members]
+    requires = wheels_bundle.bundle_requirements(
+        lambda name, extra: _requirements(projects[name], extra),
+        canonicalize_name(target.distribution),
+        list((tables[0].get("optional-dependencies") or {}).keys()),
+        {canonicalize_name(b.distribution): b.version for _, _, b in members},
+        [str(t["requires-python"]) for t in tables if "requires-python" in t],
+    )
+    distribution = wheels_bundle.BUNDLE_NAME.format(distribution=target.distribution)
+    rows = "\n".join(f"| {b.project} | {b.distribution} | {b.version} | {b.branch} {b.commit} |" for _, _, b in members)
+    header = "\n".join(_header("", command, "aisland/aisland/wheels.py (_write_bundle)"))
+    description = f"""\
+<!--
+{header}
+-->
+# {distribution}
+
+{target.name} and the workspace projects it needs, in one wheel. Inside it pip knows only the name
+`{distribution}`: none of the projects below is installed under its own name.
+
+| Project | Distribution | Version | Commit |
+| --- | --- | --- | --- |
+{rows}
+"""
+    metadata = wheels_bundle.render_metadata(
+        distribution,
+        own_entry.version,
+        f"{target.name} and the workspace projects it needs, in one wheel",
+        requires,
+        description,
+    )
+    parts = [wheels_bundle.BundlePart(b.project, b.distribution, wheel) for _, wheel, b in members]
+    return wheels_bundle.merge_wheels(
+        parts, distribution, own_entry.version, metadata, folder / wheels_bundle.BUNDLE_DIR, _ZIP_TIME
+    )
+
+
+def _bundle_entry(
+    bundle: Optional[Path], workspace_root: Path, target: WorkspaceProject, built: List[BuiltWheel]
+) -> Optional[BundleWheel]:
+    """The report's line for the bundle ``--bundle`` wrote (``None`` without one)."""
+    if bundle is None:
+        return None
+    return BundleWheel(
+        wheel=str(bundle.relative_to(workspace_root)),
+        distribution=wheels_bundle.BUNDLE_NAME.format(distribution=target.distribution),
+        version=bundle.name.split("-")[1],
+        projects=[target.name] + [b.project for b in built if b.needed],
+        bytes=bundle.stat().st_size,
     )
 
 
@@ -1295,9 +1467,34 @@ def render_report(report: WheelsReport) -> str:
         tail.append(
             f"Zip: {report.zip_file} ({_size(report.zip_bytes)}) — install it from {where} with: python {zip_name}"
         )
+    tail += _bundle_lines(report)
     if tail:
         lines += ["", *tail]
     return "\n".join(lines).rstrip() + "\n"
+
+
+def _bundle_lines(report: WheelsReport) -> List[str]:
+    """The bundle ``--bundle`` wrote: where it is, what it holds, how it installs and what its own check found."""
+    bundle = report.bundle
+    if bundle is None:
+        return []
+    count = len(bundle.projects)
+    lines = [
+        f"Bundle: {bundle.wheel} ({_size(bundle.bytes)}) — {count} project{'s' if count != 1 else ''} in one wheel "
+        f"({', '.join(bundle.projects)}); install it with: pip install {Path(bundle.wheel).name}"
+    ]
+    if not report.checked:
+        return lines + ["  Not checked (--no-check): the bundle was not installed in an empty venv."]
+    if report.bundle_install_error is not None:
+        lines.append("  Installing the bundle alone in an empty venv failed:")
+        return lines + [f"    {line}" for line in report.bundle_install_error.splitlines()]
+    n_imported = len(report.bundle_imported)
+    modules = f"module{'s' if n_imported != 1 else ''}"
+    if not report.bundle_import_failures:
+        return lines + [f"  Installed alone in an empty venv (it + PyPI): all {n_imported} {modules} imported"]
+    lines.append("  Installed alone in an empty venv (it + PyPI); these did not import:")
+    lines += ["  " + row for row in _table([[f.module, f.error] for f in report.bundle_import_failures])]
+    return lines + [f"    {n_imported} other {modules} imported"]
 
 
 def regenerate_command(target: str, scope: WheelsScope, include_project: bool = False) -> str:
