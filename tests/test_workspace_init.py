@@ -567,7 +567,7 @@ def test_rewrite_of_the_gitignore_in_a_local_workspace_keeps_it_local(tmp_path: 
 
 
 def test_the_from_files_name_names_the_new_workspace(tmp_path: Path) -> None:
-    listed = _write(tmp_path / "listed" / "workspace.toml", '[workspace]\nname = "bridge"\n')
+    listed = _write(tmp_path / "listed" / "workspace.toml", '[workspace]\nname = "studio"\n')
     result = _init(tmp_path, "--from", str(listed))
     assert result.exit_code == 0, result.output
-    assert result.output.splitlines()[0] == f"==> Created workspace bridge in {tmp_path / 'acme'}"
+    assert result.output.splitlines()[0] == f"==> Created workspace studio in {tmp_path / 'acme'}"

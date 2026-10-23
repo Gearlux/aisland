@@ -127,7 +127,7 @@ def read(path: Path) -> WorkspaceFile:
         header = table_line(text, "workspace")
         where = Where(path, key_line(text, header, NAME_KEY) if header else None)
         raise FileError(
-            f'{where}: the workspace\'s name must be one plain name (letters, digits, _ . -), as {NAME_KEY} = "bridge"'
+            f'{where}: the workspace\'s name must be one plain name (letters, digits, _ . -), as {NAME_KEY} = "studio"'
         )
     return WorkspaceFile(settings, projects)
 

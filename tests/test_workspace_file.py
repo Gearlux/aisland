@@ -415,9 +415,9 @@ def _repository(root: Path, origin: Optional[str] = None) -> Path:
 
 def test_the_files_name_names_the_workspace_before_its_origin_and_its_folder(tmp_path: Path) -> None:
     root = _repository(tmp_path / "workspace", "git@example.com:acme/models-root.git")
-    _file(root, '[workspace]\nname = "bridge"\n')
-    assert manager.get_workspace_name(root) == "bridge"
-    assert manager.code_workspace_path(root) == root / "bridge.code-workspace"
+    _file(root, '[workspace]\nname = "studio"\n')
+    assert manager.get_workspace_name(root) == "studio"
+    assert manager.code_workspace_path(root) == root / "studio.code-workspace"
 
 
 def test_without_a_name_the_origin_then_the_folder_names_the_workspace(tmp_path: Path) -> None:
@@ -430,19 +430,19 @@ def test_without_a_name_the_origin_then_the_folder_names_the_workspace(tmp_path:
 def test_the_how_to_uses_the_files_name(tmp_path: Path) -> None:
     root = tmp_path / "workspace"
     root.mkdir()
-    written = workspace_file.write(root, workspace_file.WorkspaceFile(settings={"name": "bridge"}))
+    written = workspace_file.write(root, workspace_file.WorkspaceFile(settings={"name": "studio"}))
     assert written is not None
     lines = written.read_text().splitlines()
-    assert lines[0] == "# workspace.toml — the bridge workspace: its projects and its choices, committed."
-    assert "#        uv venv --seed --prompt bridge .venv" in lines
-    assert lines[lines.index("[workspace]") + 1] == 'name = "bridge"'
+    assert lines[0] == "# workspace.toml — the studio workspace: its projects and its choices, committed."
+    assert "#        uv venv --seed --prompt studio .venv" in lines
+    assert lines[lines.index("[workspace]") + 1] == 'name = "studio"'
 
 
 @pytest.mark.parametrize("value", ["3", '"a/b"', '""', '"two words"'])
 def test_a_name_that_is_no_plain_name_is_refused_naming_its_line(tmp_path: Path, value: str) -> None:
     path = _file(tmp_path, f'[workspace]\nframework = ["torch"]\nname = {value}\n')
     assert _refusal(path) == (
-        f'{path}:3: the workspace\'s name must be one plain name (letters, digits, _ . -), as name = "bridge"'
+        f'{path}:3: the workspace\'s name must be one plain name (letters, digits, _ . -), as name = "studio"'
     )
 
 

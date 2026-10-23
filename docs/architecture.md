@@ -3185,7 +3185,7 @@ the same table.
 
 ```toml
 [workspace]
-name = "bridge"
+name = "studio"
 extras = ["dev", "local"]
 ```
 

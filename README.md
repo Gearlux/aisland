@@ -229,7 +229,7 @@ one is written in the file, before the projects:
 
 ```toml
 [workspace]
-name = "bridge"
+name = "studio"
 ```
 
 Run from that `.venv`, `init` leaves the venv line out of its `Next:` steps. A branch of `.` in
