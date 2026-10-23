@@ -775,7 +775,7 @@ def _find_target(projects: Dict[str, WorkspaceProject], workspace_root: Path, na
     if not project.checked_out:
         raise click.ClickException(
             f"{project.name} is not checked out on this machine (its folder is empty). "
-            f"Activate it with: aisland setup --activate {project.name}"
+            f"Activate it with: aisland workspace configure active set {project.name} true --machine-only"
         )
     return project
 

@@ -403,34 +403,37 @@ line complete — any discovered project missing from it is **appended**
 entries that don't exist on a given machine, so the committed file stays
 identical across machines).
 
-#### Optional submodules & the generated `uv.toml`
+#### Optional projects & the generated `uv.toml`
 
-Some projects are **optional** — they ship their own `uv.toml` (a private
-package index) or are marked `active = false` in `.gitmodules` (e.g. the
-corporate-only `vendorcli`). `aisland setup` **prompts**
-whether to activate each one and remembers the answer **per-machine** in
-`.git/config` (`submodule.<name>.active`), never in the committed
-`.gitmodules`. A decided module is honored silently on later runs; a *new*
-optional module is prompted **even with `--non-interactive/-y`** (a machine
-must consciously opt into a private project).
+A project whose table in `workspace.toml` has an `active` key is **optional**, and the value is its default; a project
+without the key is always part of the workspace:
 
-`--activate <name>` / `--deactivate <name>` (repeatable) decide ANY submodule
-on this machine without a prompt, optional or not, named by its name or its
-path. Activating runs `git submodule update --init`; deactivating deinits the
-working tree (never with `-f`: a folder with uncommitted changes is left and
-named) and keeps the choice, so later runs leave the folder empty. A name that
-is no submodule stops setup before it changes anything.
+```toml
+[project."vendorcli"]
+url = "https://bitbucket.example.com/scm/team/vendorcli.git"
+active = false          # optional, off unless a machine switches it on
+```
+
+`aisland workspace init --from` clones only the projects without `active`. `aisland setup` then **asks** about each
+optional project this machine has not answered — `Activate 'vendorcli'? (clone + install) [y/N]`, the default the
+committed value — even under `-y` (a machine consciously opts into a private project), and keeps the answer in
+`.git/config` (`aisland.active.<project>.active`), never in a committed file. It then brings the folders in line: an
+active project is checked out (added from its `url` and `branch` when the workspace does not have it yet), an
+inactive one emptied — never with `-f`, so a folder with uncommitted work is left and named. Setup also writes what
+git reads: `.gitmodules` `active = false` for a project that is off by default, and this machine's
+`submodule.<name>.active`.
 
 ```bash
-aisland setup                          # interactive: prompts for optional submodules
-aisland setup -y                       # reuse saved decisions; still ask about new modules
-aisland setup --activate vendorcli        # opt this machine into vendorcli (no prompt)
-aisland setup --deactivate navigaitor  # leave navigaitor out on this machine (empties its folder)
+aisland workspace configure active                                   # the optional projects, and this machine's choices
+aisland workspace configure active set vendorcli true --machine-only    # switch it on here (checks it out now)
+aisland workspace configure active set navigaitor false              # make it optional, off by default (committed)
+aisland workspace configure active unset navigaitor                  # always part of the workspace again
 ```
 
 ```text
-$ aisland setup --deactivate navigatior
-Error: --deactivate navigatior: no submodule of that name (the submodules: confluid, liquifai, …)
+$ aisland workspace configure active
+  PROJECT  COMMITTED  THIS MACHINE  FOLDER
+  vendorcli   false      true          checked out
 ```
 
 From the activated set, setup **generates the workspace-root `uv.toml`** =
@@ -1512,8 +1515,7 @@ ms-playwright` on macOS), so a Jenkins agent downloads it once, not per build.
 
 ### The two configuration layers
 
-Mirrors the `.gitmodules active` + `.git/config submodule.<name>.active` split used for optional
-submodules:
+The same split as the optional projects (`workspace.toml` committed, `.git/config` per machine):
 
 | layer | where | committed? |
 |---|---|---|

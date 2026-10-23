@@ -425,17 +425,7 @@ def provision() -> None:
     "--non-interactive",
     "-y",
     is_flag=True,
-    help="Reuse saved activation decisions; still prompt for new/undecided optional submodules.",
-)
-@click.option(
-    "--activate",
-    multiple=True,
-    help="Check out and install the named submodule(s) on this machine, without prompting (repeatable).",
-)
-@click.option(
-    "--deactivate",
-    multiple=True,
-    help="Empty the named submodule(s) on this machine and leave them out, without prompting (repeatable).",
+    help="Reuse this machine's saved answers; still ask about an optional project never answered.",
 )
 @click.option(
     "--framework",
@@ -458,13 +448,14 @@ def provision() -> None:
 )
 def setup(
     non_interactive: bool,
-    activate: tuple[str, ...],
-    deactivate: tuple[str, ...],
     framework: tuple[str, ...],
     extra: tuple[str, ...],
     install_all: bool,
 ) -> None:
-    """Full workspace setup: provision tools, resolve optional-submodule activation, install activated projects.
+    """Full workspace setup: provision tools, ask about the optional projects, install the active ones.
+
+    Which projects this machine has: `aisland workspace configure active` (a project with an `active` value in
+    workspace.toml is optional, and setup asks about it once).
 
     Which extras land is a workspace decision, asked once and recorded in config.toml: pick them
     at the prompt, name them with --extra, or take the lot with --all.
@@ -477,8 +468,6 @@ def setup(
         raise click.UsageError("--all takes every extra; pass either --all or --extra, not both.")
     setup_workspace(
         non_interactive=non_interactive,
-        activate=activate,
-        deactivate=deactivate,
         framework=framework,
         extra=extra,
         install_all=install_all,

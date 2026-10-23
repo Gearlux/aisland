@@ -932,24 +932,3 @@ class TestUnsetProjectSource:
         s.unset_project_source("loggair", machine_only=True, workspace_root=tmp_path)
         assert cleared == [("loggair", None)]
         assert set(s.read_committed_sources(tmp_path)) == {"loggair"}
-
-
-class TestReconcileSkipsPypiProjects:
-    def test_pypi_source_deinits_a_committed_active_submodule(
-        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
-        """Without this, the next `aisland setup` would re-init a directory the source says is empty."""
-        from aisland import manager
-
-        (tmp_path / "loggair").mkdir()
-        (tmp_path / "loggair" / ".git").write_text("gitdir: x\n")
-        s.write_committed_sources(tmp_path, {"loggair": s.ProjectSource(kind="pypi", distribution="loggair")})
-        monkeypatch.setattr(manager, "submodule_active_map", lambda root: [("loggair", "loggair", True)])
-        monkeypatch.setattr(manager, "_local_submodule_active", lambda root, name: None)
-        monkeypatch.setattr(s, "_overridden_projects", lambda root: [])
-        monkeypatch.setattr(s, "local_override", lambda root, name: None)
-
-        calls: List[List[str]] = []
-        monkeypatch.setattr(manager.subprocess, "check_call", lambda cmd, **kw: calls.append(cmd))
-        manager.reconcile_submodules(tmp_path)
-        assert calls == [["git", "submodule", "deinit", "loggair"]]

@@ -283,17 +283,17 @@ Root `AGENTS.md` "Two Test Runs" (user ruling 2026-10-05). [test-stats]
   checkout switched by hand goes back. Keep a branch with
   `aisland workspace configure source set <p> local --branch <branch> --machine-only`; after a branch switch run
   `uv pip install -e ./<p> --no-deps` to refresh the metadata.
-- Optional submodule = ships a `uv.toml` or is `active = false`. The answer is per machine in
-  `.git/config`, never `.gitmodules`; an undecided one is prompted even under `-y`;
-  deinit is never `-f`. (`tests/test_uv_activation.py`)
-- **`--activate`/`--deactivate` decide ANY submodule, by name or path (user request 2026-10-21)**, without a prompt;
-  a name that is no submodule, or one given to both, stops setup before anything changes
-  (`::test_setup_refuses_a_bad_name_before_it_changes_anything`). There is no `aisland reconcile`: setup's
-  reconcile step is the only one. `git submodule deinit` drops the submodule's `.git/config` section, the choice
-  with it, so `reconcile_submodules` writes `active false` back after a deinit the CHOICE caused — never after one a
-  `pypi`/`github` source caused, which `source unset` expects the next setup to undo
-  (`::test_deactivating_an_ordinary_submodule_empties_its_folder_and_activating_brings_it_back`,
-  `::test_a_deinit_for_a_package_source_records_no_choice`).
+- **Which projects a machine has is the `active` plugin (`activation.py`; user rulings 2026-10-23).** A project
+  whose `workspace.toml` table has `active` is OPTIONAL, the value its default; without the key it is always part of
+  the workspace (a `uv.toml` makes nothing optional). `workspace init --from` clones only projects WITHOUT `active`;
+  `aisland setup` asks about each optional one (`resolve`: under `-y` only a project this machine never answered)
+  and keeps the answer in `aisland.active.<project>.active` — aisland's key, so git's `submodule deinit` never erases
+  it — then brings the folders in line (`reconcile`): active → init, or `git submodule add` from the file's url and
+  branch when `.gitmodules` lacks it; inactive → deinit, never `-f`; a `pypi`/`github` source stays empty and records
+  no choice. It writes what git reads from the effective value: `.gitmodules` `active = false` exactly for a
+  default-off project, and `submodule.<name>.active`. Setup's upkeep keeps an optional project `.gitmodules` lacks.
+  There are no `--activate`/`--deactivate` flags and no `aisland reconcile`: `aisland workspace configure active
+  set|unset [--machine-only]` acts at once. `setup_git.sh` writes no activation key. (`tests/test_activation.py`)
 - Every name in a `[tool.aisland] frameworks`/`trackers` declaration must be a real extra:
   `aisland setup` and `aisland framework|tracker set` refuse up front, naming project and name
   (user ruling 2026-08-25). (`tests/test_workspace_axis_declarations.py`)
@@ -393,7 +393,7 @@ Root `AGENTS.md` "Two Test Runs" (user ruling 2026-10-05). [test-stats]
 - Never force `git switch` / `submodule deinit`. Report the remedy for the ACTUAL blocker
   (`_deinit_remedy`: dirty tree vs stale gitlink) and roll the config back.
   (`::TestSetProjectSourceRollback`)
-- `reconcile_submodules` folds in `detached_projects()`. The scaffolder seeds a detached dep
+- `activation.reconcile` folds in `detached_projects()`. The scaffolder seeds a detached dep
   from the registry's `distribution`
   (`::TestScaffoldAsksPypiNotTheSource::test_github_dep_survives_its_own_empty_directory`).
 - The remote comes from `.gitmodules`; `pip_vcs_url` rewrites `git@host:org/repo`.

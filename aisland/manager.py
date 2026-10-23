@@ -1326,84 +1326,6 @@ def workspace_folders(workspace_root: Path) -> List[Tuple[str, str, bool]]:
     ]
 
 
-def reconcile_submodules(workspace_root: Path) -> None:
-    """Align each submodule's checkout with its ``.gitmodules`` ``active`` flag.
-
-    * active (``true`` / key absent) and not checked out -> ``git submodule update --init <path>``.
-    * inactive (``active = false``) and checked out       -> ``git submodule deinit <path>``.
-
-    Idempotent and non-fatal: an init that fails (e.g. an auth-gated remote unreachable from this
-    machine) or a deinit that refuses (a submodule with uncommitted changes) is logged and skipped,
-    so one inaccessible/dirty submodule never aborts ``aisland setup``. Keeps ``git submodule
-    foreach`` (and tools like push-all) seeing exactly the submodules this workspace declares.
-    """
-    from aisland.sources import detached_projects
-
-    entries = submodule_active_map(workspace_root)
-    if not entries:
-        return
-    # A ``github`` or ``pypi`` source (see aisland/sources.py) means "consume it as a package;
-    # the directory stays empty" — the same working-tree state as ``active = false``. Folding it
-    # in here keeps the two mechanisms from fighting: without this, a source-driven deinit would
-    # be undone by the very next ``aisland setup``, which would re-init a submodule whose
-    # ``.gitmodules`` entry still says active.
-    detached = detached_projects(workspace_root)
-    click.echo("==> Reconciling submodule checkouts with active flags...")
-    for name, path, committed_active in entries:
-        # Effective state = the per-machine ``.git/config`` override (set by the
-        # activation prompt) when present, else the shared ``.gitmodules`` default.
-        # This is what lets one machine activate vendorcli while another skips it,
-        # without committing the choice.
-        local = _local_submodule_active(workspace_root, name)
-        chosen = committed_active if local is None else local
-        active = chosen and name not in detached
-        # A submodule's ``.git`` is a gitlink file (or dir) only when it is checked out.
-        initialized = (workspace_root / path / ".git").exists()
-        if active and not initialized:
-            click.echo(f"  - init {path} (active)")
-            try:
-                subprocess.check_call(["git", "submodule", "update", "--init", path], cwd=workspace_root)
-            except subprocess.CalledProcessError as e:
-                click.echo(f"    skip {path}: init failed ({e}); remote may be unreachable from this machine.")
-        elif not active and initialized:
-            click.echo(f"  - deinit {path} (inactive)")
-            try:
-                # No ``-f``: a deinit that would discard uncommitted work refuses, protecting it.
-                subprocess.check_call(["git", "submodule", "deinit", path], cwd=workspace_root)
-            except subprocess.CalledProcessError as e:
-                click.echo(f"    skip {path}: deinit refused ({e}); resolve local changes and re-run.")
-                continue
-            # The deinit drops the submodule's whole section from .git/config, this machine's choice with it; without
-            # it the next setup falls back to `.gitmodules` and checks the folder out again. Written back only when
-            # the choice switched it off — a package source empties the folder without a choice (`source unset`
-            # relies on the next setup bringing the checkout back).
-            if not chosen:
-                _set_local_submodule_active(workspace_root, name, False)
-
-
-def _local_submodule_active(workspace_root: Path, name: str) -> Optional[bool]:
-    """Per-machine activation override from ``.git/config`` (``submodule.<name>.active``).
-
-    Returns ``True`` / ``False`` for an explicit local value, or ``None`` when undecided
-    (no local override yet). Read from ``--local`` only, so the shared ``.gitmodules``
-    default is NOT consulted here — that's the caller's fallback.
-    """
-    res = subprocess.run(
-        ["git", "config", "--local", "--get", f"submodule.{name}.active"],
-        cwd=workspace_root,
-        text=True,
-        capture_output=True,
-    )
-    if res.returncode != 0:
-        return None
-    val = res.stdout.strip().lower()
-    if val in ("true", "1", "yes", "on"):
-        return True
-    if val in ("false", "0", "no", "off"):
-        return False
-    return None
-
-
 def _set_local_submodule_active(workspace_root: Path, name: str, active: bool) -> None:
     """Record the per-machine activation decision in ``.git/config`` (never committed)."""
     subprocess.run(
@@ -1411,79 +1333,6 @@ def _set_local_submodule_active(workspace_root: Path, name: str, active: bool) -
         cwd=workspace_root,
         check=False,
     )
-
-
-def _project_is_optional(project_path: Path, committed_active: bool) -> bool:
-    """A submodule is *optional* (activation is prompted) when it ships its own ``uv.toml``
-    (private-index needs) or is ``active = false`` in ``.gitmodules`` (a deliberately opt-in /
-    access-gated remote). Ordinary submodules auto-activate and are never prompted.
-    """
-    return (project_path / "uv.toml").exists() or committed_active is False
-
-
-def _resolve_submodule_activation(
-    workspace_root: Path,
-    non_interactive: bool = False,
-    activate: Tuple[str, ...] = (),
-    deactivate: Tuple[str, ...] = (),
-) -> None:
-    """Decide + record (per machine) which submodules are active, prompting the optional ones as needed.
-
-    Explicit ``activate`` / ``deactivate`` names — ANY submodule, by name or path — are applied first (write the
-    local override, no prompt); a name that is no submodule, or one given to both, is refused before anything is
-    written. Each remaining optional submodule is then resolved:
-
-    * already decided locally AND ``non_interactive`` -> keep the saved choice silently;
-    * otherwise (interactive, or a NEW/undecided module even under ``non_interactive``) ->
-      ``click.confirm`` (default = current effective state) and record the answer.
-
-    Decisions are written to ``.git/config submodule.<name>.active`` (per machine, never
-    committed); :func:`reconcile_submodules` then checks out / deinits accordingly.
-    """
-    entries = submodule_active_map(workspace_root)
-    forced = _activation_flags(entries, activate, deactivate)
-    if not entries:
-        return
-    optional = [(n, p, c) for n, p, c in entries if _project_is_optional(workspace_root / p, c)]
-    if not optional and not forced:
-        return
-    click.echo("==> Resolving submodule activation...")
-    for name, _path, _committed in entries:
-        if name in forced:
-            _set_local_submodule_active(workspace_root, name, forced[name])
-            click.echo(f"  - {name}: {'activate' if forced[name] else 'deactivate'} (flag)")
-    for name, _path, committed in optional:
-        if name in forced:
-            continue
-        local = _local_submodule_active(workspace_root, name)
-        if non_interactive and local is not None:
-            continue  # previously decided — honor it silently
-        default = committed if local is None else local
-        active = click.confirm(f"  Activate '{name}'? (clone + install + merge its uv.toml)", default=default)
-        _set_local_submodule_active(workspace_root, name, active)
-
-
-def _activation_flags(
-    entries: List[Tuple[str, str, bool]], activate: Tuple[str, ...], deactivate: Tuple[str, ...]
-) -> Dict[str, bool]:
-    """``{submodule name: active}`` for the names given to ``--activate`` / ``--deactivate``.
-
-    A flag names a submodule by its ``.gitmodules`` name or its path. Raises :class:`click.ClickException` for a name
-    that is no submodule (listing them) or one given to both flags, so a typo never passes silently.
-    """
-    by_name = {name: name for name, _path, _active in entries}
-    by_name.update({path: name for name, path, _active in entries})
-    both = sorted(set(activate) & set(deactivate))
-    if both:
-        raise click.ClickException(f"{', '.join(both)} is given to both --activate and --deactivate")
-    forced: Dict[str, bool] = {}
-    for flag, names, active in (("--activate", activate, True), ("--deactivate", deactivate, False)):
-        for given in names:
-            if given not in by_name:
-                known = ", ".join(name for name, _path, _active in entries) or "none"
-                raise click.ClickException(f"{flag} {given}: no submodule of that name (the submodules: {known})")
-            forced[by_name[given]] = active
-    return forced
 
 
 # Workspace-wide uv settings that are no single project's concern. Merged into the generated
@@ -1630,8 +1479,6 @@ def _write_root_uv_toml(workspace_root: Path, activated: List[dict]) -> None:
 
 def setup_workspace(
     non_interactive: bool = False,
-    activate: Tuple[str, ...] = (),
-    deactivate: Tuple[str, ...] = (),
     framework: Tuple[str, ...] = (),
     extra: Tuple[str, ...] = (),
     install_all: bool = False,
@@ -1659,9 +1506,6 @@ def setup_workspace(
                 "into it: uv venv --seed .venv && .venv/bin/pip install <the aisland wheel>"
             )
         return
-
-    # A flag naming no submodule stops the run before anything changes.
-    _activation_flags(submodule_active_map(workspace_root), activate, deactivate)
 
     # 0. Ensure uv is present in the venv — required by everything below and by
     #    every Jenkinsfile.local job that targets this workspace.
@@ -1693,12 +1537,14 @@ def setup_workspace(
     # 1. System Provisioning
     provision_system()
 
-    # 1b. Optional-submodule activation — prompt (per machine, recorded in .git/config) which
-    #     corporate/private submodules to activate, then reconcile checkouts to match: init the
-    #     active ones / deinit the inactive ones so the install set (and discovery, push-all,
-    #     `git submodule foreach`) matches. Runs before discovery so inactive checkouts drop out.
-    _resolve_submodule_activation(workspace_root, non_interactive, activate, deactivate)
-    reconcile_submodules(workspace_root)
+    # 1b. Activation (aisland.activation): ask about each optional project (an `active` key in workspace.toml), then
+    #     check each project out or empty it as this machine has it — adding one the workspace does not have yet — so
+    #     the install set (and discovery, push-all, `git submodule foreach`) matches. Before discovery, so an inactive
+    #     checkout drops out.
+    from aisland import activation
+
+    activation.resolve(workspace_root, non_interactive)
+    activation.reconcile(workspace_root)
 
     # 1c. Per-project sources — put each managed project on its configured branch (git) or
     #     replace it with the published wheel (pypi, which empties its directory). Runs BEFORE

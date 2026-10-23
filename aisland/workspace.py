@@ -167,6 +167,8 @@ def init_workspace(
     listed = list(workspace_file.read(from_file).projects.values()) if from_file is not None else []
     clones: List[Tuple[str, str, Optional[str]]] = []
     for project in listed:
+        if "active" in project.others:  # optional: `aisland setup` asks about it and checks it out if wanted
+            continue
         if project.url is None:  # the file reads one without (a source set before setup wrote it), init cannot clone it
             raise click.ClickException(f"{project.where}: project {project.name!r} has no url")
         clones.append((project.url, project.path, project.branch))

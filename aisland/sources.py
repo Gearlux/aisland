@@ -28,7 +28,7 @@ A project with no entry anywhere is *unmanaged*: nothing is switched and nothing
 differently — so this module changes no behaviour until a source is set.
 
 Two configuration layers, mirroring the existing ``.gitmodules active`` +
-``.git/config submodule.<name>.active`` split (:func:`aisland.manager._local_submodule_active`):
+``.git/config`` split of the projects' activation (:mod:`aisland.activation`):
 
 * **committed** — each project's ``source``, ``version`` and ``distribution`` (only where it differs from the
   project's name) in its ``[project."<name>"]`` table of ``<workspace>/workspace.toml``, a git source's ref being the
@@ -74,7 +74,7 @@ SOURCE_KINDS: Tuple[str, ...] = get_args(SourceKind)
 REF_KINDS: Tuple[str, ...] = ("local", "github")
 
 #: The kinds that leave the project directory EMPTY (submodule deinit'd). Consumed by
-#: :func:`detached_projects` -> :func:`aisland.manager.reconcile_submodules`.
+#: :func:`detached_projects` -> :func:`aisland.activation.reconcile`.
 DETACHED_KINDS: Tuple[str, ...] = ("github", "pypi")
 
 #: A project's settings this module owns in its ``[project."<name>"]`` table of ``workspace.toml`` (beside the
@@ -341,7 +341,7 @@ def _run(cmd: List[str], cwd: Path, *, quiet: bool = False) -> bool:
 
     One project's unreachable remote or dirty checkout must not abort a whole
     ``aisland setup`` sweep — the same non-fatal contract as
-    :func:`aisland.manager.reconcile_submodules`.
+    :func:`aisland.activation.reconcile`.
     """
     try:
         subprocess.check_call(cmd, cwd=str(cwd))
@@ -484,7 +484,7 @@ def _overridden_projects(workspace_root: Path) -> List[str]:
 def detached_projects(workspace_root: Path) -> set[str]:
     """Projects whose EFFECTIVE source empties their directory (``github`` or ``pypi``).
 
-    Consumed by :func:`aisland.manager.reconcile_submodules` so the activation machinery and the
+    Consumed by :func:`aisland.activation.reconcile` so the activation machinery and the
     source machinery cannot fight over the same submodule.
     """
     committed = read_committed_sources(workspace_root)
@@ -773,7 +773,7 @@ def unset_project_source(
     Deliberately does NOT touch the checkout or the venv: "unmanaged" means aisland holds no
     opinion, not that the current state is wrong. Dropping a ``pypi`` entry therefore leaves the
     directory empty until the next ``aisland setup`` (whose ``.gitmodules``-driven
-    :func:`aisland.manager.reconcile_submodules` re-inits it) — set an explicit ``git`` source
+    :func:`aisland.activation.reconcile` re-inits it) — set an explicit ``git`` source
     instead if you want the checkout back now.
     """
     from aisland.manager import write_code_workspace

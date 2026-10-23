@@ -67,35 +67,8 @@ fi
 echo "==> Configuring Git Submodule Tracking..."
 git config submodule.recurse true
 
-# Submodules declared `active = false` in .gitmodules are externally
-# inaccessible to most contributors (e.g. private Bitbucket hosts).
-# `git submodule init` skips populating their URL in .git/config, but a
-# contributor whose local config has `submodule.active = .` (a common
-# ergonomic default that recurses into all submodules) will still see
-# `git pull --recurse-submodules` try to fetch+clone them. Set a per-name
-# `active = false` in local .git/config — it takes precedence over the
-# multi-pattern `submodule.active` setting and makes the skip stick.
-INACTIVE_SUBMODULES=()
-if [ -f "$WORKSPACE_ROOT/.gitmodules" ]; then
-    while read -r key value; do
-        if [ "$value" = "false" ]; then
-            name="${key#submodule.}"
-            name="${name%.active}"
-            # Respect a pre-existing local `true` — that's a user opt-in
-            # (e.g. a contributor with access to a private submodule's host
-            # enabling it). Without this guard, every setup.sh run
-            # would silently flip the user's choice back to inactive.
-            current=$(git config --local --get "submodule.$name.active" 2>/dev/null || true)
-            if [ "$current" = "true" ]; then
-                echo "    - keeping submodule '$name' locally active (user opt-in)"
-                continue
-            fi
-            echo "    - marking submodule '$name' as locally inactive"
-            git config --local "submodule.$name.active" false
-            INACTIVE_SUBMODULES+=("$name")
-        fi
-    done < <(git config -f "$WORKSPACE_ROOT/.gitmodules" --get-regexp '^submodule\..*\.active$' 2>/dev/null)
-fi
+# Which submodules this machine has is aisland's (aisland.activation, run by `aisland setup`): it writes each one's
+# `submodule.<name>.active` from this machine's choice, so this script leaves those keys alone.
 
 echo "==> Configuring Git Aliases..."
 # The aliases below assume the acme mono-repo layout and Python toolchain
@@ -247,19 +220,3 @@ if git rev-parse --is-inside-work-tree >/dev/null 2>&1; then
 fi
 
 echo "==> Git configuration complete!"
-
-if [ ${#INACTIVE_SUBMODULES[@]} -gt 0 ]; then
-    echo ""
-    echo "Note: the following submodules are inactive on this machine and will be"
-    echo "skipped by 'git pull --recurse-submodules' and 'git submodule update'."
-    echo "If you have access and want to enable one, copy/paste the matching line:"
-    echo ""
-    for name in "${INACTIVE_SUBMODULES[@]}"; do
-        url=$(git config -f "$WORKSPACE_ROOT/.gitmodules" --get "submodule.$name.url" 2>/dev/null || echo "")
-        echo "    # $name  ($url)"
-        echo "    git config --local submodule.$name.active true && git submodule update --init --recursive $name"
-        echo ""
-    done
-    echo "To opt back out later:"
-    echo "    git config --local submodule.<name>.active false"
-fi

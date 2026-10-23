@@ -338,10 +338,17 @@ def refresh(root: Path) -> List[str]:
     by_path = {project.path: project for project in current.projects.values()}
     found = workspace_projects(root)
     kept_paths = {project.path for project in found}
-    lines = [
-        f"{FILE_NAME}: dropped {project.name} (no longer in the workspace)"
+    gone = [
+        project
         for project in current.projects.values()
         if project.path not in kept_paths and project.name not in {f.name for f in found}
+    ]
+    # An optional project (an `active` key) the workspace does not have is not gone: it is not switched on here.
+    optional = [project for project in gone if "active" in project.others]
+    lines = [
+        f"{FILE_NAME}: dropped {project.name} (no longer in the workspace)"
+        for project in gone
+        if project not in optional
     ]
     projects: Dict[str, Project] = {}
     for item in found:
@@ -359,6 +366,8 @@ def refresh(root: Path) -> List[str]:
             branch = item.branch
             lines.append(f"{FILE_NAME}: {old.name} branch {branch}")
         projects[old.name] = Project(old.name, item.path, item.url, branch, dict(old.others))
+    for project in optional:
+        projects[project.name] = project
     updated = WorkspaceFile(dict(current.settings), projects)
     if updated != current or (updated.projects and not (root / FILE_NAME).is_file()):
         write(root, updated)

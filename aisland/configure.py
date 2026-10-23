@@ -17,7 +17,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Callable, Dict, List, Optional, Tuple
 
-from aisland import mirrors, sources
+from aisland import activation, mirrors, sources
 
 
 @dataclass(frozen=True)
@@ -139,5 +139,28 @@ MIRROR = Plugin(
     empty="No project has a mirror.\nSet one with: aisland workspace configure mirror set <project> <url>",
 )
 
+# --- active ----------------------------------------------------------------------------------------------------------
+
+
+def _active_set(root: Path, project: str, value: str, options: Dict[str, Optional[str]], machine_only: bool) -> int:
+    return activation.set_active(root, project, value == "true", machine_only)
+
+
+ACTIVE = Plugin(
+    name="active",
+    summary="Which projects this machine has (a project with a committed value is optional, the value its default).",
+    main=Key(
+        "active", "true: checked out and installed; false: left out, its folder empty.", choices=("true", "false")
+    ),
+    options=(),
+    rows=lambda root: activation.rows(root),
+    set=_active_set,
+    unset=lambda root, project, machine_only: activation.unset_active(root, project, machine_only),
+    empty=(
+        "Every project is part of the workspace on this machine.\n"
+        "Make one optional with: aisland workspace configure active set <project> false"
+    ),
+)
+
 #: Every plugin of ``aisland workspace configure``, by name.
-PLUGINS: Dict[str, Plugin] = {plugin.name: plugin for plugin in (MIRROR, SOURCE)}
+PLUGINS: Dict[str, Plugin] = {plugin.name: plugin for plugin in (ACTIVE, MIRROR, SOURCE)}
