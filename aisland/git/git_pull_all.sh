@@ -15,7 +15,8 @@
 #
 # Steps:
 #   1. fetch the root and every submodule from origin, in parallel, before anything merges;
-#   2. merge origin/<branch> into each submodule that is on the root's branch;
+#   2. merge origin/<branch> into each submodule that is on the root's branch — an untracked one
+#      (`aisland workspace untrack`) on no branch is first put on the branch it follows;
 #   3. merge origin/<branch> into the root, settling pointer conflicts by the rule above —
 #      skipped while a submodule is left mid-merge, since its pointer depends on it;
 #   4. record, in one root commit, each submodule holding commits from origin that the root
@@ -268,17 +269,58 @@ root_step() {
     esac
 }
 
-# Whether the root ignores the updates of the submodule at path $1: `submodule.<name>.ignore` is `all`
-# in this machine's .git/config or, without one there, in .gitmodules.
+# The name .gitmodules gives the submodule at path $1, or nothing.
+submodule_name() {
+    git -C "$WORKSPACE_ROOT" config -f .gitmodules --get-regexp '^submodule\..*\.path$' |
+        awk -v p="$1" '{ key = $1; rest = substr($0, length(key) + 2) }
+            rest == p { sub(/^submodule\./, "", key); sub(/\.path$/, "", key); print key; exit }'
+}
+
+# Whether the submodule at path $1 is untracked (`aisland workspace untrack`): `submodule.<name>.ignore`
+# is `all` in this machine's .git/config or, without one there, in .gitmodules.
 updates_ignored() {
     local name value
-    name=$(git -C "$WORKSPACE_ROOT" config -f .gitmodules --get-regexp '^submodule\..*\.path$' |
-        awk -v p="$1" '{ key = $1; rest = substr($0, length(key) + 2) }
-            rest == p { sub(/^submodule\./, "", key); sub(/\.path$/, "", key); print key; exit }')
+    name=$(submodule_name "$1")
     [ -n "$name" ] || return 1
     value=$(git -C "$WORKSPACE_ROOT" config --local --get "submodule.$name.ignore") ||
         value=$(git -C "$WORKSPACE_ROOT" config -f .gitmodules --get "submodule.$name.ignore")
     [ "$value" = all ]
+}
+
+# The branch an untracked submodule at path $1 follows: .gitmodules' `branch` (`.` is the root's
+# branch), else origin's default branch; nothing when neither names one.
+followed_branch() {
+    local name branch
+    name=$(submodule_name "$1")
+    branch=$(git -C "$WORKSPACE_ROOT" config -f .gitmodules --get "submodule.$name.branch")
+    if [ "$branch" = . ]; then branch="$ROOT_BRANCH"; fi
+    if [ -z "$branch" ]; then
+        branch=$(git -C "$WORKSPACE_ROOT/$1" symbolic-ref -q --short refs/remotes/origin/HEAD)
+        branch="${branch#origin/}"
+    fi
+    printf '%s' "$branch"
+}
+
+# Put the untracked submodule at path $1, on no branch, on the branch it follows: its own local branch
+# when it has one, else a new one tracking origin's. Never forced: a switch git refuses (uncommitted
+# edits in the way) is listed and the submodule left as it is.
+follow_branch() {
+    local sub="$WORKSPACE_ROOT/$1" want out
+    want=$(followed_branch "$1")
+    if [ -z "$want" ]; then
+        need "$1" "on no branch, and no branch to follow (.gitmodules names none, origin has no default) — not pulled"
+        return 1
+    fi
+    if git -C "$sub" rev-parse -q --verify "refs/heads/$want" >/dev/null; then
+        out=$(git -C "$sub" switch -q "$want" 2>&1)
+    else
+        out=$(git -C "$sub" switch -q -c "$want" --track "origin/$want" 2>&1)
+    fi
+    if [ $? != 0 ]; then
+        need "$1" "on no branch, and git switch $want refused: $(printf '%s\n' "$out" | head -n 1)"
+        return 1
+    fi
+    report "$1" "on $want (it was on no branch)"
 }
 
 # One root commit recording each submodule that holds commits from origin the root does not
@@ -450,6 +492,11 @@ for sm in "${SUBMODULES[@]}"; do
         continue
     fi
     branch=$(git -C "$sub" branch --show-current)
+    if [ -z "$branch" ] && updates_ignored "$sm"; then
+        # An untracked submodule follows its branch, not the commit the root recorded.
+        follow_branch "$sm" || continue
+        branch=$(git -C "$sub" branch --show-current)
+    fi
     if [ -z "$branch" ]; then
         need "$sm" "detached HEAD — not pulled"
         continue

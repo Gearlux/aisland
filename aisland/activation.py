@@ -115,11 +115,14 @@ def reconcile(root: Path) -> List[str]:
     could not follow (a deinit refused, an add or init that failed), each said on the way.
 
     Then each project's ``ignore`` is written from its tracking (:mod:`aisland.tracking`) — git's own key in
-    ``.git/config`` is gone after a deinit — and a local workspace (:mod:`aisland.local_workspace`) commits
+    ``.git/config`` is gone after a deinit —, each untracked project on no branch is put on its branch, and a local
+    workspace (:mod:`aisland.local_workspace`) commits
     ``.gitmodules`` and the projects added."""
     stuck = _reconcile(root)
     for change in tracking.apply(root):
         click.echo(f"  - {change.line()}")
+    for line in tracking.follow_branches(root):
+        click.echo(f"  - {line}")
     for line in local_workspace.settle(root).lines():
         click.echo(f"  - {line}")
     return stuck

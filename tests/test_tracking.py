@@ -19,7 +19,7 @@ from typing import List, Optional
 import pytest
 from click.testing import CliRunner, Result
 
-from aisland import cli, local_workspace, tracking, workspace_file
+from aisland import activation, cli, local_workspace, tracking, workspace_file
 
 _AUTHOR = {"GIT_AUTHOR_NAME": "t", "GIT_AUTHOR_EMAIL": "t@t", "GIT_COMMITTER_NAME": "t", "GIT_COMMITTER_EMAIL": "t@t"}
 
@@ -241,3 +241,106 @@ def test_in_a_local_workspace_the_change_is_committed(ws: Path, monkeypatch: pyt
     ]
     assert _git(ws, "rev-parse", "HEAD~1") == head
     assert _git(ws, "show", "--name-only", "--format=", "HEAD").splitlines() == [".gitmodules"]
+
+
+# --- an untracked project follows its branch ------------------------------------------------------------------------
+
+
+def _publish(tmp_path: Path, name: str) -> str:
+    """A new commit on the remote's `main`, as another machine pushes it."""
+    remote = tmp_path / "remote" / name
+    (remote / "pushed.txt").write_text("pushed\n")
+    _git(remote, "add", "pushed.txt")
+    _git(remote, "commit", "-q", "-m", "pushed")
+    return _git(remote, "rev-parse", "HEAD")
+
+
+def _detach(ws: Path, project: str) -> str:
+    """``project`` on the commit the root records and on no branch, as a clone's `git submodule update` leaves it."""
+    _git(ws / project, "checkout", "-q", "--detach")
+    return _git(ws / project, "rev-parse", "HEAD")
+
+
+def test_untrack_puts_a_project_on_no_branch_on_its_branch_at_origins_newest(
+    ws: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _detach(ws, "models")
+    newest = _publish(tmp_path, "models")
+    result = _run(ws, monkeypatch, "untrack", "models")
+    assert result.exit_code == 0, result.output
+    assert "  - models: on main (it was on no branch)" in result.output.splitlines()
+    assert _git(ws / "models", "branch", "--show-current") == "main"
+    assert _git(ws / "models", "rev-parse", "HEAD") == newest
+
+
+def test_a_project_without_a_local_branch_gets_one_tracking_origin(ws: Path, tmp_path: Path) -> None:
+    tracking.set_committed(ws, ("models",), track=False)
+    _detach(ws, "models")
+    _git(ws / "models", "branch", "-q", "-D", "main")
+    newest = _publish(tmp_path, "models")
+    assert tracking.follow_branches(ws) == ["models: on main (it was on no branch)"]
+    assert _git(ws / "models", "rev-parse", "HEAD") == newest
+    assert _git(ws / "models", "rev-parse", "--abbrev-ref", "main@{u}") == "origin/main"
+
+
+def test_the_branch_gitmodules_names_is_followed_and_dot_is_the_roots(ws: Path, tmp_path: Path) -> None:
+    remote = tmp_path / "remote" / "tools"
+    _git(remote, "branch", "release")
+    tracking.set_committed(ws, (), track=False)
+    _git(ws, "config", "-f", ".gitmodules", "submodule.tools.branch", "release")
+    _git(ws, "config", "-f", ".gitmodules", "submodule.models.branch", ".")
+    _detach(ws, "models")
+    _detach(ws, "tools")
+    assert tracking.follow_branches(ws) == [
+        "models: on main (it was on no branch)",
+        "tools: on release (it was on no branch)",
+    ]
+
+
+def test_a_tracked_project_on_no_branch_is_left_on_its_commit(ws: Path, tmp_path: Path) -> None:
+    before = _detach(ws, "models")
+    _publish(tmp_path, "models")
+    assert tracking.follow_branches(ws) == []
+    assert _git(ws / "models", "rev-parse", "HEAD") == before
+
+
+def test_a_switch_git_refuses_is_said_and_the_project_left(ws: Path, tmp_path: Path) -> None:
+    tracking.set_committed(ws, ("models",), track=False)
+    before = _detach(ws, "models")
+    remote = tmp_path / "remote" / "models"
+    (remote / "pyproject.toml").write_text('[project]\nname = "models"\nversion = "0.2.0"\n')
+    _git(remote, "commit", "-q", "-am", "0.2.0")
+    _git(ws / "models", "fetch", "-q", "origin")
+    _git(ws / "models", "branch", "-q", "-f", "main", "origin/main")
+    (ws / "models" / "pyproject.toml").write_text("mine\n")
+    lines = tracking.follow_branches(ws)
+    assert len(lines) == 1 and lines[0].startswith("models: stays on no branch — git switch main refused: ")
+    assert _git(ws / "models", "rev-parse", "HEAD") == before
+
+
+def test_an_unreachable_origin_still_switches_to_the_branch_it_knows(ws: Path, tmp_path: Path) -> None:
+    tracking.set_committed(ws, ("models",), track=False)
+    _detach(ws, "models")
+    _git(ws / "models", "remote", "set-url", "origin", str(tmp_path / "gone.git"))
+    assert tracking.follow_branches(ws) == ["models: on main (it was on no branch)"]
+
+
+def test_setup_puts_untracked_projects_on_their_branch(ws: Path, tmp_path: Path) -> None:
+    tracking.set_committed(ws, ("models",), track=False)
+    _detach(ws, "models")
+    newest = _publish(tmp_path, "models")
+    activation.reconcile(ws)
+    assert _git(ws / "models", "rev-parse", "HEAD") == newest
+
+
+def test_a_local_branch_with_commits_of_its_own_is_switched_to_and_not_merged(ws: Path, tmp_path: Path) -> None:
+    tracking.set_committed(ws, ("models",), track=False)
+    (ws / "models" / "mine.txt").write_text("mine\n")
+    _git(ws / "models", "add", "mine.txt")
+    _git(ws / "models", "commit", "-q", "-m", "mine")
+    mine = _git(ws / "models", "rev-parse", "HEAD")
+    _detach(ws, "models")
+    _git(ws / "models", "checkout", "-q", "HEAD~1")
+    _publish(tmp_path, "models")
+    assert tracking.follow_branches(ws) == ["models: on main (it was on no branch)"]
+    assert _git(ws / "models", "rev-parse", "HEAD") == mine

@@ -515,6 +515,69 @@ def test_this_machines_ignore_setting_counts_too(ws: Workspace) -> None:
     ]
 
 
+def _untrack(ws: Workspace, sub: str) -> None:
+    ws.git(ws.B, "config", "-f", ".gitmodules", f"submodule.{sub}.ignore", "all")
+    ws.git(ws.B, "commit", "-q", "-am", f"{sub} untracked")
+
+
+def test_an_untracked_submodule_on_no_branch_is_put_on_its_branch_and_pulled(ws: Workspace) -> None:
+    # `branch = .` (the root's branch): a clone's `git submodule update` leaves it on the commit the root recorded.
+    _untrack(ws, "alpha")
+    ws.git(ws.B / "alpha", "checkout", "-q", "--detach")
+    alpha = _publish(ws, "alpha", 1, "A", record=False)
+    rc, out = ws.pull_all(ws.B)
+    assert rc == 0, out
+    assert out.splitlines() == [
+        "fetching the root and 2 submodules…",
+        "alpha                  on dev/main (it was on no branch)",
+        "alpha                  merged origin/dev/main (1 commit)",
+    ]
+    assert ws.git(ws.B / "alpha", "branch", "--show-current") == BRANCH
+    assert ws.head(ws.B / "alpha") == alpha
+
+
+def test_an_untracked_submodule_without_a_local_branch_gets_one_tracking_origin(ws: Workspace) -> None:
+    _untrack(ws, "alpha")
+    ws.git(ws.B / "alpha", "checkout", "-q", "--detach")
+    ws.git(ws.B / "alpha", "branch", "-q", "-D", BRANCH)
+    alpha = _publish(ws, "alpha", 1, "A", record=False)
+    rc, out = ws.pull_all(ws.B)
+    assert rc == 0, out
+    assert "alpha                  on dev/main (it was on no branch)" in out
+    assert ws.head(ws.B / "alpha") == alpha
+    assert ws.git(ws.B / "alpha", "rev-parse", "--abbrev-ref", f"{BRANCH}@{{u}}") == f"origin/{BRANCH}"
+
+
+def test_an_untracked_submodule_follows_the_branch_gitmodules_names(ws: Workspace) -> None:
+    ws.git(ws.A / "alpha", "checkout", "-q", "-b", "release")
+    release = ws.change(ws.A / "alpha", "f.txt", 2, "release")
+    ws.git(ws.A / "alpha", "push", "-q", "origin", "release")
+    ws.git(ws.B, "config", "-f", ".gitmodules", "submodule.alpha.branch", "release")
+    _untrack(ws, "alpha")
+    ws.git(ws.B / "alpha", "checkout", "-q", "--detach")
+    rc, out = ws.pull_all(ws.B)
+    assert "alpha                  on release (it was on no branch)" in out
+    assert ws.head(ws.B / "alpha") == release
+    # On `release`, the root on dev/main: it is not merged, and says so.
+    assert rc == 1
+    assert "on release, the root is on dev/main — not pulled" in out
+
+
+def test_an_untracked_submodule_whose_switch_is_refused_is_left_and_listed(ws: Workspace) -> None:
+    _untrack(ws, "alpha")
+    ws.git(ws.B / "alpha", "checkout", "-q", "--detach", "HEAD")
+    _publish(ws, "alpha", 1, "A", record=False)
+    ws.git(ws.B / "alpha", "fetch", "-q", "origin")
+    ws.git(ws.B / "alpha", "branch", "-q", "-f", BRANCH, f"origin/{BRANCH}")
+    ws.set_line(ws.B / "alpha", "f.txt", 1, "mine")
+    before = ws.head(ws.B / "alpha")
+    rc, out = ws.pull_all(ws.B)
+    assert rc == 1
+    assert "alpha                on no branch, and git switch dev/main refused: " in out
+    assert ws.head(ws.B / "alpha") == before
+    assert ws.git(ws.B / "alpha", "branch", "--show-current") == ""
+
+
 def test_an_inactive_submodule_is_left_untouched(ws: Workspace) -> None:
     ws.git(ws.B, "submodule", "deinit", "-q", "beta")
     ws.git(ws.B, "config", "submodule.beta.active", "false")

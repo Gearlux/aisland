@@ -113,6 +113,22 @@ $
 In a `--local` root, add a project later with `git submodule add -f <url>` (git refuses the ignored path without
 `-f`), then run `aisland setup`: it commits the project with `.gitmodules`.
 
+#### A repository cloned into the workspace by hand
+
+`aisland setup` asks about each clone in the workspace folder that `.gitmodules` does not list — a folder that is its
+own repository, with an `origin` and a `pyproject.toml` — and adds it as a submodule on the branch it is on
+(`aisland setup -y` adds it without asking). git keeps the clone as it is, uncommitted edits included:
+
+```text
+$ .venv/bin/aisland setup
+  - foo is a clone the workspace does not list (https://host/team/foo.git, on dev/main). Add it as a submodule? [Y/n] y
+  - added foo as a submodule (https://host/team/foo.git, dev/main)
+  - foo: untracked (the root records none of its commits)
+```
+
+It is tracked like the other projects: untracked when they all are (for everyone, or on this machine only), tracked
+otherwise. A `--local` root commits it with `.gitmodules`; in a shared root they are left for you to commit.
+
 #### Track or untrack the projects: `aisland workspace track|untrack`
 
 ```bash
@@ -135,6 +151,23 @@ over the committed one; `aisland setup` writes git's setting back from them. An 
 typed in the root would put the project back there, off its branch — `git pull-all` and `aisland setup` never do.
 `track` shows a project that moved meanwhile again (` M models`), and the next `git pull-all` records it once origin
 has those commits.
+
+An untracked project follows its **branch**, not the commit the root recorded. A fresh clone's `git submodule update`
+leaves every project on that old commit and on no branch; `aisland setup`, `aisland workspace untrack` and
+`git pull-all` then fetch it and put it on its branch — `.gitmodules`' `branch` (`.` is the root's branch), else
+origin's default — at origin's newest commit (a local branch with commits of its own is switched to, then merged by
+`git pull-all`). So on a new machine `git clone --recurse-submodules <root>` and `aisland setup` put every untracked
+project on its branch:
+
+```text
+$ git pull-all
+fetching the root and 2 submodules…
+models                 on dev/main (it was on no branch)
+models                 merged origin/dev/main (3 commits)
+```
+
+A switch is never forced: uncommitted edits in its way leave the project as it is, listed as
+`on no branch, and git switch dev/main refused: …`. A tracked project on no branch is still left alone.
 
 #### The same workspace on another machine: `workspace.toml`
 
@@ -2069,6 +2102,7 @@ What it cannot do is listed under `needs you:` and it exits 1; fix the item and 
 | `not merged: uncommitted edits to <files> would be overwritten` | the merge changes files you are editing; nothing was touched | commit them, or run `git pull-all --autostash` |
 | `your uncommitted edits to <files> clash with the pulled changes` | `--autostash` put your edits back over lines the pull changed; the file has conflict markers, and a copy is in `git stash list` as `git pull-all autostash (applied with conflicts)` | fix the markers, `git reset -q -- <file>`, then `git stash drop` that copy |
 | `detached HEAD — not pulled` / `on <branch>, the root is on <branch> — not pulled` | that submodule is checked out elsewhere on purpose | `git switch <branch>` in it to have it pulled |
+| `on no branch, and git switch <branch> refused: …` | an untracked submodule's uncommitted edits are in the way of its branch | commit or set them aside, run `git pull-all` again |
 | `not fetched: …` | its remote could not be reached (e.g. off VPN); the others still pull | reconnect and run again |
 | `the root records <sha>, which <submodule>'s <branch> does not contain` | the root points at a commit outside that branch; the pointer is left as recorded | check the submodule's branch |
 

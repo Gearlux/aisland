@@ -38,13 +38,27 @@ The workspace's dev-infrastructure CLI, `aisland` (click, `aisland/cli.py`):
   and after `track|untrack`; a commit git refuses is said, never raised; an unmarked workspace is never touched; the
   `active` plugin adds a project there with `-f`. (`tests/test_local_workspace.py`,
   `tests/test_workspace_init.py::test_a_local_workspace_tracks_only_its_projects_and_has_nothing_to_commit`)
+- `clones.py`: `aisland setup` adds a clone the workspace does not list as a submodule (user choice 2026-10-23: it
+  ASKS, `-y` adds; tracked LIKE THE OTHERS). A clone: a direct, non-hidden subfolder with a `.git` FOLDER, an
+  `origin` and a `pyproject.toml`, not in `.gitmodules`, no alias link; only in a workspace with `.gitmodules` or a
+  local root (a folder of clones has none). `git submodule add -b <its branch> <its origin> <folder>` keeps the clone
+  as it is; `-f` only in a local root; a refused add is said and setup goes on. Untracked for everyone when every
+  other project is committed-untracked, on this machine when every other one is so here, else tracked. Runs before
+  `workspace_file.refresh` in setup. (`tests/test_setup_adds_clones.py`,
+  `tests/test_setup_installs_git_aliases.py::test_setup_offers_the_clones_the_workspace_does_not_list`)
 - `tracking.py`: `aisland workspace track|untrack [PROJECT…] [--machine-only]` (user choice 2026-10-23: two commands,
   no project = every submodule; not a `configure` plugin) — whether the root records a project's commits. Committed:
   the project's `track = false` in `workspace.toml`, written as `ignore = all` in `.gitmodules`; this machine:
   `aisland.track.<project>.track`, written as git's `submodule.<name>.ignore` (`all`/`none`) in `.git/config`, which
   git reads first — aisland's key because `submodule deinit` drops git's section, and `apply` (every
   `activation.reconcile`) writes it back. A committed `track|untrack` drops this machine's choice for those projects.
-  An `ignore` value aisland does not write (`dirty`, `untracked`) is the user's and left alone. Only submodules: a
+  An `ignore` value aisland does not write (`dirty`, `untracked`) is the user's and left alone. **An untracked
+  project follows its branch (user request 2026-10-23):** one on no branch is fetched and switched to its branch —
+  `.gitmodules`' `branch` (`.` = the root's), else origin's default; its local branch, fast-forwarded only when
+  strictly behind, else a new one tracking origin's — by `follow_branches` (every `activation.reconcile`, `untrack`)
+  and by `git pull-all` before it merges; never `-f`, a refused switch is said and the project left; a tracked project
+  on no branch is never moved (`tests/test_tracking.py::test_a_tracked_project_on_no_branch_is_left_on_its_commit`,
+  `tests/test_git_pull_push_all.py::test_an_untracked_submodule_on_no_branch_is_put_on_its_branch_and_pulled`). Only submodules: a
   workspace without them, and a name that is no submodule's, are refused before anything changes. `init
   --untracked` is `untrack` for every project. (`tests/test_tracking.py`,
   `tests/test_workspace_init.py::test_untracked_hides_a_projects_new_commits_and_writes_it_down`)

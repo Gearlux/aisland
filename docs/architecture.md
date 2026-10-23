@@ -2929,6 +2929,10 @@ in an existing repository sets it up in place instead of refusing it (`--from` a
   `/commit-session` are told not to take it.
 - `git submodule add` refuses a `--local` root's ignored path without `-f`; the `active` plugin passes it, a person
   types it.
+- An untracked project follows its branch: on no branch (a fresh clone's `git submodule update`), `aisland setup`,
+  `untrack` and `git pull-all` fetch it and switch it to `.gitmodules`' branch (`.` = the root's), else origin's
+  default — never forced. So a shared root's recorded commits stop mattering for its untracked projects: a new
+  machine needs only the clone and `aisland setup`.
 
 ### Example
 
@@ -2948,6 +2952,39 @@ $ aisland workspace track models --machine-only
 - The commit message and the report rows.
 - Never: `update = none` for the projects (setup would no longer check out an optional one), a pull-all that
   records an untracked submodule, or an `ignore` value aisland did not write overwritten.
+
+---
+
+## A clone the workspace does not list: setup asks, and adds it as a submodule
+
+*2026-10-23* [clones]
+
+### Context
+
+In a workspace of submodules, a repository cloned into its folder by hand was invisible: discovery and
+`workspace.toml` read `.gitmodules` only, so setup neither listed nor installed it, and said nothing.
+
+### Decision
+
+`aisland setup` finds each clone `.gitmodules` does not list (a `.git` folder, an `origin`, a `pyproject.toml`), asks
+`[Y/n]` (`-y` adds), and runs `git submodule add -b <its branch> <its origin> <folder>`, which keeps the clone as it
+is. The new project is tracked like the others — untracked when every other project is.
+
+### Consequences
+
+- A clone is installed and listed by the same setup run; a `--local` root commits it.
+- A data repository (no `pyproject.toml`) or a scratch one (no `origin`) is never offered.
+
+### Example
+
+```text
+  - foo is a clone the workspace does not list (https://host/team/foo.git, on dev/main). Add it as a submodule? [Y/n]
+```
+
+### What you may change
+
+- The question's wording.
+- Never: adding a clone without asking outside `-y`, or moving its checkout.
 
 ---
 

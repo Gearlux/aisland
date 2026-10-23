@@ -14,10 +14,16 @@ Two layers, as for every per-project setting (:mod:`aisland.activation`):
   ``git submodule deinit``, which drops git's section; the next ``aisland setup`` writes git's key back.
 
 An ``ignore`` value aisland does not write (``dirty``, ``untracked``) is the user's, and left alone.
+
+An untracked project FOLLOWS ITS BRANCH instead of the commit the root recorded (user request 2026-10-23): one on no
+branch — what a clone's ``git submodule update`` leaves — is fetched and put on its branch by :func:`follow_branches`
+(``aisland setup``, ``untrack``) and by ``git pull-all``. The branch is ``.gitmodules``' ``branch`` (``.`` is the root's
+branch), else origin's default branch; the switch is never forced.
 """
 
 from __future__ import annotations
 
+import os
 import subprocess
 from dataclasses import dataclass
 from pathlib import Path
@@ -166,6 +172,50 @@ def set_machine(root: Path, projects: Sequence[str], track: bool) -> List[Change
     return apply(root)
 
 
+def _followed_branch(root: Path, name: str, folder: Path) -> Optional[str]:
+    """The branch an untracked submodule follows: ``.gitmodules``' (``.``: the root's), else origin's default."""
+    branch = _get(root, "-f", ".gitmodules", "--get", f"submodule.{name}.branch")
+    if branch == ".":
+        branch = _git(root, "branch", "--show-current").stdout.strip() or None
+    if not branch:
+        head = _git(folder, "symbolic-ref", "-q", "--short", "refs/remotes/origin/HEAD").stdout.strip()
+        branch = head[len("origin/") :] if head.startswith("origin/") else None
+    return branch
+
+
+def follow_branches(root: Path) -> List[str]:
+    """Put every untracked, checked-out project that is on no branch on the branch it follows, after a fetch: its own
+    local branch when it has one, else a new one tracking origin's. Never forced — a switch git refuses (uncommitted
+    edits in the way) is said and the project left; an unreachable origin only means the branch it already knows.
+    A local branch strictly behind origin's is fast-forwarded to it. One line per project acted on."""
+    lines = []
+    quiet = {**os.environ, "GIT_TERMINAL_PROMPT": "0"}
+    for project, name in _submodules(root).items():
+        path = next(p for p, n in local_workspace.submodule_names(root).items() if n == name)
+        folder = root / path
+        if not (folder / ".git").exists() or not _ignored(root, name):
+            continue
+        if _git(folder, "branch", "--show-current").stdout.strip():
+            continue
+        subprocess.run(["git", "fetch", "-q", "origin"], cwd=folder, capture_output=True, env=quiet)
+        branch = _followed_branch(root, name, folder)
+        if branch is None:
+            lines.append(f"{project}: stays on no branch — .gitmodules names none and origin has no default")
+            continue
+        if _git(folder, "rev-parse", "-q", "--verify", f"refs/heads/{branch}").returncode == 0:
+            done = _git(folder, "switch", "-q", branch)
+        else:
+            done = _git(folder, "switch", "-q", "-c", branch, "--track", f"origin/{branch}")
+        if done.returncode != 0:
+            refusal = (done.stderr.strip().splitlines() or ["failed"])[0]
+            lines.append(f"{project}: stays on no branch — git switch {branch} refused: {refusal}")
+            continue
+        # A local branch behind origin's moves up to it; one with commits of its own is left for `git pull-all`.
+        _git(folder, "merge", "-q", "--ff-only", f"origin/{branch}")
+        lines.append(f"{project}: on {branch} (it was on no branch)")
+    return lines
+
+
 def track_command(root: Path, projects: Sequence[str], track: bool, machine_only: bool) -> List[str]:
     """``aisland workspace track|untrack``: the change and the report's lines; a local workspace commits it."""
     chosen = _chosen(root, projects)
@@ -180,5 +230,6 @@ def track_command(root: Path, projects: Sequence[str], track: bool, machine_only
             f"==> {word}: {', '.join(chosen)} (in workspace.toml and .gitmodules{'' if local else ' — commit them'})"
         )
     lines = [header, *(f"  - {change.line()}" for change in changes)]
+    lines += [f"  - {line}" for line in follow_branches(root)]
     lines += [f"  - {line}" for line in local_workspace.settle(root).lines()]
     return lines
