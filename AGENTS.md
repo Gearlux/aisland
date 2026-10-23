@@ -261,9 +261,9 @@ start-time port pre-flight naming the PID is the only signal). All service state
   bare `java` on PATH, which a shell profile points at the newest JDK (26 broke Jenkins on
   2026-10-06). `services/jenkins_java.py` probes each installed JDK, newest first, with
   `java -jar jenkins.war --version`; no Java version is written into aisland, and the bare
-  `openjdk` formula is never a sys-dependency. On macOS `provision_system` installs the
+  `openjdk` formula is never one of aisland's tools. On macOS `provision.install` installs the
   `openjdk@N` the WAR names. (`tests/test_jenkins_java.py`,
-  `::test_aisland_never_declares_the_floating_openjdk_formula`)
+  `tests/test_workspace_provision.py::test_aisland_never_needs_the_floating_openjdk_formula`)
 
 ## Docker, containers, trackers
 
@@ -475,6 +475,19 @@ User choice 2026-10-16: an aisland command, submodules only, run by `/push-all` 
   a project without a mirror is never contacted.
 - `/push-all` and `/ship` call `aisland workspace mirror sync` last; change its exit status or wording and
   those workflows together.
+
+## System tools (`aisland workspace provision`, `provision.py`)
+
+User choices 2026-10-23: no configure plugin (which projects a machine has decides its tools), aisland's own tools in
+the package. (`tests/test_workspace_provision.py`)
+- A project declares `[tool.aisland.sys-dependencies]` `brew`/`userspace` lists; discovery refuses an unknown key, a
+  value that is no list of names and a userspace tool `manager.USERSPACE_TOOLS` lacks, naming the file and the table's
+  line — before anything is installed.
+- aisland's own tools are `provision.AISLAND_TOOLS`, never a table in its `pyproject.toml` (a wheel workspace has none
+  to read; `::test_aislands_pyproject_declares_no_tools_of_its_own`).
+- `aisland workspace provision` lists this platform's tools, one row each (who needs it, installed or not — Homebrew's
+  list, a tap-qualified name by its last part; a userspace tool by its binaries in `BIN_DIR`), `--json` the same
+  rows; `install` is what `aisland setup` runs. There is no `aisland provision`.
 
 ## What the projects declare (`discovery.py`)
 

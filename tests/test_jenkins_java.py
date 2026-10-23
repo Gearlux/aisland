@@ -9,7 +9,6 @@ download, provisioning and the doctor check through them.
 """
 
 import subprocess
-import tomllib
 import zipfile
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Sequence
@@ -17,7 +16,7 @@ from typing import Any, Dict, List, Optional, Sequence
 import pytest
 from click.testing import CliRunner
 
-from aisland import doctor, manager
+from aisland import doctor
 from aisland.cli import main
 from aisland.services import jenkins as jenkins_module
 from aisland.services import jenkins_java
@@ -314,7 +313,7 @@ class TestMessages:
         choice = JenkinsJava("2.555.2", None, (), ())
         assert choice.refusal() == (
             "Error: Jenkins 2.555.2 needs a Java, and none is installed.\n"
-            "Fix: aisland provision   # installs the Java this Jenkins supports"
+            "Fix: aisland workspace provision install   # installs the Java this Jenkins supports"
         )
 
     def test_only_javas_too_old_to_ask_on_linux(self, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -423,7 +422,7 @@ class TestPluginDownload:
 
 
 # ---------------------------------------------------------------------------
-# Provisioning — `aisland setup` / `aisland provision`
+# Provisioning — `aisland setup` / `aisland workspace provision install`
 # ---------------------------------------------------------------------------
 
 
@@ -520,41 +519,6 @@ class TestProvisionJava:
         provisioning["service"].provision_java()
         assert provisioning["installs"] == []
         assert "Error: Jenkins 2.555.2 needs a Java, and none is installed." in capsys.readouterr().out
-
-
-class TestProvisionSystem:
-    def _workspace(self, tmp_path: Path) -> Path:
-        workspace = tmp_path / "ws"
-        (workspace / "proj").mkdir(parents=True)
-        (workspace / ".git").mkdir()
-        (workspace / "proj" / "pyproject.toml").write_text(
-            "[project]\nname = 'fake'\nversion = '0.0.0'\n[tool.aisland.sys-dependencies]\nbrew = ['node']\n"
-        )
-        return workspace
-
-    def _run(self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path, system: str) -> List[str]:
-        monkeypatch.setattr(manager, "get_workspace_root", lambda: self._workspace(tmp_path))
-        monkeypatch.setattr(manager.platform, "system", lambda: system, raising=False)
-        monkeypatch.setattr(manager, "_install_brew_packages", lambda packages: None)
-        monkeypatch.setattr(manager, "_install_userspace_tool", lambda name: None)
-        monkeypatch.setattr(manager, "_maybe_offer_shell_switch", lambda packages: None)
-        provisioned: List[str] = []
-        monkeypatch.setattr(JenkinsService, "provision_java", lambda self: provisioned.append(system))
-        manager.provision_system()
-        return provisioned
-
-    def test_macos_provisions_the_java_jenkins_runs_on(self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
-        assert self._run(monkeypatch, tmp_path, "Darwin") == ["Darwin"]
-
-    def test_linux_installs_no_java(self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
-        assert self._run(monkeypatch, tmp_path, "Linux") == []
-
-
-def test_aisland_never_declares_the_floating_openjdk_formula() -> None:
-    """`openjdk` follows the newest Java (26 on 2026-10-06), which Jenkins refuses; `openjdk@N` is chosen by the WAR."""
-    pyproject = Path(__file__).resolve().parents[1] / "pyproject.toml"
-    declared: Sequence[str] = tomllib.loads(pyproject.read_text())["tool"]["aisland"]["sys-dependencies"]["brew"]
-    assert not [formula for formula in declared if formula == "openjdk" or formula.startswith("openjdk@")]
 
 
 # ---------------------------------------------------------------------------

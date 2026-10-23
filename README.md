@@ -254,9 +254,8 @@ From a wheel, the git aliases `aisland setup` installs (`git pull-all`, …) nam
 their place in the venv: after recreating the venv or installing a new aisland, run
 `aisland setup` again. The editor file names the workspace's own folder
 (`${workspaceFolder:acme}`, the `acme-bash` terminal profile) and takes the bash on `PATH` when
-the template's is missing on the machine. aisland's own system tools (process-compose for the
-services, Homebrew's bash) are not provisioned from a wheel; install them yourself before
-`aisland start`.
+the template's is missing on the machine. `aisland setup` installs aisland's own system tools (process-compose for
+the services, Docker) from a wheel too ([System tools](#system-tools-aisland-workspace-provision)).
 
 #### What the projects declare (`aisland workspace show`)
 
@@ -291,6 +290,33 @@ A declaration aisland cannot use stops it with one line naming the file and the 
 
 ```text
 Error: /path/to/sonair/pyproject.toml:8: sonair offers 'jax' for selection 'framework', but defines no extra of that name
+```
+
+#### System tools (`aisland workspace provision`)
+
+A project declares the tools it needs from outside Python in its `pyproject.toml`; aisland adds its own (the service
+supervisor, Docker, Colima, `act`, SwiftBar):
+
+```toml
+[tool.aisland.sys-dependencies]
+brew = ["node"]          # macOS, installed with Homebrew
+userspace = ["node"]     # Linux, downloaded by aisland into its bin/ folder
+```
+
+```text
+$ aisland workspace provision
+  TOOL                           HOW   PROJECTS      INSTALLED
+  act                            brew  aisland       yes
+  node                           brew  streamstudio  no
+  …
+$ aisland workspace provision install      # install them; `aisland setup` does the same
+```
+
+On macOS `install` also installs the Java the Jenkins server runs on. A wrong declaration stops every command before
+anything is installed, naming the file and the line:
+
+```text
+Error: /w/editor/pyproject.toml:4: sys-dependencies takes brew and userspace, not 'apt'
 ```
 
 #### A workspace without `.gitmodules`: a folder of projects
@@ -764,7 +790,7 @@ root is left alone.
 | The backup store itself is never moved | Cleaning `aisland` matters here: its `.gitignore` ignores `data/` wholesale and the store lives at `data/backups`, so that one entry is split and everything *except* the store moves |
 
 Cleaning a project undoes work that has to be redone: `aisland clean aisland` takes away the
-provisioned `bin/` and every service's `data/` (re-run `aisland provision` / `aisland setup`),
+provisioned `bin/` and every service's `data/` (re-run `aisland workspace provision install` / `aisland setup`),
 and cleaning any project removes caches that the next `pytest` / `mypy` run rebuilds slowly.
 That is the point of the backup — `aisland backups restore <project>` puts it back, until the
 retention window closes.
@@ -1114,7 +1140,7 @@ aisland supervisor down     # stop ALL supervised services + the supervisor
 ```
 
 **Installation**: macOS via Homebrew (`f1bonacc1/tap/process-compose`,
-declared in aisland's `[tool.aisland.sys-dependencies]` and installed by
+one of aisland's own [system tools](#system-tools-aisland-workspace-provision), installed by
 `aisland setup` / `setup.sh`); Linux via the userspace registry into
 `aisland/bin/` (no sudo). Userspace downloads are verified against a pinned
 per-architecture SHA-256 before extraction — a mismatch aborts the install
@@ -1202,7 +1228,7 @@ Error: Jenkins 2.555.2 runs on Java 21 or 25, and none is installed (found 26.0.
 Fix: brew install openjdk@25
 ```
 
-On macOS, `aisland setup` (and `aisland provision`) installs that Java for you. It downloads the
+On macOS, `aisland setup` (and `aisland workspace provision install`) installs that Java for you. It downloads the
 WAR if it is missing, asks it, and installs the `openjdk@N` formula for the newest release
 named. A machine with no Java that can ask (none at all, or only Java 8) first gets the newest
 `openjdk@N` to ask with. Setup never installs or upgrades the bare `openjdk` formula, and

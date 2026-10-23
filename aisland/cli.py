@@ -17,7 +17,6 @@ from aisland.manager import (
     generate_gemini_settings,
     generate_mcp_json,
     get_workspace_root,
-    provision_system,
     run_quality_gates,
     setup_workspace,
 )
@@ -373,6 +372,37 @@ def workspace_configure(ctx: click.Context) -> None:
             click.echo(line)
 
 
+@workspace_group.group("provision", invoke_without_command=True)
+@click.option("--json", "as_json", is_flag=True, help="Print the rows as one JSON object.")
+@click.pass_context
+def workspace_provision(ctx: click.Context, as_json: bool) -> None:
+    """The system tools this machine needs (Homebrew on macOS, aisland's downloads on Linux): who needs each, and
+    whether it is installed. `install` installs them, as `aisland setup` does.
+
+    \b
+    aisland workspace provision
+    aisland workspace provision install
+    """
+    from aisland import provision
+
+    if ctx.invoked_subcommand is not None:
+        return
+    rows = provision.rows(_configure_root())
+    if as_json:
+        click.echo(json.dumps({"rows": rows}, indent=2))
+        return
+    for line in configure.table(rows) if rows else [provision.nothing_here()]:
+        click.echo(line)
+
+
+@workspace_provision.command("install")
+def workspace_provision_install() -> None:
+    """Install every system tool this machine needs: aisland's own and the projects' sys-dependencies."""
+    from aisland import provision
+
+    provision.install(_configure_root())
+
+
 @workspace_group.group("mirror")
 def workspace_mirror() -> None:
     """The mirror plugin's action: copy each project to its mirror (set it with `aisland workspace configure mirror`)."""
@@ -541,12 +571,6 @@ def notebooks_clean() -> None:
     from aisland.notebook_utils import clean_notebook_stdin
 
     clean_notebook_stdin()
-
-
-@main.command()
-def provision() -> None:
-    """Scan projects and install required system dependencies (Homebrew)."""
-    provision_system()
 
 
 @main.command()

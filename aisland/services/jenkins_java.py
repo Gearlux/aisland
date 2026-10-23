@@ -125,7 +125,7 @@ class JenkinsJava:
             return (
                 f"brew install {formula}"
                 if formula
-                else "aisland provision   # installs the Java this Jenkins supports"
+                else "aisland workspace provision install   # installs the Java this Jenkins supports"
             )
         if self.supported:
             return f"install a Java {max(self.supported)} JDK and set JAVA_HOME to its home directory"

@@ -31,11 +31,11 @@ import re
 import tomllib
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Dict, List, Literal, Mapping, Optional, Tuple, get_args
+from typing import Any, Dict, List, Literal, Mapping, Optional, Tuple, cast, get_args
 
 import click
 
-from aisland.manager import workspace_folders
+from aisland.manager import USERSPACE_TOOLS, workspace_folders
 
 #: The entry-point group a project's code plugins are declared in.
 ENTRY_POINT_GROUP = "aisland.plugins"
@@ -52,6 +52,10 @@ _WORKSPACE_NAME_KEY = "name"
 #: The settings a declared selection and a declared service take.
 _SELECTION_KEYS = ("question", "choices")
 _SERVICE_KEYS = ("command", "port", "ready", "needs")
+
+#: How a system tool is installed: ``brew`` on macOS (Homebrew), ``userspace`` on Linux (aisland's download list).
+ToolKind = Literal["brew", "userspace"]
+TOOL_KINDS: Tuple[str, ...] = get_args(ToolKind)
 
 #: Whether an installed plugin could be loaded yet.
 PluginState = Literal["installed", "not installed"]
@@ -106,6 +110,16 @@ class Service:
 
 
 @dataclass(frozen=True)
+class SystemTool:
+    """A tool from outside Python a project needs (``[tool.aisland.sys-dependencies]``), and how it is installed."""
+
+    project: str
+    kind: ToolKind
+    name: str
+    where: Where
+
+
+@dataclass(frozen=True)
 class Plugin:
     """A code plugin a project declares as an entry point; ``distribution`` is the project's package name."""
 
@@ -135,6 +149,7 @@ class Discovery:
     services: Dict[str, Service] = field(default_factory=dict)
     plugins: Dict[str, Plugin] = field(default_factory=dict)
     undefined: Dict[str, List[str]] = field(default_factory=dict)
+    system_tools: List[SystemTool] = field(default_factory=list)
 
 
 # --- locating a table in the text ----------------------------------------------------------------------------------
@@ -262,6 +277,37 @@ def _manual_extras(projects: List[Tuple[str, Path, str, Dict[str, Any]]]) -> Non
                 )
 
 
+def _system_tools(projects: List[Tuple[str, Path, str, Dict[str, Any]]], found: Discovery) -> None:
+    """Each project's ``[tool.aisland.sys-dependencies]``: ``brew`` and ``userspace`` lists of tool names, a userspace
+    tool one aisland can download. Refused here, before anything is installed — the installer would otherwise skip a
+    wrong key silently, or name an unknown tool only on Linux, in the middle of setup."""
+    for project, path, text, data in projects:
+        table = data.get("tool", {}).get("aisland", {}).get("sys-dependencies")
+        if table is None:
+            continue
+        where = Where(path, table_line(text, "tool", "aisland", "sys-dependencies"))
+        if not isinstance(table, dict):
+            raise DeclarationError(f"{where}: sys-dependencies is not a table")
+        unknown = [key for key in table if key not in TOOL_KINDS]
+        if unknown:
+            raise DeclarationError(f"{where}: sys-dependencies takes {' and '.join(TOOL_KINDS)}, not {unknown[0]!r}")
+        for kind in TOOL_KINDS:
+            if kind not in table:
+                continue
+            names = _strings(table[kind])
+            if names is None:
+                raise DeclarationError(
+                    f'{where}: sys-dependencies: {kind} must be a list of names, as {kind} = ["node"]'
+                )
+            for name in names:
+                if kind == "userspace" and name not in USERSPACE_TOOLS:
+                    raise DeclarationError(
+                        f"{where}: userspace tool {name!r} is none aisland can install "
+                        f"(it can: {', '.join(sorted(USERSPACE_TOOLS))})"
+                    )
+                found.system_tools.append(SystemTool(project, cast(ToolKind, kind), name, where))
+
+
 def _services(projects: List[Tuple[str, Path, str, Dict[str, Any]]], found: Discovery) -> None:
     for project, path, text, data in projects:
         for name, table in data.get("tool", {}).get("aisland", {}).get("service", {}).items():
@@ -322,6 +368,7 @@ def discover(root: Path) -> Discovery:
     _manual_extras(projects)
     _services(projects, found)
     _plugins(projects, found)
+    _system_tools(projects, found)
     return found
 
 
@@ -414,6 +461,16 @@ def as_json(found: Discovery, loaded: Mapping[str, Loaded]) -> Dict[str, Any]:
             for name, plugin in found.plugins.items()
         },
         "undefined": found.undefined,
+        "system_tools": [
+            {
+                "project": tool.project,
+                "kind": tool.kind,
+                "name": tool.name,
+                "file": str(tool.where.file),
+                "line": tool.where.line,
+            }
+            for tool in found.system_tools
+        ],
     }
 
 
@@ -429,6 +486,8 @@ def report_lines(found: Discovery, loaded: Mapping[str, Loaded]) -> List[str]:
         state = loaded[name]
         detail = f"{plugin.target} — {state.kind}" if state.state == "installed" else f"{plugin.target} — not installed"
         rows.append(("plugin", name, plugin.project, detail))
+    for tool in found.system_tools:
+        rows.append(("tool", tool.name, tool.project, tool.kind))
     if not rows:
         lines = ["Declared by the projects: nothing"]
     else:

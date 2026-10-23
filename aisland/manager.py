@@ -44,7 +44,7 @@ USERSPACE_TOOLS: dict[str, dict[str, Any]] = {
         "sha256": {"amd64": "83bf07dd343002a26211cf1fcd46a9d9534219aad42ee02847816940bf610a72"},
     },
     # The aisland service supervisor (see aisland/supervisor.py). macOS gets it
-    # via Homebrew (f1bonacc1/tap, declared in aisland's sys-dependencies);
+    # via Homebrew (f1bonacc1/tap, in aisland.provision.AISLAND_TOOLS);
     # this entry covers Linux. Flat archive: the binary sits at the tarball
     # root (bin_subdir "" — no bin/ directory), and upstream publishes
     # per-architecture assets ({arch} = amd64 / arm64).
@@ -367,71 +367,6 @@ def discover_projects(root: Path, workspace_root: Optional[Path] = None) -> List
                 # If it's a project, also check for sub-projects (submodules)
                 projects.extend(discover_projects(item, workspace_root))
     return projects
-
-
-def provision_system() -> None:
-    """Scan all projects for [tool.aisland.sys-dependencies] and install them.
-
-    Honoured schema (per pyproject)::
-
-        [tool.aisland.sys-dependencies]
-        brew      = ["pkg", ...]   # macOS: installed via Homebrew
-        userspace = ["tool", ...]  # Linux: installed via aisland's userspace registry
-
-    Behaviour by platform:
-      * Darwin: install ``brew`` deps via Homebrew; ``userspace`` is ignored. Then install
-        the Java the Jenkins WAR accepts (:meth:`JenkinsService.provision_java`).
-      * Linux:  install ``userspace`` deps via :data:`USERSPACE_TOOLS`; ``brew`` is ignored.
-      * Other:  log and skip — no provisioning implemented yet.
-    """
-    workspace_root = get_workspace_root()
-    click.echo(f"==> Scanning for system dependencies in {workspace_root}...")
-
-    import tomllib
-
-    brew_packages: set[str] = set()
-    userspace_tools: set[str] = set()
-
-    for pyproject in discover_projects(workspace_root):
-        try:
-            with open(pyproject, "rb") as f:
-                data = tomllib.load(f)
-                sys_deps = data.get("tool", {}).get("aisland", {}).get("sys-dependencies", {})
-                brew_deps = sys_deps.get("brew", [])
-                if isinstance(brew_deps, list):
-                    brew_packages.update(brew_deps)
-                user_deps = sys_deps.get("userspace", [])
-                if isinstance(user_deps, list):
-                    userspace_tools.update(user_deps)
-        except Exception as e:
-            click.echo(f"  - Warning: Failed to parse {pyproject}: {e}")
-
-    if not brew_packages and not userspace_tools:
-        click.echo("  - No system dependencies found.")
-        return
-
-    system = platform.system()
-    if system == "Darwin":
-        if brew_packages:
-            click.echo(f"  - Found required brew packages: {', '.join(sorted(brew_packages))}")
-            _install_brew_packages(brew_packages)
-            _maybe_offer_shell_switch(brew_packages)
-        else:
-            click.echo("  - No brew packages declared; nothing to install on macOS.")
-        # Jenkins' Java is no declared formula: the WAR names the Java it runs on (see
-        # services/jenkins_java.py). Imported here because services.jenkins imports this module.
-        from aisland.services.jenkins import JenkinsService
-
-        JenkinsService().provision_java()
-    elif system == "Linux":
-        if userspace_tools:
-            click.echo(f"  - Found required userspace tools: {', '.join(sorted(userspace_tools))}")
-            for tool in sorted(userspace_tools):
-                _install_userspace_tool(tool)
-        else:
-            click.echo("  - No userspace tools declared; nothing to install on Linux.")
-    else:
-        click.echo(f"  - sys-deps provisioning not implemented for platform '{system}'; skipping.")
 
 
 def _install_brew_packages(packages: set) -> None:
@@ -1546,8 +1481,10 @@ def setup_workspace(non_interactive: bool = False, install_all: bool = False) ->
     for line in workspace_file.refresh(workspace_root):
         click.echo(f"  - {line}")
 
-    # 1. System Provisioning
-    provision_system()
+    # 1. The system tools the workspace needs (aisland's own and the projects' sys-dependencies).
+    from aisland import provision  # local: provision imports this module
+
+    provision.install(workspace_root)
 
     # 1b. Activation (aisland.activation): ask about each optional project (an `active` key in workspace.toml), then
     #     check each project out or empty it as this machine has it — adding one the workspace does not have yet — so

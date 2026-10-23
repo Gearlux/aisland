@@ -326,7 +326,7 @@ def test_setup_keeps_the_file_current(tmp_path: Path, monkeypatch: pytest.Monkey
         return ["workspace.toml: added x"]
 
     monkeypatch.setattr(workspace_file, "refresh", refresh)
-    monkeypatch.setattr(manager, "provision_system", lambda: (_ for _ in ()).throw(_Stop()))
+    monkeypatch.setattr("aisland.provision.install", lambda root: (_ for _ in ()).throw(_Stop()))
     with pytest.raises(_Stop):
         manager.setup_workspace(non_interactive=True)
     assert seen == ["refresh"]

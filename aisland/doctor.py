@@ -331,7 +331,7 @@ def check_colima_vm_trust() -> CheckResult:
 def _jenkins_java() -> Optional[JenkinsJava]:
     """What the downloaded Jenkins WAR says about the installed JDKs; None before it is downloaded.
 
-    The doctor never downloads it — that is `aisland jenkins start`'s and `aisland provision`'s.
+    The doctor never downloads it — that is `aisland jenkins start`'s and `aisland workspace provision install`'s.
     """
     service = JenkinsService()
     if not service.war_file.exists():

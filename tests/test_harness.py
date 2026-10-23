@@ -441,10 +441,10 @@ def test_setup_installs_the_harness_before_provisioning(
     monkeypatch.setattr(manager, "ensure_uv_in_venv", lambda venv_bin: "uv")
     monkeypatch.setattr(manager, "_link_project_bashrc", lambda root: None)
 
-    def provision() -> None:
+    def provision(root: Path) -> None:
         raise _Stop
 
-    monkeypatch.setattr(manager, "provision_system", provision)
+    monkeypatch.setattr("aisland.provision.install", provision)
     with pytest.raises(_Stop):
         manager.setup_workspace(non_interactive=True)
     assert (tmp_path / ".agents/workflows/ship.md").is_file()
@@ -459,7 +459,7 @@ def test_setup_prints_what_the_harness_reports(
     monkeypatch.setattr(manager, "get_workspace_root", lambda: tmp_path)
     monkeypatch.setattr(manager, "ensure_uv_in_venv", lambda venv_bin: "uv")
     monkeypatch.setattr(manager, "_link_project_bashrc", lambda root: None)
-    monkeypatch.setattr(manager, "provision_system", lambda: (_ for _ in ()).throw(_Stop()))
+    monkeypatch.setattr("aisland.provision.install", lambda root: (_ for _ in ()).throw(_Stop()))
     with pytest.raises(_Stop):
         manager.setup_workspace(non_interactive=True)
     assert (

@@ -1,4 +1,6 @@
-"""Tests for aisland.manager.provision_system and shell-switch offer.
+"""Tests for aisland.manager's installers (Homebrew, the userspace registry) and shell-switch offer.
+
+Which tools are installed, and the command: `tests/test_workspace_provision.py`.
 
 Covers the deterministic early-return branches of `_maybe_offer_shell_switch`.
 The interactive sudo / chsh paths are not exercised here — they require
@@ -97,98 +99,8 @@ def test_shell_switch_declined_exits_cleanly(monkeypatch: pytest.MonkeyPatch, ca
 
 
 # ---------------------------------------------------------------------------
-# Cross-platform provisioning: brew vs userspace dispatch.
+# The userspace installer (Linux).
 # ---------------------------------------------------------------------------
-
-
-def _write_pyproject(path: Path, *, brew: list[str] | None = None, userspace: list[str] | None = None) -> None:
-    """Write a minimal pyproject.toml declaring sys-dependencies."""
-    lines = [
-        "[project]\nname = 'fake'\nversion = '0.0.0'\n",
-        "[tool.aisland.sys-dependencies]\n",
-    ]
-    if brew is not None:
-        lines.append(f"brew = {brew!r}\n")
-    if userspace is not None:
-        lines.append(f"userspace = {userspace!r}\n")
-    path.write_text("".join(lines))
-
-
-def _make_fake_workspace(tmp_path: Path) -> Path:
-    """Build a workspace skeleton with a single fake project containing a pyproject."""
-    workspace = tmp_path / "ws"
-    (workspace / "proj").mkdir(parents=True)
-    (workspace / ".git").mkdir()  # makes get_workspace_root anchor here
-    return workspace
-
-
-def test_provision_dispatches_to_brew_on_darwin(monkeypatch: pytest.MonkeyPatch, tmp_path: Path, capsys: Any) -> None:
-    """Darwin: only brew installer runs; userspace deps are ignored."""
-    workspace = _make_fake_workspace(tmp_path)
-    _write_pyproject(workspace / "proj" / "pyproject.toml", brew=["node"], userspace=["node"])
-
-    monkeypatch.setattr(manager, "get_workspace_root", lambda: workspace)
-    monkeypatch.setattr(manager.platform, "system", lambda: "Darwin", raising=False)
-
-    brew_calls: list = []
-    user_calls: list = []
-    monkeypatch.setattr(manager, "_install_brew_packages", lambda pkgs: brew_calls.append(set(pkgs)))
-    monkeypatch.setattr(manager, "_install_userspace_tool", lambda name: user_calls.append(name))
-    monkeypatch.setattr(manager, "_maybe_offer_shell_switch", lambda pkgs: None)
-    monkeypatch.setattr("aisland.services.jenkins.JenkinsService.provision_java", lambda self: None)
-
-    manager.provision_system()
-
-    assert brew_calls == [{"node"}]
-    assert user_calls == []
-
-
-def test_provision_dispatches_to_userspace_on_linux(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
-    """Linux: only userspace installer runs; brew deps are ignored."""
-    workspace = _make_fake_workspace(tmp_path)
-    _write_pyproject(workspace / "proj" / "pyproject.toml", brew=["node"], userspace=["node"])
-
-    monkeypatch.setattr(manager, "get_workspace_root", lambda: workspace)
-    monkeypatch.setattr(manager.platform, "system", lambda: "Linux", raising=False)
-
-    brew_calls: list = []
-    user_calls: list = []
-    monkeypatch.setattr(manager, "_install_brew_packages", lambda pkgs: brew_calls.append(set(pkgs)))
-    monkeypatch.setattr(manager, "_install_userspace_tool", lambda name: user_calls.append(name))
-
-    manager.provision_system()
-
-    assert brew_calls == []
-    assert user_calls == ["node"]
-
-
-def test_provision_no_deps_short_circuits(monkeypatch: pytest.MonkeyPatch, tmp_path: Path, capsys: Any) -> None:
-    """If no projects declare sys-deps, no installers should run."""
-    workspace = _make_fake_workspace(tmp_path)
-    (workspace / "proj" / "pyproject.toml").write_text("[project]\nname='fake'\nversion='0.0.0'\n")
-
-    monkeypatch.setattr(manager, "get_workspace_root", lambda: workspace)
-    monkeypatch.setattr(manager.platform, "system", lambda: "Linux", raising=False)
-
-    user_calls: list = []
-    monkeypatch.setattr(manager, "_install_userspace_tool", lambda name: user_calls.append(name))
-
-    manager.provision_system()
-
-    assert user_calls == []
-    assert "No system dependencies found" in capsys.readouterr().out
-
-
-def test_provision_unknown_platform_skips(monkeypatch: pytest.MonkeyPatch, tmp_path: Path, capsys: Any) -> None:
-    """Unsupported platform → log + skip, never raise."""
-    workspace = _make_fake_workspace(tmp_path)
-    _write_pyproject(workspace / "proj" / "pyproject.toml", brew=["node"])
-
-    monkeypatch.setattr(manager, "get_workspace_root", lambda: workspace)
-    monkeypatch.setattr(manager.platform, "system", lambda: "Windows", raising=False)
-
-    manager.provision_system()
-    assert "not implemented for platform 'Windows'" in capsys.readouterr().out
 
 
 def test_userspace_install_unknown_tool_errors(monkeypatch: pytest.MonkeyPatch, capsys: Any) -> None:
