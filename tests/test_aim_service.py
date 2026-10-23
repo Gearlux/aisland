@@ -18,13 +18,13 @@ from aisland.services.aim import DEFAULT_PORT, REPO_ENV_KEY, AimService
 
 
 def test_setup_refuses_to_install_and_names_the_selection_command() -> None:
-    """A service must never install its own backend — that bypasses `aisland tracker`."""
+    """A service must never install its own backend — that bypasses the tracker selection."""
     svc = AimService()
     with patch("importlib.util.find_spec", return_value=None):
         with patch("subprocess.run") as run_mock:
-            with pytest.raises(click.ClickException, match="aisland tracker set aim"):
+            with pytest.raises(click.ClickException, match="aisland workspace configure tracker set"):
                 svc.setup()
-    run_mock.assert_not_called()
+    assert not [c for c in run_mock.call_args_list if "pip" in c.args[0]], "the backend is never installed here"
 
 
 def test_setup_is_silent_when_aim_is_present() -> None:

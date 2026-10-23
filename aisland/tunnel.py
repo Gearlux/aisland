@@ -130,7 +130,7 @@ def pid_path() -> Path:
 
 
 def provider_path() -> Path:
-    """The account provider remembered after a sign-in (per machine, so not in ``config.toml``)."""
+    """The account provider remembered after a sign-in (per machine, so not in ``workspace.toml``)."""
     return state_dir() / "provider"
 
 

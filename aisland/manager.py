@@ -1477,20 +1477,12 @@ def _write_root_uv_toml(workspace_root: Path, activated: List[dict]) -> None:
     click.echo(f"==> Wrote {out} (base + {n_merged} project uv.toml; {extra} extra index URL(s))")
 
 
-def setup_workspace(
-    non_interactive: bool = False,
-    framework: Tuple[str, ...] = (),
-    extra: Tuple[str, ...] = (),
-    install_all: bool = False,
-) -> None:
+def setup_workspace(non_interactive: bool = False, install_all: bool = False) -> None:
     """Perform a full workspace setup: system provisioning followed by editable pip installs.
 
-    ``extra`` names the optional-dependency extras to install (``--extra dev --extra local``),
-    and ``install_all`` (``--all``) takes every extra every project defines. ``framework`` names
-    the ML frameworks (``--framework torch --framework keras``). Passing any of them RECORDS the
-    selection in ``config.toml``, so they are one-time flags rather than something to repeat on
-    every run; omitting them uses the recorded selection, and prompts when there is none. See
-    :mod:`aisland.selection`.
+    Each selection (:mod:`aisland.selection`: aisland's ``extras`` and those the projects declare) installs what this
+    machine has chosen, asked once and committed in ``workspace.toml``; ``install_all`` (``--all``) takes every extra
+    every project defines. A choice is changed with ``aisland workspace configure <selection> set``.
     """
     workspace_root = get_workspace_root()
     venv_bin = workspace_root / ".venv" / "bin"
@@ -1510,12 +1502,6 @@ def setup_workspace(
     # 0. Ensure uv is present in the venv — required by everything below and by
     #    every Jenkinsfile.local job that targets this workspace.
     uv_cmd = ensure_uv_in_venv(venv_bin)
-
-    # 0a. Fold any pre-2026-08-01 sources/frameworks/trackers.toml into the single config.toml.
-    #     A no-op (and byte-silent) once there is nothing left to migrate — see aisland.config.
-    from aisland.config import migrate as migrate_config
-
-    migrate_config(workspace_root)
 
     # 0b. Symlink the aisland-managed project.bashrc to the workspace root so
     #     users can `source ./project.bashrc` from the workspace as before.
@@ -1572,43 +1558,24 @@ def setup_workspace(
     #      project (append-only — see _sync_mypy_path for why nothing is removed).
     _sync_mypy_path(workspace_root, install_order)
 
-    # 2b''. Framework selection — which ML frameworks this machine installs. Resolved AFTER
-    #       discovery (the vocabulary comes from the discovered projects' declarations) and
-    #       BEFORE the install loop, which reads it per project. Prompts once when nothing has
-    #       been chosen yet; a recorded choice is used silently.
-    from aisland.selection import (
-        AXES,
-        PLAYWRIGHT_BROWSER,
-        browser_install_command,
-        require_defined_declarations,
-        resolve_for_setup,
-    )
+    # 2b''. The selections — aisland's `extras` and each one a project declares — resolved AFTER discovery (their
+    #       menus come from the projects) and BEFORE the installs, which read them per project. A declaration aisland
+    #       cannot use (a choice that is no extra) stops setup here, naming its file and line, before anything is
+    #       installed. Asks once when nothing is chosen; a recorded choice is used silently. `--all` is the extras
+    #       selection's own: a framework or tracker is a machine's choice of one backend each.
+    from aisland.selection import PLAYWRIGHT_BROWSER, axes, browser_install_command, resolve_for_setup
 
-    # Each axis takes the flag that names it; the tracker axis has none and resolves from its
-    # recorded selection (or prompts once), which is why `requested` is None for it. `--all` is
-    # the extras axis's own: frameworks and trackers are a machine's choice of ONE backend each,
-    # where "all of them" installs mutually exclusive stacks.
-    requested_for = {"extras": extra, "frameworks": framework}
-    for axis in AXES:
+    for axis in axes(workspace_root):
         selected, _just_chosen = resolve_for_setup(
-            workspace_root,
-            requested_for.get(axis.plural),
-            non_interactive,
-            axis,
-            select_all=install_all and axis.from_defined_extras,
+            workspace_root, non_interactive, axis, select_all=install_all and axis.from_defined_extras
         )
         if selected:
-            click.echo(f"==> {axis.plural.capitalize()}: {', '.join(selected)}")
+            click.echo(f"==> {axis.name}: {', '.join(selected)}")
 
     # 2c. Generated root uv.toml — workspace base merged with each activated project's uv.toml,
     #     so a private index (e.g. vendorcli's Company Artifactory URLs) is present ONLY when that
     #     project is active. Written BEFORE the install loop so `uv pip install` sees the index.
     _write_root_uv_toml(workspace_root, install_order)
-
-    # 2d. Refuse while any project declares an extra it never defined. Checked over the
-    #     WHOLE workspace before ANYTHING is installed, so one run names every project to
-    #     fix rather than failing at the twelfth (user ruling 2026-08-25, option B).
-    require_defined_declarations(workspace_root)
 
     # 3. Provisioning (Git & Python)
     for project in install_order:

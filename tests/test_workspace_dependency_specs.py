@@ -24,7 +24,7 @@ contradict — the resolver takes whatever the workspace provides. Only a spec
 that names versions is held to accepting the local one.
 
 Projects whose source is ``github`` / ``pypi`` are deinit'd to an empty
-directory (see ``config.toml`` ``[sources]``), so they declare no local version
+directory (``aisland workspace configure source``), so they declare no local version
 and specs naming them are resolved against a real index instead. Those are
 skipped rather than guessed at.
 """

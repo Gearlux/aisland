@@ -3,6 +3,7 @@ import sys
 import click
 
 from aisland.manager import BaseService
+from aisland.selection import missing_message
 
 
 class MLflowService(BaseService):
@@ -17,21 +18,15 @@ class MLflowService(BaseService):
         """Fail with the selection command when mlflow is absent — never install it here.
 
         Installing it ad hoc would contradict the very layer this service depends on: which
-        tracking backends a machine has is decided by ``aisland tracker`` and recorded in
-        ``config.toml`` / ``.git/config``, and a silent ``pip install`` behind the
+        tracking backends a machine has is decided by the ``tracker`` selection
+        (``workspace.toml`` / ``.git/config``), and a silent ``pip install`` behind the
         operator's back leaves the venv holding something no selection asked for (and gone
         again after the next ``aisland setup``). Point at the command that makes it stick.
         """
         import importlib.util
 
         if importlib.util.find_spec("mlflow") is None:
-            raise click.ClickException(
-                "MLflow is not installed in this environment.\n"
-                "  Select it, so the choice is recorded and survives the next setup:\n"
-                "      aisland tracker set mlflow\n"
-                "  Or, for this machine only:\n"
-                "      aisland tracker set mlflow --machine-only"
-            )
+            raise click.ClickException(missing_message("MLflow", "tracker", "mlflow"))
 
     def info(self) -> None:
         """Show detailed MLflow configuration."""

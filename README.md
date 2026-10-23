@@ -75,8 +75,7 @@ Next:
 repository (set that one up with `aisland setup`). Every file it writes is a starting point you
 own. A workspace is a folder whose projects are subfolders holding a `pyproject.toml` —
 submodules listed in `.gitmodules`, or, without one, every such subfolder (next section);
-`aisland setup` needs the `.venv` and reads `workspace.toml`, `config.toml`, `.env` and `mypy.ini` when they
-exist.
+`aisland setup` needs the `.venv` and reads `workspace.toml`, `.env` and `mypy.ini` when they exist.
 
 To take a newer template of a starting file, name it with `--rewrite` (repeat for several). In an
 existing repository that is all `init` does; the old copy is kept as `<file>.bak`, and the run is
@@ -409,13 +408,13 @@ A project whose table in `workspace.toml` has an `active` key is **optional**, a
 without the key is always part of the workspace:
 
 ```toml
-[project."vendorcli"]
-url = "https://bitbucket.example.com/scm/team/vendorcli.git"
+[project."tools"]
+url = "https://bitbucket.example.com/scm/team/tools.git"
 active = false          # optional, off unless a machine switches it on
 ```
 
 `aisland workspace init --from` clones only the projects without `active`. `aisland setup` then **asks** about each
-optional project this machine has not answered — `Activate 'vendorcli'? (clone + install) [y/N]`, the default the
+optional project this machine has not answered — `Activate 'tools'? (clone + install) [y/N]`, the default the
 committed value — even under `-y` (a machine consciously opts into a private project), and keeps the answer in
 `.git/config` (`aisland.active.<project>.active`), never in a committed file. It then brings the folders in line: an
 active project is checked out (added from its `url` and `branch` when the workspace does not have it yet), an
@@ -425,7 +424,7 @@ git reads: `.gitmodules` `active = false` for a project that is off by default, 
 
 ```bash
 aisland workspace configure active                                   # the optional projects, and this machine's choices
-aisland workspace configure active set vendorcli true --machine-only    # switch it on here (checks it out now)
+aisland workspace configure active set tools true --machine-only     # switch it on here (checks it out now)
 aisland workspace configure active set navigaitor false              # make it optional, off by default (committed)
 aisland workspace configure active unset navigaitor                  # always part of the workspace again
 ```
@@ -433,7 +432,7 @@ aisland workspace configure active unset navigaitor                  # always pa
 ```text
 $ aisland workspace configure active
   PROJECT  COMMITTED  THIS MACHINE  FOLDER
-  vendorcli   false      true          checked out
+  tools    false      true          checked out
 ```
 
 From the activated set, setup **generates the workspace-root `uv.toml`** =
@@ -986,8 +985,8 @@ single-binary, native-process orchestrator with docker-compose semantics. The
   already taken and names the owning PID — typically an instance started
   outside the supervisor.
 - **No installs at start**: a service whose package is missing stops and names
-  the command that installs it — `aisland tracker set <name>` for MLflow, Aim and
-  ClearML, `uv pip install fiftyone` for FiftyOne. It never installs into the
+  the command that adds it to the `tracker` selection (`aisland workspace configure tracker set …`) for MLflow,
+  Aim and ClearML, `uv pip install fiftyone` for FiftyOne. It never installs into the
   shared venv itself.
 - **Foreground semantics**: `aisland <service> start` without `--background`
   streams the service log; Ctrl+C stops the service (as before). The process
@@ -1327,39 +1326,6 @@ act -j unit-tests
 ```
 *Note: Running `act` requires Docker to be installed and running on your machine.*
 
-## Workspace configuration (`config.toml`)
-
-Every **shared** decision this workspace makes lives in one tracked file at the workspace root,
-`config.toml` — which frameworks to install and which tracking backends (where each project's package comes from
-is in [`workspace.toml`](#project-sources-aisland-workspace-configure-source)):
-
-```toml
-frameworks = ["torch", "lightning", "keras"]
-trackers   = ["mlflow", "tensorboard", "aim"]
-
-[mirrors.navigaitor]
-url = "git@github.com:Org/navigaitor.git"
-```
-
-You never edit it by hand: `aisland framework set` / `aisland tracker set` each rewrite
-their own section and leave the others alone. Two commands exist for the file
-itself:
-
-```bash
-aisland config show      # print it
-aisland config migrate   # fold a pre-2026-08 sources/frameworks/trackers.toml into it
-```
-
-**Per-machine deviations never land here.** They go to `.git/config` (`aisland.frameworks`,
-`aisland.trackers`), because this file is tracked and drives every
-generated CI pipeline — one developer's local narrowing must not decide what a runner installs.
-
-> The workspace-root **`uv.toml` is a different file and stays separate.** uv reads only a file
-> of its own settings and rejects anything else in it, and that file is *generated* per machine
-> from the activated project set (a private index reaches it only when its project is active),
-> so it is gitignored rather than committed. See [Optional submodules & the generated
-> `uv.toml`](#optional-submodules--the-generated-uvtoml).
-
 ## Project Sources (`aisland workspace configure source`)
 
 Each workspace project can be consumed either as a **local checkout** (developed here, installed
@@ -1519,8 +1485,8 @@ The same split as the optional projects (`workspace.toml` committed, `.git/confi
 
 | layer | where | committed? |
 |---|---|---|
-| default | the `[sources.*]` tables of `<workspace>/config.toml` | **yes** — shared between machines |
-| override | `git config --local aisland.source.<project>` | no — per machine |
+| default | the project's table in `<workspace>/workspace.toml` | **yes** — shared between machines |
+| override | `git config --local aisland.source.<project>.<key>` | no — per machine |
 
 **Which layer drives what is load-bearing.** Every downstream artifact except the venv, the
 checkout and the generated workspace file is itself a committed file, so a machine-local choice
@@ -1634,211 +1600,125 @@ password prompt. Use an SSH key, or an HTTPS token in `~/.netrc`, for both hosts
   for a mirror unset on another machine. Why the mirror is push-only: [docs/architecture.md](docs/architecture.md),
   "A mirror is push-only, fast-forward-only, and copies the primary".
 
-## Optional extras: two selection axes
+## Selections: what each project installs (`aisland workspace configure <selection>`)
 
-Workspace packages keep their core minimal and put optional capabilities behind *extras*.
-Two independent things need deciding, and each has its own command over the same machinery:
+Workspace packages keep their core minimal and put optional capabilities behind *extras*. A **selection** decides
+which of them a machine installs. aisland has one of its own, `extras` (every extra a project defines); every other
+selection is declared by the projects themselves, so a workspace has exactly the ones its projects ask for — here
+`framework` (what a machine **trains with**) and `tracker` (where its results **go**):
 
-| axis | command | decides | committed key |
-| --- | --- | --- | --- |
-| **frameworks** | `aisland framework` | what this machine **trains with** (`recordstream[torch]`, `sonair[lightning]`/`[keras]`) | `frameworks` in `config.toml` |
-| **trackers** | `aisland tracker` | where results **go** (`matrainer[mlflow]`/`[aim]`/`[tensorboard]`/`[wandb]`) | `trackers` in `config.toml` |
+```text
+$ aisland workspace configure framework
+  FRAMEWORK    COMMITTED  THIS MACHINE  EFFECTIVE  PROJECTS
+  fastai       no         yes           yes        deltaid, distilaide, raidar, sonair
+  keras        yes        yes           yes        deltaid, distilaide, matrainer, raidar, recordstream, sonair
+  rfdetr       yes        no            no         raidar
+  torch        yes        yes           yes        deltaid, distilaide, matrainer, raidar, recordstream, sonair, torpaido
+  …
+```
 
-They are **siblings, never merged**: picking a training engine must not install a tracking
-client. Both work identically — same `list` / `set` / `unset` verbs, same committed +
-per-machine layers, same rule that an override never reaches a tracked build file. Everything
-below is written for `framework`; substitute `tracker` and it all holds.
-
-## ML Frameworks (`aisland framework`)
-
-Workspace packages keep their core **framework-free** and put each ML framework behind an
-*extra*: `recordstream[torch]`, `sonair[lightning]` / `[keras]`, `matrainer[torch,lightning,…]`.
-That makes "install only what I actually work with" expressible — this command decides *which*.
-
-### The commands
-
-There are exactly three, all under `aisland framework`:
-
-| command | what it does |
-| --- | --- |
-| `aisland framework list` | show what is declared, what is selected, and how to change it |
-| `aisland framework set <names...>` | choose frameworks **and reinstall** the projects that declare them |
-| `aisland framework unset` | clear the selection (the next `aisland setup` prompts again) |
-
-`--machine-only` and `--no-apply` are **flags on `set` / `unset`**, not commands — typing
-`aisland framework --machine-only` is an error. Always spell the verb:
+`-` in a column means that layer has no choice. The commands:
 
 ```bash
-aisland framework list                                  # start here
-aisland framework set torch lightning                   # shared choice; CI installs this too
-aisland framework set torch lightning --machine-only    # THIS machine only; nothing committed
-aisland framework set torch lightning --no-apply        # record it, install later
-aisland framework unset --machine-only                  # drop the override, use the shared choice
-aisland framework unset                                 # clear both layers
+aisland workspace configure framework                              # the choices, both layers, who offers each
+aisland workspace configure framework set torch lightning          # committed; CI installs it too
+aisland workspace configure framework set keras --machine-only     # THIS machine only; nothing committed
+aisland workspace configure framework unset --machine-only         # back to the committed choice
+aisland workspace configure framework unset                        # forget both; the next setup asks again
+aisland workspace configure tracker set mlflow tensorboard aim     # the same for every selection
 ```
 
-`aisland framework list` prints those commands back to you, filled in with the real framework
-names of this workspace:
+`set` takes the **whole list** and reinstalls, at once and in dependency order, every project offering one of the
+selection's choices:
 
-```
-  FRAMEWORK      COMMITTED   OVERRIDE   EFFECTIVE   PROJECTS
-  keras          yes         -          yes         matrainer, sonair
-  lightning      yes         -          yes         matrainer, sonair
-  tensorflow     no          -          no          matrainer
-  torch          yes         -          yes         matrainer, recordstream
-
-  '-' = no selection recorded in that layer (config.toml has no `frameworks` key, or no override).
-
-  Change it (--machine-only / --no-apply are FLAGS on set/unset, not commands):
-    aisland framework set keras lightning                 # shared: writes config.toml; CI installs it
-    aisland framework set keras lightning --machine-only  # this machine only (.git/config)
-    aisland framework unset --machine-only                # drop this machine's override
-    aisland framework set keras lightning --no-apply      # record it without reinstalling
+```text
+$ aisland workspace configure framework set keras --machine-only
+==> framework = keras on this machine (nothing committed)
+==> Installing recordstream (/w/recordstream[dev,keras])...
+==> Installing matrainer (/w/matrainer[dev,keras,mlflow,tensorboard])...
 ```
 
-### Switching frameworks on your own machine
+A name no project offers is refused before anything is installed:
 
-Use `--machine-only`. It writes `.git/config` and **reinstalls immediately** — no `aisland setup`
-afterwards, and nothing tracked is modified, so your choice never reaches CI or a teammate:
-
-```bash
-$ aisland framework set keras --machine-only
-==> This machine only: keras
-==> Installing recordstream (/w/recordstream[dev])...
-==> Installing matrainer (/w/matrainer[dev,keras])...
-==> Installing sonair (/w/sonair[dev,keras])...
-
-$ aisland framework unset --machine-only          # ...and back again
-==> Cleared this machine's override; the committed selection applies.
-==> Installing recordstream (/w/recordstream[dev,torch])...
-==> Installing matrainer (/w/matrainer[dev,torch,lightning,keras])...
-==> Installing sonair (/w/sonair[dev,lightning,keras])...
+```text
+$ aisland workspace configure framework set torch jax2
+Error: no project offers framework 'jax2' (the choices: fastai, huggingface, jax, keras, lightning, mlx, rfdetr, tensorflow, torch)
 ```
 
-**Switching does not uninstall.** `uv` has no notion of "the packages that belonged to this
-extra" — they are ordinary dependencies, possibly shared — so after switching to `keras` the
-`pytorch-lightning` and `timm` wheels are still present and `LightningClassifier` still imports.
-The selection controls what is *declared and installed*, not what is *removed*. For a genuinely
-clean environment, recreate the `.venv` and run `aisland setup --framework keras`.
+**Switching does not uninstall.** uv has no notion of "the packages that belonged to this extra" — they are ordinary
+dependencies, possibly shared — so after switching to `keras` the torch wheels are still present. Recreate the
+`.venv` and run `aisland setup` for a genuinely clean set.
 
-> **Some projects require a framework rather than offering a choice**, and they keep `torch` as a
-> plain hard dependency on purpose: `deltaid` (a PyTorch-Lightning segmenter), `raidar` and `raidar-ultralytics` (torch
-> detection trainers). Selecting `keras` therefore still installs torch on a full workspace —
-> narrowing what a *multi-backend* project installs is what this command is for. Moving their
-> deps behind an extra was considered and rejected: it would make `pip install raidar` yield a
-> package whose `__init__` raises `ImportError`, which is dishonest packaging for a project that
-> genuinely needs torch.
+### A project declares its selections
+
+The project that **asks the question** defines a selection; every project lists the extras it offers for it:
+
+```toml
+# the training project's pyproject.toml — it defines both selections
+[tool.aisland.selection.framework]
+question = "Which ML frameworks should this machine install?"
+choices = ["torch", "lightning", "keras", "tensorflow"]
+
+[tool.aisland.selection.tracker]
+question = "Which experiment-tracking backends should this machine install?"
+choices = ["mlflow", "tensorboard", "aim", "clearml", "wandb"]
+
+# any other project's pyproject.toml — it only offers choices
+[tool.aisland.selection.framework]
+choices = ["lightning", "torch", "keras"]
+```
+
+Each choice must be an extra of the project offering it; `aisland setup` and every `configure` command refuse
+anything else up front, naming the file and the line:
+
+```text
+Error: /w/models/pyproject.toml:31: models offers 'mlx' for selection 'framework', but defines no extra of that name
+```
+
+The names line up across projects on purpose (`keras` is `keras` everywhere), so one choice drives every project.
+Each project installs what it offers ∩ what is chosen, in the order it lists them:
+
+| framework choice | recordstream offers `torch, keras` | sonair offers `lightning, torch, keras` |
+| --- | --- | --- |
+| `torch lightning keras` | `[dev,torch,keras]` | `[dev,lightning,torch,keras]` |
+| `keras` | `[dev,keras]` | `[dev,keras]` |
+| *(none)* | `[dev]` | `[dev]` |
+
+A project that needs a framework outright keeps it as a plain dependency and offers no choice for it. Without the
+project that asks the question, there is no such selection and the others' choices install nothing.
 
 ### Choosing at setup time
 
-`aisland setup` takes `--framework` (repeatable), which **records** the selection so you only
-pass it once:
+`aisland setup` asks each selection's question once, offering every choice with the projects that offer it, and
+commits the answer (a blank answer is everything); `aisland setup -y` with nothing chosen takes everything rather
+than hanging. To choose beforehand, set it first: `aisland workspace configure framework set torch --machine-only &&
+aisland setup -y`. `aisland setup --all` takes every extra every project defines.
 
-```bash
-aisland setup --framework lightning --framework keras
-```
-
-With nothing recorded, `aisland setup` prompts and saves your answer. `aisland setup -y`
-(non-interactive) selects everything rather than hanging.
-
-### A project declares which of its extras are frameworks
-
-Selection needs to know which extras *are* frameworks — `dev`, `http`, `viz`, `notebook` and
-`all` live in the same table as `torch` and `keras`, so a name match would install a docs extra
-on a machine that asked for a training engine. Each project declares them itself:
-
-```toml
-# sonair/pyproject.toml
-[tool.aisland]
-frameworks = ["lightning", "keras"]
-```
-
-Declare only what is **implemented**: sonair keeps `tensorflow` / `jax` / `mlx` extras so its
-CLI templates can print a real install command, but declaring them would install three
-frameworks nothing can run yet. A project with **no** declaration is unaffected by any
-selection — it installs exactly as it always did.
-
-The names line up across projects on purpose (`keras` is `keras` everywhere), so one selection
-drives every project with no per-project mapping table. Each project then installs what it
-declares ∩ what is selected:
-
-| selection | recordstream | matrainer | sonair |
-| --- | --- | --- | --- |
-| `torch lightning keras` | `[dev,torch]` | `[dev,torch,lightning,keras]` | `[dev,lightning,keras]` |
-| `keras` | `[dev]` | `[dev,keras]` | `[dev,keras]` |
-| *(none)* | `[dev]` | `[dev]` | `[dev]` |
-
-### The two configuration layers
-
-Same split as [Project Sources](#project-sources-aisland-workspace-configure-source), for the same reason:
+### The two layers
 
 | layer | where | drives |
 | --- | --- | --- |
-| **committed** | the `frameworks` key of `config.toml` | the shared default **and** what every generated CI pipeline installs |
-| **per-machine** | `git config --local aisland.frameworks` | this machine's `.venv` only |
+| **committed** | `[workspace] framework = [...]` in `workspace.toml` | the shared default **and** what every generated CI pipeline installs |
+| **this machine** | `git config --local aisland.framework.selected` | this machine's `.venv` only; it wins over the committed one |
 
-A machine-local choice must never reach a tracked build file. If one developer narrows to torch
-locally and that reached CI, every runner would silently stop testing the Keras backend — so
-`aisland jenkins scaffold` reads the **committed** layer only. Verified 2026-07-30 that the full
-set co-resolves (torch 2.13 + tensorflow 2.20 + keras 3.15 + pytorch-lightning 2.6.5 on one
-numpy), so committing everything and letting each machine narrow is a workable default.
+A machine-local choice never reaches a tracked build file: if one developer's narrowing to torch reached CI, every
+runner would silently stop testing the Keras backend — and tests needing a tracker `importorskip` it, so a runner
+that stops installing `mlflow` produces a green build that checks less. `aisland jenkins scaffold` reads the
+committed layer only.
 
-### Notes
+**Unset is not empty.** No key and no machine choice means *nobody has chosen*, and setup asks; a recorded empty list
+means *none, deliberately*, and is honoured silently.
 
-- **Unset is not empty.** No `frameworks` key in `config.toml` and no override means *nobody has chosen*,
-  and `aisland setup` prompts (recording the answer); a recorded empty selection means *no
-  frameworks, I mean it*, and is honoured silently. `aisland setup -y` with nothing recorded
-  selects everything rather than hanging or producing a workspace that cannot train.
-- **Reinstalling does not uninstall.** Dropping `keras` from the selection leaves the keras wheel
-  in the `.venv` — guessing which packages "belonged" to an extra is unsound, and a stale wheel
-  costs disk, not correctness. Recreate the `.venv` for a truly clean set.
-- **Order matters, and is handled.** `aisland framework set` reinstalls in dependency order,
-  because a consumer's extra can name a sibling's (`sonair[keras]` requires `matrainer[keras]`);
-  installing the consumer first makes uv warn `does not have an extra named 'keras'` and quietly
-  install without it.
-- **Both axes go into one install.** Changing the framework selection reinstalls with the
-  selected *tracker* extras too, and vice versa — a target naming only the axis you changed
-  would describe a package you never asked for.
+**A service will not install its own backend.** `aisland mlflow start`, `aisland aim start` and `aisland clearml
+start` stop with the command that adds the backend to the choices already made, for example:
 
-## Tracking backends (`aisland tracker`)
-
-The sibling axis. Experiment-tracking backends live behind extras
-(`matrainer[mlflow]` / `[aim]` / `[tensorboard]` / `[wandb]`) and each imports its library
-*lazily*, so code runs with none of them installed — the local-file backend always works. This
-command decides which a machine actually installs.
-
-```bash
-aisland tracker list                          # start here
-aisland tracker set mlflow tensorboard aim    # the free, self-hostable set
-aisland tracker set mlflow --machine-only     # THIS machine only; nothing committed
-aisland tracker unset --machine-only          # drop the override, use the shared choice
+```text
+MLflow is not installed in this environment.
+  Add it to the tracker selection, so the choice is recorded and survives the next setup:
+      aisland workspace configure tracker set tensorboard mlflow
+  Or, for this machine only:
+      aisland workspace configure tracker set tensorboard mlflow --machine-only
 ```
-
-```
-  TRACKER        COMMITTED   OVERRIDE   EFFECTIVE   PROJECTS
-  aim            yes         -          yes         matrainer
-  mlflow         yes         -          yes         matrainer
-  tensorboard    yes         -          yes         matrainer
-  wandb          yes         -          yes         matrainer
-```
-
-A project declares its backends the same way it declares frameworks — a sibling key, not an
-addition:
-
-```toml
-[tool.aisland]
-frameworks = ["torch", "lightning", "keras"]   # what it can train with
-trackers   = ["mlflow", "tensorboard", "aim", "wandb"]  # what it can track to
-```
-
-Two things worth knowing:
-
-- **A service will not install its own backend.** `aisland mlflow start` and `aisland aim start`
-  fail with `aisland tracker set <name>` rather than pip-installing behind your back — an
-  ad-hoc install is not recorded anywhere and disappears at the next `aisland setup`.
-- **CI installs the committed selection**, for the same reason as frameworks, and it matters
-  more here: tests needing a backend `importorskip` it, so a runner that stops installing
-  `mlflow` produces a green build that quietly checks less than it used to.
 
 ### The Aim UI (`aisland aim`)
 
@@ -1846,7 +1726,7 @@ Aim needs no server infrastructure: runs live in an `.aim` repository directory 
 serves the comparison UI from it.
 
 ```bash
-aisland tracker set aim              # install the backend (once)
+aisland workspace configure tracker set mlflow tensorboard aim   # install the backend (once; the whole list)
 aisland aim start --background       # serve http://localhost:43800
 aisland aim info                     # URL + which repository it is serving
 aisland aim stop
@@ -1874,7 +1754,7 @@ aisland does **not** reimplement that topology — it fetches upstream's compose
 release, checks it against a pinned SHA-256, and layers a generated override on top.
 
 ```bash
-aisland tracker set clearml     # install the backend (once)
+aisland workspace configure tracker set mlflow clearml   # install the backend (once; the whole list)
 aisland docker start            # the stack needs a Docker daemon
 aisland clearml start           # ~2 GB of images on first run
 aisland clearml status          # the containers

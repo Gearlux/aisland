@@ -572,7 +572,7 @@ def released_on_pypi(distribution: str) -> bool:
 
     The ONE question the CI scaffolder asks per internal dependency (user ruling 2026-09-26):
     released -> the runner installs it from PyPI (``.[dev]`` resolves it); not released -> from
-    GitHub ``main``. The workspace SOURCE of the dependency (``config.toml``) plays no part —
+    GitHub ``main``. The workspace SOURCE of the dependency (``workspace.toml``) plays no part —
     it describes one machine's checkout, never what a runner builds against. A pre-release
     alone (``recordstream`` 0.1.0a1) is not a release: a plain ``>=0.1.0`` excludes it, and the
     project is still developed from ``main``. A stranger's package under the same global name

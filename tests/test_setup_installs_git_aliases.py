@@ -23,7 +23,6 @@ def stubbed_setup(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> List[Path]
     installed: List[Path] = []
     monkeypatch.setattr(manager, "get_workspace_root", lambda: tmp_path)
     monkeypatch.setattr(manager, "ensure_uv_in_venv", lambda venv_bin: "uv")
-    monkeypatch.setattr("aisland.config.migrate", lambda root: None)
     monkeypatch.setattr(manager, "_link_project_bashrc", lambda root: None)
     monkeypatch.setattr(manager, "install_harness", lambda root: [])
     monkeypatch.setattr(manager, "provision_system", lambda: None)
@@ -35,7 +34,6 @@ def stubbed_setup(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> List[Path]
     monkeypatch.setattr(manager, "_write_pyrightconfig", lambda *a: None)
     monkeypatch.setattr(manager, "_sync_mypy_path", lambda *a: None)
     monkeypatch.setattr("aisland.selection.resolve_for_setup", lambda *a, **k: ([], False))
-    monkeypatch.setattr("aisland.selection.require_defined_declarations", lambda root: None)
     monkeypatch.setattr(manager, "_write_root_uv_toml", lambda *a: None)
     monkeypatch.setattr(manager, "_run_installs", lambda *a: ([], []))
     monkeypatch.setattr(manager, "_write_gemini_settings", lambda *a: None)

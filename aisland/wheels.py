@@ -184,7 +184,7 @@ class WorkspaceProject:
         distribution: Its distribution name (``acme-tools`` for a folder ``acme``).
         path: Its folder on this machine.
         pyproject: Its parsed ``pyproject.toml``; ``None`` when the folder is empty (a detached
-            source or an inactive submodule) — then ``distribution`` comes from ``config.toml``,
+            source or an inactive submodule) — then ``distribution`` comes from ``workspace.toml``,
             or is the folder name.
     """
 

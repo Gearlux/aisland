@@ -292,7 +292,6 @@ def test_setup_asks_then_reconciles(tmp_path: Path, monkeypatch: pytest.MonkeyPa
 
     monkeypatch.setattr(manager, "get_workspace_root", lambda: tmp_path)
     monkeypatch.setattr(manager, "ensure_uv_in_venv", lambda venv_bin: "uv")
-    monkeypatch.setattr("aisland.config.migrate", lambda root: None)
     monkeypatch.setattr(manager, "_link_project_bashrc", lambda root: None)
     monkeypatch.setattr(manager, "install_harness", lambda root: [])
     monkeypatch.setattr(manager, "provision_system", lambda: None)

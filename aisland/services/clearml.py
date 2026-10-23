@@ -42,6 +42,7 @@ import click
 import yaml
 
 from aisland.manager import BaseService
+from aisland.selection import missing_message
 
 #: Pinned upstream release. Bump this AND the digest below in the same edit.
 CLEARML_SERVER_VERSION = "v2.4.0"
@@ -105,13 +106,7 @@ class ClearMLService(BaseService):
         import importlib.util
 
         if importlib.util.find_spec("clearml") is None:
-            raise click.ClickException(
-                "ClearML is not installed in this environment.\n"
-                "  Select it, so the choice is recorded and survives the next setup:\n"
-                "      aisland tracker set clearml\n"
-                "  Or, for this machine only:\n"
-                "      aisland tracker set clearml --machine-only"
-            )
+            raise click.ClickException(missing_message("ClearML", "tracker", "clearml"))
         if shutil.which("docker") is None:
             raise click.ClickException(
                 "The `docker` CLI was not found.\n"

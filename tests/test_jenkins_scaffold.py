@@ -534,7 +534,7 @@ class TestTheInternalDepClosureFollowsWhatCIInstalls:
         """A selected framework extra is part of `.[dev,<selected>]`, so its internal
         deps are pre-installed — an axis extra the committed selection omits is not.
         """
-        (tmp_path / "config.toml").write_text('frameworks = ["keras"]\n', encoding="utf-8")
+        (tmp_path / "workspace.toml").write_text('[workspace]\nframework = ["keras"]\n', encoding="utf-8")
         files = _scaffold_app(
             monkeypatch,
             tmp_path,
@@ -544,8 +544,9 @@ class TestTheInternalDepClosureFollowsWhatCIInstalls:
                     "[project.optional-dependencies]\n"
                     'keras = ["kerasdep>=0.1.0"]\n'
                     'torch = ["torchdep>=0.1.0"]\n\n'
-                    "[tool.aisland]\n"
-                    'frameworks = ["keras", "torch"]\n'
+                    "[tool.aisland.selection.framework]\n"
+                    'question = "Which ML frameworks?"\n'
+                    'choices = ["keras", "torch"]\n'
                 ),
                 "kerasdep": '[project]\nname = "kerasdep"\nversion = "0.0.0"\n',
                 "torchdep": '[project]\nname = "torchdep"\nversion = "0.0.0"\n',

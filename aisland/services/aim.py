@@ -15,6 +15,7 @@ from typing import List, Optional
 import click
 
 from aisland.manager import BaseService
+from aisland.selection import missing_message
 
 DEFAULT_PORT = 43800
 
@@ -34,20 +35,14 @@ class AimService(BaseService):
     def setup(self) -> None:
         """Fail with the selection command when aim is absent — never install it here.
 
-        Which tracking backends a machine has is decided by ``aisland tracker`` and recorded
-        in ``config.toml`` / ``.git/config``; a silent install leaves the venv holding
+        Which tracking backends a machine has is decided by the ``tracker`` selection
+        (``workspace.toml`` / ``.git/config``); a silent install leaves the venv holding
         something no selection asked for, and gone again after the next ``aisland setup``.
         """
         import importlib.util
 
         if importlib.util.find_spec("aim") is None:
-            raise click.ClickException(
-                "Aim is not installed in this environment.\n"
-                "  Select it, so the choice is recorded and survives the next setup:\n"
-                "      aisland tracker set aim\n"
-                "  Or, for this machine only:\n"
-                "      aisland tracker set aim --machine-only"
-            )
+            raise click.ClickException(missing_message("Aim", "tracker", "aim"))
 
     def info(self) -> None:
         """Show detailed Aim configuration."""

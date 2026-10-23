@@ -361,6 +361,10 @@ aisland.editor.background navy
 
 ## Framework selection is a second two-layer registry, and CI reads only the committed layer (2026-07-30)
 
+*Superseded 2026-10-23 by "What each project installs: selections the projects declare, committed in
+`workspace.toml`": the two layers and the committed-only CI rule stand; the axes, `config.toml` and the commands below
+are gone.*
+
 ### Context
 
 The workspace's packages were made framework-neutral: each keeps a numpy/config core and puts
@@ -678,7 +682,8 @@ class _Command(click.Command):
 
 ## The workspace's committed configuration is ONE file, and `uv.toml` cannot join it
 
-*2026-08-01*
+*2026-08-01* — *superseded 2026-10-23: the one file is `workspace.toml` and `config.toml` is gone ("What each project
+installs: …"); the reason `uv.toml` stays separate stands.*
 
 ### Context
 
@@ -2917,8 +2922,8 @@ and `submodule.<name>.active` — from the effective value. `aisland workspace c
 ### Example
 
 ```toml
-[project."vendorcli"]
-url = "https://bitbucket.example.com/scm/team/vendorcli.git"
+[project."tools"]
+url = "https://bitbucket.example.com/scm/team/tools.git"
 active = false
 ```
 
@@ -2926,3 +2931,58 @@ active = false
 
 - The question's wording and the listing's columns.
 - Never: a second place that makes a project optional, or a choice kept in a key git can erase.
+
+---
+
+## What each project installs: selections the projects declare, committed in `workspace.toml`
+
+*2026-10-23* [frameworks] [config]
+
+### Context
+
+aisland hard-coded two selections, `FRAMEWORKS` and `TRACKERS` (their names, questions and hints), beside its own
+`EXTRAS`. A project declared its menu under `[tool.aisland] frameworks = [...]`, the choice was committed in
+`config.toml` (`frameworks`, `trackers`) and kept per machine as `aisland.frameworks`; the commands were `aisland
+framework|tracker list|set|unset` (with `--no-apply`) and `aisland setup --framework/--extra`, and `aisland config
+show|migrate` read the file and folded the pre-2026-08 ones into it. A choice that was no extra was found by a
+separate check (`require_defined_declarations`) that named no line.
+
+### Decision
+
+A selection is the projects': the one whose `[tool.aisland.selection.<name>]` has `question` defines it (matrainer
+asks `framework` and `tracker`), every project's `choices` are its menu, and discovery refuses a choice that is no
+extra, naming the file and the line. aisland keeps only `extras`. The choice is committed as `[workspace] <name> =
+[...]` in `workspace.toml` and chosen per machine as `aisland.<name>.selected`; each selection is a workspace-level
+plugin of `aisland workspace configure` (`set NAME… [--machine-only]`, `unset`), which reinstalls at once.
+`config.toml`, `config.py`, `frameworks.py`, `aisland config`, `aisland framework|tracker`, setup's
+`--framework/--extra` and `--no-apply` are gone. A service whose backend is missing names `set` with the trackers
+already chosen plus its own: `set` takes the whole list, and the old message (`aisland tracker set mlflow`) would
+have dropped the rest.
+
+### Consequences
+
+- aisland names no framework or tracker; a workspace has exactly the selections its projects ask for.
+- One committed file. Measured on acme: every generated `Jenkinsfile`, `Jenkinsfile.local` and `ci.yml` (78 files)
+  is byte-identical to the `config.toml` era's, with every dependency released and with none.
+- A machine opts out of a choice with `set … --machine-only`; choosing before a first setup is `set` then
+  `setup -y`.
+
+### Example
+
+```toml
+# matrainer/pyproject.toml — defines the selection
+[tool.aisland.selection.tracker]
+question = "Which experiment-tracking backends should this machine install?"
+choices = ["mlflow", "tensorboard", "aim", "clearml", "wandb"]
+
+# workspace.toml — the committed choice
+[workspace]
+tracker = ["mlflow", "tensorboard", "aim", "clearml", "wandb"]
+```
+
+### What you may change
+
+- A selection's question (in the project that defines it), the listing's columns, the prompt's layout.
+- Never: a selection named in aisland's code (but `extras`), a second committed file, or a machine's choice
+  reaching a generated CI file.
+

@@ -2,8 +2,8 @@
 
 A workspace, as aisland sees it, is a git repository whose projects are folders holding a ``pyproject.toml`` —
 usually submodules. ``aisland setup`` then needs a ``.venv`` at the root and reads, when they exist,
-``workspace.toml`` (its projects, kept current by setup: :mod:`aisland.workspace_file`), ``config.toml`` (sources,
-frameworks, trackers), ``.env`` (exported by ``project.bashrc``) and ``mypy.ini`` (its ``mypy_path`` kept complete).
+``workspace.toml`` (its projects and their settings, kept current by setup: :mod:`aisland.workspace_file`),
+``.env`` (exported by ``project.bashrc``) and ``mypy.ini`` (its ``mypy_path`` kept complete).
 ``init`` writes the starting files, runs ``git init``, adds each project of a ``--from`` file and each ``--add``
 repository as a submodule, writes ``workspace.toml`` and installs the workspace git aliases. It works the same
 whichever way aisland is installed; the workspace it makes is one that aisland from a wheel works in

@@ -15,7 +15,8 @@ import click
 from packaging.requirements import InvalidRequirement, Requirement
 
 from aisland.manager import BIN_DIR, BaseService, _install_brew_packages, get_workspace_root
-from aisland.selection import AXES, PLAYWRIGHT_BROWSER
+from aisland.selection import PLAYWRIGHT_BROWSER
+from aisland.selection import axes as sel_axes
 from aisland.selection import declared as sel_declared
 from aisland.selection import dev_extra_names
 from aisland.selection import extras_for as sel_extras_for
@@ -1073,24 +1074,20 @@ pipeline {{
         # workspace project is now a zero-aisland-edit operation.
         gearlux_projects = discover_gearlux_projects(workspace_root)
 
-        # Selected extras this project's CI installs: what it DECLARES on each axis
-        # (`[tool.aisland] frameworks` / `trackers`) intersected with that axis's COMMITTED
-        # selection (the `frameworks` / `trackers` keys of `config.toml`). Committed-only, for the
-        # reason the source registry below is: a per-machine `.git/config aisland.frameworks`
-        # override must never reach a tracked build file, or one developer's "I only use torch"
-        # would silently stop every runner from testing the Keras backend. The same holds for
-        # trackers — a runner that stops installing mlflow silently stops running the tests that
-        # need it, and they SKIP rather than fail. A project declaring neither emits the
-        # historical `.[dev]` unchanged.
+        # Selected extras this project's CI installs: what it offers for each selection (aisland's `extras`, and
+        # each `[tool.aisland.selection.<name>]` a project declares) intersected with that selection's COMMITTED
+        # choice (`[workspace] <name>` of `workspace.toml`). Committed-only, for the reason the source registry below
+        # is: this machine's `aisland.<name>.selected` must never reach a tracked build file, or one developer's "I
+        # only use torch" would silently stop every runner from testing the Keras backend — and a runner that stops
+        # installing mlflow silently stops running the tests that need it, which SKIP rather than fail. A project
+        # offering nothing emits the historical `.[dev]` unchanged.
         selected_extras: list[str] = []
-        for axis in AXES:
+        for axis in sel_axes(workspace_root):
             selected_extras += sel_extras_for(
-                project_name,
-                sel_declared(pyproject_path, axis),
-                sel_committed(workspace_root, axis),
+                sel_declared(pyproject_path, axis), sel_committed(workspace_root, axis.name)
             )
         # `dev` is listed first and unconditionally (CI always needs the test tooling), then
-        # deduped: since 2026-10-20 the EXTRAS axis offers `dev` like any other extra, so a
+        # deduped: since 2026-10-20 the `extras` selection offers `dev` like any other extra, so a
         # workspace that selected it would otherwise emit `.[dev,dev,local]`.
         ci_extras = ",".join(dict.fromkeys(["dev"] + selected_extras))
 
@@ -1192,7 +1189,7 @@ pipeline {{
         )
 
         # CI asks ONE question per internal dependency — is it RELEASED on PyPI? — and nothing
-        # about the workspace's `config.toml` sources (user ruling 2026-09-26: "it should always
+        # about the workspace's sources (`workspace.toml`) (user ruling 2026-09-26: "it should always
         # point to released packages, and to GitHub for non-released ones").
         #
         # Released (a final, non-yanked version whose metadata points at github.com/Gearlux/ —

@@ -9,15 +9,19 @@ A plugin declares its keys and three functions; the commands are built from them
 
 so a plugin writes no command of its own. A plugin's settings live in ``workspace.toml`` (committed) and in
 ``.git/config`` as ``aisland.<plugin>.<project>.<key>`` (this machine); the plugin's functions read and write them.
+
+A SELECTION (:mod:`aisland.selection`: aisland's ``extras`` and each one a project declares) is a plugin too, of the
+whole workspace rather than of a project — ``set NAME… [--machine-only]`` and ``unset [--machine-only]``, committed
+as ``[workspace] <selection>`` and chosen here as ``aisland.<selection>.selected``.
 """
 
 from __future__ import annotations
 
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Callable, Dict, List, Optional, Tuple
+from typing import Callable, Dict, List, Optional, Tuple, Union
 
-from aisland import activation, mirrors, sources
+from aisland import activation, mirrors, selection, sources
 
 
 @dataclass(frozen=True)
@@ -66,12 +70,43 @@ def table(rows: List[Dict[str, str]]) -> List[str]:
     return lines
 
 
-def overview() -> List[str]:
+@dataclass(frozen=True)
+class SelectionPlugin:
+    """A selection of :mod:`aisland.selection` as a plugin: one list of names for the whole workspace."""
+
+    axis: selection.Axis
+
+    @property
+    def name(self) -> str:
+        return self.axis.name
+
+    @property
+    def summary(self) -> str:
+        return self.axis.question
+
+    def usage(self) -> str:
+        return "set NAME… [--machine-only]"
+
+
+AnyPlugin = Union[Plugin, SelectionPlugin]
+
+
+def plugins(root: Optional[Path]) -> Dict[str, AnyPlugin]:
+    """Every plugin: the built-ins of :data:`PLUGINS`, and — in a workspace — each selection. Raises
+    :class:`aisland.discovery.DeclarationError` for a selection declared in a way aisland cannot use."""
+    found: Dict[str, AnyPlugin] = dict(PLUGINS)
+    if root is not None:
+        found.update({axis.name: SelectionPlugin(axis) for axis in selection.axes(root)})
+    return found
+
+
+def overview(root: Optional[Path]) -> List[str]:
     """What ``aisland workspace configure`` prints: each plugin, what it is for, and how to set it."""
-    width = max(len(name) for name in PLUGINS)
+    found = plugins(root)
+    width = max(len(name) for name in found)
     lines: List[str] = []
-    for name in sorted(PLUGINS):
-        plugin = PLUGINS[name]
+    for name in sorted(found):
+        plugin = found[name]
         lines.append(f"  {name.ljust(width)}  {plugin.summary}")
         lines.append(f"  {' ' * width}  {plugin.usage()}")
     return lines

@@ -1,11 +1,11 @@
 import json
 from pathlib import Path
-from typing import List, Optional, Tuple
+from typing import Dict, List, Optional, Tuple
 
 import click
 from click.shell_completion import CompletionItem
 
-from aisland import configure, discovery, editor, locations, manager, nightly, pytest_stats
+from aisland import configure, discovery, editor, locations, manager, nightly, pytest_stats, selection
 from aisland import supervisor as supervisor_mod
 from aisland import tunnel as tunnel_mod
 from aisland import tunnel_connect as tunnel_connect_mod
@@ -216,14 +216,66 @@ def _plugin_group(plugin: configure.Plugin) -> click.Group:
     return group
 
 
+def _selection_group(plugin: configure.SelectionPlugin) -> click.Group:
+    """`aisland workspace configure <selection>`: its names and both layers, `set NAME…` and `unset`."""
+    axis = plugin.axis
+
+    @click.group(name=axis.name, cls=_Group, invoke_without_command=True, help=axis.question)
+    @click.option("--json", "as_json", is_flag=True, help="Print the rows as one JSON object.")
+    @click.pass_context
+    def group(ctx: click.Context, as_json: bool) -> None:
+        if ctx.invoked_subcommand is not None:
+            return
+        rows = selection.rows(_configure_root(), axis)
+        if as_json:
+            click.echo(json.dumps({"rows": rows, "notes": []}, indent=2))
+            return
+        for line in configure.table(rows) if rows else [f"No project offers a {axis.one}."]:
+            click.echo(line)
+
+    def set_(names: Tuple[str, ...], machine_only: bool) -> None:
+        raise SystemExit(selection.set_selection(_configure_root(), axis, names, machine_only))
+
+    def unset(machine_only: bool) -> None:
+        raise SystemExit(selection.unset_selection(_configure_root(), axis, machine_only))
+
+    machine = click.Option(
+        ["--machine-only"], is_flag=True, help="Change this machine only (.git/config); commit nothing."
+    )
+    group.add_command(
+        _Command(
+            "set",
+            callback=set_,
+            help=f"Choose the {axis.one}s to install (the whole list) and reinstall the projects offering them.",
+            params=[click.Argument(["names"], nargs=-1), machine],
+        )
+    )
+    group.add_command(
+        _Command(
+            "unset",
+            callback=unset,
+            help=f"Forget the {axis.name} choice (with --machine-only, this machine's only); setup asks again.",
+            params=[machine],
+        )
+    )
+    return group
+
+
+def _configure_plugins() -> Dict[str, configure.AnyPlugin]:
+    """The plugins of the workspace aisland runs in (the built-ins alone outside one)."""
+    return configure.plugins(get_workspace_root() if locations.workspace_found() else None)
+
+
 class _ConfigureGroup(_Group):
-    """`aisland workspace configure`: one subgroup per plugin of `configure.PLUGINS`, built when it is asked for."""
+    """`aisland workspace configure`: one subgroup per plugin and selection, built when it is asked for."""
 
     def list_commands(self, ctx: click.Context) -> List[str]:
-        return sorted(configure.PLUGINS)
+        return sorted(_configure_plugins())
 
     def get_command(self, ctx: click.Context, cmd_name: str) -> Optional[click.Command]:
-        plugin = configure.PLUGINS.get(cmd_name)
+        plugin = configure.PLUGINS.get(cmd_name) or _configure_plugins().get(cmd_name)
+        if isinstance(plugin, configure.SelectionPlugin):
+            return _selection_group(plugin)
         return _plugin_group(plugin) if plugin else None
 
 
@@ -238,9 +290,11 @@ def workspace_configure(ctx: click.Context) -> None:
     aisland workspace configure source set loggair pypi
     aisland workspace configure source set loggair local --branch dev/main --machine-only
     aisland workspace configure source unset loggair
+    aisland workspace configure framework set torch keras
+    aisland workspace configure tracker set mlflow --machine-only
     """
     if ctx.invoked_subcommand is None:
-        for line in configure.overview():
+        for line in configure.overview(get_workspace_root() if locations.workspace_found() else None):
             click.echo(line)
 
 
@@ -428,50 +482,27 @@ def provision() -> None:
     help="Reuse this machine's saved answers; still ask about an optional project never answered.",
 )
 @click.option(
-    "--framework",
-    multiple=True,
-    help="ML framework(s) to install, e.g. --framework torch --framework keras (repeatable). "
-    "Recorded in config.toml; omit to reuse the recorded selection.",
-)
-@click.option(
-    "--extra",
-    multiple=True,
-    help="Extra(s) to install, e.g. --extra dev --extra local (repeatable). Recorded in "
-    "config.toml; omit to reuse the recorded selection, or prompt when there is none.",
-)
-@click.option(
     "--all",
     "install_all",
     is_flag=True,
     help="Install every extra every project defines, without asking. Computed from the "
     "projects' own [project.optional-dependencies]; does not need an extra named `all`.",
 )
-def setup(
-    non_interactive: bool,
-    framework: tuple[str, ...],
-    extra: tuple[str, ...],
-    install_all: bool,
-) -> None:
+def setup(non_interactive: bool, install_all: bool) -> None:
     """Full workspace setup: provision tools, ask about the optional projects, install the active ones.
 
     Which projects this machine has: `aisland workspace configure active` (a project with an `active` value in
     workspace.toml is optional, and setup asks about it once).
 
-    Which extras land is a workspace decision, asked once and recorded in config.toml: pick them
-    at the prompt, name them with --extra, or take the lot with --all.
+    What each project installs is a selection — `extras`, and each one the projects declare (`framework`,
+    `tracker`, …) — asked once and committed in workspace.toml; choose beforehand with
+    `aisland workspace configure <selection> set`, or take every extra with --all.
 
     \b
     aisland setup --all
-    aisland setup --extra dev --extra local
+    aisland workspace configure framework set torch --machine-only && aisland setup -y
     """
-    if install_all and extra:
-        raise click.UsageError("--all takes every extra; pass either --all or --extra, not both.")
-    setup_workspace(
-        non_interactive=non_interactive,
-        framework=framework,
-        extra=extra,
-        install_all=install_all,
-    )
+    setup_workspace(non_interactive=non_interactive, install_all=install_all)
 
 
 @main.command()
@@ -879,231 +910,6 @@ def wheels_install(zip_path: Path, python: Path, into: Optional[Path], rest: Tup
     raise SystemExit(status)
 
 
-# --- Workspace Configuration Commands ---
-#
-# `config.toml` is maintained by `aisland workspace configure source/framework/tracker set` — this group only
-# INSPECTS it and completes the one-time migration from the per-concern files it replaced.
-
-
-@main.group()
-def config() -> None:
-    """Inspect the workspace's single committed configuration file (`config.toml`).
-
-    One tracked file at the workspace root holds every shared decision: the `frameworks` and
-    `trackers` selections and the `[sources.*]` registry. It is written by `aisland framework
-    set` / `aisland tracker set` / `aisland workspace configure source set`; per-machine deviations stay in
-    `.git/config` and never reach it.
-
-    The workspace-root `uv.toml` is NOT part of it — uv only reads a file of its own settings,
-    so that one stays generated by `aisland setup` and gitignored.
-    """
-    pass
-
-
-@config.command(name="show")
-def config_show() -> None:
-    """Print the workspace configuration file."""
-    from aisland.config import CONFIG_FILE, config_path
-
-    path = config_path(get_workspace_root())
-    if not path.exists():
-        click.echo(f"No {CONFIG_FILE} at {path.parent} — nothing is configured yet.")
-        click.echo(
-            "Create it with: aisland framework set <name>... | aisland workspace configure source set <project> <kind>"
-        )
-        return
-    click.echo(click.style(str(path), bold=True))
-    click.echo(path.read_text())
-
-
-@config.command(name="migrate")
-def config_migrate() -> None:
-    """Fold any legacy sources/frameworks/trackers.toml into `config.toml` (idempotent)."""
-    from aisland.config import CONFIG_FILE, migrate
-
-    folded = migrate(get_workspace_root())
-    if not folded:
-        click.echo(f"Nothing to migrate — no legacy file beside {CONFIG_FILE}.")
-        return
-    click.echo(f"==> Folded {', '.join(folded)} into {CONFIG_FILE}. Commit the change.")
-
-
-# --- Framework Selection Commands ---
-
-
-@main.group()
-def framework() -> None:
-    """Choose which ML frameworks this workspace installs.
-
-    Workspace packages keep their core framework-free and put each framework behind an EXTRA
-    (`recordstream[torch]`, `sonair[lightning]`/`[keras]`). A project declares which of its
-    extras are frameworks in `[tool.aisland] frameworks`; this command selects among them, and
-    `aisland setup` installs the intersection.
-
-    Both layers are honoured: the committed `frameworks` key of `config.toml` (shared, and
-    the set generated CI installs) and a per-machine `.git/config aisland.frameworks` override.
-    """
-    pass
-
-
-@framework.command(name="list")
-def framework_list() -> None:
-    """Show each declared framework, which projects offer it, and whether it is selected."""
-    from aisland.frameworks import CONFIG_FILE, FRAMEWORKS_KEY, describe
-
-    rows = describe()
-    if not rows:
-        click.echo("No project declares framework extras ([tool.aisland] frameworks).")
-        return
-    header = f"  {'FRAMEWORK':<14} {'COMMITTED':<11} {'OVERRIDE':<10} {'EFFECTIVE':<11} PROJECTS"
-    click.echo(click.style(header, bold=True))
-    for row in rows:
-        click.echo(
-            f"  {row['framework']:<14} {row['committed']:<11} {row['override']:<10} "
-            f"{row['effective']:<11} {row['projects']}"
-        )
-    click.echo(
-        f"\n  '-' = no selection recorded in that layer ({CONFIG_FILE} has no `{FRAMEWORKS_KEY}` key, or no override)."
-    )
-
-    # Print the commands that CHANGE this, using real framework names so they are copy-pasteable.
-    # `--machine-only` is a FLAG on set/unset, never a command of its own — showing it detached
-    # from its verb sent an operator hunting for a subcommand that does not exist.
-    example = " ".join(row["framework"] for row in rows[:2])
-    commands = [
-        (f"aisland framework set {example}", f"shared: writes {CONFIG_FILE}; CI installs it"),
-        (f"aisland framework set {example} --machine-only", "this machine only (.git/config)"),
-        ("aisland framework unset --machine-only", "drop this machine's override"),
-        (f"aisland framework set {example} --no-apply", "record it without reinstalling"),
-    ]
-    width = max(len(cmd) for cmd, _ in commands)
-    click.echo("\n  Change it (--machine-only / --no-apply are FLAGS on set/unset, not commands):")
-    for cmd, note in commands:
-        click.echo(f"    {cmd:<{width}}  # {note}")
-
-
-@framework.command(name="set")
-@click.argument("names", nargs=-1, required=True)
-@click.option(
-    "--machine-only",
-    is_flag=True,
-    help="Record only the per-machine .git/config override; leave config.toml "
-    "(and the set generated CI installs) untouched.",
-)
-@click.option("--no-apply", is_flag=True, help="Record the selection without reinstalling anything.")
-def framework_set(names: tuple[str, ...], machine_only: bool, no_apply: bool) -> None:
-    """Select FRAMEWORKS and reinstall the projects that declare them.
-
-    \b
-    aisland framework set torch lightning        # a torch-only machine
-    aisland framework set lightning keras        # both backends
-    aisland framework set keras --machine-only   # this machine only; nothing committed
-    """
-    from aisland.frameworks import set_frameworks
-
-    raise SystemExit(set_frameworks(names=names, machine_only=machine_only, apply=not no_apply))
-
-
-@framework.command(name="unset")
-@click.option("--machine-only", is_flag=True, help="Clear only this machine's override; keep the committed selection.")
-@click.option("--no-apply", is_flag=True, help="Clear the selection without reinstalling anything.")
-def framework_unset(machine_only: bool, no_apply: bool) -> None:
-    """Clear the framework selection; the next `aisland setup` prompts again."""
-    from aisland.frameworks import unset_frameworks
-
-    raise SystemExit(unset_frameworks(machine_only=machine_only, apply=not no_apply))
-
-
-# --- Tracker Selection Commands ---
-#
-# The sibling of `framework`, over the same machinery (aisland/selection.py) with the
-# TRACKERS axis. A separate command rather than more names under `framework` because the
-# axes are independent: what a machine TRAINS WITH and where its results GO are unrelated,
-# and merging them would install a tracking client because someone picked a training engine.
-
-
-@main.group()
-def tracker() -> None:
-    """Choose which experiment-tracking backends this workspace installs.
-
-    Tracking backends live behind extras (`matrainer[mlflow]`/`[aim]`/`[tensorboard]`/`[wandb]`)
-    and each imports its library lazily, so code runs with none of them installed — the
-    local-file backend always works. A project declares which of its extras are trackers in
-    `[tool.aisland] trackers`; this command selects among them, and `aisland setup` installs
-    the intersection.
-
-    Both layers are honoured: the committed `trackers` key of `config.toml` (shared, and the
-    set generated CI installs) and a per-machine `.git/config aisland.trackers` override.
-    """
-    pass
-
-
-@tracker.command(name="list")
-def tracker_list() -> None:
-    """Show each declared tracker, which projects offer it, and whether it is selected."""
-    from aisland.config import CONFIG_FILE
-    from aisland.selection import TRACKERS, describe
-
-    rows = describe(axis=TRACKERS)
-    if not rows:
-        click.echo("No project declares tracker extras ([tool.aisland] trackers).")
-        return
-    header = f"  {'TRACKER':<14} {'COMMITTED':<11} {'OVERRIDE':<10} {'EFFECTIVE':<11} PROJECTS"
-    click.echo(click.style(header, bold=True))
-    for row in rows:
-        click.echo(
-            f"  {row['tracker']:<14} {row['committed']:<11} {row['override']:<10} "
-            f"{row['effective']:<11} {row['projects']}"
-        )
-    click.echo(
-        f"\n  '-' = no selection recorded in that layer ({CONFIG_FILE} has no `{TRACKERS.plural}` key, or no override)."
-    )
-
-    example = " ".join(row["tracker"] for row in rows[:2])
-    commands = [
-        (f"aisland tracker set {example}", f"shared: writes {CONFIG_FILE}; CI installs it"),
-        (f"aisland tracker set {example} --machine-only", "this machine only (.git/config)"),
-        ("aisland tracker unset --machine-only", "drop this machine's override"),
-        (f"aisland tracker set {example} --no-apply", "record it without reinstalling"),
-    ]
-    width = max(len(cmd) for cmd, _ in commands)
-    click.echo("\n  Change it (--machine-only / --no-apply are FLAGS on set/unset, not commands):")
-    for cmd, note in commands:
-        click.echo(f"    {cmd:<{width}}  # {note}")
-
-
-@tracker.command(name="set")
-@click.argument("names", nargs=-1, required=True)
-@click.option(
-    "--machine-only",
-    is_flag=True,
-    help="Record only the per-machine .git/config override; leave config.toml "
-    "(and the set generated CI installs) untouched.",
-)
-@click.option("--no-apply", is_flag=True, help="Record the selection without reinstalling anything.")
-def tracker_set(names: tuple[str, ...], machine_only: bool, no_apply: bool) -> None:
-    """Select TRACKERS and reinstall the projects that declare them.
-
-    \b
-    aisland tracker set mlflow                  # a machine that only uses the MLflow server
-    aisland tracker set aim tensorboard         # local-only, no server to operate
-    aisland tracker set mlflow --machine-only   # this machine only; nothing committed
-    """
-    from aisland.selection import TRACKERS, set_selection
-
-    raise SystemExit(set_selection(names=names, axis=TRACKERS, machine_only=machine_only, apply=not no_apply))
-
-
-@tracker.command(name="unset")
-@click.option("--machine-only", is_flag=True, help="Clear only this machine's override; keep the committed selection.")
-@click.option("--no-apply", is_flag=True, help="Clear the selection without reinstalling anything.")
-def tracker_unset(machine_only: bool, no_apply: bool) -> None:
-    """Clear the tracker selection; the next `aisland setup` prompts again."""
-    from aisland.selection import TRACKERS, unset_selection
-
-    raise SystemExit(unset_selection(axis=TRACKERS, machine_only=machine_only, apply=not no_apply))
-
-
 # --- Docker Commands ---
 
 
@@ -1332,7 +1138,7 @@ def aim() -> None:
     workspace `.env` as `AIM_REPO`, so a run config points its tracker at `$AIM_REPO` and
     what a run writes is what this UI shows.
 
-    Requires the `aim` backend: `aisland tracker set aim`.
+    Requires the `aim` backend, chosen in the `tracker` selection (`aisland workspace configure tracker`).
     """
     pass
 
@@ -1390,8 +1196,8 @@ def clearml() -> None:
     `/opt/clearml` into `aisland/data/clearml/state`, so a service's data stays inside the
     workspace.
 
-    Requires the `clearml` backend (`aisland tracker set clearml`) and a running Docker
-    daemon (`aisland docker start`). For tracking WITHOUT a server, `ClearMLTracker(offline=True)`
+    Requires the `clearml` backend, chosen in the `tracker` selection (`aisland workspace configure tracker`),
+    and a running Docker daemon (`aisland docker start`). For tracking WITHOUT a server, `ClearMLTracker(offline=True)`
     records to local disk and needs neither.
     """
     pass

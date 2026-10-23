@@ -37,9 +37,9 @@ The workspace's dev-infrastructure CLI, `aisland` (click, `aisland/cli.py`):
 - `discovery.py`: what the projects declare to aisland, found in two stages, and `aisland workspace show` [declarations].
 - `editor.py`: `aisland workspace theme|color`, this machine's VS Code theme and colours (`css_colors.py`: the CSS
   names), kept in `.git/config` and laid over the generated workspace file.
-- `config.py`: the one committed `config.toml`, written through `sources.py`
-  (`aisland workspace configure source`, through `configure.py`), `mirrors.py` (`aisland workspace configure mirror`, `aisland workspace mirror sync`) and `selection.py`
-  (`aisland framework|tracker`; `frameworks.py` is a facade over it).
+- `configure.py`: `aisland workspace configure`, one set of commands built from each plugin's keys — the
+  project-level built-ins `source` (`sources.py`), `mirror` (`mirrors.py`, its action `aisland workspace mirror
+  sync`), `active` (`activation.py`), and a workspace-level plugin per selection (`selection.py`).
 - `supervisor.py` (process-compose), `doctor.py` (`aisland doctor`), `completion.py`
   (`aisland completion install`), `clean.py` (`aisland clean`, `aisland backups`).
 - `pytest_stats.py`: the `aisland_test_stats` pytest plugin (entry point `pytest11`) that
@@ -192,8 +192,11 @@ start-time port pre-flight naming the PID is the only signal). All service state
   state.
 - A Docker-run service (`docker`, `clearml`, `iqengine`) overrides `launch`/`stop`/`status`/
   `reset`; its `info()` skips `super().info()` (the supervisor line would mislead).
-- A service never installs its backend: `mlflow`, `aim`, `clearml` fail naming
-  `aisland tracker set <name>`; `fiftyone` (on no axis) fails naming `uv pip install fiftyone`
+- A service never installs its backend: `mlflow`, `aim`, `clearml` fail with `selection.missing_message`, naming
+  `aisland workspace configure tracker set <the trackers already chosen> <name>` — `set` takes the whole list, so
+  naming the missing one alone would drop the rest (user ruling 2026-10-23;
+  `tests/test_selection.py::test_a_missing_tracker_names_the_command_that_adds_it_to_the_chosen_ones`); `fiftyone`
+  (in no selection) fails naming `uv pip install fiftyone`
   (`tests/test_fiftyone_setup.py::test_setup_stops_with_the_uv_install_command_when_fiftyone_is_missing`).
 - New services write `.env` through `supervisor.write_workspace_env` (aim/clearml copies:
   TASKS.md).
@@ -294,9 +297,10 @@ Root `AGENTS.md` "Two Test Runs" (user ruling 2026-10-05). [test-stats]
   default-off project, and `submodule.<name>.active`. Setup's upkeep keeps an optional project `.gitmodules` lacks.
   There are no `--activate`/`--deactivate` flags and no `aisland reconcile`: `aisland workspace configure active
   set|unset [--machine-only]` acts at once. `setup_git.sh` writes no activation key. (`tests/test_activation.py`)
-- Every name in a `[tool.aisland] frameworks`/`trackers` declaration must be a real extra:
-  `aisland setup` and `aisland framework|tracker set` refuse up front, naming project and name
-  (user ruling 2026-08-25). (`tests/test_workspace_axis_declarations.py`)
+- Every choice a project offers for a selection must be an extra of its own: discovery refuses anything else
+  (`DeclarationError`, the file and the table's line), so `aisland setup` stops before it installs anything and every
+  `aisland workspace configure` command stops with one `Error:` line (user ruling 2026-08-25).
+  (`tests/test_selection.py::test_a_choice_that_is_no_extra_is_refused_naming_its_file_and_line`)
 - An internal dependency spec must accept the sibling's declared version, extras included; a
   bare name makes no claim. Bumping a version means every sibling spec must still accept it.
   (`tests/test_workspace_dependency_specs.py::test_the_real_workspace_has_no_unsatisfiable_internal_specs`)
@@ -340,12 +344,9 @@ Root `AGENTS.md` "Two Test Runs" (user ruling 2026-10-05). [test-stats]
   `opencv-python-headless>=4.12,<5`) + each ACTIVATED project's `uv.toml`. A private index
   lives only in its project's `uv.toml`; never commit the root file or put an index in the
   base. (`tests/test_uv_activation.py`)
-- `config.toml` holds `frameworks` and `trackers`; a project's source and mirror are in `workspace.toml`.
-  (`tests/test_config.py`) [config]
-  - `config.py` owns the file, not the data; it imports nothing from aisland.
-  - Writes are whole-file, keyed; scalars before tables (`::test_scalars_are_emitted_before_tables`).
-  - An absent key = unset; an empty document deletes the file.
-  - `uv.toml` never joins it; never re-split it.
+- There is no `config.toml` and no `aisland config` (user ruling 2026-10-23): every committed setting is in
+  `workspace.toml` — a project's in its table, a selection's choice under `[workspace]`. `uv.toml` never joins it:
+  uv reads only a file of its own settings. [config]
 - `<workspace>.code-workspace` is GENERATED and gitignored (user choice 2026-10-18), written by
   `manager.write_code_workspace` on every `aisland setup` and `aisland workspace configure source set|unset`
   (`--machine-only` included). Folders: the workspace, each project with a checkout in
@@ -362,7 +363,7 @@ Root `AGENTS.md` "Two Test Runs" (user ruling 2026-10-05). [test-stats]
   - The real workspace ignores it and does not track it
     (`::test_the_real_workspace_keeps_the_file_out_of_git`).
   - This machine's editor theme and colours (`aisland workspace theme|color`, `editor.py`; user request
-    2026-10-21) live in `git config --local aisland.editor.*` ONLY — never `config.toml`, the template or any
+    2026-10-21) live in `git config --local aisland.editor.*` ONLY — never `workspace.toml`, the template or any
     tracked file — and `write_code_workspace` lays them over the template's settings on every write. The colours
     are written unscoped in `workbench.colorCustomizations` (they hold whatever the theme); a theme is VS Code's
     `id || label`; without VS Code nothing is listed and `theme set` is refused; an unreadable hand-edited value is
@@ -439,21 +440,28 @@ The first step of the workspace redesign (`TASKS.md`, user rulings 2026-10-21/22
   (`::test_choices_for_a_selection_no_project_defines_are_reported_not_refused`).
 - A new plugin kind joins `PluginKind` and `_KIND_METHODS` together, with a contract test.
 
-## Selection axes (`aisland framework` / `aisland tracker`)
+## Selections (`aisland workspace configure <selection>`, `selection.py`)
 
-- `selection.py` owns the mechanism per `Axis`. `FRAMEWORKS` and `TRACKERS` are siblings,
-  never merged. `frameworks.py` is a facade; leave its call sites alone.
-  (`tests/test_selection.py`, `tests/test_frameworks.py`) [frameworks]
-- A project declares (`[tool.aisland] frameworks`/`trackers`), the workspace selects; it
-  installs declared ∩ selected, in declaration order. Declare only implemented extras.
-- CI reads only the committed key (`read_committed`, all `AXES`); the per-machine
-  `git config --local aisland.<plural>` drives only the venv.
-  (`tests/test_frameworks.py::TestScaffolderUsesThisModule`)
-- Unset ≠ empty: setup prompts on unset, `-y` with nothing recorded selects all, an explicit
-  `--framework` is recorded. `all_extras()` spans both axes. Reinstalls follow
-  `get_install_order`.
-- A project that needs one framework outright (`raidar-ultralytics`) keeps it as
-  a base dependency and declares no axis. Never fake an extra.
+User rulings 2026-10-23. [frameworks] (`tests/test_selection.py`)
+- **aisland names no selection but its own `extras`.** The others are DISCOVERED (`selection.axes`, over
+  `discovery.discover`): the project whose `[tool.aisland.selection.<name>]` has `question` defines it, every project's
+  `choices` are its menu. Never hard-code a selection's name or question in aisland; a workspace without the defining
+  project has no such selection, and the others' choices install nothing
+  (`::test_choices_for_a_selection_no_project_defines_offer_nothing`). `extras`' menu is every extra a project
+  defines but a self-referential one (structural, never a name match).
+- Committed: `[workspace] <name> = [...]` in `workspace.toml`; this machine: `aisland.<name>.selected`
+  (space-separated, `""` = none), which wins. No backward compatibility: an old `[tool.aisland] frameworks`, a
+  `config.toml` key or an `aisland.frameworks` setting is simply not read.
+- A project installs its menu ∩ the effective choice, in its MENU's order, each extra once across selections; once
+  `extras` is chosen it owns `dev` (`::test_a_resolved_extras_selection_owns_dev`). CI reads the committed layer
+  only (`::test_ci_never_installs_this_machines_choice`); the generated CI files are byte-identical to the
+  `config.toml` era's for acme (measured 2026-10-23, all 78 files, released and unreleased).
+- Unset ≠ empty: setup asks on unset (the selection's own question, no hint line), `-y` with nothing chosen takes
+  everything, `--all` takes every extra; an answer is committed. `set` takes the WHOLE list and reinstalls the
+  offering projects at once (no `--no-apply`); an unknown name is refused before anything is written; the exit code
+  is the number of failed installs. `setup` has no `--framework`/`--extra` (choose with `set` first).
+- A project that needs one framework outright (`raidar-ultralytics`) keeps it as a base dependency and offers no
+  choice. Never fake an extra.
 
 ## Generated CI (`aisland jenkins scaffold`)
 

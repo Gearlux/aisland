@@ -1,60 +1,29 @@
-"""Which optional extras this workspace installs — the shared two-layer selection machinery.
+"""What a machine installs of each project: the selections of ``aisland workspace configure <selection>``.
 
-Workspace packages keep their core minimal and put optional capabilities behind EXTRAS.
-That makes "install only what I use" expressible, but only if something decides WHICH.
-There are two independent things to decide, and this module implements both from one
-mechanism because the mechanism is identical and only the vocabulary differs:
+A project keeps its core minimal and puts optional capabilities behind extras; a SELECTION decides which of them a
+machine installs. The projects declare the selections in their own ``pyproject.toml`` (read by
+:mod:`aisland.discovery`, so aisland names none of them): the project whose table has ``question`` DEFINES the
+selection, and every project's ``choices`` are its MENU, each an extra of its own::
 
-* :data:`FRAMEWORKS` — the ML framework a machine TRAINS WITH (``recordstream[torch]``,
-  ``sonair[lightning]`` / ``[keras]``). Nothing trains without one, so a workspace with no
-  selection is broken.
-* :data:`TRACKERS` — the experiment-tracking backend results GO TO (``matrainer[mlflow]`` /
-  ``[aim]`` / ``[tensorboard]`` / ``[wandb]``).
+    [tool.aisland.selection.framework]          # the project that asks
+    question = "Which ML frameworks should this machine install?"
+    choices = ["torch", "lightning"]
 
-They are **sibling axes, never merged**: what a machine trains with and where its results
-go are unrelated choices, and folding them together would install a tracking client
-because someone picked a training engine.
+    [tool.aisland.selection.framework]          # any other project offering frameworks
+    choices = ["keras", "torch"]
 
-Each axis has two halves, deliberately separate:
+aisland adds one selection of its own, :data:`EXTRAS`, whose menu is every extra a project defines — "which of your
+extras" has nothing to declare. Names line up across projects on purpose (``torch`` is ``torch`` everywhere), so ONE
+choice drives every project: a project installs its menu ∩ the effective choice, in its menu's order.
 
-* **A project DECLARES which of its extras belong to an axis**, in its own
-  ``pyproject.toml``::
+Two layers, like every plugin of ``aisland workspace configure``:
 
-      [tool.aisland]
-      frameworks = ["lightning", "keras"]     # what it can train with
-      trackers   = ["mlflow", "aim"]          # what it can track to
+* **committed** — ``[workspace] <selection> = [...]`` in ``workspace.toml``, shared, and the ONLY layer generated CI
+  reads: one developer narrowing to ``torch`` must never stop every runner from testing the other backends;
+* **this machine** — ``git config --local aisland.<selection>.selected`` (space-separated), which wins.
 
-  Declaring is required rather than guessed, because extras are a mixed bag — ``dev`` /
-  ``http`` / ``viz`` / ``all`` sit in the same table as ``torch`` and ``mlflow``, and a
-  name match would install a documentation extra on a machine that asked for a backend.
-  Only IMPLEMENTED capabilities belong there: the declaration is the MENU, and the
-  workspace's committed SELECTION decides what actually lands.
-
-* **The workspace SELECTS names**, and each project installs the extras it declares that
-  are selected. Names line up across projects on purpose (``keras`` is ``keras``
-  everywhere), so ONE selection drives every project with no per-project mapping table.
-
-Two configuration layers per axis, mirroring :mod:`aisland.sources` exactly:
-
-* **committed** — the ``frameworks`` / ``trackers`` key of ``<workspace>/config.toml``
-  (tracked, shared between machines, and the ONLY layer generated CI reads);
-* **per-machine** — ``git config --local aisland.frameworks`` / ``aisland.trackers``
-  (never committed).
-
-The committed layer is ONE key in the workspace's single config file (:mod:`aisland.config`),
-which this module neither formats nor owns — it hands a list of names to
-:func:`aisland.config.update` and reads one back.
-
-A machine-local choice must never reach a committed artifact: one developer narrowing to
-``torch`` locally must not stop every runner from testing the Keras backend, a failure
-that shows up as a green CI that no longer checks anything.
-
-An UNSET selection is not an EMPTY one. Empty means "none, I mean it"; unset means nobody
-has chosen yet, and :func:`resolve_for_setup` prompts (recording the answer) rather than
-silently installing either everything or nothing.
-
-:mod:`aisland.frameworks` is the framework-flavoured facade over this module, kept so the
-long-standing ``*_frameworks`` call sites and their tests are unaffected.
+An UNSET selection is not an EMPTY one: empty means "none, deliberately"; unset means nobody has chosen, and
+:func:`resolve_for_setup` asks (recording the answer) rather than silently installing everything or nothing.
 """
 
 from __future__ import annotations
@@ -64,243 +33,94 @@ import subprocess
 import tomllib
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Dict, List, Mapping, NamedTuple, Optional, Sequence, Set, Tuple
+from typing import Any, Dict, List, Mapping, Optional, Sequence, Set, Tuple
 
 import click
 from packaging.requirements import InvalidRequirement, Requirement
 
-from aisland.config import CONFIG_FILE
-from aisland.config import load as load_config
-from aisland.config import update as update_config
-from aisland.manager import get_project_metadata, get_workspace_root
+from aisland import workspace_file
+from aisland.manager import get_project_metadata
 
 
 @dataclass(frozen=True)
 class Axis:
-    """One selectable dimension: its vocabulary, its two config layers, and its wording.
+    """One selection: its name (the ``workspace.toml`` key, the plugin's name, ``aisland.<name>.selected``), the
+    question setup asks, and the noun its messages use for one choice.
 
-    Args:
-        name: Singular noun used in messages and as the CLI sub-command (``framework``).
-        plural: The ``[tool.aisland]`` declaration key, this axis's key in the committed
-            ``config.toml``, and the ``.git/config`` key suffix — one word drives all three
-            so they cannot drift.
-        question: The setup prompt's question line.
-        hint: The line under it explaining what the selection does.
-    """
+    ``from_defined_extras`` marks aisland's own :data:`EXTRAS`, whose menu is a project's extras rather than its
+    declaration."""
 
     name: str
-    plural: str
     question: str
-    hint: str
-    #: Where this axis's vocabulary comes from. ``False`` (the default) reads a project's
-    #: ``[tool.aisland] <plural>`` declaration — the MENU a project opts into. ``True`` uses
-    #: the project's own ``[project.optional-dependencies]`` keys instead, so the axis covers
-    #: everything the project defines without the project declaring anything. Only the extras
-    #: axis does the latter: "which of your extras do you want" has no menu to opt into, and
-    #: nothing on it can be declared-but-undefined.
+    noun: str = ""
     from_defined_extras: bool = False
 
     @property
-    def config_key(self) -> str:
-        """Per-machine ``.git/config`` key, e.g. ``aisland.frameworks``."""
-        return f"aisland.{self.plural}"
+    def one(self) -> str:
+        """The noun for one choice (``framework``, ``extra``)."""
+        return self.noun or self.name
 
-    @property
-    def table_path(self) -> Tuple[str, ...]:
-        """Where a project declares this axis, e.g. ``("tool", "aisland", "frameworks")``."""
-        return ("tool", "aisland", self.plural)
-
-
-FRAMEWORKS = Axis(
-    name="framework",
-    plural="frameworks",
-    question="Which ML frameworks should this machine install?",
-    hint="(workspace projects put each framework behind an extra; this selects them)",
-)
-
-TRACKERS = Axis(
-    name="tracker",
-    plural="trackers",
-    question="Which experiment-tracking backends should this machine install?",
-    hint="(the local-file backend always works; this selects the ones needing a library)",
-)
 
 EXTRAS = Axis(
-    name="extra",
-    plural="extras",
-    question="Which extras should this machine install?",
-    hint="(every extra the workspace's projects define — dev, local, platform, …; blank = all)",
-    from_defined_extras=True,
+    name="extras", question="Which extras should this machine install?", noun="extra", from_defined_extras=True
 )
 
-#: Every axis, in the order setup resolves them. Extras comes first: it is the one axis that
-#: always has a vocabulary (every project defines some extra), so it is the question an
-#: operator expects first on a fresh workspace.
-AXES: Tuple[Axis, ...] = (EXTRAS, FRAMEWORKS, TRACKERS)
+
+def axes(root: Path) -> Tuple[Axis, ...]:
+    """Every selection of the workspace: :data:`EXTRAS`, then each one a project defines, in discovery order.
+
+    Raises :class:`aisland.discovery.DeclarationError`, naming the file and the line, for a declaration it cannot
+    use (a choice that is no extra, a question asked twice)."""
+    from aisland import discovery
+
+    found = discovery.discover(root)
+    return (EXTRAS,) + tuple(Axis(name, selection.question) for name, selection in found.selections.items())
 
 
-# --------------------------------------------------------------------------- #
-# What each project declares
-# --------------------------------------------------------------------------- #
+def axis_named(root: Path, name: str) -> Optional[Axis]:
+    """The selection called ``name``, or ``None``."""
+    return {axis.name: axis for axis in axes(root)}.get(name)
+
+
+# --- what each project offers -------------------------------------------------------------------------------------
+
+
+def _read(pyproject_path: Path) -> Dict[str, Any]:
+    try:
+        return tomllib.loads(pyproject_path.read_text())
+    except (OSError, tomllib.TOMLDecodeError):
+        return {}
 
 
 def declared(pyproject_path: Path, axis: Axis) -> List[str]:
-    """The extras a project declares for ``axis``, in declaration order.
+    """The choices one project offers for ``axis``, in its order; ``[]`` for a project offering none.
 
-    A project with no declaration returns ``[]`` and is therefore unaffected by any
-    selection — which is what keeps a new axis inert for the projects that ignore it.
-
-    Example::
-
-        declared(Path("sonair/pyproject.toml"), FRAMEWORKS)  # ["lightning", "keras"]
-
-    On an axis whose vocabulary is the project's own extras (:attr:`Axis.from_defined_extras`)
-    there is nothing to declare: every ``[project.optional-dependencies]`` key is in scope, so
-    no project can be left out by forgetting a declaration.
-    """
+    For :data:`EXTRAS` that is every extra the project defines but a self-referential one."""
     if axis.from_defined_extras:
         return _selectable_extras(pyproject_path)
-    try:
-        data = tomllib.loads(pyproject_path.read_text())
-    except (OSError, tomllib.TOMLDecodeError):
-        return []
-    node: object = data
-    for key in axis.table_path:
-        if not isinstance(node, dict):
-            return []
-        node = node.get(key, {})
-    if not isinstance(node, list):
-        return []
-    return [str(name) for name in node]
+    table = _read(pyproject_path).get("tool", {}).get("aisland", {}).get("selection", {}).get(axis.name, {})
+    choices = table.get("choices", []) if isinstance(table, dict) else []
+    return [str(name) for name in choices] if isinstance(choices, list) else []
 
 
-def declarations(workspace_root: Path, axis: Axis) -> Dict[str, List[str]]:
-    """``{project name: declared extras}`` for every project declaring any on ``axis``.
+def declarations(root: Path, axis: Axis) -> Dict[str, List[str]]:
+    """``{project: its choices}`` for every project offering any for ``axis``.
 
-    Discovery goes through :func:`aisland.manager.discover_projects`, so a project detached
-    by ``aisland workspace configure source set … pypi`` (empty directory, no pyproject) drops out on its own.
-    """
+    Through :func:`aisland.manager.discover_projects`, so a project with an empty folder (a ``pypi`` source) drops
+    out on its own."""
     from aisland.manager import discover_projects
 
     out: Dict[str, List[str]] = {}
-    for pyproject in discover_projects(workspace_root):
+    for pyproject in discover_projects(root):
         names = declared(pyproject, axis)
         if names:
             out[pyproject.parent.name] = names
     return out
 
 
-def available(workspace_root: Path, axis: Axis) -> List[str]:
-    """Every name declared by any project on ``axis``, sorted — the selectable vocabulary."""
-    return sorted({name for names in declarations(workspace_root, axis).values() for name in names})
-
-
-# --------------------------------------------------------------------------- #
-# committed layer: the <plural> key of config.toml
-# --------------------------------------------------------------------------- #
-
-
-def read_committed(workspace_root: Path, axis: Axis) -> Optional[List[str]]:
-    """The committed selection, or ``None`` when ``config.toml`` carries no such key.
-
-    ``None`` (unset) is distinct from ``[]`` (explicitly none) — setup prompts for the
-    former and honours the latter. That is why an ABSENT key, rather than an absent file, is
-    what unset means now that three concerns share one file.
-    """
-    selected = load_config(workspace_root).get(axis.plural)
-    if selected is None:
-        return None
-    return [str(name) for name in selected] if isinstance(selected, list) else []
-
-
-def write_committed(workspace_root: Path, names: Sequence[str], axis: Axis) -> Path:
-    """Record the committed selection in ``config.toml``, leaving every other section intact."""
-    return update_config(workspace_root, axis.plural, list(names))
-
-
-# --------------------------------------------------------------------------- #
-# per-machine layer: .git/config aisland.<plural>
-# --------------------------------------------------------------------------- #
-
-
-def local_override(workspace_root: Path, axis: Axis) -> Optional[List[str]]:
-    """The per-machine selection from ``.git/config``, or ``None`` when unset.
-
-    Stored space-separated in ONE key rather than one key per name: the value is a SET
-    being replaced wholesale, and a multi-key form would make "none selected"
-    indistinguishable from "never chosen" — the very distinction this module is careful
-    about.
-    """
-    try:
-        result = subprocess.run(
-            ["git", "config", "--local", "--get", axis.config_key],
-            cwd=workspace_root,
-            capture_output=True,
-            text=True,
-        )
-    except FileNotFoundError:
-        return None
-    if result.returncode != 0:
-        return None
-    return result.stdout.split()
-
-
-def set_local_override(workspace_root: Path, names: Optional[Sequence[str]], axis: Axis) -> None:
-    """Set (or, with ``names=None``, remove) the per-machine selection."""
-    if names is None:
-        subprocess.run(
-            ["git", "config", "--local", "--unset", axis.config_key],
-            cwd=workspace_root,
-            capture_output=True,
-        )
-        return
-    subprocess.run(
-        ["git", "config", "--local", axis.config_key, " ".join(names)],
-        cwd=workspace_root,
-        check=True,
-        capture_output=True,
-    )
-
-
-# --------------------------------------------------------------------------- #
-# the resolved answer
-# --------------------------------------------------------------------------- #
-
-
-def effective(workspace_root: Path, axis: Axis) -> Optional[List[str]]:
-    """The selection that drives the venv: the per-machine override, else the committed one.
-
-    ``None`` means nobody has chosen on this machine or in this repo — the caller decides
-    what to do about it (setup prompts; CI uses the committed layer).
-    """
-    override = local_override(workspace_root, axis)
-    return override if override is not None else read_committed(workspace_root, axis)
-
-
-# --------------------------------------------------------------------------- #
-# declarations that name an extra nobody defined
-# --------------------------------------------------------------------------- #
-
-
-class UndefinedDeclaration(NamedTuple):
-    """One ``[tool.aisland]`` axis name with no matching ``[project.optional-dependencies]`` key."""
-
-    project: str
-    axis: str  #: the axis plural, e.g. "trackers"
-    name: str  #: the declared extra that does not exist
-    defined: List[str]  #: the extras the project DOES define
-
-    def __str__(self) -> str:
-        return f"{self.project}  {self.axis}  {self.name}  (defines: {', '.join(self.defined) or 'nothing'})"
-
-
-def _defined_extras(pyproject_path: Path) -> List[str]:
-    """The ``[project.optional-dependencies]`` keys of one pyproject, sorted."""
-    try:
-        data = tomllib.loads(pyproject_path.read_text())
-    except (OSError, tomllib.TOMLDecodeError):
-        return []
-    return sorted(data.get("project", {}).get("optional-dependencies", {}))
+def available(root: Path, axis: Axis) -> List[str]:
+    """Every name any project offers for ``axis``, sorted: what can be chosen."""
+    return sorted({name for names in declarations(root, axis).values() for name in names})
 
 
 def _canonical(name: str) -> str:
@@ -309,28 +129,16 @@ def _canonical(name: str) -> str:
 
 
 def _selectable_extras(pyproject_path: Path) -> List[str]:
-    """The defined extras WITHOUT the self-referential ones — the extras axis's vocabulary.
+    """The defined extras WITHOUT the self-referential ones — the :data:`EXTRAS` menu.
 
     A project commonly defines a convenience extra that is nothing but its own other extras
-    (``all = ["my-project[dev,local,tools]"]``). Offering
-    it beside the extras it re-exports is not merely redundant, it is harmful: selecting both
-    puts the distribution into its own requirement set, and uv then resolves the project a
-    second time as an ordinary dependency. Observed 2026-10-20 on a project of another workspace, where
-    selecting `all` beside the extras it re-exports pulled `platform-client==0.1.36` — whose
-    URL dependency uv refuses outright — while the same list without `all` resolved 310
-    packages cleanly on 0.1.38.
-
-    The test is STRUCTURAL, not a name match: an extra is dropped when one of its requirements
-    is the project's own distribution, whatever either is called. A project that happens to
-    name an extra `all` while putting real packages in it keeps it; `everything = ["foo[dev]"]`
-    in project `foo` is dropped. Name matching is what this module warns against elsewhere, and
-    it would both miss the second case and break the first.
+    (``all = ["my-project[dev,local,tools]"]``). Selecting it beside the extras it re-exports puts the distribution
+    into its own requirement set, and uv then resolves the project a second time as an ordinary dependency
+    (2026-10-20: a project of another workspace pulled a release whose URL dependency uv refuses). The test is
+    STRUCTURAL, not a name match: an extra is dropped when one of its requirements is the project's own
+    distribution, whatever either is called.
     """
-    try:
-        data = tomllib.loads(pyproject_path.read_text())
-    except (OSError, tomllib.TOMLDecodeError):
-        return []
-    project = data.get("project", {})
+    project = _read(pyproject_path).get("project", {})
     me = _canonical(str(project.get("name", "")))
     out: List[str] = []
     for extra, requirements in sorted(project.get("optional-dependencies", {}).items()):
@@ -348,167 +156,119 @@ def _selectable_extras(pyproject_path: Path) -> List[str]:
     return out
 
 
-def undefined_declarations(workspace_root: Path, axes: Tuple[Axis, ...] = AXES) -> List[UndefinedDeclaration]:
-    """Every axis name declared across the workspace that is not a real extra.
-
-    :func:`extras_for` is set intersection and trusts the declaration, so a name declared
-    here but never defined as an extra reaches uv, which warns and installs nothing --
-    leaving ``aisland tracker set mlflow`` a silent no-op for that project. Checking the
-    WHOLE workspace in one pass is deliberate: the operator gets every project to fix from
-    one run instead of failing at the twelfth and going again.
-    """
-    from aisland.manager import discover_projects
-
-    out: List[UndefinedDeclaration] = []
-    for pyproject in discover_projects(workspace_root):
-        extras = _defined_extras(pyproject)
-        try:
-            name = tomllib.loads(pyproject.read_text()).get("project", {}).get("name") or pyproject.parent.name
-        except (OSError, tomllib.TOMLDecodeError):
-            name = pyproject.parent.name
-        for axis in axes:
-            if axis.from_defined_extras:
-                continue  # its vocabulary IS `extras`, so every name is defined by construction
-            for declaration in declared(pyproject, axis):
-                if declaration not in extras:
-                    out.append(UndefinedDeclaration(name, axis.plural, declaration, extras))
-    return sorted(out)
+# --- the two layers -----------------------------------------------------------------------------------------------
 
 
-def require_defined_declarations(workspace_root: Path, axes: Tuple[Axis, ...] = AXES) -> None:
-    """Refuse to install while any project declares an extra it never defined.
+def read_committed(root: Path, name: str) -> Optional[List[str]]:
+    """The committed choice — ``[workspace] <name>`` of ``workspace.toml`` — or ``None`` when it has none."""
+    value = workspace_file.load(root).settings.get(name)
+    if value is None:
+        return None
+    return [str(item) for item in value] if isinstance(value, list) else []
 
-    User ruling 2026-08-25 (option B): stop and NAME the project and the name, rather than
-    letting uv emit a warning nobody reads in the middle of a twenty-project install. Raised
-    before anything is installed, from both entry points -- ``aisland setup`` and
-    ``aisland tracker/framework set``.
-    """
-    offenders = undefined_declarations(workspace_root, axes)
-    if not offenders:
+
+def write_committed(root: Path, name: str, names: Optional[Sequence[str]]) -> None:
+    """Commit ``names`` (or, with ``None``, remove the key), keeping the file's projects and other settings."""
+    current = workspace_file.load(root)
+    settings = dict(current.settings)
+    if names is None:
+        settings.pop(name, None)
+    else:
+        settings[name] = list(names)
+    workspace_file.write(root, workspace_file.WorkspaceFile(settings, current.projects))
+
+
+def _machine_key(name: str) -> str:
+    return f"aisland.{name}.selected"
+
+
+def machine_choice(root: Path, name: str) -> Optional[List[str]]:
+    """This machine's choice, or ``None`` when it has made none. One space-separated key: a set replaced whole,
+    where ``""`` is "none" and an absent key "never chosen"."""
+    run = subprocess.run(
+        ["git", "config", "--local", "--get", _machine_key(name)], cwd=root, capture_output=True, text=True
+    )
+    return run.stdout.split() if run.returncode == 0 else None
+
+
+def set_machine_choice(root: Path, name: str, names: Optional[Sequence[str]]) -> None:
+    """Record (or, with ``None``, forget) this machine's choice. Never committed."""
+    if names is None:
+        subprocess.run(["git", "config", "--local", "--unset", _machine_key(name)], cwd=root, capture_output=True)
         return
-    # Align the columns: an operator scanning this list is looking for the project name.
-    widths = [max(len(getattr(o, f)) for o in offenders) for f in ("project", "axis", "name")]
-    lines = [
-        f"  {o.project:<{widths[0]}}  {o.axis:<{widths[1]}}  {o.name:<{widths[2]}}"
-        f"  (defines: {', '.join(o.defined) or 'nothing'})"
-        for o in offenders
-    ]
-    headline = (
-        "1 declaration names an extra that does not exist"
-        if len(offenders) == 1
-        else f"{len(offenders)} declarations name extras that do not exist"
-    )
-    raise click.ClickException(
-        headline
-        + ":\n\n"
-        + "\n".join(lines)
-        + "\n\nEach name above is listed under [tool.aisland] in that project's pyproject.toml\n"
-        "but has no matching entry under [project.optional-dependencies]. Either define the\n"
-        "extra there, or drop the name from the declaration -- until then, selecting it\n"
-        "installs nothing for these projects."
+    subprocess.run(
+        ["git", "config", "--local", _machine_key(name), " ".join(names)], cwd=root, check=True, capture_output=True
     )
 
 
-def extras_for(project_name: str, declared_names: Sequence[str], selected: Optional[Sequence[str]]) -> List[str]:
-    """The extras to install for one project: what it declares ∩ what is selected.
+def effective(root: Path, name: str) -> Optional[List[str]]:
+    """What drives this machine's venv: its own choice, else the committed one, else ``None``."""
+    choice = machine_choice(root, name)
+    return choice if choice is not None else read_committed(root, name)
 
-    Order follows the project's DECLARATION, not the selection, so the emitted install
-    target is stable regardless of the order names were typed in. An unset selection
-    (``None``) yields nothing — callers that mean "everything" pass the full list
-    explicitly, so the ambiguity never travels.
 
-    Axis-free: it is set intersection, and both axes intersect identically.
+# --- what a project installs --------------------------------------------------------------------------------------
 
-    Example::
 
-        extras_for("sonair", ["lightning", "keras"], ["keras", "torch"])  # ["keras"]
-    """
+def extras_for(declared_names: Sequence[str], selected: Optional[Sequence[str]]) -> List[str]:
+    """What one project installs of one selection: its menu ∩ the choice, in the MENU's order, so the install
+    target is stable however the names were typed. ``None`` (unset) yields nothing."""
     if not selected:
         return []
     chosen = set(selected)
     return [name for name in declared_names if name in chosen]
 
 
-def all_extras(workspace_root: Path, pyproject_path: Path, project_name: str) -> List[str]:
-    """Every selected extra for one project, ACROSS BOTH AXES.
-
-    The install target must carry both, because a reinstall names the extras it wants and
-    a target listing only one axis describes a package the operator did not ask for. A
-    project declaring only frameworks is unaffected — the other axis contributes nothing.
-    """
+def all_extras(root: Path, pyproject_path: Path) -> List[str]:
+    """Every extra one project installs, across every selection, each once."""
     out: List[str] = []
-    for axis in AXES:
-        out += extras_for(project_name, declared(pyproject_path, axis), effective(workspace_root, axis) or [])
-    return out
+    for axis in axes(root):
+        out += extras_for(declared(pyproject_path, axis), effective(root, axis.name))
+    return list(dict.fromkeys(out))
 
 
 def install_target(project_dir: Path, has_dev: bool, extras: Sequence[str]) -> str:
-    """The ``uv pip install -e`` target for one project, e.g. ``/w/sonair[dev,lightning]``.
-
-    Kept here rather than inlined at the call sites (the venv install and the generated CI
-    lines) so both spell the extras list identically — they are compared by eye when a
-    build disagrees with a local run.
-    """
+    """The ``uv pip install -e`` target for one project, e.g. ``/w/models[dev,keras]`` — one spelling for the venv
+    and the generated CI, which are compared by eye when a build disagrees with a local run."""
     parts = (["dev"] if has_dev and "dev" not in extras else []) + list(extras)
     return f"{project_dir}[{','.join(parts)}]" if parts else str(project_dir)
 
 
-def editable_target(workspace_root: Path, project_dir: Path, project_name: str) -> str:
-    """The ``uv pip install -e`` target for one CHECKOUT: its ``dev`` extra plus every selected
-    extra on both axes — the ONE spelling ``aisland setup`` and ``aisland workspace configure source … local`` share.
+def editable_target(root: Path, project_dir: Path, project_name: str) -> str:
+    """The ``uv pip install -e`` target for one CHECKOUT: its ``dev`` extra plus every selected extra — the ONE
+    spelling ``aisland setup`` and ``aisland workspace configure source … local`` share.
 
-    Before 2026-08-22 the source path installed the bare directory, so switching a project to
-    ``local`` dropped ``[dev]`` (a dev-only test dependency vanished and its pin skipped) and a
-    framework project lost the backends the machine had selected. A checkout with no
-    ``pyproject.toml`` yields the bare directory so uv reports its own error for it.
-    """
+    Once :data:`EXTRAS` has been chosen it owns ``dev`` too: forcing ``[dev]`` back in would make "everything but
+    dev" unexpressible. A workspace that never chose it keeps ``[dev]``. A checkout without a ``pyproject.toml``
+    yields the bare folder, so uv reports its own error for it."""
     pyproject = project_dir / "pyproject.toml"
     if not pyproject.exists():
         return str(project_dir)
-    # Since 2026-10-20 the EXTRAS axis offers `dev` like any other extra. Once it has been
-    # resolved its answer is the whole answer: forcing `[dev]` back in would make "everything
-    # but dev" unexpressible, and the operator who deselected it would get it anyway. A
-    # workspace that has never resolved that axis keeps the old unconditional `[dev]`.
-    extras = all_extras(workspace_root, pyproject, project_name)
-    has_dev = effective(workspace_root, EXTRAS) is None and bool(get_project_metadata(pyproject)["has_dev"])
-    return install_target(project_dir, has_dev, extras)
+    has_dev = effective(root, EXTRAS.name) is None and bool(get_project_metadata(pyproject)["has_dev"])
+    return install_target(project_dir, has_dev, all_extras(root, pyproject))
 
 
-# --------------------------------------------------------------------------- #
-# the setup prompt
-# --------------------------------------------------------------------------- #
+# --- setup asks ---------------------------------------------------------------------------------------------------
 
 
-def prompt_for(workspace_root: Path, choices: Sequence[str], axis: Axis) -> List[str]:
-    """Ask which names to install, returning the chosen ones.
-
-    A blank answer selects EVERYTHING, because the alternative default (nothing) hands
-    back a workspace whose projects cannot do what they were installed for — a fresh setup
-    should work before it is optimised. Answers are matched by name or by 1-based index, so
-    both ``torch keras`` and ``1,3`` work.
-    """
+def prompt_for(root: Path, choices: Sequence[str], axis: Axis) -> List[str]:
+    """Ask the selection's question; answers are names or 1-based numbers, and a blank one is EVERYTHING — a fresh
+    setup should work before it is trimmed."""
     click.echo(f"\n==> {axis.question}")
-    click.echo(f"    {axis.hint}")
-    decls = declarations(workspace_root, axis)
+    offered = declarations(root, axis)
     for index, name in enumerate(choices, start=1):
-        users = [p for p, names in decls.items() if name in names]
+        users = [project for project, names in offered.items() if name in names]
         click.echo(f"      [{index}] {name:<12} {', '.join(sorted(users))}")
     answer = click.prompt(
-        "    Select (names or numbers, comma/space separated; blank = all)",
-        default="",
-        show_default=False,
+        "    Select (names or numbers, comma/space separated; blank = all)", default="", show_default=False
     )
     return parse_selection(answer, choices, axis)
 
 
-def parse_selection(answer: str, choices: Sequence[str], axis: Axis = FRAMEWORKS) -> List[str]:
-    """Parse a prompt answer into names; blank means all of ``choices``.
-
-    Unknown tokens are DROPPED with a warning rather than raising: this runs in the middle
-    of a long ``aisland setup``, and aborting a provisioning run over a typo would cost more
-    than proceeding with the names that were understood.
-    """
-    tokens = [tok for tok in answer.replace(",", " ").split() if tok]
+def parse_selection(answer: str, choices: Sequence[str], axis: Axis) -> List[str]:
+    """An answer as names; blank is all of ``choices``. An unknown word is DROPPED with a warning: this runs in the
+    middle of a long setup, and stopping it over a typo would cost more than going on with what was understood."""
+    tokens = [token for token in answer.replace(",", " ").split() if token]
     if not tokens:
         return list(choices)
     chosen: List[str] = []
@@ -518,7 +278,7 @@ def parse_selection(answer: str, choices: Sequence[str], axis: Axis = FRAMEWORKS
         elif token in choices:
             name = token
         else:
-            click.echo(f"  - Warning: unknown {axis.name} {token!r}; ignoring.")
+            click.echo(f"  - Warning: unknown {axis.one} {token!r}; ignoring.")
             continue
         if name not in chosen:
             chosen.append(name)
@@ -526,197 +286,151 @@ def parse_selection(answer: str, choices: Sequence[str], axis: Axis = FRAMEWORKS
 
 
 def resolve_for_setup(
-    workspace_root: Path,
-    requested: Optional[Sequence[str]],
-    non_interactive: bool,
-    axis: Axis = FRAMEWORKS,
-    select_all: bool = False,
+    root: Path, non_interactive: bool, axis: Axis, select_all: bool = False
 ) -> Tuple[List[str], bool]:
-    """The selection ``setup`` should install, plus whether it was just chosen.
+    """The choice setup installs, and whether it was just made.
 
-    Precedence: ``select_all`` (``--all``) wins, then an explicit flag — both are RECORDED, so
-    the next run needs no flag; else an existing selection is used as-is; else the operator is
-    prompted, unless the run is non-interactive, in which case everything available is selected
-    — a headless setup must not hang, and must not silently produce a workspace that cannot do
-    its job.
-
-    ``select_all`` is the whole vocabulary, computed from what the projects DEFINE. It does not
-    look for an extra named ``all``: that convention is a project's own shorthand, several
-    projects here spell it differently or not at all, and a flag that silently installed less
-    on the project that omitted it would be worse than no flag.
-    """
-    choices = available(workspace_root, axis)
+    ``select_all`` (``setup --all``, for :data:`EXTRAS`) takes the whole menu and records it; else a recorded choice
+    is used as it is; else setup asks — or, under ``-y``, takes everything, since a headless setup must neither hang
+    nor leave a workspace that cannot do its job. A new choice is committed."""
+    choices = available(root, axis)
     if not choices:
         return [], False
-
     if select_all:
-        write_committed(workspace_root, choices, axis)
+        write_committed(root, axis.name, choices)
         return choices, True
-
-    if requested:
-        chosen = parse_selection(" ".join(requested), choices, axis)
-        write_committed(workspace_root, chosen, axis)
-        return chosen, True
-
-    existing = effective(workspace_root, axis)
+    existing = effective(root, axis.name)
     if existing is not None:
         return list(existing), False
-
     if non_interactive:
-        click.echo(f"==> No {axis.name} selection recorded; installing all ({', '.join(choices)}).")
-        write_committed(workspace_root, choices, axis)
-        return choices, True
-
-    chosen = prompt_for(workspace_root, choices, axis)
-    write_committed(workspace_root, chosen, axis)
-    click.echo(f"  - Recorded as `{axis.plural}` in {CONFIG_FILE}: {', '.join(chosen) or '(none)'}")
+        click.echo(f"==> Nothing chosen for {axis.name}; installing all ({', '.join(choices)}).")
+        chosen = choices
+    else:
+        chosen = prompt_for(root, choices, axis)
+        click.echo(f"  - {axis.name} = {', '.join(chosen) or '(none)'} (in {workspace_file.FILE_NAME})")
+    write_committed(root, axis.name, chosen)
     return chosen, True
 
 
-# --------------------------------------------------------------------------- #
-# the CLI surface
-# --------------------------------------------------------------------------- #
+# --- `aisland workspace configure <selection>` --------------------------------------------------------------------
 
 
-def describe(workspace_root: Optional[Path] = None, axis: Axis = FRAMEWORKS) -> List[Dict[str, str]]:
-    """One row per declared name: who offers it, and whether each layer selects it.
+def rows(root: Path, axis: Axis) -> List[Dict[str, str]]:
+    """One row per name: whether each layer chooses it, and which projects offer it."""
+    offered = declarations(root, axis)
+    committed, machine, resolved = (
+        read_committed(root, axis.name),
+        machine_choice(root, axis.name),
+        effective(root, axis.name),
+    )
 
-    Rows are per NAME rather than per project because that is the unit an operator selects;
-    the projects affected are shown as a column so the effect of a choice is visible without
-    a second command.
-    """
-    root = workspace_root or get_workspace_root()
-    decls = declarations(root, axis)
-    committed = read_committed(root, axis)
-    override = local_override(root, axis)
-    resolved = effective(root, axis)
-
-    def mark(selection: Optional[Sequence[str]], name: str) -> str:
-        if selection is None:
-            return "-"
-        return "yes" if name in selection else "no"
+    def mark(chosen: Optional[Sequence[str]], name: str) -> str:
+        return "-" if chosen is None else ("yes" if name in chosen else "no")
 
     return [
         {
             axis.name: name,
             "committed": mark(committed, name),
-            "override": mark(override, name),
+            "this machine": mark(machine, name),
             "effective": mark(resolved, name),
-            "projects": ", ".join(sorted(p for p, names in decls.items() if name in names)),
+            "projects": ", ".join(sorted(project for project, names in offered.items() if name in names)),
         }
         for name in available(root, axis)
     ]
 
 
-def apply_selection(
-    workspace_root: Path,
-    selected: Sequence[str],
-    axis: Axis = FRAMEWORKS,
-    uv_cmd: Optional[str] = None,
-) -> int:
-    """Reinstall every project declaring something on ``axis``, at the current selection.
+def apply_selection(root: Path, axis: Axis, uv_cmd: Optional[str] = None) -> int:
+    """Reinstall every project offering something for ``axis``, at every selection's effective choice. Returns how
+    many failed.
 
-    Only DECLARING projects are touched: reinstalling the whole workspace to change one
-    extra would take minutes and rebuild things the selection cannot affect. Returns the
-    number of projects that failed to install, so the CLI can exit non-zero.
-
-    The install target carries BOTH axes' selected extras (:func:`all_extras`), not just
-    this one's — a target naming only the axis being changed would describe a package the
-    operator never asked for.
-
-    Order comes from :func:`aisland.manager.get_install_order` — the same topological order
-    ``aisland setup`` uses — NOT from discovery order. That is load-bearing rather than
-    tidy: a consumer's extra can name a sibling's (``sonair[keras]`` requires
-    ``matrainer[keras]>=0.1.0``), so installing the consumer first resolves it against the
-    sibling's ALREADY-INSTALLED metadata and uv warns ``does not have an extra named
-    'keras'`` while quietly installing without it. Observed on the first real run.
-
-    uv does not UNINSTALL an extra that is no longer selected — dropping ``keras`` leaves
-    the keras wheel in the venv until something removes it. Deliberate: guessing which
-    packages "belonged" to an extra is unsound (they are ordinary dependencies, possibly
-    shared), and a stale wheel costs disk, not correctness. Recreate the venv for a truly
-    clean set.
-    """
+    Only the OFFERING projects are touched: reinstalling the workspace to change one extra would take minutes. The
+    order is setup's (:func:`aisland.manager.get_install_order`): a consumer's extra can name a sibling's
+    (``models[keras]`` requiring ``trainer[keras]``), and installed first it resolves against the sibling's OLD
+    metadata. uv never uninstalls an extra no longer chosen — which packages "belonged" to it is unknowable, and a
+    stale wheel costs disk, not correctness."""
     from aisland.manager import ensure_uv_in_venv, get_install_order
 
-    require_defined_declarations(workspace_root)
-
-    uv = uv_cmd or ensure_uv_in_venv(workspace_root / ".venv" / "bin")
+    uv = uv_cmd or ensure_uv_in_venv(root / ".venv" / "bin")
     failures = 0
-    for project in get_install_order(workspace_root):
-        pyproject = project["path"] / "pyproject.toml"
-        if not declared(pyproject, axis):
+    for project in get_install_order(root):
+        if not declared(project["path"] / "pyproject.toml", axis):
             continue
-        extras = extras_for(project["name"], declared(pyproject, axis), selected)
-        other = [name for name in all_extras(workspace_root, pyproject, project["name"]) if name not in extras]
-        target = install_target(project["path"], project["has_dev"], extras + other)
+        target = editable_target(root, project["path"], project["name"])
         click.echo(f"==> Installing {project['name']} ({target})...")
         try:
-            subprocess.check_call([uv, "pip", "install", "-e", target], cwd=workspace_root)
+            subprocess.check_call([uv, "pip", "install", "-e", target], cwd=root)
         except subprocess.CalledProcessError as exc:
             click.echo(f"  - Error: Failed to install {project['name']}: {exc}")
             failures += 1
     return failures
 
 
-def set_selection(
-    names: Sequence[str],
-    axis: Axis = FRAMEWORKS,
-    machine_only: bool = False,
-    apply: bool = True,
-) -> int:
-    """Record a selection and (by default) install it. Returns an exit code."""
-    workspace_root = get_workspace_root()
-    choices = available(workspace_root, axis)
-    if not choices:
-        click.echo(f"No project declares any {axis.name} extras ([tool.aisland] {axis.plural}); nothing to select.")
-        return 1
+def _command(axis: Axis, *words: str) -> str:
+    return " ".join(("aisland workspace configure", axis.name) + words)
 
+
+def set_selection(root: Path, axis: Axis, names: Sequence[str], machine_only: bool) -> int:
+    """Commit (or, ``machine_only``, choose here) ``names`` and reinstall the projects offering them."""
+    choices = available(root, axis)
     unknown = [name for name in names if name not in choices]
     if unknown:
-        click.echo(f"Error: unknown {axis.name}(s) {', '.join(unknown)}. Available: {', '.join(choices)}")
+        click.echo(
+            f"Error: no project offers {axis.one} {unknown[0]!r} (the choices: {', '.join(choices) or 'none'})",
+            err=True,
+        )
         return 1
-
     chosen = list(dict.fromkeys(names))
+    shown = ", ".join(chosen) or "(none)"
     if machine_only:
-        set_local_override(workspace_root, chosen, axis)
-        click.echo(f"==> This machine only: {', '.join(chosen) or '(none)'}")
+        set_machine_choice(root, axis.name, chosen)
+        click.echo(f"==> {axis.name} = {shown} on this machine (nothing committed)")
     else:
-        path = write_committed(workspace_root, chosen, axis)
-        click.echo(f"==> Recorded as `{axis.plural}` in {path.name}: {', '.join(chosen) or '(none)'}")
-        if local_override(workspace_root, axis) is not None:
-            click.echo("  - Note: a per-machine override is set and still WINS here.")
-            click.echo(f"    Drop it with: aisland {axis.name} unset --machine-only")
-
-    if not apply:
-        return 0
-    return apply_selection(workspace_root, effective(workspace_root, axis) or [], axis)
+        write_committed(root, axis.name, chosen)
+        click.echo(f"==> {axis.name} = {shown} (in {workspace_file.FILE_NAME})")
+        machine = machine_choice(root, axis.name)
+        if machine is not None:
+            click.echo(f"  - Note: this machine's choice ({', '.join(machine) or 'none'}) still wins here;")
+            click.echo(f"    drop it with: {_command(axis, 'unset', '--machine-only')}")
+    return apply_selection(root, axis)
 
 
-def unset_selection(axis: Axis = FRAMEWORKS, machine_only: bool = False, apply: bool = True) -> int:
-    """Clear a selection: the per-machine override, or (default) the committed key too.
-
-    Removing the KEY rather than the file is what keeps *unset* expressible now that the
-    axes share ``config.toml`` with each other and with ``[sources.*]`` — the file survives
-    for its other sections, and only vanishes when nothing at all is left in it.
-    """
-    workspace_root = get_workspace_root()
-    set_local_override(workspace_root, None, axis)
+def unset_selection(root: Path, axis: Axis, machine_only: bool) -> int:
+    """Forget this machine's choice (``machine_only``) or both layers', and reinstall at what is left."""
+    set_machine_choice(root, axis.name, None)
     if machine_only:
-        click.echo("==> Cleared this machine's override; the committed selection applies.")
+        click.echo(f"==> {axis.name}: this machine follows {workspace_file.FILE_NAME} again")
     else:
-        update_config(workspace_root, axis.plural, None)
-        click.echo(f"==> Cleared the override and dropped `{axis.plural}` from {CONFIG_FILE}; setup will prompt again.")
-
-    resolved = effective(workspace_root, axis)
-    if resolved is None or not apply:
+        write_committed(root, axis.name, None)
+        click.echo(f"==> {axis.name}: nothing chosen; setup asks again")
+    if effective(root, axis.name) is None:
         return 0
-    return apply_selection(workspace_root, resolved, axis)
+    return apply_selection(root, axis)
 
 
-# --------------------------------------------------------------------------- #
-# a dev dependency that needs more than pip: playwright's browser
-# --------------------------------------------------------------------------- #
+def add_command(root: Path, name: str, value: str) -> str:
+    """The command that adds ``value`` to selection ``name``, keeping what this machine has chosen — ``set`` takes
+    the WHOLE list, so naming only the missing one would drop the rest."""
+    current = effective(root, name) or []
+    return " ".join(["aisland workspace configure", name, "set", *current, *([] if value in current else [value])])
+
+
+def missing_message(what: str, name: str, value: str) -> str:
+    """What a service says when ``value`` of selection ``name`` (its backend, ``what``) is not installed: the
+    command that adds it, keeping the rest. A service never installs its backend — a silent install leaves the venv
+    holding something no selection asked for, gone again after the next ``aisland setup``."""
+    from aisland import manager
+
+    command = add_command(manager.get_workspace_root(), name, value)
+    return (
+        f"{what} is not installed in this environment.\n"
+        f"  Add it to the {name} selection, so the choice is recorded and survives the next setup:\n"
+        f"      {command}\n"
+        "  Or, for this machine only:\n"
+        f"      {command} --machine-only"
+    )
+
+
+# --- a dev dependency that needs more than pip: playwright's browser ----------------------------------------------
 
 #: The one browser a workspace test asks for — Playwright's package alone cannot open a page.
 PLAYWRIGHT_BROWSER = "chromium"

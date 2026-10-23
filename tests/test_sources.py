@@ -23,7 +23,6 @@ import pytest
 
 from aisland import sources as s
 from aisland import workspace_file
-from aisland.config import CONFIG_FILE
 from aisland.services.jenkins import JenkinsService
 
 # --- the model ----------------------------------------------------------------------------
@@ -337,13 +336,13 @@ class TestApplySource:
         vanished from the venv and its pin skipped; a framework project lost its backends too.
         """
         subprocess.run(["git", "init", "-q"], cwd=tmp_path, check=True)
-        (tmp_path / CONFIG_FILE).write_text('frameworks = ["lightning"]\n')
+        (tmp_path / "workspace.toml").write_text('[workspace]\nframework = ["lightning"]\n')
         (tmp_path / "sonair").mkdir()
         (tmp_path / "sonair" / ".git").write_text("gitdir: ../.git/modules/sonair\n")
         (tmp_path / "sonair" / "pyproject.toml").write_text(
             '[project]\nname = "sonair"\n'
             '[project.optional-dependencies]\ndev = ["pytest"]\nlightning = ["lightning"]\nkeras = ["keras"]\n'
-            '[tool.aisland]\nframeworks = ["lightning", "keras"]\n'
+            '[tool.aisland.selection.framework]\nquestion = "Which?"\nchoices = ["lightning", "keras"]\n'
         )
         source = s.ProjectSource(kind="local", ref="dev/main")
         assert s.apply_source(tmp_path, "sonair", source, "/venv/bin/uv") is True

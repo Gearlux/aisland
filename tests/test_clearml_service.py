@@ -147,9 +147,9 @@ def test_the_pin_is_a_release_tag_not_a_branch() -> None:
 def test_setup_refuses_to_install_the_backend(service: ClearMLService) -> None:
     with patch("importlib.util.find_spec", return_value=None):
         with patch("subprocess.run") as run_mock:
-            with pytest.raises(click.ClickException, match="aisland tracker set clearml"):
+            with pytest.raises(click.ClickException, match="aisland workspace configure tracker set"):
                 service.setup()
-    run_mock.assert_not_called()
+    assert not [c for c in run_mock.call_args_list if "pip" in c.args[0]], "the backend is never installed here"
 
 
 def test_setup_names_the_docker_start_command(service: ClearMLService) -> None:
