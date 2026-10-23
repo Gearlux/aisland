@@ -28,7 +28,7 @@ When the user invokes `/commit-session`:
    c. **Message:** written from the STAGED diff only (`git diff --cached`), concise and conventional (`feat:`, `fix:`, `chore:`, `docs:`).
    d. **Commit**, and report the commit hash and message. Only whole files staged → `git commit -- <paths>`, so anything another session staged stays out. A hand-staged file among them → first confirm `git diff --cached --name-only` lists only your files, then a plain `git commit` (a pathspec commits the working tree, the other session's hunks included).
 
-4. **Root repository last:** stage the pointer of each submodule this session just committed in (`git add <submodule_path>`) together with the session's own root files (rules of step 3a), then commit (e.g. `chore: sync submodule pointer — <project> <what changed>`). Do NOT stage the pointer of a submodule this session did not commit in, even when it shows as modified.
+4. **Root repository last:** stage the pointer of each submodule this session just committed in (`git add <submodule_path>`) together with the session's own root files (rules of step 3a), then commit (e.g. `chore: sync submodule pointer — <project> <what changed>`). Do NOT stage the pointer of a submodule this session did not commit in, even when it shows as modified. A submodule git skips with `hint: Skipping submodule due to ignore=all` is untracked (`aisland workspace untrack`): leave it unrecorded — never `git add -f`.
 
 5. **No quality gates** in this shortcut (same as `/commit-all`), and **NEVER `git push`** unless the user asks in a follow-up instruction.
 

@@ -20,10 +20,13 @@
 #      skipped while a submodule is left mid-merge, since its pointer depends on it;
 #   4. record, in one root commit, each submodule holding commits from origin that the root
 #      does not record yet. A pointer never moves backwards, and a submodule whose only
-#      unrecorded commits are local ones is left for whoever made them.
+#      unrecorded commits are local ones is left for whoever made them. A submodule whose updates
+#      the root ignores (`ignore = all`, what `aisland workspace init --local` writes) is never
+#      recorded: the root keeps the commit it was added at.
 # A root with no origin remote (the one `aisland workspace init` makes) has nothing to pull: it is
 # neither fetched nor merged, and since its branch is then a local name only, each submodule is
-# pulled on the branch it is on (step 2); step 4 still records what came in.
+# pulled on the branch it is on (step 2); step 4 still records what came in, but for the submodules
+# whose updates it ignores.
 # Whatever it cannot do is listed under "needs you:" with exit status 1; a rerun after
 # fixing it continues where this run stopped (it also finishes a root merge left on pointer
 # conflicts, e.g. by a plain `git pull`).
@@ -265,8 +268,22 @@ root_step() {
     esac
 }
 
+# Whether the root ignores the updates of the submodule at path $1: `submodule.<name>.ignore` is `all`
+# in this machine's .git/config or, without one there, in .gitmodules.
+updates_ignored() {
+    local name value
+    name=$(git -C "$WORKSPACE_ROOT" config -f .gitmodules --get-regexp '^submodule\..*\.path$' |
+        awk -v p="$1" '{ key = $1; rest = substr($0, length(key) + 2) }
+            rest == p { sub(/^submodule\./, "", key); sub(/\.path$/, "", key); print key; exit }')
+    [ -n "$name" ] || return 1
+    value=$(git -C "$WORKSPACE_ROOT" config --local --get "submodule.$name.ignore") ||
+        value=$(git -C "$WORKSPACE_ROOT" config -f .gitmodules --get "submodule.$name.ignore")
+    [ "$value" = all ]
+}
+
 # One root commit recording each submodule that holds commits from origin the root does not
-# record yet. Only once the root holds everything origin has and no merge is in progress.
+# record yet, but those whose updates it ignores. Only once the root holds everything origin has
+# and no merge is in progress.
 record_pointers() {
     local sm sub up rec head names branch
     local -a paths=()
@@ -276,6 +293,7 @@ record_pointers() {
     fi
     for sm in "${SUBMODULES[@]}"; do
         listed "$sm" && continue
+        updates_ignored "$sm" && continue
         sub="$WORKSPACE_ROOT/$sm"
         branch=$(git -C "$sub" branch --show-current)
         [ -n "$branch" ] || continue

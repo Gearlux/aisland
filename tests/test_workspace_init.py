@@ -143,17 +143,44 @@ def test_a_repository_that_cannot_be_added_stops_with_its_url(tmp_path: Path) ->
     assert f"Error: could not add {missing} as a submodule:" in result.output
 
 
-def test_a_git_repository_is_refused_and_left_as_it_was(tmp_path: Path) -> None:
+def test_an_existing_repository_is_set_up_in_place_and_its_files_kept(tmp_path: Path, models: Path) -> None:
     root = tmp_path / "acme"
     root.mkdir()
     subprocess.run(["git", "init", "-q"], cwd=root, check=True)
-    result = _init(tmp_path)
+    (root / ".gitignore").write_text("# ours\n")
+    result = _init(tmp_path, "--add", str(models))
+    assert result.exit_code == 0, result.output
+    lines = result.output.splitlines()
+    assert lines[0] == f"==> Set up workspace acme in {root}"
+    assert lines[1] == "    .git/                     kept (an existing repository)"
+    assert "    .gitignore                kept (it exists)" in lines
+    assert (root / ".gitignore").read_text().startswith("# ours\n")
+    assert (root / "models" / "pyproject.toml").is_file()
+    assert (root / "mypy.ini").is_file() and (root / "AGENTS.md").is_file()
+    assert "pull-all" in _git(root, "config", "--local", "--get-regexp", r"^alias\.")
+
+
+def test_an_existing_repository_refuses_a_workspace_file_and_changes_nothing(tmp_path: Path) -> None:
+    root = tmp_path / "acme"
+    root.mkdir()
+    subprocess.run(["git", "init", "-q"], cwd=root, check=True)
+    source = _workspace_toml(tmp_path, "")
+    result = _init(tmp_path, "--from", str(source))
     assert result.exit_code == 1
     assert result.output == (
-        f"Error: {root} is already a git repository. `aisland workspace init` starts a new one; "
-        "in an existing repository run `aisland setup`.\n"
+        f"Error: {root} is already a git repository, with a workspace.toml of its own: add projects with --add.\n"
     )
     assert sorted(p.name for p in root.iterdir()) == [".git"]
+
+
+def test_an_existing_repository_refuses_rewrite_beside_anything_else(tmp_path: Path) -> None:
+    root = _existing_workspace(tmp_path)
+    result = _init(tmp_path, "--rewrite", ".env", "--untracked")
+    assert result.exit_code == 1
+    assert result.output == (
+        "Error: in an existing repository --rewrite writes its files and nothing else: run it on its own.\n"
+    )
+    assert (root / ".env").read_text() == "DATA_ROOT=/data\n"
 
 
 def test_a_file_that_exists_is_kept(tmp_path: Path) -> None:
@@ -406,3 +433,134 @@ def test_the_repository_name_comes_from_the_address() -> None:
     assert workspace_file.repository_name("git@github.com:Gearlux/aisland.git") == "aisland"
     assert workspace_file.repository_name("/srv/git/models/") == "models"
     assert workspace_file.repository_name("https://host/a b.git") is None
+
+
+# --- --local and --untracked -------------------------------------------------------------------------------------
+
+
+@pytest.fixture
+def author(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The identity `--local`'s first commit is made under, whatever machine runs the suite."""
+    for key, value in _AUTHOR.items():
+        monkeypatch.setenv(key, value)
+
+
+def _status(root: Path) -> list:
+    # Not stripped: the first line's leading space is part of its status.
+    return subprocess.run(
+        ["git", "status", "--porcelain"], cwd=root, capture_output=True, text=True
+    ).stdout.splitlines()
+
+
+def _move(project: Path) -> None:
+    (project / "f.txt").write_text("new\n")
+    _git(project, "add", "f.txt")
+    _git(project, "commit", "-q", "-m", "second")
+
+
+def test_a_local_workspace_tracks_only_its_projects_and_has_nothing_to_commit(
+    tmp_path: Path, models: Path, author: None
+) -> None:
+    result = _init(tmp_path, "--local", "--add", str(models))
+    assert result.exit_code == 0, result.output
+    root = tmp_path / "acme"
+    assert _status(root) == []
+    assert _git(root, "ls-files").splitlines() == [".gitmodules", "models"]
+    assert _git(root, "log", "--format=%s").splitlines() == ["chore: the workspace's projects (models)"]
+    assert _git(root, "config", "--local", "--type=bool", "aisland.workspace.local") == "true"
+    assert "/*" in (root / ".gitignore").read_text().splitlines()
+    lines = result.output.splitlines()
+    assert "    .git/                     git init (local: it tracks only the projects)" in lines
+    assert "    first commit              .gitmodules, models" in lines
+    # --local alone still records the projects' commits: the root shows a project that moved.
+    _move(root / "models")
+    assert _status(root) == [" M models"]
+
+
+def test_untracked_hides_a_projects_new_commits_and_writes_it_down(tmp_path: Path, models: Path, author: None) -> None:
+    result = _init(tmp_path, "--local", "--untracked", "--add", str(models))
+    assert result.exit_code == 0, result.output
+    root = tmp_path / "acme"
+    assert _git(root, "config", "-f", ".gitmodules", "submodule.models.ignore") == "all"
+    assert workspace_file.load(root).projects["models"].others == {"track": False}
+    assert "    models                    untracked: the root records none of its commits" in result.output.splitlines()
+    assert _status(root) == []
+    _move(root / "models")
+    assert _status(root) == []
+
+
+def test_untracked_in_a_shared_root_leaves_the_files_for_its_first_commit(tmp_path: Path, models: Path) -> None:
+    result = _init(tmp_path, "--untracked", "--add", str(models))
+    assert result.exit_code == 0, result.output
+    root = tmp_path / "acme"
+    assert _git(root, "config", "-f", ".gitmodules", "submodule.models.ignore") == "all"
+    assert subprocess.run(["git", "rev-parse", "-q", "--verify", "HEAD"], cwd=root, capture_output=True).returncode
+
+
+def test_untracked_in_an_existing_repository_untracks_its_submodules(tmp_path: Path, models: Path) -> None:
+    root = tmp_path / "acme"
+    root.mkdir()
+    subprocess.run(["git", "init", "-q"], cwd=root, check=True)
+    subprocess.run(["git", "submodule", "add", "-q", str(models), "models"], cwd=root, check=True, capture_output=True)
+    result = _init(tmp_path, "--untracked")
+    assert result.exit_code == 0, result.output
+    assert _git(root, "config", "-f", ".gitmodules", "submodule.models.ignore") == "all"
+    assert workspace_file.load(root).projects["models"].others == {"track": False}
+
+
+def test_a_local_workspace_without_projects_makes_no_commit(tmp_path: Path, author: None) -> None:
+    result = _init(tmp_path, "--local")
+    assert result.exit_code == 0, result.output
+    root = tmp_path / "acme"
+    assert _status(root) == []
+    assert subprocess.run(["git", "rev-parse", "-q", "--verify", "HEAD"], cwd=root, capture_output=True).returncode
+    assert not any(line.startswith("    first commit") for line in result.output.splitlines())
+
+
+def test_a_first_commit_git_refuses_is_said_and_the_workspace_still_made(
+    tmp_path: Path, models: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    for key in _AUTHOR:
+        monkeypatch.delenv(key, raising=False)
+    monkeypatch.setenv("GIT_CONFIG_GLOBAL", str(tmp_path / "no-identity"))
+    monkeypatch.setenv("GIT_CONFIG_NOSYSTEM", "1")
+    monkeypatch.setenv("GIT_CONFIG_COUNT", "2")
+    monkeypatch.setenv("GIT_CONFIG_KEY_1", "user.useConfigOnly")
+    monkeypatch.setenv("GIT_CONFIG_VALUE_1", "true")
+    result = _init(tmp_path, "--local", "--add", str(models))
+    assert result.exit_code == 0, result.output
+    row = next(line for line in result.output.splitlines() if line.startswith("    first commit"))
+    assert row.startswith("    first commit              not made: ")
+    assert (tmp_path / "acme" / "models" / "pyproject.toml").is_file()
+
+
+def test_a_plain_workspace_records_its_projects_commits_as_before(tmp_path: Path, models: Path) -> None:
+    _init(tmp_path, "--add", str(models))
+    root = tmp_path / "acme"
+    ignore = subprocess.run(["git", "config", "-f", ".gitmodules", "submodule.models.ignore"], cwd=root)
+    assert ignore.returncode == 1
+    assert "/*" not in (root / ".gitignore").read_text().splitlines()
+    marker = subprocess.run(["git", "config", "--local", "aisland.workspace.local"], cwd=root, capture_output=True)
+    assert marker.stdout == b""
+    assert "track" not in workspace_file.load(root).projects["models"].others
+
+
+def test_local_in_an_existing_repository_is_refused(tmp_path: Path) -> None:
+    root = tmp_path / "acme"
+    root.mkdir()
+    subprocess.run(["git", "init", "-q"], cwd=root, check=True)
+    result = _init(tmp_path, "--local")
+    assert result.exit_code == 1
+    assert result.output == (
+        f"Error: {root} is already a git repository: --local makes a new one that only this machine has.\n"
+    )
+    assert sorted(p.name for p in root.iterdir()) == [".git"]
+
+
+def test_rewrite_of_the_gitignore_in_a_local_workspace_keeps_it_local(tmp_path: Path, author: None) -> None:
+    _init(tmp_path, "--local")
+    root = tmp_path / "acme"
+    (root / ".gitignore").write_text("# mine\n")
+    result = _init(tmp_path, "--rewrite", ".gitignore")
+    assert result.exit_code == 0, result.output
+    assert "/*" in (root / ".gitignore").read_text().splitlines()

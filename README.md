@@ -71,9 +71,10 @@ Next:
     .venv/bin/aisland setup
 ```
 
-`init` never writes over a file that exists, and refuses a folder that already is a git
-repository (set that one up with `aisland setup`). Every file it writes is a starting point you
-own. A workspace is a folder whose projects are subfolders holding a `pyproject.toml` —
+`init` never writes over a file that exists. In a folder that already is a git repository it sets
+that one up instead: no `git init`, the `--add` projects added, the missing starting files written, the
+aliases and the agent commands installed (`--from` and `--local` are refused there). Every file it writes is
+a starting point you own. A workspace is a folder whose projects are subfolders holding a `pyproject.toml` —
 submodules listed in `.gitmodules`, or, without one, every such subfolder (next section);
 `aisland setup` needs the `.venv` and reads `workspace.toml`, `.env` and `mypy.ini` when they exist.
 
@@ -86,6 +87,54 @@ $ aisland workspace init . --rewrite vscode-init-bash.sh
 ==> Rewrote in /Users/you/work/acme
     vscode-init-bash.sh       rewritten (the old one kept as vscode-init-bash.sh.bak)
 ```
+
+#### A root no one shares (`--local`), projects it does not record (`--untracked`)
+
+Two choices of the root's, each its own flag:
+
+- `--local` makes a new root repository that only this machine has. It tracks `.gitmodules` and the projects and
+  nothing else (its `.gitignore` is `/*`); `.gitmodules` and the projects are its first commit.
+- `--untracked` makes the root record none of its projects' commits: `git status` in the root never shows a
+  project's new commits and `git pull-all` never records them. It works in a new root, a `--local` one or an
+  existing repository.
+
+```text
+$ aisland workspace init ~/work/acme --local --untracked --add git@github.com:acme/models.git
+==> Created workspace acme in /Users/you/work/acme
+    .git/                     git init (local: it tracks only the projects)
+    models/                   submodule git@github.com:acme/models.git
+    ...
+    models                    untracked: the root records none of its commits
+    first commit              .gitmodules, models
+$ cd ~/work/acme && git status --short
+$
+```
+
+In a `--local` root, add a project later with `git submodule add -f <url>` (git refuses the ignored path without
+`-f`), then run `aisland setup`: it commits the project with `.gitmodules`.
+
+#### Track or untrack the projects: `aisland workspace track|untrack`
+
+```bash
+aisland workspace untrack                      # every project: the root records none of their commits
+aisland workspace untrack models               # one project
+aisland workspace track models                 # record its commits again
+aisland workspace untrack --machine-only       # this machine only; nothing to commit
+```
+
+```text
+$ aisland workspace untrack models
+==> untracked: models (in workspace.toml and .gitmodules — commit them)
+  - models: untracked (the root records none of its commits)
+```
+
+The choice is written for everyone as `track = false` in the project's table of `workspace.toml` and `ignore = all`
+in `.gitmodules` (a `--local` root commits it itself), or with `--machine-only` in `.git/config` alone, where it wins
+over the committed one; `aisland setup` writes git's setting back from them. An untracked project is skipped by
+`git add <project>` and by `/commit-all`; the root keeps the commit it last recorded, so a `git submodule update`
+typed in the root would put the project back there, off its branch — `git pull-all` and `aisland setup` never do.
+`track` shows a project that moved meanwhile again (` M models`), and the next `git pull-all` records it once origin
+has those commits.
 
 #### The same workspace on another machine: `workspace.toml`
 
@@ -2034,6 +2083,9 @@ alpha                  merged origin/dev/feature (2 commits)
 beta                   merged origin/dev/main (1 commit)
 root                   recorded submodule pointers: alpha, beta
 ```
+
+An untracked submodule (`aisland workspace untrack`: `ignore = all` in `.gitmodules` or this machine's
+`.git/config`) is pulled the same way and never recorded.
 
 The merges are explicit (`git fetch` + `git merge`, never `git pull`), so the result does not depend on a machine's `pull.rebase` setting. The logic lives in [`git_pull_all.sh`](aisland/git/git_pull_all.sh) (why it is shaped this way: [docs/architecture.md](docs/architecture.md), "`pull-all` settles a submodule pointer only to a commit holding both sides"). In Claude Code, `/pull-all` runs it and finishes the listed conflicts for you; `/push-all` runs `/pull-all`, pushes, and ends with `aisland workspace mirror sync` (see [Project Mirrors](#project-mirrors-aisland-workspace-configure-mirror)).
 

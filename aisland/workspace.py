@@ -9,11 +9,18 @@ repository as a submodule, writes ``workspace.toml`` and installs the workspace 
 whichever way aisland is installed; the workspace it makes is one that aisland from a wheel works in
 (:mod:`aisland.locations`).
 
-It never writes over a file that exists, and refuses a folder that already is a git repository: an existing
-repository is set up with ``aisland setup``, not re-created. A ``--from`` file that cannot be read is refused before
-anything is written, naming the file and the line; the file it reads is copied in as the new workspace's
-``workspace.toml``. The one exception is ``--rewrite <file>``: each starting file it names is written again from the
-template, the old copy kept as ``<file>.bak``; in an existing repository that is all init does.
+In a folder that already is a git repository it sets that one up instead (user choice 2026-10-23): no ``git init``,
+the ``--add`` projects added, the starting files that are missing written, the aliases and the agent harness
+installed. A ``--from`` file is refused there (the repository keeps its own ``workspace.toml``), and so is ``--local``.
+
+It never writes over a file that exists. A ``--from`` file that cannot be read is refused before anything is written,
+naming the file and the line; the file it reads is copied in as the new workspace's ``workspace.toml``. The one
+exception is ``--rewrite <file>``: each starting file it names is written again from the template, the old copy kept
+as ``<file>.bak``; in an existing repository that is all init does, and it is refused beside any other option.
+
+Two choices of the root's, each its own flag: ``--local`` makes a new root repository that tracks only the projects
+(:mod:`aisland.local_workspace`: its ``.gitignore`` ignores everything, ``.gitmodules`` and the projects are its first
+commit), and ``--untracked`` makes the root record none of its projects' commits (:mod:`aisland.tracking`).
 """
 
 import subprocess
@@ -23,7 +30,7 @@ from typing import Dict, List, Literal, Optional, Sequence, Tuple, get_args
 
 import click
 
-from aisland import locations, workspace_file
+from aisland import local_workspace, locations, tracking, workspace_file
 from aisland.harness import install_harness
 from aisland.manager import install_git_aliases
 
@@ -61,6 +68,17 @@ _GITIGNORE = (
 .project.bashrc.completion
 user.bashrc
 __pycache__/
+"""
+)
+
+#: A local workspace's ``.gitignore`` (``init --local``): the root tracks only ``.gitmodules`` and the submodules.
+_LOCAL_GITIGNORE = (
+    _HEADER
+    + """
+# A local workspace (aisland workspace init --local): this root repository tracks only the projects —
+# .gitmodules and the submodules — so everything else here is this machine's. Add a project with
+# `git submodule add -f <url>` (the -f because of the line below), then `aisland setup`.
+/*
 """
 )
 
@@ -110,10 +128,11 @@ def runs_from_venv_of(root: Path) -> bool:
 
 
 def _starting_files(root: Path) -> Dict[StartingFile, str]:
-    """The text of each starting file for ``root``; ``mypy.ini`` lists the submodules holding a ``pyproject.toml``."""
+    """The text of each starting file for ``root``; ``mypy.ini`` lists the submodules holding a ``pyproject.toml``,
+    and a local workspace's ``.gitignore`` ignores everything."""
     submodules = workspace_file.submodules(root)
     return {
-        ".gitignore": _GITIGNORE,
+        ".gitignore": _LOCAL_GITIGNORE if local_workspace.is_local(root) else _GITIGNORE,
         ".env": _ENV,
         "mypy.ini": _mypy_ini(
             [path for path, _url, _branch in submodules if (root / path / "pyproject.toml").is_file()]
@@ -155,7 +174,12 @@ def _write_starting_files(root: Path, rewrite: Sequence[StartingFile], only_rewr
 
 
 def init_workspace(
-    folder: Path, add: Sequence[str] = (), from_file: Optional[Path] = None, rewrite: Sequence[StartingFile] = ()
+    folder: Path,
+    add: Sequence[str] = (),
+    from_file: Optional[Path] = None,
+    rewrite: Sequence[StartingFile] = (),
+    local: bool = False,
+    untracked: bool = False,
 ) -> None:
     """Make ``folder`` a new workspace (see the module docstring). Raises :class:`click.ClickException` on refusal.
 
@@ -163,7 +187,8 @@ def init_workspace(
     branch, then each ``add``; the file is read before anything is written, so a file aisland refuses leaves the folder
     as it was, and it is copied in as the new workspace's ``workspace.toml``, which then lists the ``add`` ones too.
     Each of ``rewrite`` is written over its old copy, kept as ``<file>.bak``; in a folder that already is a git
-    repository only those files are written."""
+    repository only those files are written. A folder that already is a repository is set up in place. ``local``
+    makes the root track only the projects, ``untracked`` its projects' commits go unrecorded (the module docstring)."""
     listed = list(workspace_file.read(from_file).projects.values()) if from_file is not None else []
     clones: List[Tuple[str, str, Optional[str]]] = []
     for project in listed:
@@ -175,28 +200,43 @@ def init_workspace(
     root = folder.absolute()
     if root.exists() and not root.is_dir():
         raise click.ClickException(f"{root} is a file, not a folder.")
+    existing = (root / ".git").exists()
+    if existing and rewrite and (add or from_file is not None or local or untracked):
+        raise click.ClickException(
+            "in an existing repository --rewrite writes its files and nothing else: run it on its own."
+        )
     _refuse_a_bak_in_the_way(root, rewrite)
-    if (root / ".git").exists() and rewrite:
+    if existing and rewrite:
         click.echo(f"==> Rewrote in {root}")
         for row in _write_starting_files(root, rewrite, only_rewrite=True):
             click.echo(row)
         return
-    if (root / ".git").exists():
+    if existing and local:
         raise click.ClickException(
-            f"{root} is already a git repository. `aisland workspace init` starts a new one; "
-            "in an existing repository run `aisland setup`."
+            f"{root} is already a git repository: --local makes a new one that only this machine has."
         )
-    root.mkdir(parents=True, exist_ok=True)
-    subprocess.run(["git", "init", "-q"], cwd=root, check=True)
-    rows = [_row(".git/", "git init")]
+    if existing and from_file is not None:
+        raise click.ClickException(
+            f"{root} is already a git repository, with a workspace.toml of its own: add projects with --add."
+        )
+    if existing:
+        rows = [_row(".git/", "kept (an existing repository)")]
+    else:
+        root.mkdir(parents=True, exist_ok=True)
+        subprocess.run(["git", "init", "-q"], cwd=root, check=True)
+        rows = [_row(".git/", "git init (local: it tracks only the projects)" if local else "git init")]
+    if local:
+        local_workspace.mark(root)
 
+    already = {path for path, _url, _branch in workspace_file.submodules(root)}
     for url, path, branch in clones:
         _add_submodule(root, url, path, branch)
     for url in add:
         _add_submodule(root, url)
-    submodules = workspace_file.submodules(root)
     rows += [
-        _row(f"{path}/", f"submodule {url}" + (f" ({branch})" if branch else "")) for path, url, branch in submodules
+        _row(f"{path}/", f"submodule {url}" + (f" ({branch})" if branch else ""))
+        for path, url, branch in workspace_file.submodules(root)
+        if path not in already
     ]
 
     rows += _write_starting_files(root, rewrite)
@@ -217,7 +257,15 @@ def init_workspace(
         rows.append(_row("AGENTS.md", "written (imports the rules; CLAUDE.md and GEMINI.md link to it)"))
     rows += [_row("", note) for note in notes]
 
-    click.echo(f"==> Created workspace {root.name} in {root}")
+    if untracked and workspace_file.submodules(root):
+        changes = tracking.set_committed(root, (), track=False)
+        rows += [_row(change.project, "untracked: the root records none of its commits") for change in changes]
+    settled = local_workspace.settle(root)
+    if settled.committed:
+        made = ", ".join(settled.committed) if settled.error is None else f"not made: {settled.error}"
+        rows.append(_row("first commit", made))
+
+    click.echo(f"==> {'Set up' if existing else 'Created'} workspace {root.name} in {root}")
     for row in rows:
         click.echo(row)
     click.echo("Next:")

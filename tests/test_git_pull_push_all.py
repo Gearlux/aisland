@@ -479,6 +479,42 @@ def test_a_root_without_origin_leaves_unrecorded_local_commits_alone(ws: Workspa
     assert ws.status(ws.B) == [" M alpha"]
 
 
+def test_a_submodule_whose_updates_the_root_ignores_is_pulled_and_never_recorded(ws: Workspace) -> None:
+    # `aisland workspace init --local`: `ignore = all` in .gitmodules, so the root never shows nor records a project's
+    # new commits; a submodule without it is recorded as before.
+    ws.git(ws.B, "remote", "remove", "origin")
+    ws.git(ws.B, "config", "-f", ".gitmodules", "submodule.alpha.ignore", "all")
+    ws.git(ws.B, "commit", "-q", "-am", "alpha's updates ignored")
+    before = ws.head(ws.B)
+    alpha = _publish(ws, "alpha", 1, "A", record=False)
+    beta = _publish(ws, "beta", 1, "A", record=False)
+    rc, out = ws.pull_all(ws.B)
+    assert rc == 0, out
+    assert out.splitlines() == [
+        "fetching 2 submodules (the root has no origin remote)…",
+        "alpha                  merged origin/dev/main (1 commit)",
+        "beta                   merged origin/dev/main (1 commit)",
+        "root                   recorded submodule pointers: beta",
+    ]
+    assert ws.head(ws.B / "alpha") == alpha and ws.head(ws.B / "beta") == beta
+    assert ws.recorded(ws.B, "alpha") == ws.recorded(ws.B, "alpha", before)
+    assert ws.recorded(ws.B, "beta") == beta
+    assert ws.status(ws.B) == []
+
+
+def test_this_machines_ignore_setting_counts_too(ws: Workspace) -> None:
+    ws.git(ws.B, "remote", "remove", "origin")
+    ws.git(ws.B, "config", "submodule.alpha.ignore", "all")
+    ws.git(ws.B, "submodule", "deinit", "-q", "beta")
+    _publish(ws, "alpha", 1, "A", record=False)
+    rc, out = ws.pull_all(ws.B)
+    assert rc == 0, out
+    assert out.splitlines() == [
+        "fetching 1 submodule (the root has no origin remote)…",
+        "alpha                  merged origin/dev/main (1 commit)",
+    ]
+
+
 def test_an_inactive_submodule_is_left_untouched(ws: Workspace) -> None:
     ws.git(ws.B, "submodule", "deinit", "-q", "beta")
     ws.git(ws.B, "config", "submodule.beta.active", "false")

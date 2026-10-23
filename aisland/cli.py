@@ -1,12 +1,13 @@
 import json
 from pathlib import Path
-from typing import Dict, List, Optional, Tuple
+from typing import Callable, Dict, List, Optional, Tuple
 
 import click
 from click.shell_completion import CompletionItem
 
 from aisland import configure, discovery, editor, locations, manager, nightly, pytest_stats, selection
 from aisland import supervisor as supervisor_mod
+from aisland import tracking
 from aisland import tunnel as tunnel_mod
 from aisland import tunnel_connect as tunnel_connect_mod
 from aisland import wheels
@@ -119,20 +120,94 @@ def workspace_group() -> None:
     help="A starting file to write again from aisland's template, the old copy kept as FILE.bak. Repeat for several. "
     "In an existing repository only these files are written.",
 )
+@click.option(
+    "--local",
+    "local",
+    is_flag=True,
+    help="A new root repository no one shares: it tracks only .gitmodules and the projects, and ignores everything "
+    "else.",
+)
+@click.option(
+    "--untracked",
+    "untracked",
+    is_flag=True,
+    help="The root records none of its projects' commits: `git status` never shows them, `git pull-all` never "
+    "records them (`aisland workspace track` undoes it).",
+)
 def workspace_init(
-    folder: Path, add: Tuple[str, ...], from_file: Optional[Path], rewrite: Tuple[workspace_mod.StartingFile, ...]
+    folder: Path,
+    add: Tuple[str, ...],
+    from_file: Optional[Path],
+    rewrite: Tuple[workspace_mod.StartingFile, ...],
+    local: bool,
+    untracked: bool,
 ) -> None:
-    """Make FOLDER a new workspace: git init, the starting files, the submodules and the git aliases.
+    """Make FOLDER a workspace: git init, the starting files, the submodules and the git aliases.
 
-    Writes .gitignore, .env, mypy.ini and vscode-init-bash.sh, never over a file that exists, and refuses a folder
-    that already is a git repository (set that one up with `aisland setup`). --from names a workspace.toml: each of
-    its projects is cloned into its path on its branch and the file is copied in as the new workspace's own; a file
-    that cannot be read is refused, naming its line, before anything is written.
+    Writes .gitignore, .env, mypy.ini and vscode-init-bash.sh, never over a file that exists. A folder that already
+    is a git repository is set up in place: no git init, the missing files written, the --add projects added (--from
+    and --local are refused there). --from names a workspace.toml: each of its projects is cloned into its path on
+    its branch and the file is copied in as the new workspace's own; a file that cannot be read is refused, naming
+    its line, before anything is written.
 
     --rewrite FILE writes FILE again over the one there, keeping it as FILE.bak (refused when FILE.bak exists);
     in an existing repository it is all init does: `aisland workspace init . --rewrite vscode-init-bash.sh`.
+
+    --local makes a new root repository that tracks only the projects (its .gitignore ignores everything; add a
+    project later with `git submodule add -f <url>`, then `aisland setup`). --untracked makes the root record none of
+    the projects' commits: `aisland workspace untrack`, for every project.
     """
-    workspace_mod.init_workspace(folder, add, from_file, rewrite)
+    workspace_mod.init_workspace(folder, add, from_file, rewrite, local, untracked)
+
+
+def _complete_submodules(ctx: click.Context, param: click.Parameter, incomplete: str) -> List[CompletionItem]:
+    """The workspace's submodules whose name starts with ``incomplete``; nothing for a workspace it cannot read."""
+    try:
+        names = tracking.submodule_projects(get_workspace_root())
+    except Exception:  # a completion callback must never break the shell
+        return []
+    return [CompletionItem(name) for name in names if name.startswith(incomplete)]
+
+
+def _track(projects: Tuple[str, ...], track: bool, machine_only: bool) -> None:
+    for line in tracking.track_command(_configure_root(), projects, track, machine_only):
+        click.echo(line)
+
+
+_TRACK_ARGUMENTS = [
+    click.argument("projects", nargs=-1, metavar="[PROJECT]...", shell_complete=_complete_submodules),
+    click.option("--machine-only", is_flag=True, help="Change this machine only (.git/config); commit nothing."),
+]
+
+
+def _with_track_arguments(command: Callable[..., None]) -> Callable[..., None]:
+    """``track`` and ``untrack`` take the same arguments."""
+    for decorator in reversed(_TRACK_ARGUMENTS):
+        command = decorator(command)
+    return command
+
+
+@workspace_group.command("untrack")
+@_with_track_arguments
+def workspace_untrack(projects: Tuple[str, ...], machine_only: bool) -> None:
+    """Stop recording PROJECT's commits in the root (no PROJECT: every submodule).
+
+    `git status` in the root no longer shows the project's new commits, `git add <project>` skips it and `git
+    pull-all` never records them; the root keeps the commit it last recorded. Written for everyone as `track = false`
+    in workspace.toml and `ignore = all` in .gitmodules (commit them), or with --machine-only in .git/config alone.
+    """
+    _track(projects, False, machine_only)
+
+
+@workspace_group.command("track")
+@_with_track_arguments
+def workspace_track(projects: Tuple[str, ...], machine_only: bool) -> None:
+    """Record PROJECT's commits in the root again (no PROJECT: every submodule).
+
+    A project whose commits moved meanwhile shows again in `git status` (` M <project>`), and the next `git pull-all`
+    records it once origin has them. Without --machine-only it also drops this machine's own choice.
+    """
+    _track(projects, True, machine_only)
 
 
 @workspace_group.command("show")

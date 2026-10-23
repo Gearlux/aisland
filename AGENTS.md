@@ -18,7 +18,8 @@ is found from aisland's place, from a wheel from where it runs · [folders-as-su
 projects is a workspace, its subfolders read as submodules · [workspace-file] a workspace is written down in a
 file a machine without aisland reads · [harness] every workspace gets aisland's agent commands and rules · [editor] the editor's theme and colours are a per-machine choice laid over the
 generated workspace file · [declarations] a project declares what it brings, aisland finds it in two stages and the project never imports aisland · [mcp-server] aisland's tools are its own server, a chosen set · [aliases] a link to a folder of the workspace is a short name, never a project ·
-[tunnel-terminal] a terminal on the remote machine rides the VS Code tunnel it already runs.
+[tunnel-terminal] a terminal on the remote machine rides the VS Code tunnel it already runs · [local-workspace] a root
+repository no one shares tracks only the projects, and an untracked project's commits are never recorded.
 
 ## Current state
 
@@ -27,8 +28,26 @@ The workspace's dev-infrastructure CLI, `aisland` (click, `aisland/cli.py`):
   where aisland runs (standard library only; the pytest plugin imports it).
 - `manager.py`: workspace root, `aisland setup` (provisioning, submodule activation, editable
   installs, generated workspace files), `BaseService`.
-- `workspace.py`: `aisland workspace init <folder>`, a new workspace (its starting files, the `--from` file's
-  projects and the `--add` submodules, its `workspace.toml`, the git aliases).
+- `workspace.py`: `aisland workspace init <folder>`, a new workspace or an existing repository set up in place (its
+  starting files, the `--from` file's projects and the `--add` submodules, its `workspace.toml`, the git aliases;
+  `--local`, `--untracked`).
+- `local_workspace.py`: a local workspace (`init --local`; user request 2026-10-23) — a root repository that tracks
+  only the projects: `.gitignore` `/*`, `.gitmodules` and the projects committed, marked by `aisland.workspace.local`
+  in `.git/config` (never a tracked file: the root is no one else's). `settle` commits `.gitmodules` and the
+  projects' paths — nothing else staged — at init, after every `activation.reconcile` (setup, `configure active`)
+  and after `track|untrack`; a commit git refuses is said, never raised; an unmarked workspace is never touched; the
+  `active` plugin adds a project there with `-f`. (`tests/test_local_workspace.py`,
+  `tests/test_workspace_init.py::test_a_local_workspace_tracks_only_its_projects_and_has_nothing_to_commit`)
+- `tracking.py`: `aisland workspace track|untrack [PROJECT…] [--machine-only]` (user choice 2026-10-23: two commands,
+  no project = every submodule; not a `configure` plugin) — whether the root records a project's commits. Committed:
+  the project's `track = false` in `workspace.toml`, written as `ignore = all` in `.gitmodules`; this machine:
+  `aisland.track.<project>.track`, written as git's `submodule.<name>.ignore` (`all`/`none`) in `.git/config`, which
+  git reads first — aisland's key because `submodule deinit` drops git's section, and `apply` (every
+  `activation.reconcile`) writes it back. A committed `track|untrack` drops this machine's choice for those projects.
+  An `ignore` value aisland does not write (`dirty`, `untracked`) is the user's and left alone. Only submodules: a
+  workspace without them, and a name that is no submodule's, are refused before anything changes. `init
+  --untracked` is `untrack` for every project. (`tests/test_tracking.py`,
+  `tests/test_workspace_init.py::test_untracked_hides_a_projects_new_commits_and_writes_it_down`)
 - `workspace_file.py`: `workspace.toml`, the workspace's committed file shaped like `.gitmodules` (the how-to for a
   machine without aisland, then a `[project."<name>"]` per project: `path`, `url`, `branch`), kept current by
   `aisland setup` (`refresh`) [workspace-file].
@@ -165,9 +184,16 @@ start-time port pre-flight naming the PID is the only signal). All service state
   - `init` writes over a starting file ONLY when `--rewrite <file>` names it (a closed set, `workspace.StartingFile`);
     the old copy becomes `<file>.bak`, and a `.bak` already there refuses the whole run before anything is written.
     In an existing repository `--rewrite` writes the named files and nothing else (no git, submodules, aliases or
-    harness); without it that repository is still refused
+    harness), and beside any other option it is refused
     (`::test_rewrite_in_an_existing_repository_replaces_the_file_keeps_a_bak_and_writes_nothing_else`,
-    `::test_rewrite_refuses_when_a_bak_is_in_the_way_and_changes_nothing`).
+    `::test_rewrite_refuses_when_a_bak_is_in_the_way_and_changes_nothing`,
+    `::test_an_existing_repository_refuses_rewrite_beside_anything_else`).
+  - **An existing repository is set up in place (user choice 2026-10-23)**, no longer refused: no `git init`, the
+    `--add` projects, the missing starting files, aliases, harness, `--untracked`. `--from` (the repository keeps its
+    own `workspace.toml`) and `--local` (that root is already shared) are refused there before anything is written
+    (`::test_an_existing_repository_is_set_up_in_place_and_its_files_kept`,
+    `::test_an_existing_repository_refuses_a_workspace_file_and_changes_nothing`,
+    `::test_local_in_an_existing_repository_is_refused`).
 
 ## Supervisor and services
 
@@ -753,6 +779,11 @@ User choice 2026-10-08: an aisland command, only the named project's closure, bo
     branch stays listed, never pulled (`::test_a_root_without_origin_pulls_each_submodule_on_its_own_branch`,
     `::test_the_push_all_alias_pushes_the_submodules_of_a_root_without_origin`,
     `tests/test_folder_git_aliases.py::test_pull_all_skips_a_root_repository_without_origin`).
+  - **An untracked submodule is never recorded (user request 2026-10-23).** `ignore = all` for it (`tracking.py`)
+    — this machine's `.git/config` first, else `.gitmodules` — and step 4 skips it; it is still pulled
+    (`::test_a_submodule_whose_updates_the_root_ignores_is_pulled_and_never_recorded`,
+    `::test_this_machines_ignore_setting_counts_too`). Never record it "just this once": the root keeps the commit it last recorded. `/commit-all` and
+    `/commit-session` leave it unrecorded, never `git add -f` (`aisland/harness/commands/commit-*.md`).
   - bash 3.2 (`/bin/bash` on macOS): no `wait -n`, associative arrays, `mapfile`; the tests run
     it under `/bin/bash`.
 - `git push-all` pushes every submodule before the root, and the root only when they all pushed

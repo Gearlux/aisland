@@ -19,7 +19,7 @@ from typing import Dict, List, Optional
 
 import click
 
-from aisland import workspace_file
+from aisland import local_workspace, tracking, workspace_file
 
 #: The project's setting in ``workspace.toml`` and the last part of this machine's ``aisland.active.<project>.active``.
 ACTIVE_KEY = "active"
@@ -112,7 +112,20 @@ def _gitmodules(root: Path) -> List[tuple[str, str, bool]]:
 
 def reconcile(root: Path) -> List[str]:
     """Check each project out or empty it as this machine has it, and tell git. Returns the projects whose folder
-    could not follow (a deinit refused, an add or init that failed), each said on the way."""
+    could not follow (a deinit refused, an add or init that failed), each said on the way.
+
+    Then each project's ``ignore`` is written from its tracking (:mod:`aisland.tracking`) — git's own key in
+    ``.git/config`` is gone after a deinit — and a local workspace (:mod:`aisland.local_workspace`) commits
+    ``.gitmodules`` and the projects added."""
+    stuck = _reconcile(root)
+    for change in tracking.apply(root):
+        click.echo(f"  - {change.line()}")
+    for line in local_workspace.settle(root).lines():
+        click.echo(f"  - {line}")
+    return stuck
+
+
+def _reconcile(root: Path) -> List[str]:
     from aisland.sources import detached_projects
 
     listed = workspace_file.load(root)
@@ -134,7 +147,9 @@ def reconcile(root: Path) -> List[str]:
             elif project.url is not None:
                 click.echo(f"  - add {project.path} (active)")
                 branch = ["-b", project.branch] if project.branch else []
-                done = _git(root, "submodule", "add", "-q", *branch, project.url, project.path)
+                # A local workspace's `.gitignore` ignores everything: git adds the path only with `-f`.
+                force = ["-f"] if local_workspace.is_local(root) else []
+                done = _git(root, "submodule", "add", "-q", *force, *branch, project.url, project.path)
                 name = _submodule_names(root).get(project.path)
             else:
                 click.echo(f"    skip {project.path}: active, but workspace.toml gives it no url to clone from.")

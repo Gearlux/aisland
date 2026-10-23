@@ -30,7 +30,7 @@ When the user invokes the `/commit-all` command (or requests to commit all chang
    d. **Feedback:** Inform the user of the commit hash and message for each project.
 
 3. **Root Repository Processing:**
-   a. **Submodule Updates:** Stage all updated submodule pointers (`git add <submodule_path>`).
+   a. **Submodule Updates:** Stage all updated submodule pointers (`git add <submodule_path>`). A submodule git skips with `hint: Skipping submodule due to ignore=all` is untracked (`aisland workspace untrack`): leave it unrecorded — never `git add -f`.
    b. **Other Changes:** Check for any other uncommitted changes in the root repository.
    c. **Final Commit:** Generate a summary commit message (e.g., `chore: sync submodules and update [files]`) and commit all changes to the root repository.
 
