@@ -6,6 +6,7 @@ whole provisioning script. So the pins are about the things that fail SILENTLY â
 missing from the file, a block that evals to nothing, and a pruner that could empty it.
 """
 
+import sys
 from pathlib import Path
 
 import pytest
@@ -308,3 +309,58 @@ def test_the_guard_is_rendered_for_every_shell(rc: Path, all_present: None) -> N
     for shell in ("bash", "zsh"):
         comp.install_completions(target_rc=rc, shell=shell, apps=[])
         assert "case $- in *i*) ;; *) return 0 ;; esac" in rc.read_text(), shell
+
+
+# --------------------------------------------------------------------------- #
+# without liquifai (aisland installed from PyPI on its own)
+# --------------------------------------------------------------------------- #
+
+
+@pytest.fixture
+def no_liquifai(monkeypatch: pytest.MonkeyPatch) -> None:
+    """`import liquifai.completion` fails, as in a venv where aisland is installed without it."""
+    monkeypatch.setitem(sys.modules, "liquifai", None)
+    monkeypatch.setitem(sys.modules, "liquifai.completion", None)
+
+
+def test_without_liquifai_the_other_clis_are_still_installed(rc: Path, all_present: None, no_liquifai: None) -> None:
+    """A venv without liquifai has no liquifai app to complete, so there is nothing to hand over â€” and no error."""
+    report = comp.install_completions(target_rc=rc, shell="bash")
+    assert report.liquifai_apps == []
+    assert "aisland" in report.non_liquifai
+    assert 'eval "$(_AISLAND_COMPLETE=bash_source aisland 2>/dev/null)" || true' in rc.read_text()
+
+
+def test_without_liquifai_a_stale_liquifai_block_is_kept_not_pruned(
+    rc: Path, all_present: None, no_liquifai: None
+) -> None:
+    """No liquifai means no discovery; pruning then would delete blocks of apps that may still exist."""
+    rc.write_text("# >>> liquifai completion for sonair >>>\nblock\n# <<< liquifai completion for sonair <<<\n")
+    report = comp.install_completions(target_rc=rc, shell="bash")
+    assert report.pruned == []
+    assert "liquifai completion for sonair" in rc.read_text()
+
+
+@pytest.mark.parametrize(
+    "login_shell, expected",
+    [("/bin/zsh", "zsh"), ("/usr/local/bin/fish", "fish"), ("/bin/bash", "bash"), ("/bin/tcsh", "bash")],
+)
+def test_without_liquifai_the_shell_comes_from_SHELL(
+    rc: Path,
+    all_present: None,
+    no_liquifai: None,
+    monkeypatch: pytest.MonkeyPatch,
+    login_shell: str,
+    expected: str,
+) -> None:
+    monkeypatch.setenv("SHELL", login_shell)
+    assert comp.install_completions(target_rc=rc).shell == expected
+
+
+def test_without_liquifai_the_command_reports_no_liquifai_app(
+    tmp_path: Path, all_present: None, no_liquifai: None
+) -> None:
+    rc = tmp_path / ".project.bashrc.completion"
+    result = CliRunner().invoke(main, ["completion", "install", "--target-rc", str(rc), "--shell", "bash"])
+    assert result.exit_code == 0, result.output
+    assert "    liquifai apps: (none discovered)" in result.output.splitlines()

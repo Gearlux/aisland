@@ -159,6 +159,12 @@ start-time port pre-flight naming the PID is the only signal). All service state
     servers it ships, its shell init) carries `needs_workspace` (`tests/workspace_layout.py`) and is skipped there
     with its reason, never failed (`tests/test_workspace_layout.py`). Reproduce CI in a fresh venv holding only
     `aisland[dev]`, with a copy of aisland alone, before changing either.
+  - A release ships `LICENSE` (`license-files`), `CHANGELOG.md` (`MANIFEST.in`) and `aisland/py.typed`, and the
+    newest `## [<version>]` of the CHANGELOG is `pyproject.toml`'s version. It is published by the hand-written
+    `.github/workflows/release.yml` on a `v<version>` tag: the tag guard, `python -m build`, `twine check --strict`,
+    a smoke test of the wheel in a clean venv from `/tmp` (`--help`, the version, `workspace init`), then Trusted
+    Publishing from the `pypi` environment. Change a step and its test together (`tests/test_packaging.py`:
+    `::test_the_tag_guard_refuses_a_tag_that_is_not_the_version` runs the guard's own script).
   - `project.bashrc` ALWAYS sets `PROJECT_ROOT` from its own place, never keeps an inherited one: an editor
     started from a shell that sourced another workspace passes that root down, and its `.venv` was activated
     (`::test_a_project_root_inherited_from_another_workspace_is_replaced_by_this_ones`). A `.env` with no
@@ -659,6 +665,10 @@ A bare `::` pin in this section is in `tests/test_jenkins_scaffold.py`.
   [completion]
   - liquifai apps: `install_for_apps`, in-process. click apps: `_<PROG>_COMPLETE`, bash
     guarded on `BASH_VERSINFO >= 4.4`. argcomplete: no member; never add a `streamstudio` row.
+  - liquifai is never a dependency of aisland, not even behind an extra: a venv without it has no liquifai app, so
+    the install hands nothing over and writes the other families; the default shell is `completion.login_shell`
+    (`$SHELL`'s name, else bash), never liquifai's (`tests/test_completion.py::test_without_liquifai_the_other_clis_are_still_installed`
+    and its neighbours).
 - **An empty word after an aisland command with nothing left to fill offers its options** (user request
   2026-10-21; click by itself waits for a `-`). `cli._Command.shell_complete` completes `""` as `"-"`; every
   group is a `cli._Group` (`command_class = _Command`, `group_class = _Group`), so a command added with

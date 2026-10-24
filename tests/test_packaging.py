@@ -9,17 +9,20 @@ aisland is installed from a wheel — so the wheel is built and its members chec
 import email
 import json
 import os
+import re
 import shutil
 import subprocess
 import sys
+import tarfile
 import tomllib
 import zipfile
 from email.message import Message
 from pathlib import Path
 from subprocess import CompletedProcess
-from typing import Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Tuple
 
 import pytest
+import yaml
 
 from aisland import manager
 
@@ -74,6 +77,7 @@ def test_the_package_holds_the_templates_and_the_git_scripts() -> None:
         "aisland/harness/commands/pull-all.md",
         "aisland/harness/commands/push-all.md",
         "aisland/harness/commands/ship.md",
+        "aisland/py.typed",
         "aisland/templates/vscode-init-bash.sh",
     ]
 
@@ -183,6 +187,7 @@ def test_the_release_names_its_author_and_where_it_lives(release_metadata: Messa
         "Homepage": "https://github.com/Gearlux/aisland",
         "Repository": "https://github.com/Gearlux/aisland.git",
         "Issues": "https://github.com/Gearlux/aisland/issues",
+        "Changelog": "https://github.com/Gearlux/aisland/blob/main/CHANGELOG.md",
     }
 
 
@@ -309,3 +314,109 @@ def test_from_the_wheel_a_new_workspace_gets_copies_of_the_agent_harness(install
         assert (root / name).is_file() and not (root / name).is_symlink(), name
     assert (root / ".agents/workflows/ship.md").read_bytes() == (PACKAGE / "harness/commands/ship.md").read_bytes()
     assert (root / ".claude/commands/commit-session.md").is_file()
+
+
+# --- the release's files: licence, changelog, typing marker, the release workflow ---------------------------------
+
+
+def test_the_source_package_carries_the_licence_and_the_changelog(released: Path) -> None:
+    """`license-files` brings LICENSE; nothing references CHANGELOG.md, so `MANIFEST.in` names it."""
+    (source_package,) = released.glob("*.tar.gz")
+    with tarfile.open(source_package) as archive:
+        names = {name.split("/", 1)[1] for name in archive.getnames() if "/" in name}
+    assert {"LICENSE", "CHANGELOG.md"} <= names
+
+
+def test_the_wheel_carries_the_licence_and_the_typing_marker(released: Path) -> None:
+    (built,) = released.glob("*.whl")
+    with zipfile.ZipFile(built) as archive:
+        names = archive.namelist()
+    assert "aisland/py.typed" in names
+    assert [name for name in names if name.endswith(".dist-info/licenses/LICENSE")] != []
+
+
+def test_a_typed_package_says_so() -> None:
+    project = tomllib.loads((PROJECT / "pyproject.toml").read_text(encoding="utf-8"))["project"]
+    assert (PACKAGE / "py.typed").is_file()
+    assert "Typing :: Typed" in project["classifiers"]
+
+
+def _released_versions(changelog: str) -> List[str]:
+    """The `## [<version>]` headings, newest first; an `## [Unreleased]` section is no version."""
+    headings = re.findall(r"^## \[([^\]]+)\]", changelog, flags=re.MULTILINE)
+    return [heading for heading in headings if heading.lower() != "unreleased"]
+
+
+def test_an_unreleased_section_is_not_a_version() -> None:
+    assert _released_versions("## [Unreleased]\n\n- a change\n\n## [0.1.0] - 2026-10-24\n") == ["0.1.0"]
+    assert _released_versions("## [0.2.0] - 2026-11-01\n\n## [0.1.0] - 2026-10-24\n") == ["0.2.0", "0.1.0"]
+    assert _released_versions("## [Unreleased]\n\n- a change\n") == []
+
+
+def test_the_newest_changelog_entry_is_the_declared_version() -> None:
+    """The release workflow checks the tag against `pyproject.toml`; this checks the CHANGELOG against both."""
+    project = tomllib.loads((PROJECT / "pyproject.toml").read_text(encoding="utf-8"))["project"]
+    versions = _released_versions((PROJECT / "CHANGELOG.md").read_text(encoding="utf-8"))
+    assert versions, "CHANGELOG.md has no `## [<version>]` entry"
+    assert versions[0] == project["version"]
+
+
+RELEASE_WORKFLOW = PROJECT / ".github" / "workflows" / "release.yml"
+
+
+# A parsed YAML document: its keys are not all strings (PyYAML reads the bare key `on` as True).
+Workflow = Dict[Any, Any]
+
+
+@pytest.fixture(scope="module")
+def release_workflow() -> Workflow:
+    loaded: Workflow = yaml.safe_load(RELEASE_WORKFLOW.read_text(encoding="utf-8"))
+    return loaded
+
+
+def _step(workflow: Workflow, job: str, name: str) -> Workflow:
+    step: Workflow
+    (step,) = [step for step in workflow["jobs"][job]["steps"] if step.get("name") == name]
+    return step
+
+
+def test_a_release_runs_on_a_version_tag_only(release_workflow: Workflow) -> None:
+    # PyYAML reads the bare key `on` as True.
+    assert release_workflow[True] == {"push": {"tags": ["v*"]}}
+
+
+def test_the_release_publishes_by_trusted_publishing_from_the_pypi_environment(
+    release_workflow: Workflow,
+) -> None:
+    publish = release_workflow["jobs"]["publish"]
+    assert publish["needs"] == ["build"]
+    assert publish["environment"] == "pypi"
+    assert publish["permissions"] == {"id-token": "write"}
+    assert [step["uses"] for step in publish["steps"] if "uses" in step][-1] == "pypa/gh-action-pypi-publish@release/v1"
+    assert "password" not in str(publish)
+
+
+@pytest.mark.parametrize("tag, accepted", [("v0.1.0", True), ("v0.1.1", False), ("0.1.0", False)])
+def test_the_tag_guard_refuses_a_tag_that_is_not_the_version(
+    release_workflow: Workflow, tmp_path: Path, tag: str, accepted: bool
+) -> None:
+    """The guard step's own script, run against a pyproject.toml declaring 0.1.0."""
+    (tmp_path / "pyproject.toml").write_text('[project]\nname = "aisland"\nversion = "0.1.0"\n')
+    script = _step(release_workflow, "build", "Guard - tag matches pyproject version")["run"]
+    result = subprocess.run(
+        ["bash", "-e", "-c", script.replace("python ", f"{sys.executable} ")],
+        cwd=tmp_path,
+        env={**os.environ, "GITHUB_REF_NAME": tag},
+        capture_output=True,
+        text=True,
+    )
+    assert (result.returncode == 0) is accepted, result.stdout + result.stderr
+
+
+def test_the_release_checks_the_build_strictly_and_smoke_tests_the_wheel(release_workflow: Workflow) -> None:
+    assert _step(release_workflow, "build", "Build sdist + wheel")["run"].strip() == "python -m build"
+    assert _step(release_workflow, "build", "Check package metadata")["run"].strip() == (
+        "python -m twine check --strict dist/*"
+    )
+    smoke = _step(release_workflow, "build", "Smoke-test the built wheel in a clean venv")["run"]
+    assert "cd /tmp" in smoke and "dist/*.whl" in smoke and "aisland --help" in smoke

@@ -88,6 +88,19 @@ class CompletionReport(NamedTuple):
     pruned: List[str]
 
 
+#: The shells completion is written for; any other login shell gets bash's (liquifai's ``detect_shell`` rule).
+SHELLS: Tuple[str, ...] = ("bash", "zsh", "fish")
+
+
+def login_shell() -> str:
+    """``$SHELL``'s name when completion is written for it, else ``bash``.
+
+    Read here rather than through liquifai, so completion installs where liquifai is not installed.
+    """
+    name = Path(os.environ.get("SHELL", "/bin/bash")).name
+    return name if name in SHELLS else "bash"
+
+
 def default_target_rc() -> Path:
     """The workspace-local rc fragment, resolved from the workspace root (never hardcoded)."""
     return get_workspace_root() / DEFAULT_RC_NAME
@@ -205,19 +218,23 @@ def install_completions(
         target_rc: Where to write. Defaults to the workspace ``.project.bashrc.completion``,
             which ``project.bashrc`` sources — pass ``~/.bashrc`` (or ``project.bashrc``
             itself) to install somewhere else.
-        shell: ``bash`` / ``zsh`` / ``fish``. Defaults to liquifai's ``$SHELL`` detection.
+        shell: ``bash`` / ``zsh`` / ``fish``. Defaults to ``$SHELL``'s (:func:`login_shell`).
         apps: liquifai apps to install. ``None`` auto-discovers every one in the active venv.
         prune: Drop blocks for programs that no longer exist. Skipped when NO liquifai app
             was found, since that means discovery is broken rather than every app removed —
             pruning then would empty the file.
     """
-    from liquifai.completion import detect_shell, install_for_apps
-
     rc = Path(target_rc).expanduser() if target_rc is not None else default_target_rc()
-    shell = shell or detect_shell()
+    shell = shell or login_shell()
     rc.parent.mkdir(parents=True, exist_ok=True)
 
-    installed = list(install_for_apps(target_rc=rc, apps=apps, shell=shell))
+    try:
+        from liquifai.completion import install_for_apps
+    except ImportError:
+        # A venv without liquifai (aisland installed on its own) holds no liquifai app: nothing to hand over.
+        installed: List[str] = []
+    else:
+        installed = list(install_for_apps(target_rc=rc, apps=apps, shell=shell))
 
     pruned = _prune_stale(rc) if (prune and installed) else []
 

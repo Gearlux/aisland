@@ -1,3 +1,6 @@
 # The source package carries project.bashrc: setup.py copies it into the wheel, and `python -m build` builds
 # the wheel FROM the source package. Pinned by tests/test_packaging.py::test_a_release_build_puts_the_shell_init_into_the_wheel.
 include project.bashrc
+# Nothing references CHANGELOG.md (LICENSE comes with `license-files`), so without this line the source
+# package would ship none. Pinned by tests/test_packaging.py::test_the_source_package_carries_the_licence_and_the_changelog.
+include CHANGELOG.md
