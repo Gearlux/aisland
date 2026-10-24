@@ -3,12 +3,17 @@
 The list is in START order; stopping and resetting go the other way, so the container engine the Docker-run services
 need is the last to go. With no name, ``status`` and ``info`` cover every service, and ``start``, ``stop``,
 ``restart`` and ``reset`` cover the services started by default (``by_default``) — the others start when named.
+
+A project's own services (``[tool.aisland.service.<name>]``, :mod:`aisland.services.declared`) follow aisland's,
+started only when named, and only while what they ``need`` is chosen (``needs = { tracker = "aim" }``).
 """
 
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Any, Callable, List, Protocol, Sequence, Tuple
+from functools import partial
+from pathlib import Path
+from typing import Any, Callable, Collection, List, Protocol, Sequence, Tuple
 
 import click
 
@@ -72,21 +77,51 @@ ENTRIES: Tuple[Entry, ...] = (
 )
 
 
-def chosen(names: Sequence[str], every: bool = False) -> List[Entry]:
+def declared(root: Path, reserved: Collection[str] = ()) -> List[Entry]:
+    """The services the projects of ``root`` declare, whose ``needs`` are chosen, after aisland's own.
+
+    A name of one of aisland's services, or of an aisland command (``reserved``), is refused naming the line: the
+    project's service would hide it."""
+    from aisland import discovery, selection
+    from aisland.services.declared import DeclaredService
+
+    own = {entry.name for entry in ENTRIES}
+    found: List[Entry] = []
+    for name, service in discovery.discover(root).services.items():
+        if name in own:
+            raise discovery.DeclarationError(
+                f"{service.where}: service {name!r} is one of aisland's own — give it another name"
+            )
+        if name in reserved:
+            raise discovery.DeclarationError(
+                f"{service.where}: service {name!r} would hide the command `aisland {name}` — give it another name"
+            )
+        if any(choice not in (selection.effective(root, needed) or []) for needed, choice in service.needs.items()):
+            continue
+        found.append(Entry(name, partial(DeclaredService, service), by_default=False, takes_background=True))
+    return found
+
+
+def entries(root: Path, reserved: Collection[str] = ()) -> List[Entry]:
+    """aisland's services, then the projects' (:func:`declared`)."""
+    return list(ENTRIES) + declared(root, reserved)
+
+
+def chosen(entries: Sequence[Entry], names: Sequence[str], every: bool = False) -> List[Entry]:
     """The entries ``names`` name, in the order given; with no name, every entry (``every``) or the default ones.
 
     A name no service has is refused before anything is done."""
-    by_name = {entry.name: entry for entry in ENTRIES}
+    by_name = {entry.name: entry for entry in entries}
     for name in names:
         if name not in by_name:
             raise click.ClickException(f"no service {name!r} (the services: {', '.join(sorted(by_name))})")
     if names:
         return [by_name[name] for name in names]
-    return [entry for entry in ENTRIES if every or entry.by_default]
+    return [entry for entry in entries if every or entry.by_default]
 
 
-def start(names: Sequence[str], background: bool) -> None:
-    for entry in chosen(names):
+def start(entries: Sequence[Entry], names: Sequence[str], background: bool) -> None:
+    for entry in chosen(entries, names):
         service = entry.make()
         if entry.takes_background:
             service.launch(background=background)
@@ -94,8 +129,8 @@ def start(names: Sequence[str], background: bool) -> None:
             service.launch()
 
 
-def restart(names: Sequence[str], background: bool) -> None:
-    for entry in chosen(names):
+def restart(entries: Sequence[Entry], names: Sequence[str], background: bool) -> None:
+    for entry in chosen(entries, names):
         service = entry.make()
         if entry.takes_background:
             service.restart(background=background)
@@ -103,27 +138,27 @@ def restart(names: Sequence[str], background: bool) -> None:
             service.restart()
 
 
-def stop(names: Sequence[str]) -> None:
-    for entry in _last_first(names):
+def stop(entries: Sequence[Entry], names: Sequence[str]) -> None:
+    for entry in _last_first(entries, names):
         entry.make().stop()
 
 
-def reset(names: Sequence[str]) -> None:
-    for entry in _last_first(names):
+def reset(entries: Sequence[Entry], names: Sequence[str]) -> None:
+    for entry in _last_first(entries, names):
         entry.make().reset()
 
 
-def status(names: Sequence[str]) -> None:
-    for entry in chosen(names, every=True):
+def status(entries: Sequence[Entry], names: Sequence[str]) -> None:
+    for entry in chosen(entries, names, every=True):
         entry.make().status()
 
 
-def info(names: Sequence[str]) -> None:
-    for entry in chosen(names, every=True):
+def info(entries: Sequence[Entry], names: Sequence[str]) -> None:
+    for entry in chosen(entries, names, every=True):
         entry.make().info()
 
 
-def _last_first(names: Sequence[str]) -> List[Entry]:
+def _last_first(entries: Sequence[Entry], names: Sequence[str]) -> List[Entry]:
     """Named: in the order given. Unnamed: the default services, the last started first."""
-    entries = chosen(names)
-    return entries if names else list(reversed(entries))
+    picked = chosen(entries, names)
+    return picked if names else list(reversed(picked))

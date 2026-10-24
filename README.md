@@ -586,6 +586,20 @@ aisland services start -b         # start the default ones in the background
 aisland services start mlflow aim # or only those named
 ```
 
+A project can bring a service of its own, declared in its `pyproject.toml` — no aisland code:
+
+```toml
+[tool.aisland.service.notes]
+command = ["notes-server", "--port", "8123"]   # what the supervisor runs
+port = 8123                                    # checked free before it starts …
+ready = "/health"                              # … and asked until it answers
+needs = { tracker = "aim" }                    # optional: offered only while this choice is made
+```
+
+It gets its own `aisland notes start|stop|restart|status|info|reset` and joins `aisland services`, started when
+named (`aisland services start notes`), never by default. A name aisland already uses — one of its services or a
+command — is refused, naming the file and the line.
+
 ### Environment doctor
 
 The shared `.venv` is built incrementally by every project, so one install can leave a

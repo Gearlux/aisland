@@ -244,6 +244,14 @@ start-time port pre-flight naming the PID is the only signal). All service state
   container engine last). A name no service has is refused before anything is done. There are no top-level
   `aisland start|stop|restart|status|info|reset`; a new service is one `Entry` and never a hand-written list in
   `cli.py`. (`tests/test_services_command.py`)
+- **A project declares a service in its `pyproject.toml` and writes no aisland code (user choice 2026-10-24).**
+  `[tool.aisland.service.<name>]` (`command`, `port`, `ready`, `needs`) becomes a `services/declared.py`
+  `DeclaredService` — the command under the supervisor, probed only with both `port` and `ready` — appended to the
+  list after aisland's own (`registry.declared`), started only when named, offered only while every `needs` choice is
+  in that selection's effective choice. It gets `aisland <name> …` from `cli._WorkspaceGroup.get_command`, after
+  aisland's own commands. A name of an aisland service or command is a `DeclarationError` naming the line; the
+  top-level listing (`--help`, completion) leaves the declared groups out then, every command reading them says why.
+  (`tests/test_declared_services.py`)
 - A new service extends `BaseService` and implements `launch()` (command, env, probe); the
   base owns start/stop/status/reset. One `aisland/data/<service>/` and log each; no shared
   state.

@@ -80,6 +80,76 @@ class _WorkspaceGroup(_Group):
             raise click.ClickException(locations.missing_workspace_message())
         return rest
 
+    def list_commands(self, ctx: click.Context) -> List[str]:
+        """aisland's commands, then a group per service a project declares."""
+        names = super().list_commands(ctx)
+        if not locations.workspace_found():
+            return names
+        try:
+            declared = service_registry.declared(get_workspace_root(), reserved=self.commands)
+        except discovery.DeclarationError:
+            return names  # the listing (--help, completion) stays usable; every command that reads them says why
+        return names + sorted(entry.name for entry in declared)
+
+    def get_command(self, ctx: click.Context, cmd_name: str) -> Optional[click.Command]:
+        command = super().get_command(ctx, cmd_name)
+        if command is not None or not locations.workspace_found():
+            return command
+        for entry in service_registry.declared(get_workspace_root(), reserved=self.commands):
+            if entry.name == cmd_name:
+                return _declared_service_group(entry)
+        return None
+
+
+def _service_entries() -> List["service_registry.Entry"]:
+    """Every service of this workspace: aisland's own, then the ones its projects declare."""
+    return service_registry.entries(get_workspace_root(), reserved=main.commands)
+
+
+def _declared_service_group(entry: "service_registry.Entry") -> click.Group:
+    """`aisland <name> start|stop|restart|status|info|reset` for a service a project declares."""
+
+    @click.group(
+        name=entry.name, cls=_Group, help=f"Manage {entry.name}, a service a project of this workspace declares."
+    )
+    def group() -> None:
+        pass
+
+    @group.command(name="start")
+    @click.option("--background", "-b", is_flag=True, help="Run in the background.")
+    def start(background: bool) -> None:
+        """Start it under the supervisor."""
+        entry.make().launch(background=background)
+
+    @group.command(name="stop")
+    def stop() -> None:
+        """Stop it."""
+        entry.make().stop()
+
+    @group.command(name="restart")
+    @click.option("--background", "-b", is_flag=True, help="Run in the background.")
+    def restart(background: bool) -> None:
+        """Stop and start it."""
+        entry.make().restart(background=background)
+
+    @group.command(name="status")
+    def status() -> None:
+        """Its state."""
+        entry.make().status()
+
+    @group.command(name="info")
+    def info() -> None:
+        """What runs, where it is declared, its address, its log."""
+        entry.make().info()
+
+    @group.command(name="reset")
+    @click.confirmation_option(prompt=f"Stop {entry.name} and wipe its data?")
+    def reset() -> None:
+        """Stop it and wipe its data."""
+        entry.make().reset()
+
+    return group
+
 
 @click.group(cls=_WorkspaceGroup)
 def main() -> None:
@@ -1616,9 +1686,10 @@ def services(ctx: click.Context) -> None:
     aisland services stop
     """
     if ctx.invoked_subcommand is None:
+        every = _service_entries()  # a declaration aisland cannot use stops here, before anything is printed
         click.echo("Aisland Infrastructure Status:")
         supervisor_mod.print_status()
-        service_registry.status(())
+        service_registry.status(every, ())
 
 
 _SERVICE_NAMES = click.argument("names", nargs=-1)
@@ -1630,14 +1701,14 @@ _BACKGROUND = click.option("--background", "-b", is_flag=True, help="Run in the 
 @_BACKGROUND
 def services_start(names: Tuple[str, ...], background: bool) -> None:
     """Start the services named (default: the services started by default)."""
-    service_registry.start(names, background)
+    service_registry.start(_service_entries(), names, background)
 
 
 @services.command(name="stop")
 @_SERVICE_NAMES
 def services_stop(names: Tuple[str, ...]) -> None:
     """Stop the services named (default: the services started by default, the container engine last)."""
-    service_registry.stop(names)
+    service_registry.stop(_service_entries(), names)
 
 
 @services.command(name="restart")
@@ -1645,21 +1716,21 @@ def services_stop(names: Tuple[str, ...]) -> None:
 @_BACKGROUND
 def services_restart(names: Tuple[str, ...], background: bool) -> None:
     """Restart the services named (default: the services started by default)."""
-    service_registry.restart(names, background)
+    service_registry.restart(_service_entries(), names, background)
 
 
 @services.command(name="status")
 @_SERVICE_NAMES
 def services_status(names: Tuple[str, ...]) -> None:
     """Each named service's state (default: every service)."""
-    service_registry.status(names)
+    service_registry.status(_service_entries(), names)
 
 
 @services.command(name="info")
 @_SERVICE_NAMES
 def services_info(names: Tuple[str, ...]) -> None:
     """URLs, credentials and paths of the services named (default: every service)."""
-    service_registry.info(names)
+    service_registry.info(_service_entries(), names)
 
 
 @services.command(name="reset")
@@ -1667,7 +1738,7 @@ def services_info(names: Tuple[str, ...]) -> None:
 @click.confirmation_option(prompt="Stop these services and wipe their data?")
 def services_reset(names: Tuple[str, ...]) -> None:
     """Stop the services named and wipe their data (default: the services started by default)."""
-    service_registry.reset(names)
+    service_registry.reset(_service_entries(), names)
 
 
 # --- Supervisor Commands ---
