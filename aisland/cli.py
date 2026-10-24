@@ -21,6 +21,7 @@ from aisland.manager import (
     setup_workspace,
 )
 from aisland.pytest_stats import DEFAULT_WINDOW_DAYS
+from aisland.services import registry as service_registry
 from aisland.services.aim import DEFAULT_PORT as AIM_PORT
 from aisland.services.aim import AimService
 from aisland.services.clearml import DEFAULT_WEB_PORT as CLEARML_WEB_PORT
@@ -1600,17 +1601,73 @@ def swiftbar_reset() -> None:
 # --- Global Commands ---
 
 
-@main.command()
-def status() -> None:
-    """Show status of all aisland services."""
-    click.echo("Aisland Infrastructure Status:")
-    supervisor_mod.print_status()
-    DockerService().status()
-    JenkinsService().status()
-    MLflowService().status()
-    LabelStudioService().status()
-    FiftyOneService().status()
-    SwiftBarService().status()
+@main.group(name="services", cls=_Group, invoke_without_command=True)
+@click.pass_context
+def services(ctx: click.Context) -> None:
+    """Every aisland service at once, or the ones named. Alone: the supervisor and each service's state.
+
+    With no name, start/stop/restart/reset act on the services started by default (docker, jenkins, mlflow,
+    labelstudio, fiftyone, swiftbar); status and info cover every service. Each service also has its own group
+    (`aisland mlflow start --port 5006`).
+
+    \b
+    aisland services start -b
+    aisland services start mlflow aim
+    aisland services stop
+    """
+    if ctx.invoked_subcommand is None:
+        click.echo("Aisland Infrastructure Status:")
+        supervisor_mod.print_status()
+        service_registry.status(())
+
+
+_SERVICE_NAMES = click.argument("names", nargs=-1)
+_BACKGROUND = click.option("--background", "-b", is_flag=True, help="Run in the background.")
+
+
+@services.command(name="start")
+@_SERVICE_NAMES
+@_BACKGROUND
+def services_start(names: Tuple[str, ...], background: bool) -> None:
+    """Start the services named (default: the services started by default)."""
+    service_registry.start(names, background)
+
+
+@services.command(name="stop")
+@_SERVICE_NAMES
+def services_stop(names: Tuple[str, ...]) -> None:
+    """Stop the services named (default: the services started by default, the container engine last)."""
+    service_registry.stop(names)
+
+
+@services.command(name="restart")
+@_SERVICE_NAMES
+@_BACKGROUND
+def services_restart(names: Tuple[str, ...], background: bool) -> None:
+    """Restart the services named (default: the services started by default)."""
+    service_registry.restart(names, background)
+
+
+@services.command(name="status")
+@_SERVICE_NAMES
+def services_status(names: Tuple[str, ...]) -> None:
+    """Each named service's state (default: every service)."""
+    service_registry.status(names)
+
+
+@services.command(name="info")
+@_SERVICE_NAMES
+def services_info(names: Tuple[str, ...]) -> None:
+    """URLs, credentials and paths of the services named (default: every service)."""
+    service_registry.info(names)
+
+
+@services.command(name="reset")
+@_SERVICE_NAMES
+@click.confirmation_option(prompt="Stop these services and wipe their data?")
+def services_reset(names: Tuple[str, ...]) -> None:
+    """Stop the services named and wipe their data (default: the services started by default)."""
+    service_registry.reset(names)
 
 
 # --- Supervisor Commands ---
@@ -1639,69 +1696,6 @@ def supervisor_attach() -> None:
 def supervisor_down() -> None:
     """Stop every supervised service and the supervisor process."""
     supervisor_mod.shutdown_server()
-
-
-@main.command(name="info")
-def info() -> None:
-    """Show detailed info (URLs, credentials, paths) for all aisland services."""
-    click.echo("Aisland Infrastructure Info:")
-    DockerService().info()
-    JenkinsService().info()
-    MLflowService().info()
-    LabelStudioService().info()
-    FiftyOneService().info()
-    SwiftBarService().info()
-
-
-@main.command(name="start")
-@click.option("--background", "-b", is_flag=True, help="Run all in background.")
-def start(background: bool) -> None:
-    """Start all aisland services."""
-    click.echo("Starting all services...")
-    DockerService().launch()
-    JenkinsService().launch(background=background)
-    MLflowService().launch(background=background)
-    LabelStudioService().launch(background=background)
-    FiftyOneService().launch(background=background)
-    SwiftBarService().launch()
-
-
-@main.command(name="stop")
-def stop() -> None:
-    """Stop all aisland services."""
-    click.echo("Stopping all services...")
-    JenkinsService().stop()
-    MLflowService().stop()
-    LabelStudioService().stop()
-    FiftyOneService().stop()
-    SwiftBarService().stop()
-    DockerService().stop()
-
-
-@main.command(name="restart")
-@click.option("--background", "-b", is_flag=True, help="Run all in background.")
-def restart(background: bool) -> None:
-    """Restart all aisland services."""
-    click.echo("Restarting all services...")
-    DockerService().restart()
-    JenkinsService().restart(background=background)
-    MLflowService().restart(background=background)
-    LabelStudioService().restart(background=background)
-    FiftyOneService().restart(background=background)
-    SwiftBarService().restart()
-
-
-@main.command(name="reset")
-@click.confirmation_option(prompt="Are you sure you want to wipe ALL aisland data?")
-def reset() -> None:
-    """Stop all services and wipe all data."""
-    click.echo("Resetting all services...")
-    JenkinsService().reset()
-    MLflowService().reset()
-    LabelStudioService().reset()
-    FiftyOneService().reset()
-    SwiftBarService().reset()
-    DockerService().reset()
 
 
 # --- Completion Commands ---
@@ -1800,7 +1794,7 @@ def tunnel() -> None:
 
     `list` shows what is remembered, `clear` forgets one or all of them, and `status` says whether a
     tunnel runs on this machine, under which name and which account. None of this is part of
-    `aisland start` / `stop`: a tunnel into your own laptop is nobody's intent, so it runs only where
+    `aisland services start` / `stop`: a tunnel into your own laptop is nobody's intent, so it runs only where
     you ask for it.
     """
 

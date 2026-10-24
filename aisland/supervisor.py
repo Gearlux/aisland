@@ -394,7 +394,7 @@ def _preflight_full_disk_access() -> None:
         "  Jenkins builds etc. will fail there with 'Operation not permitted'.\n"
         "  Fix: System Settings > Privacy & Security > Full Disk Access > + >\n"
         f"       {binary.resolve()}\n"
-        "  then restart the supervisor: aisland supervisor down && aisland start --background\n"
+        "  then restart the supervisor: aisland supervisor down && aisland services start --background\n"
         "  (Re-grant after every process-compose upgrade — the grant pins to the versioned\n"
         "  path, which is why the formula is kept `brew pin`ned.)",
         err=True,

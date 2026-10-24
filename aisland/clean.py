@@ -48,7 +48,7 @@ from aisland.manager import DATA_DIR, get_workspace_root
 from aisland.sources import known_projects, project_path
 
 #: Backup store, under aisland's own data directory (git-ignored via `data/`, and NOT touched
-#: by `aisland reset` — that command wipes each *service's* subdirectory, not the whole tree).
+#: by `aisland services reset` — that command wipes each *service's* subdirectory, not the whole tree).
 BACKUP_DIRNAME = "backups"
 
 #: Subdirectory of a single backup that mirrors the project tree. Keeping the payload one

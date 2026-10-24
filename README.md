@@ -246,7 +246,7 @@ From a wheel, outside a workspace, a command is refused before it writes anythin
 `aisland workspace …`, `aisland wheels …` and `--help` run anywhere:
 
 ```text
-$ aisland status
+$ aisland services
 Error: No workspace here: /Users/you/Downloads is in no git repository and holds no project. Run aisland in your workspace or one of its projects, set AISLAND_WORKSPACE to it, or create one with `aisland workspace init <folder>`.
 ```
 
@@ -581,7 +581,9 @@ A project checked out in the workspace still installs from its checkout.
 ### 1. Check Status
 Retrieve service information for all infrastructure components:
 ```bash
-aisland status
+aisland services                  # the supervisor and every service
+aisland services start -b         # start the default ones in the background
+aisland services start mlflow aim # or only those named
 ```
 
 ### Environment doctor
@@ -704,7 +706,7 @@ Restore with:  cp -R .../aisland/data/backups/sonair/20260804-164945/files/. /Us
 ```
 
 **Backup layout.** Everything lives under `aisland/data/backups/` (git-ignored, and *not*
-touched by `aisland reset`, which wipes each **service's** own directory):
+touched by `aisland services reset`, which wipes each **service's** own directory):
 
 ```text
 aisland/data/backups/<project>/<YYYYMMDD-HHMMSS>/
@@ -1113,7 +1115,7 @@ single-binary, native-process orchestrator with docker-compose semantics. The
   workspace checkouts never collide.
 - **Readiness, not just liveness**: every service carries an HTTP readiness
   probe (Jenkins `/login`, MLflow `/health`, Label Studio `/health`, FiftyOne
-  `/`). `aisland status` shows `ready: Ready` once the service actually
+  `/`). `aisland services` shows `ready: Ready` once the service actually
   answers, not merely when its process exists.
 - **Crash recovery**: services restart automatically on failure (up to 3
   times); a manual `aisland <service> stop` is always respected.
@@ -1171,7 +1173,7 @@ The kernel-log signature is
 2. System Settings → Privacy & Security → Full Disk Access → **+** → paste the
    resolved path (Cmd+Shift+G in the file picker) and enable it.
 3. Restart the **whole supervisor** so the grant applies to a fresh root
-   process: `aisland supervisor down && aisland start --background`.
+   process: `aisland supervisor down && aisland services start --background`.
    Restarting only a service (or only Jenkins) is NOT enough.
 
 The grant is recorded against the **versioned Cellar path**

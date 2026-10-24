@@ -36,7 +36,7 @@ def test_actions_skip_on_non_macos(system: str, action: str) -> None:
 
 @pytest.mark.parametrize("system", ["Linux", "Windows"])
 def test_status_reports_unsupported_on_non_macos(system: str, capsys: pytest.CaptureFixture) -> None:
-    """``aisland status`` aggregates this line — it must not probe ``pgrep``."""
+    """``aisland services`` aggregates this line — it must not probe ``pgrep``."""
     svc = SwiftBarService()
     with (
         patch("aisland.services.swiftbar.platform.system", return_value=system),

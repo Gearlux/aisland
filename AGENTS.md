@@ -93,7 +93,7 @@ The workspace's dev-infrastructure CLI, `aisland` (click, `aisland/cli.py`):
   `<workspace>.nightly-check` Jenkins job.
 - `tunnel.py`: `aisland tunnel` — a VS Code Remote Tunnel to the machine aisland runs on. One
   detached process with a pidfile, NOT a `BaseService` (the remote box has no process-compose) and
-  not in `aisland start`; workspace-free in `cli.py`'s `_WORKSPACE_FREE`, because the box it is for
+  not in `aisland services start`; workspace-free in `cli.py`'s `_WORKSPACE_FREE`, because the box it is for
   has no workspace. State is PER MACHINE, `~/.aisland/tunnel` (`AISLAND_TUNNEL_HOME` overrides it,
   for a `$HOME` that does not persist) — never derived from the working directory, which made
   `start` in one folder and `status` in another disagree. `code tunnel` is passed NO account option
@@ -238,6 +238,12 @@ start-time port pre-flight naming the PID is the only signal). All service state
 - Every `USERSPACE_TOOLS` entry pins a per-arch `sha256`, checked before extraction; bump
   `version` and digests in one edit; a missing digest is never shipped.
   (`tests/test_provision.py::test_registry_pins_wellformed_sha256_for_every_tool`)
+- **Every service is in ONE list, `services/registry.py` (`ENTRIES`, start order; user choice 2026-10-24).**
+  `aisland services [start|stop|restart|status|info|reset] [NAME…]` reads it: named → those, in the order given;
+  unnamed → `status`/`info` every service, the others the `by_default` ones, `stop`/`reset` last-started first (the
+  container engine last). A name no service has is refused before anything is done. There are no top-level
+  `aisland start|stop|restart|status|info|reset`; a new service is one `Entry` and never a hand-written list in
+  `cli.py`. (`tests/test_services_command.py`)
 - A new service extends `BaseService` and implements `launch()` (command, env, probe); the
   base owns start/stop/status/reset. One `aisland/data/<service>/` and log each; no shared
   state.
@@ -252,7 +258,7 @@ start-time port pre-flight naming the PID is the only signal). All service state
 - New services write `.env` through `supervisor.write_workspace_env` (aim/clearml copies:
   TASKS.md).
 - macOS external volumes: Full Disk Access for the RESOLVED process-compose binary, then
-  `aisland supervisor down && aisland start --background`. Never "fix" it by moving
+  `aisland supervisor down && aisland services start --background`. Never "fix" it by moving
   `DATA_ROOT`, editing Jenkinsfiles or loosening volume ownership; diagnose with a live
   `log stream`. (README "macOS: Full Disk Access for the supervisor")
 - `aisland jenkins init` seeds a multibranch job per `Jenkinsfile`; `--local` seeds

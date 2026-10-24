@@ -204,7 +204,7 @@ def test_a_workspace_command_is_refused_and_writes_nothing(nowhere: Path) -> Non
     assert list(nowhere.iterdir()) == []
 
 
-@pytest.mark.parametrize("args", [["status", "--help"], ["workspace", "--help"], ["wheels", "--help"], ["--help"]])
+@pytest.mark.parametrize("args", [["services", "--help"], ["workspace", "--help"], ["wheels", "--help"], ["--help"]])
 def test_help_and_the_workspace_free_commands_run_anywhere(nowhere: Path, args: list) -> None:
     from click.testing import CliRunner
 

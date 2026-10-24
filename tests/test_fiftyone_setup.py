@@ -43,7 +43,7 @@ def test_launch_registers_supervised_process() -> None:
 
     The supervisor owns liveness and crash recovery, so a wrong command,
     missing database-dir env, or missing readiness probe here means the
-    service either won't start or won't be observable via ``aisland status``.
+    service either won't start or won't be observable via ``aisland services``.
     """
     svc = FiftyOneService()
     with (
