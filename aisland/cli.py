@@ -27,7 +27,6 @@ from aisland.services.aim import AimService
 from aisland.services.clearml import DEFAULT_WEB_PORT as CLEARML_WEB_PORT
 from aisland.services.clearml import ClearMLService
 from aisland.services.docker import DockerService
-from aisland.services.fiftyone import FiftyOneService
 from aisland.services.iqengine import DEFAULT_PORT as IQENGINE_PORT
 from aisland.services.iqengine import RECORDINGS_ENV_KEY as IQENGINE_RECORDINGS_KEY
 from aisland.services.iqengine import IQEngineService
@@ -110,16 +109,26 @@ def _declared_service_group(entry: "service_registry.Entry") -> click.Group:
     """`aisland <name> start|stop|restart|status|info|reset` for a service a project declares."""
 
     @click.group(
-        name=entry.name, cls=_Group, help=f"Manage {entry.name}, a service a project of this workspace declares."
+        name=entry.name, cls=_Group, help=f"Manage {entry.name}, a service a project of this workspace brings."
     )
     def group() -> None:
         pass
 
+    port = click.option("--port", type=int, default=None, help="The port to serve on (default: the service's own).")
+
+    def with_port(command: Callable[..., None]) -> Callable[..., None]:
+        """`--port` for a service a project implements; a declared one's port is in its declaration."""
+        return port(command) if entry.takes_port else command
+
+    def ports(value: Optional[int]) -> Dict[str, int]:
+        return {"port": value} if value is not None else {}
+
     @group.command(name="start")
     @click.option("--background", "-b", is_flag=True, help="Run in the background.")
-    def start(background: bool) -> None:
+    @with_port
+    def start(background: bool, port: Optional[int] = None) -> None:
         """Start it under the supervisor."""
-        entry.make().launch(background=background)
+        entry.make().launch(background=background, **ports(port))
 
     @group.command(name="stop")
     def stop() -> None:
@@ -128,9 +137,10 @@ def _declared_service_group(entry: "service_registry.Entry") -> click.Group:
 
     @group.command(name="restart")
     @click.option("--background", "-b", is_flag=True, help="Run in the background.")
-    def restart(background: bool) -> None:
+    @with_port
+    def restart(background: bool, port: Optional[int] = None) -> None:
         """Stop and start it."""
-        entry.make().restart(background=background)
+        entry.make().restart(background=background, **ports(port))
 
     @group.command(name="status")
     def status() -> None:
@@ -1567,56 +1577,6 @@ def labelstudio_reset() -> None:
     LabelStudioService().reset()
 
 
-# --- FiftyOne Commands ---
-
-
-@main.group()
-def fiftyone() -> None:
-    """Manage local FiftyOne (voxel51) app for visual dataset/annotation review."""
-    pass
-
-
-@fiftyone.command(name="start")
-@click.option("--port", default=5151, help="HTTP port for FiftyOne.")
-@click.option("--background", "-b", is_flag=True, help="Run in background.")
-def fiftyone_start(port: int, background: bool) -> None:
-    """Start FiftyOne."""
-    FiftyOneService().launch(port=port, background=background)
-
-
-@fiftyone.command(name="stop")
-def fiftyone_stop() -> None:
-    """Stop FiftyOne."""
-    FiftyOneService().stop()
-
-
-@fiftyone.command(name="status")
-def fiftyone_status() -> None:
-    """Show FiftyOne status."""
-    FiftyOneService().status()
-
-
-@fiftyone.command(name="info")
-def fiftyone_info() -> None:
-    """Show detailed FiftyOne configuration (URL, database dir, registered datasets)."""
-    FiftyOneService().info()
-
-
-@fiftyone.command(name="restart")
-@click.option("--port", default=5151, help="HTTP port for FiftyOne.")
-@click.option("--background", "-b", is_flag=True, help="Run in background.")
-def fiftyone_restart(port: int, background: bool) -> None:
-    """Restart FiftyOne."""
-    FiftyOneService().restart(port=port, background=background)
-
-
-@fiftyone.command(name="reset")
-@click.confirmation_option(prompt="Are you sure you want to wipe all FiftyOne data?")
-def fiftyone_reset() -> None:
-    """Stop FiftyOne and wipe all its data."""
-    FiftyOneService().reset()
-
-
 # --- SwiftBar Commands ---
 
 
@@ -1677,7 +1637,7 @@ def services(ctx: click.Context) -> None:
     """Every aisland service at once, or the ones named. Alone: the supervisor and each service's state.
 
     With no name, start/stop/restart/reset act on the services started by default (docker, jenkins, mlflow,
-    labelstudio, fiftyone, swiftbar); status and info cover every service. Each service also has its own group
+    labelstudio, swiftbar); status and info cover every service. Each service also has its own group
     (`aisland mlflow start --port 5006`).
 
     \b

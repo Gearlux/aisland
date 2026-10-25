@@ -4,8 +4,10 @@ The list is in START order; stopping and resetting go the other way, so the cont
 need is the last to go. With no name, ``status`` and ``info`` cover every service, and ``start``, ``stop``,
 ``restart`` and ``reset`` cover the services started by default (``by_default``) — the others start when named.
 
-A project's own services (``[tool.aisland.service.<name>]``, :mod:`aisland.services.declared`) follow aisland's,
-started only when named, and only while what they ``need`` is chosen (``needs = { tracker = "aim" }``).
+A project's own services follow aisland's, started only when named: one it declares (``[tool.aisland.service.<name>]``,
+:mod:`aisland.services.declared`), offered only while what it ``needs`` is chosen (``needs = { tracker = "aim" }``),
+and one it implements in its own code (an ``aisland.plugins`` entry point of kind ``service``,
+:mod:`aisland.services.plugin`), offered once its project is installed and given ``--port``.
 """
 
 from __future__ import annotations
@@ -20,7 +22,6 @@ import click
 from aisland.services.aim import AimService
 from aisland.services.clearml import ClearMLService
 from aisland.services.docker import DockerService
-from aisland.services.fiftyone import FiftyOneService
 from aisland.services.iqengine import IQEngineService
 from aisland.services.jenkins import JenkinsService
 from aisland.services.labelstudio import LabelStudioService
@@ -62,6 +63,7 @@ class Entry:
     make: Callable[[], Service]
     by_default: bool
     takes_background: bool
+    takes_port: bool = False
 
 
 ENTRIES: Tuple[Entry, ...] = (
@@ -69,7 +71,6 @@ ENTRIES: Tuple[Entry, ...] = (
     Entry("jenkins", JenkinsService, by_default=True, takes_background=True),
     Entry("mlflow", MLflowService, by_default=True, takes_background=True),
     Entry("labelstudio", LabelStudioService, by_default=True, takes_background=True),
-    Entry("fiftyone", FiftyOneService, by_default=True, takes_background=True),
     Entry("swiftbar", SwiftBarService, by_default=True, takes_background=False),
     Entry("aim", AimService, by_default=False, takes_background=True),
     Entry("clearml", ClearMLService, by_default=False, takes_background=True),
@@ -78,28 +79,44 @@ ENTRIES: Tuple[Entry, ...] = (
 
 
 def declared(root: Path, reserved: Collection[str] = ()) -> List[Entry]:
-    """The services the projects of ``root`` declare, whose ``needs`` are chosen, after aisland's own.
+    """The services the projects of ``root`` bring, after aisland's own: the ones they declare whose ``needs`` are
+    chosen, then the ones they implement whose project is installed.
 
     A name of one of aisland's services, or of an aisland command (``reserved``), is refused naming the line: the
     project's service would hide it."""
     from aisland import discovery, selection
     from aisland.services.declared import DeclaredService
+    from aisland.services.plugin import PluginService
 
     own = {entry.name for entry in ENTRIES}
-    found: List[Entry] = []
-    for name, service in discovery.discover(root).services.items():
+
+    def free(name: str, where: object) -> None:
         if name in own:
             raise discovery.DeclarationError(
-                f"{service.where}: service {name!r} is one of aisland's own — give it another name"
+                f"{where}: service {name!r} is one of aisland's own — give it another name"
             )
         if name in reserved:
             raise discovery.DeclarationError(
-                f"{service.where}: service {name!r} would hide the command `aisland {name}` — give it another name"
+                f"{where}: service {name!r} would hide the command `aisland {name}` — give it another name"
             )
+
+    found = discovery.discover(root)
+    entries: List[Entry] = []
+    for name, service in found.services.items():
+        free(name, service.where)
         if any(choice not in (selection.effective(root, needed) or []) for needed, choice in service.needs.items()):
             continue
-        found.append(Entry(name, partial(DeclaredService, service), by_default=False, takes_background=True))
-    return found
+        entries.append(Entry(name, partial(DeclaredService, service), by_default=False, takes_background=True))
+    for name, loaded in discovery.load(found).items():
+        if loaded.state != "installed" or loaded.kind != "service":
+            continue
+        free(name, loaded.plugin.where)
+        entries.append(
+            Entry(
+                name, partial(PluginService, name, loaded.obj), by_default=False, takes_background=True, takes_port=True
+            )
+        )
+    return entries
 
 
 def entries(root: Path, reserved: Collection[str] = ()) -> List[Entry]:

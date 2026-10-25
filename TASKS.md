@@ -32,7 +32,8 @@ workspace root `TASKS.md`. Completed items are not archived here — git history
     `aisland workspace show`.
   - Steps, one commit each, tests first: (1) discovery core + `workspace show` — DONE (`discovery.py`); (2) `workspace.toml` (2a DONE: `workspace_file.py`, setup keeps it, `init --from`, no `export`) + generated `configure` (2b DONE:
     `configure.py`, the `source` plugin; 2c DONE `mirror`; 2d DONE `active`; 2e DONE the selections: `extras` and (3) matrainer's `framework`/`tracker`, `config.toml` gone; 2f DONE `provision` (`aisland workspace provision [install]`, no configure plugin)), built-ins one per commit; (4) services — 4a DONE one list + `aisland services` (`services/registry.py`); 4b DONE a project's
-    declared service run and given its group (`services/declared.py`); next 4c the moves (user choices 2026-10-24: a moved service disappears with
+    declared service run and given its group (`services/declared.py`); 4c the moves — FiftyOne DONE (curaitor's
+    class, `services/plugin.py`), next aim and clearml to matrainer, labelstudio to annotaide, iqengine (user choices 2026-10-24: a moved service disappears with
     its project; its code is a class of the project's own filling aisland's contract without importing aisland), 4d
     messages and docs; (5) conversion of the existing workspaces and every surface naming the old commands (MCP
     tools, `/push-all`, `/ship`, services' messages, other projects' docs, `docs/workspace.md`, `docs/services.md`,

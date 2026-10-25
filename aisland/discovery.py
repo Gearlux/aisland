@@ -41,9 +41,11 @@ from aisland.manager import USERSPACE_TOOLS, workspace_folders
 ENTRY_POINT_GROUP = "aisland.plugins"
 
 #: The kinds a code plugin can be, and the methods each needs (each taking one argument, the context aisland passes).
+#: A service needs only ``start``: ``stop``, ``status``, ``info`` and ``reset`` are aisland's own unless it has them
+#: (:mod:`aisland.services.plugin`).
 PluginKind = Literal["service"]
 PLUGIN_KINDS: Tuple[str, ...] = get_args(PluginKind)
-_KIND_METHODS: Dict[str, Tuple[str, ...]] = {"service": ("start", "stop", "status")}
+_KIND_METHODS: Dict[str, Tuple[str, ...]] = {"service": ("start",)}
 
 #: ``workspace.toml``'s ``[workspace]`` key for the workspace's name (``workspace_file.NAME_KEY``, which imports this
 #: module): a selection's choice is committed under its own name in that table, so none may take this one.

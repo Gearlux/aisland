@@ -251,14 +251,24 @@ def test_an_installed_plugin_missing_a_method_of_its_kind_is_refused_naming_its_
 ) -> None:
     root = _workspace(tmp_path, {"acme": PLUGIN_PROJECT})
     _install(
-        tmp_path, monkeypatch, PLUGIN_MODULE.replace('    def stop(self, ctx):\n        ctx.echo("stopped")\n', "")
+        tmp_path, monkeypatch, PLUGIN_MODULE.replace('    def start(self, ctx):\n        ctx.echo("started")\n', "")
     )
     with pytest.raises(discovery.DeclarationError) as refused:
         discovery.load(discovery.discover(root))
     assert refused.value.message == (
         f"{root / 'acme' / 'pyproject.toml'}:6: plugin 'acme-db' (acme_plugin:Database) is a service "
-        "but has no stop(ctx)"
+        "but has no start(ctx)"
     )
+
+
+def test_a_service_plugin_needs_only_start(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """stop, status, info and reset are aisland's own when the class has none (`services/plugin.py`)."""
+    root = _workspace(tmp_path, {"acme": PLUGIN_PROJECT})
+    module = PLUGIN_MODULE.replace('    def stop(self, ctx):\n        ctx.echo("stopped")\n', "")
+    _install(
+        tmp_path, monkeypatch, module.replace('    def status(self, ctx):\n        return {"running": False}\n', "")
+    )
+    assert discovery.load(discovery.discover(root))["acme-db"].kind == "service"
 
 
 def test_an_installed_plugin_of_an_unknown_kind_is_refused(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:

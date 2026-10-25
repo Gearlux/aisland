@@ -114,8 +114,9 @@ The workspace's dev-infrastructure CLI, `aisland` (click, `aisland/cli.py`):
   `docs/tunnel.md` (the README keeps three commands and its absolute link), its twin `examples/01_tunnel_terminal.py`;
   an error the page quotes is the code's, word for word (`tests/test_tunnel_docs.py`).
 - `services/`: `jenkins` (incl. `aisland jenkins scaffold`), `mlflow`, `labelstudio`,
-  `fiftyone`, `aim`, `swiftbar` run under the supervisor; `docker` (Colima), `clearml`,
-  `iqengine` run under Docker.
+  `aim`, `swiftbar` run under the supervisor; `docker` (Colima), `clearml`,
+  `iqengine` run under Docker; `registry.py` lists them, `declared.py` and `plugin.py` run the ones a project brings
+  (FiftyOne is curaitor's).
 - `setup.sh`: interpreter + venv, then `aisland setup -y` and `aisland completion install`.
 - `harness.py` + `harness/`: the agent harness — the workspace commands, their helper script and the generic
   agent rules — installed into every workspace's `.agents/` by `aisland setup` and `aisland workspace init`.
@@ -258,6 +259,15 @@ start-time port pre-flight naming the PID is the only signal). All service state
   aisland's own commands. A name of an aisland service or command is a `DeclarationError` naming the line; the
   top-level listing (`--help`, completion) leaves the declared groups out then, every command reading them says why.
   (`tests/test_declared_services.py`)
+- **A project implements a service in its own code, importing nothing of aisland (user choices 2026-10-25).** An
+  `aisland.plugins` entry point of kind `service` (a class needing only `start(ctx)`; `stop`, `status`, `info`,
+  `reset` are `BaseService`'s unless it has them, its `info(ctx)` printed after aisland's) becomes a
+  `services/plugin.py` `PluginService`, offered once its project is installed, started only when named, with
+  `--port` on `start`/`restart` (`ctx.port`, `None` when not given: the class picks its default). `ServiceContext` is
+  all it gets: `name`, `workspace`, `data_dir`, `port`, `background`, `run`, `write_env`, `ports`, `echo`, `fail` —
+  grow it only with a real service that needs more. A moved service disappears with its project; its data folder
+  stays `data/<name>/`. Same name rules as a declared one. (`tests/test_plugin_services.py`; FiftyOne is curaitor's:
+  `curaitor/tests/test_fiftyone_service.py`)
 - A new service extends `BaseService` and implements `launch()` (command, env, probe); the
   base owns start/stop/status/reset. One `aisland/data/<service>/` and log each; no shared
   state.
@@ -266,9 +276,7 @@ start-time port pre-flight naming the PID is the only signal). All service state
 - A service never installs its backend: `mlflow`, `aim`, `clearml` fail with `selection.missing_message`, naming
   `aisland workspace configure tracker set <the trackers already chosen> <name>` — `set` takes the whole list, so
   naming the missing one alone would drop the rest (user ruling 2026-10-23;
-  `tests/test_selection.py::test_a_missing_tracker_names_the_command_that_adds_it_to_the_chosen_ones`); `fiftyone`
-  (in no selection) fails naming `uv pip install fiftyone`
-  (`tests/test_fiftyone_setup.py::test_setup_stops_with_the_uv_install_command_when_fiftyone_is_missing`).
+  `tests/test_selection.py::test_a_missing_tracker_names_the_command_that_adds_it_to_the_chosen_ones`).
 - New services write `.env` through `supervisor.write_workspace_env` (aim/clearml copies:
   TASKS.md).
 - macOS external volumes: Full Disk Access for the RESOLVED process-compose binary, then

@@ -2,7 +2,7 @@
 
 The list is `aisland/services/registry.py`, in start order. With no name, `status` and `info` cover every service;
 `start`, `stop`, `restart` and `reset` cover the services started by default (the container engine, Jenkins, MLflow,
-Label Studio, FiftyOne, SwiftBar), stopping in the reverse order so the container engine goes last. A name no
+Label Studio, SwiftBar), stopping in the reverse order so the container engine goes last. A name no
 service has is refused before anything happens.
 """
 
@@ -128,7 +128,6 @@ def test_the_list_holds_every_service_aisland_ships_once() -> None:
         "jenkins",
         "mlflow",
         "labelstudio",
-        "fiftyone",
         "swiftbar",
         "aim",
         "clearml",
@@ -139,7 +138,6 @@ def test_the_list_holds_every_service_aisland_ships_once() -> None:
         "jenkins",
         "mlflow",
         "labelstudio",
-        "fiftyone",
         "swiftbar",
     ]
 
