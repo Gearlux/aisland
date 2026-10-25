@@ -13,7 +13,8 @@ The first release on PyPI: `pip install aisland`.
 - **`aisland workspace init <folder>`** creates a workspace — one git repository whose projects are submodules,
   written down in `workspace.toml` — and `aisland setup` sets it up: the system tools, each project installed
   editable into the workspace's one `.venv`, the git aliases (`git pull-all`, `git push-all`), the editor's
-  workspace file and the shell start-up file `project.bashrc`.
+  workspace file and the shell start-up file `project.bashrc`. While `init` clones, it says each project as it
+  starts and ends, with git's download progress on a terminal.
 - **`aisland workspace configure`** chooses, per project, where it comes from (`source`: a checkout, GitHub or
   PyPI), whether this machine has it (`active`) and where it is mirrored (`mirror`), and per workspace the extras
   the projects offer.

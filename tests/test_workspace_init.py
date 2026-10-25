@@ -10,9 +10,14 @@ written.
 from __future__ import annotations
 
 import os
+import pty
+import re
+import select
 import subprocess
 import sys
+import time
 from pathlib import Path
+from typing import Tuple
 
 import pytest
 from click.testing import CliRunner, Result
@@ -83,8 +88,8 @@ def test_a_new_folder_becomes_a_workspace(tmp_path: Path) -> None:
     # `.claude/` and the three rule files with the agent harness (aisland.harness).
     assert sorted(p.name for p in root.iterdir() if p.name != ".git") == sorted([*FILES, ".gitattributes", *HARNESS])
     assert "pull-all" in _git(root, "config", "--local", "--get-regexp", r"^alias\.")
-    assert result.output.splitlines()[0] == f"==> Created workspace acme in {root}"
-    assert result.output.splitlines()[-4:] == [
+    assert result.stdout.splitlines()[0] == f"==> Created workspace acme in {root}"
+    assert result.stdout.splitlines()[-4:] == [
         "Next:",
         f"    cd {root}",
         "    uv venv --seed .venv && .venv/bin/pip install <the aisland wheel>",
@@ -140,7 +145,7 @@ def test_a_repository_that_cannot_be_added_stops_with_its_url(tmp_path: Path) ->
     missing = tmp_path / "remote" / "nothing"
     result = _init(tmp_path, "--add", str(missing))
     assert result.exit_code == 1
-    assert f"Error: could not add {missing} as a submodule:" in result.output
+    assert f"Error: [1/1] nothing: could not add {missing} as a submodule:" in result.output
 
 
 def test_an_existing_repository_is_set_up_in_place_and_its_files_kept(tmp_path: Path, models: Path) -> None:
@@ -150,7 +155,7 @@ def test_an_existing_repository_is_set_up_in_place_and_its_files_kept(tmp_path: 
     (root / ".gitignore").write_text("# ours\n")
     result = _init(tmp_path, "--add", str(models))
     assert result.exit_code == 0, result.output
-    lines = result.output.splitlines()
+    lines = result.stdout.splitlines()
     assert lines[0] == f"==> Set up workspace acme in {root}"
     assert lines[1] == "    .git/                     kept (an existing repository)"
     assert "    .gitignore                kept (it exists)" in lines
@@ -301,7 +306,7 @@ def _workspace_toml(tmp_path: Path, body: str) -> Path:
     return _write(tmp_path / "source" / "workspace.toml", body)
 
 
-def _project(name: str, url: Path, branch: str = "", path: str = "") -> str:
+def _project(name: str, url: Path | str, branch: str = "", path: str = "") -> str:
     lines = [f'[project."{name}"]', *([f'path = "{path}"'] if path else []), f'url = "{url}"']
     return "\n".join(lines + ([f'branch = "{branch}"'] if branch else [])) + "\n\n"
 
@@ -404,7 +409,7 @@ def test_a_projects_branch_that_does_not_exist_stops_with_its_url(tmp_path: Path
     listed = _workspace_toml(tmp_path, _project("models", models, "nope"))
     result = _init(tmp_path, "--from", str(listed))
     assert result.exit_code == 1
-    assert f"Error: could not add {models} as a submodule:" in result.output
+    assert f"Error: [1/1] models: could not add {models} as a submodule:" in result.output
 
 
 def test_a_workspace_made_from_the_file_of_another_holds_the_same_projects(tmp_path: Path) -> None:
@@ -570,4 +575,141 @@ def test_the_from_files_name_names_the_new_workspace(tmp_path: Path) -> None:
     listed = _write(tmp_path / "listed" / "workspace.toml", '[workspace]\nname = "studio"\n')
     result = _init(tmp_path, "--from", str(listed))
     assert result.exit_code == 0, result.output
-    assert result.output.splitlines()[0] == f"==> Created workspace studio in {tmp_path / 'acme'}"
+    assert result.stdout.splitlines()[0] == f"==> Created workspace studio in {tmp_path / 'acme'}"
+
+
+# --- Progress: what init says while it works (stderr), the report after it (stdout) ---
+
+
+def _progress(result: Result) -> list:
+    """The progress lines on stderr, each clone's time written as `T`."""
+    return [re.sub(r"done in \d+\.\d s$", "done in T s", line) for line in result.stderr.splitlines()]
+
+
+def test_each_project_is_said_as_its_clone_starts_and_ends(tmp_path: Path) -> None:
+    models = _remote(tmp_path, "models", branches=("dev",))
+    tools = _remote(tmp_path, "tools")
+    listed = _workspace_toml(tmp_path, _project("models", models, "dev") + _project("tools", tools))
+    result = _init(tmp_path, "--from", str(listed))
+    assert result.exit_code == 0, result.output
+    assert _progress(result) == [
+        f"==> Creating workspace in {tmp_path / 'acme'}",
+        f"[1/2] models  cloning {models} (dev) …",
+        "[1/2] models  done in T s",
+        f"[2/2] tools   cloning {tools} …",
+        "[2/2] tools   done in T s",
+        "      writing the starting files, workspace.toml, the git aliases and the agent rules …",
+    ]
+
+
+def test_an_added_repository_is_said_by_its_repository_name_after_the_files_projects(
+    tmp_path: Path, models: Path
+) -> None:
+    tools = _remote(tmp_path, "tools")
+    listed = _workspace_toml(tmp_path, _project("tools", tools))
+    result = _init(tmp_path, "--from", str(listed), "--add", str(models))
+    assert result.exit_code == 0, result.output
+    assert _progress(result)[1:5] == [
+        f"[1/2] tools   cloning {tools} …",
+        "[1/2] tools   done in T s",
+        f"[2/2] models  cloning {models} …",
+        "[2/2] models  done in T s",
+    ]
+
+
+def test_an_optional_project_is_said_to_be_skipped_and_not_counted(tmp_path: Path) -> None:
+    models = _remote(tmp_path, "models")
+    viewer = _remote(tmp_path, "viewer")
+    body = _project("viewer", viewer) + "active = false\n\n" + _project("models", models)
+    result = _init(tmp_path, "--from", str(_workspace_toml(tmp_path, body)))
+    assert result.exit_code == 0, result.output
+    assert not (tmp_path / "acme" / "viewer").exists()
+    assert _progress(result)[1:4] == [
+        "[–]   viewer  skipped (optional: aisland setup asks)",
+        f"[1/1] models  cloning {models} …",
+        "[1/1] models  done in T s",
+    ]
+
+
+def test_a_failed_clone_is_named_by_its_place_and_the_ones_after_it_are_not_started(tmp_path: Path) -> None:
+    models = _remote(tmp_path, "models")
+    tools = _remote(tmp_path, "tools")
+    body = _project("models", models, "nope") + _project("tools", tools)
+    result = _init(tmp_path, "--from", str(_workspace_toml(tmp_path, body)))
+    assert result.exit_code == 1
+    assert _progress(result)[1] == f"[1/2] models  cloning {models} (nope) …"
+    assert _progress(result)[2].startswith(f"Error: [1/2] models: could not add {models} as a submodule: fatal: ")
+    assert "tools" not in result.stderr
+
+
+def test_the_report_on_stdout_holds_no_progress(tmp_path: Path, models: Path) -> None:
+    result = _init(tmp_path, "--add", str(models))
+    assert result.exit_code == 0, result.output
+    root = tmp_path / "acme"
+    assert result.stdout.splitlines()[:3] == [
+        f"==> Created workspace acme in {root}",
+        "    .git/                     git init",
+        f"    models/                   submodule {models}",
+    ]
+    assert "cloning" not in result.stdout and "done in" not in result.stdout
+
+
+def test_without_a_terminal_gits_progress_stays_out(tmp_path: Path, models: Path) -> None:
+    result = _init(tmp_path, "--add", f"file://{models}")
+    assert result.exit_code == 0, result.output
+    assert "\r" not in result.output and "%" not in result.output
+
+
+def _on_a_terminal(cwd: Path, *args: str) -> Tuple[int, str, str]:
+    """Run `aisland` with its stderr on a pseudo-terminal and its stdout on a pipe: (exit code, stderr, stdout)."""
+    master, slave = pty.openpty()
+    process = subprocess.Popen(
+        [sys.executable, "-c", "from aisland.cli import main; main()", *args],
+        cwd=cwd,
+        stdin=subprocess.DEVNULL,
+        stdout=subprocess.PIPE,
+        stderr=slave,
+    )
+    os.close(slave)
+    seen = b""
+    deadline = time.monotonic() + 60
+    while True:
+        left = deadline - time.monotonic()
+        assert left > 0, f"aisland did not finish within 60 s; it wrote: {seen!r}"
+        ready, _, _ = select.select([master], [], [], left)
+        if not ready:
+            continue
+        try:
+            chunk = os.read(master, 4096)
+        except OSError:  # the terminal closed with the process (EIO)
+            break
+        if not chunk:
+            break
+        seen += chunk
+    os.close(master)
+    assert process.stdout is not None
+    stdout = process.stdout.read().decode()
+    return process.wait(timeout=60), seen.decode().replace("\r\n", "\n"), stdout
+
+
+def test_on_a_terminal_gits_progress_is_drawn_on_one_line_and_cleared(tmp_path: Path, models: Path) -> None:
+    url = f"file://{models}"
+    code, terminal, stdout = _on_a_terminal(tmp_path, "workspace", "init", str(tmp_path / "acme"), "--add", url)
+    assert code == 0, terminal
+    assert f"[1/1] models  cloning {url} …\n" in terminal
+    drawn = terminal.split(f"cloning {url} …\n")[1].split("[1/1] models  done in")[0]
+    assert drawn.startswith("\r\x1b[K      ") and "%" in drawn  # each of git's lines over the last, indented
+    assert drawn.endswith("\r\x1b[K")  # and gone before the done line
+    assert re.search(r"\[1/1\] models  done in \d+\.\d s\n", terminal)
+    assert "\r" not in stdout and stdout.splitlines()[0] == f"==> Created workspace acme in {tmp_path / 'acme'}"
+
+
+def test_on_a_terminal_a_failed_clone_says_gits_error_without_its_progress(tmp_path: Path, models: Path) -> None:
+    listed = _workspace_toml(tmp_path, _project("models", f"file://{models}", "nope"))
+    code, terminal, _stdout = _on_a_terminal(
+        tmp_path, "workspace", "init", str(tmp_path / "acme"), "--from", str(listed)
+    )
+    assert code == 1
+    error = "Error:" + terminal.split("Error:", 1)[1].split("\n")[0]  # the progress drawn before it ends no line
+    assert f"Error: [1/1] models: could not add file://{models} as a submodule: fatal: " in error
+    assert "%" not in error and "remote:" not in error

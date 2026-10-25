@@ -216,6 +216,21 @@ $ .venv/bin/aisland workspace init . --from workspace.toml
 Error: workspace.toml:7: project 'tools' has no url
 ```
 
+While it clones, `init` says each project as it starts and ends, on stderr — on a terminal git's own download
+progress is drawn on one line below it; the report it ends with goes to stdout alone:
+
+```text
+$ .venv/bin/aisland workspace init . --from workspace.toml
+==> Creating workspace in /home/you/acme
+[–]   viewer  skipped (optional: aisland setup asks)
+[1/2] models  cloning git@github.com:acme/models.git (dev) …
+[1/2] models  done in 3.1 s
+[2/2] tools   cloning git@github.com:acme/tools.git …
+[2/2] tools   done in 2.8 s
+      writing the starting files, workspace.toml, the git aliases and the agent rules …
+==> Created workspace acme in /home/you/acme
+```
+
 aisland finds the venv at `.venv` in the workspace. To give it a name, use `--prompt` (the shell
 then shows `(acme)`), or keep the venv elsewhere and link it in — `.gitignore` covers the link:
 

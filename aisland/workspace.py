@@ -23,8 +23,13 @@ Two choices of the root's, each its own flag: ``--local`` makes a new root repos
 commit), and ``--untracked`` makes the root record none of its projects' commits (:mod:`aisland.tracking`).
 """
 
+import codecs
+import os
+import re
+import shutil
 import subprocess
 import sys
+import time
 from pathlib import Path
 from typing import Dict, List, Literal, Optional, Sequence, Tuple, get_args
 
@@ -114,11 +119,62 @@ def _row(name: str, what: str) -> str:
     return f"    {name.ljust(25)} {what}"
 
 
-def _add_submodule(root: Path, url: str, path: Optional[str] = None, branch: Optional[str] = None) -> None:
-    args = ["git", "submodule", "add", "-q", *(["-b", branch] if branch else []), url, *([path] if path else [])]
-    result = subprocess.run(args, cwd=root, capture_output=True, text=True)
-    if result.returncode != 0:
-        raise click.ClickException(f"could not add {url} as a submodule: {result.stderr.strip()}")
+#: A line git writes while it clones that is progress, not what went wrong: left out of a failed clone's message.
+_GIT_PROGRESS = re.compile(r"^(remote: |Cloning into |[A-Z][a-z]+( [a-z]+)*: +\d+% )")
+#: Back to the start of the terminal's line and erase it: git's progress is drawn over its previous line.
+_REDRAW = "\r\x1b[K"
+#: The indent of a line below a project's ``[N/M]`` line.
+_INDENT = "      "
+
+
+def _say(text: str) -> None:
+    """A progress line. It goes to stderr, so stdout holds the report alone (``init … > report.txt``)."""
+    click.echo(text, err=True)
+
+
+def _add_submodule(
+    root: Path, url: str, path: Optional[str] = None, branch: Optional[str] = None, step: str = ""
+) -> None:
+    """``git submodule add`` ``url``. On a terminal git's download progress is drawn on one line, each of its lines
+    over the last, and erased when the clone ends; elsewhere (a pipe, a log) git is asked for none.
+
+    A refusal raises naming ``step`` (``[2/5] models``) and git's message without its progress lines."""
+    terminal = sys.stderr.isatty()
+    args = [
+        "git",
+        "submodule",
+        "add",
+        "-q",
+        *(["--progress"] if terminal else []),
+        *(["-b", branch] if branch else []),
+        url,
+        *([path] if path else []),
+    ]
+    process = subprocess.Popen(
+        args, cwd=root, stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE
+    )
+    assert process.stderr is not None  # stderr=PIPE
+    # A line wider than the terminal wraps, and the carriage return then goes back to its last row only.
+    width = shutil.get_terminal_size().columns - len(_INDENT) - 1
+    decoder = codecs.getincrementaldecoder("utf-8")(errors="replace")
+    said: List[str] = []
+    pending = ""
+    while chunk := os.read(process.stderr.fileno(), 4096):
+        # git ends a progress line with a carriage return and every other line with a newline.
+        *ended, pending = re.split(r"[\r\n]", pending + decoder.decode(chunk))
+        for line in (text.strip() for text in ended):
+            if not line:
+                continue
+            said.append(line)
+            if terminal:
+                click.echo(f"{_REDRAW}{_INDENT}{line[:width]}", err=True, nl=False)
+    if pending.strip():
+        said.append(pending.strip())
+    if terminal and said:
+        click.echo(_REDRAW, err=True, nl=False)
+    if process.wait() != 0:
+        message = "\n".join(line for line in said if not _GIT_PROGRESS.match(line)) or "\n".join(said)
+        raise click.ClickException(f"{step}: could not add {url} as a submodule: {message}")
 
 
 def runs_from_venv_of(root: Path) -> bool:
@@ -173,6 +229,27 @@ def _write_starting_files(root: Path, rewrite: Sequence[StartingFile], only_rewr
     return rows
 
 
+def _clone(root: Path, plan: Sequence[Tuple[str, Optional[Tuple[str, Optional[str], Optional[str]]]]]) -> None:
+    """Add each project of ``plan`` as a submodule, saying it as its clone starts (``[2/5] models  cloning …``) and
+    ends (``done in 3.1 s``); a project left out (None) is said skipped and not counted."""
+    total = sum(1 for _name, clone in plan if clone is not None)
+    width = max((len(name) for name, _clone in plan), default=0)
+    mark = len(f"[{total}/{total}]")
+    number = 0
+    for name, clone in plan:
+        label = name.ljust(width)
+        if clone is None:
+            _say(f"{'[–]'.ljust(mark)} {label}  skipped (optional: aisland setup asks)")
+            continue
+        number += 1
+        url, path, branch = clone
+        step = f"[{number}/{total}]"
+        _say(f"{step} {label}  cloning {url}" + (f" ({branch})" if branch else "") + " …")
+        started = time.monotonic()
+        _add_submodule(root, url, path, branch, step=f"{step} {name}")
+        _say(f"{step} {label}  done in {time.monotonic() - started:.1f} s")
+
+
 def init_workspace(
     folder: Path,
     add: Sequence[str] = (),
@@ -190,13 +267,16 @@ def init_workspace(
     repository only those files are written. A folder that already is a repository is set up in place. ``local``
     makes the root track only the projects, ``untracked`` its projects' commits go unrecorded (the module docstring)."""
     listed = list(workspace_file.read(from_file).projects.values()) if from_file is not None else []
-    clones: List[Tuple[str, str, Optional[str]]] = []
+    # Each project in the order init says it: its name and (url, path, branch), or None for one it leaves out.
+    plan: List[Tuple[str, Optional[Tuple[str, Optional[str], Optional[str]]]]] = []
     for project in listed:
         if "active" in project.others:  # optional: `aisland setup` asks about it and checks it out if wanted
+            plan.append((project.name, None))
             continue
         if project.url is None:  # the file reads one without (a source set before setup wrote it), init cannot clone it
             raise click.ClickException(f"{project.where}: project {project.name!r} has no url")
-        clones.append((project.url, project.path, project.branch))
+        plan.append((project.name, (project.url, project.path, project.branch)))
+    plan += [(workspace_file.repository_name(url) or url, (url, None, None)) for url in add]
     root = folder.absolute()
     if root.exists() and not root.is_dir():
         raise click.ClickException(f"{root} is a file, not a folder.")
@@ -219,6 +299,7 @@ def init_workspace(
         raise click.ClickException(
             f"{root} is already a git repository, with a workspace.toml of its own: add projects with --add."
         )
+    _say(f"==> {'Setting up' if existing else 'Creating'} workspace in {root}")
     if existing:
         rows = [_row(".git/", "kept (an existing repository)")]
     else:
@@ -229,16 +310,14 @@ def init_workspace(
         local_workspace.mark(root)
 
     already = {path for path, _url, _branch in workspace_file.submodules(root)}
-    for url, path, branch in clones:
-        _add_submodule(root, url, path, branch)
-    for url in add:
-        _add_submodule(root, url)
+    _clone(root, plan)
     rows += [
         _row(f"{path}/", f"submodule {url}" + (f" ({branch})" if branch else ""))
         for path, url, branch in workspace_file.submodules(root)
         if path not in already
     ]
 
+    _say(f"{_INDENT}writing the starting files, workspace.toml, the git aliases and the agent rules …")
     rows += _write_starting_files(root, rewrite)
 
     if from_file is not None:
