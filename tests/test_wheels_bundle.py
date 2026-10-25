@@ -565,6 +565,7 @@ class TestEndToEnd:
         ran = subprocess.run([str(venv / "bin" / "app")], cwd=tmp_path, env=env, capture_output=True, text=True)
         assert (ran.returncode, ran.stdout) == (0, "app ran\n"), ran.stderr
 
+    @pytest.mark.slow
     def test_an_unchanged_workspace_rebuilds_the_same_bundle(
         self, tmp_path: Path, offline_uv: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:

@@ -9,6 +9,8 @@ synthetic projects naming each shape.
 from __future__ import annotations
 
 import shlex
+import subprocess
+import sys
 import tomllib
 from pathlib import Path
 from typing import List, Optional, Sequence, Union
@@ -77,3 +79,37 @@ def test_a_project_that_registers_slow_must_deselect_it_by_default(tmp_path: Pat
     assert bool(violations) is violates
     if violates:
         assert str(project / "pyproject.toml") in violations[0]
+
+
+def test_aislands_own_pytest_reads_the_table_that_registers_slow(pytestconfig: pytest.Config) -> None:
+    """pytest reads a `pytest.ini` instead of `[tool.pytest.ini_options]`, which the scaffold reads: asked itself,
+    pytest knows `slow` and leaves a slow test out of a plain run."""
+    slow = "tests/test_workspace_init.py::test_a_workspace_made_from_the_file_of_another_holds_the_same_projects"
+    asked = subprocess.run(
+        [sys.executable, "-m", "pytest", "-p", "no:aisland_test_stats", "-p", "no:cacheprovider", "--markers"],
+        cwd=pytestconfig.rootpath,
+        capture_output=True,
+        text=True,
+        timeout=60,
+    )
+    assert "@pytest.mark.slow:" in asked.stdout, asked.stdout + asked.stderr
+    collected = subprocess.run(
+        [
+            sys.executable,
+            "-m",
+            "pytest",
+            "-p",
+            "no:aisland_test_stats",
+            "-p",
+            "no:cacheprovider",
+            "--co",
+            "-q",
+            "tests/test_workspace_init.py",
+        ],
+        cwd=pytestconfig.rootpath,
+        capture_output=True,
+        text=True,
+        timeout=60,
+    )
+    assert collected.returncode == 0, collected.stdout + collected.stderr
+    assert slow not in collected.stdout.splitlines() and "deselected" in collected.stdout

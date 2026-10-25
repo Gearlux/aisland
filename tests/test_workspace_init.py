@@ -412,6 +412,7 @@ def test_a_projects_branch_that_does_not_exist_stops_with_its_url(tmp_path: Path
     assert f"Error: [1/1] models: could not add {models} as a submodule:" in result.output
 
 
+@pytest.mark.slow
 def test_a_workspace_made_from_the_file_of_another_holds_the_same_projects(tmp_path: Path) -> None:
     """What `export` used to check: the file one workspace keeps creates the same workspace again."""
     models = _remote(tmp_path, "models", branches=("dev",))

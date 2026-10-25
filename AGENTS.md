@@ -327,6 +327,11 @@ Root `AGENTS.md` "Two Test Runs" (user ruling 2026-10-05). [test-stats]
   `@pytest.mark.slow` (or a `FAST_SAMPLE`). Never deselect by history at collection time.
 - A project that registers `slow` sets `addopts = "-m 'not slow'"`
   (`tests/test_workspace_fast_run_default.py::test_the_real_workspace_runs_the_fast_run_by_default`).
+- aisland's own pytest settings live in `[tool.pytest.ini_options]` alone, never a `pytest.ini`: pytest reads a
+  `pytest.ini` INSTEAD of the table, while the scaffold (`jenkins.registers_slow_marker`) reads the table, so with
+  both the CI files split a run pytest never splits. A test moves to aisland's slow leg only when
+  `aisland tests report aisland` lists it
+  (`tests/test_workspace_fast_run_default.py::test_aislands_own_pytest_reads_the_table_that_registers_slow`).
 
 ## Doctor
 

@@ -146,6 +146,7 @@ def test_track_shows_the_commits_again_and_leaves_no_setting(ws: Path, monkeypat
     assert " M models" in _status(ws)
 
 
+@pytest.mark.slow
 def test_a_project_tracked_in_an_untracked_workspace_keeps_its_own_choice(
     ws: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

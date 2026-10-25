@@ -110,4 +110,8 @@ skip_glob = ["data/*"]
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 python_files = ["test_*.py"]
-norecursedirs = ["data", ".venv"]
+norecursedirs = ["data", ".venv", "tools", "bin"]
+# Plain `pytest` is the fast run, `pytest -m slow` the slow one (workspace rule "Two Test Runs"); a test moves to the
+# slow run when `aisland tests report aisland` lists it.
+addopts = "-m 'not slow'"
+markers = ["slow: never failed and among the slowest; left out of the fast run, run by CI's slow leg"]

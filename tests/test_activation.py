@@ -162,6 +162,7 @@ def test_reconcile_checks_out_the_active_empties_the_inactive_and_tells_git(ws: 
     assert _git(ws, "config", "--local", "submodule.extra.active") == "true"
 
 
+@pytest.mark.slow
 def test_switching_a_project_off_empties_its_folder_and_the_choice_survives_the_deinit(ws: Path) -> None:
     activation.set_machine_choice(ws, "models", False)
     activation.reconcile(ws)
@@ -172,6 +173,7 @@ def test_switching_a_project_off_empties_its_folder_and_the_choice_survives_the_
     assert (ws / "models" / "pyproject.toml").is_file()
 
 
+@pytest.mark.slow
 def test_a_folder_with_uncommitted_work_is_never_emptied(ws: Path, capsys: pytest.CaptureFixture[str]) -> None:
     (ws / "models" / "pyproject.toml").write_text("# edited\n")
     activation.set_machine_choice(ws, "models", False)
@@ -180,6 +182,7 @@ def test_a_folder_with_uncommitted_work_is_never_emptied(ws: Path, capsys: pytes
     assert "skip models: deinit refused" in capsys.readouterr().out
 
 
+@pytest.mark.slow
 def test_a_project_on_a_package_source_stays_empty_whatever_its_choice(
     ws: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -214,6 +217,7 @@ def test_the_listing_shows_the_optional_projects_and_this_machines_choices(at: P
     ]
 
 
+@pytest.mark.slow
 def test_set_machine_only_records_this_machines_choice_and_applies_it(at: Path) -> None:
     _configure("set", "models", "false", "--machine-only")
     assert activation.machine_choice(at, "models") is False
