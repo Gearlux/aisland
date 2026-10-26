@@ -29,6 +29,7 @@ from pathlib import Path
 from typing import Callable, List, Optional, Tuple
 
 import click
+from packaging.version import InvalidVersion, Version
 
 from aisland import tunnel, tunnel_connect
 from aisland.services.docker import DockerService
@@ -89,6 +90,12 @@ _VM_CA_REMEDY = (
 #: about ten seconds (measured 2026-10-13), so two minutes is an order of magnitude over a live build.
 #: A project that imports such an extension may clear a lock older than this before its import.
 _TORCH_LOCK_STALE_SECONDS = 120.0
+
+#: The first torch measured to build under an OS-level lock (`filelock`) instead of a lock file whose mere existence
+#: blocks: the kernel releases it when the builder dies, so a killed build blocks nothing, and the `lock` file stays
+#: behind after every build. Measured 2026-10-25: a build killed mid-compile left the next import waiting > 240 s on
+#: torch 2.13.0 and loading in 43 s on 2.14.1 (pytorch issue 189245). Not 2.14.0: it was not measured.
+_TORCH_OS_LOCK_SINCE = Version("2.14.1")
 
 
 @dataclass(frozen=True)
@@ -374,12 +381,25 @@ def _torch_extensions_root() -> Path:
 
 
 def _torch_build_locks(root: Path) -> List[Path]:
-    """Every build lock under the root — `<root>/<ext>/lock` with `TORCH_EXTENSIONS_DIR` set, else
-    `<root>/py<ver>_<accelerator>/<ext>/lock` — oldest first."""
+    """This venv's build locks, oldest first: `<root>/<ext>/lock` with `TORCH_EXTENSIONS_DIR` set, else
+    `<root>/py<this python>_<accelerator>/<ext>/lock`. Another Python's folder belongs to another venv, whose torch
+    (and so whether its lock can block) this doctor cannot see."""
     if not root.is_dir():
         return []
-    found = [path for pattern in ("*/lock", "*/*/lock") for path in root.glob(pattern) if path.is_file()]
+    if os.environ.get("TORCH_EXTENSIONS_DIR"):
+        pattern = "*/lock"
+    else:
+        pattern = f"py{sys.version_info.major}{sys.version_info.minor}_*/*/lock"
+    found = [path for path in root.glob(pattern) if path.is_file()]
     return sorted(found, key=lambda path: path.stat().st_mtime)
+
+
+def _torch_version() -> Optional[Version]:
+    """This venv's torch, from its installed metadata (torch is never imported here); None when it has none."""
+    try:
+        return Version(version("torch"))
+    except (PackageNotFoundError, InvalidVersion):
+        return None
 
 
 def check_torch_extension_lock() -> CheckResult:
@@ -392,7 +412,20 @@ def check_torch_extension_lock() -> CheckResult:
     annotation server's first tool-graph load, a class catalogue's helper process (2026-10-13: one lock
     hung every start for an afternoon, 8 s of CPU then nothing). A lock younger than the bound is a build
     that may still be running and is reported as such, not as a failure.
+
+    That is torch up to 2.13. From :data:`_TORCH_OS_LOCK_SINCE` torch builds under an OS lock that a killed process
+    releases, and leaves the `lock` file behind after every build: then a lock file is no failure, and the check
+    passes saying why. Only this venv's own folder is read (:func:`_torch_build_locks`).
     """
+    torch = _torch_version()
+    if torch is None:
+        return CheckResult("torch-ext-lock", True, "torch is not installed in this venv — it builds no extension")
+    if torch >= _TORCH_OS_LOCK_SINCE:
+        return CheckResult(
+            "torch-ext-lock",
+            True,
+            f"torch {torch} holds an OS lock while it builds — a killed build leaves no lock that blocks",
+        )
     root = _torch_extensions_root()
     locks = _torch_build_locks(root)
     if not locks:
@@ -410,7 +443,7 @@ def check_torch_extension_lock() -> CheckResult:
         "torch-ext-lock",
         False,
         f"a torch extension build lock is {age_minutes:.0f} min old with no build to hold it ({names}: {oldest}) — "
-        "every import that compiles that extension waits on it forever",
+        f"with torch {torch}, every import that compiles that extension waits on it forever",
         remedy,
     )
 

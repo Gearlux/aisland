@@ -14,11 +14,10 @@ tunnel. Nothing is exposed through the ingress and nothing listens on the box.
 
 ## On the remote machine: start the tunnel
 
-The machine needs no workspace and no checkout of its own: build the wheel on yours
-(`python -m pip wheel --no-deps -w dist ./aisland`, as in
-[Another workspace](../README.md#another-workspace-aisland-from-a-wheel-aisland-workspace-init)),
-copy that one file over and `pip install` it there — its three dependencies come from the index, or
-add them to the copy with `python -m pip wheel -w dist ./aisland` for a box with no index. Then:
+The machine needs no workspace and no checkout of its own: `pip install aisland` there is enough
+(its three dependencies come from the index). For a box with no index, download the wheels on a
+machine that has one (`python -m pip wheel aisland -w dist`), copy the `dist` folder over and
+`pip install --no-index --find-links dist aisland` there. Then:
 
 ```bash
 aisland tunnel start                              # name: $WORKSPACE, else this machine's hostname

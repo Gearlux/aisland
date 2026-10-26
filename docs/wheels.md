@@ -1,0 +1,290 @@
+# Wheels for another machine
+
+How to build, zip and install the wheels of a project that has to run on a machine without the workspace: `aisland wheels build`, `aisland wheels zip` and `aisland wheels install`.
+
+## Wheels for a project installed outside the workspace (`aisland wheels`)
+
+A project can be installed on a machine without the workspace only when everything it needs can
+be found there. The workspace projects on PyPI can be found; the others cannot. `aisland wheels`
+builds a wheel of each workspace project the named project needs that is not on PyPI, writes the
+wheels into that project's `wheels/` folder, and checks the projects it takes from PyPI against
+their local checkouts:
+
+```bash
+aisland wheels build app
+aisland wheels build app --include-published   # also the projects it needs that ARE on PyPI
+aisland wheels build app --all                 # every workspace project with a checkout here
+aisland wheels build app --include-project     # also app's own wheel: installs with no source
+aisland wheels build app --bundle              # also ONE wheel of app and what it needs
+aisland wheels build app --zip                 # also pack the folder into one zip
+aisland wheels build app --commit              # commit the folder in app
+aisland wheels build app --force               # build projects with uncommitted changes as they are
+aisland wheels build app --no-check            # build and write the wheels only, check nothing
+aisland wheels build app --json                # the same report as data
+aisland wheels app …                           # short for `aisland wheels build app …`
+```
+
+| Flag | Built | Installed by default |
+|---|---|---|
+| *(none)* | the projects it needs that are not on PyPI | all of them |
+| `--include-published` | every project it needs that has a checkout here — the commit, not the release | all of them |
+| `--all` | every workspace project that has a checkout here | the ones it needs |
+
+A project the flag covers that has no checkout on this machine is not built: the report says so
+(`Not built: viewer (no checkout here — taken from PyPI 0.2.0)`) and it comes from PyPI.
+
+`--include-project` builds the named project's own wheel too, beside any of the flags above. It
+follows the same rules as the others — built from the last commit, refused with uncommitted changes
+unless `--force` (its own `wheels/` folder does not count) — and the report lists it after the rest:
+
+```text
+app's own wheel (--include-project), installed in place of its folder:
+  app  0.5.0  dev/main <sha>
+```
+
+`install.py` then installs that wheel instead of the project's folder (which it would install editable), so the other machine needs no
+checkout of the project, and the zip installs from any folder. The empty-venv check installs and
+imports that same wheel.
+
+TAB completes the project: `aisland wheels build <TAB>` offers every project checked out here,
+`aisland wheels zip <TAB>` those that have a `wheels/wheels.yaml`, and `aisland wheels <TAB>` the
+commands, then the projects.
+
+What it printed for `app` (exit 0) — every workspace project it needs is on PyPI, so it built
+nothing and checked the PyPI half:
+
+```text
+app needs no workspace project that is not on PyPI; app/wheels holds no wheel.
+
+It takes 4 workspace projects from PyPI, compared with this checkout:
+  lib         PyPI 0.4.1    behind: 3 files differ (lib/__init__.py, lib/resolver.py, lib/scopes.py)
+  tools       PyPI 0.3.1    behind: 9 files differ (tools/__init__.py, tools/completion/cache.py, tools/completion/engine.py, …)
+  viewer      PyPI 0.2.1    up to date
+  models      PyPI 0.1.0a3  behind: 6 files differ (models/ops/__init__.py, models/ops/image.py, models/ops/predict.py, …)
+
+Installed app in an empty venv (its wheels + PyPI) and imported every module of its 1 package:
+  17 modules imported
+
+Not imported, missing what no workspace project ships (an optional extra's?):
+  app.server         ModuleNotFoundError: No module named 'extra'
+  app.visualisation  ModuleNotFoundError: No module named 'matplotlib'
+
+Behind, nothing breaks: lib, tools, models
+```
+
+- **Behind**: the wheel the local checkout builds differs from the one on PyPI, file by file. The
+  wheels were built from your checkouts, so they may use what no release has yet.
+- **Release first**: a module failed to import in an empty venv, and the module it missed
+  belongs to that project. Release it, then run `aisland wheels` again. Every module is
+  imported, not only the packages: a module no package's own import reaches is checked too.
+  Exit status 1 means the install failed, a package failed to import, or a module
+  missed a workspace project's module; 0 means none of that, even if some projects are behind.
+- **Not imported, missing what no workspace project ships**: a module below a package that
+  imported, missing something no workspace project ships — most often an optional extra's
+  dependency, which the empty venv does not install. It is listed and does not change the exit
+  status. Only a `ModuleNotFoundError` is listed here: any other error of such a module (say a
+  `TypeError` because PyPI's release of a dependency lacks a keyword) is a break once a project
+  is behind, printed with that project's name in parentheses and under "Release first".
+- **`--no-check`**: both checks are skipped, and the report puts two lines in their place:
+  ```text
+  It takes 4 workspace projects from PyPI, not compared (--no-check): lib 0.4.1, tools 0.3.1, viewer 0.2.1, models 0.1.0a3
+
+  Not checked (--no-check): app was not installed in an empty venv, so nothing says these wheels import.
+  ```
+  The JSON report says `"checked": false`.
+
+What `--include-published` printed for `app` (exit 0):
+
+```text
+app needs 4 workspace projects; 4 are built from this checkout into app/wheels (749 kB):
+  lib         0.4.1    dev/main b313e71  on PyPI 0.4.1
+  tools       0.3.1    dev/main e2e0e07  on PyPI 0.3.1
+  viewer      0.2.1    dev/main 5dcb106  on PyPI 0.2.1
+  models      0.1.0a3  dev/main 4ba5477  on PyPI 0.1.0a3
+
+It takes no workspace project from PyPI.
+
+Installed app in an empty venv (its wheels + PyPI) and imported every module of its 5 packages:
+  146 modules imported
+
+Not imported, missing what no workspace project ships (an optional extra's?):
+  app.server         ModuleNotFoundError: No module named 'extra'
+  app.visualisation  ModuleNotFoundError: No module named 'matplotlib'
+  models.keras        ModuleNotFoundError: No module named 'keras'
+  models.loaders      ImportError: models.loaders needs torch (it declares DataLoader slots) — install `models[torch]`.
+  models.ops.torch    ModuleNotFoundError: No module named 'torch'
+
+PyPI is up to date for app.
+```
+
+### Installing on the other machine: `wheels/install.py` and `wheels/wheels.yaml`
+
+Beside the wheels, `aisland wheels` writes `wheels.yaml` — each wheel, the commit it was built
+from, whether the project needs it, the version PyPI has, and `install:` — and `install.py`, one
+generic installer that reads it. `install:` is yours: set it to choose what installs; a rerun of
+`aisland wheels` keeps every value you set (a wheel no longer built drops out).
+
+```yaml
+  - wheel: "lib-0.4.0-py3-none-any.whl"
+    project: "lib"
+    commit: "dev/main 302e2ed"
+    needed: true
+    on_pypi: "0.4.0"
+    install: true
+```
+
+From the project's own folder (the folder's `README.md` says the same). With `--include-project`,
+`wheels.yaml` lists the project's own wheel last, `install: true`: the script installs it in place of
+`-e <project>`, and from any folder; set that `install:` to false to install the folder, editable,
+again. `--no-project` leaves out both.
+
+```bash
+python wheels/install.py                 # the wheels marked install: true, then the project, editable
+python wheels/install.py --all           # every wheel listed
+python wheels/install.py --needed        # the wheels the project needs
+python wheels/install.py --only lib,models
+python wheels/install.py --no-project    # the chosen wheels only
+python wheels/install.py --reinstall     # take rebuilt wheels that kept their version
+python wheels/install.py --dry-run       # print the command, run nothing
+python wheels/install.py --installer uv  # uv pip instead of pip
+python wheels/install.py -- --index-url https://…   # everything after -- goes to pip / uv
+```
+
+In an aisland workspace holding the project, `aisland setup` finds the folder's wheels by itself (the generated
+`uv.toml`'s `find-links`); the script is for an environment aisland does not manage.
+
+It installs into the interpreter that runs it, and installs PyYAML first when it is missing.
+It names each chosen wheel by its FILE. That is what makes a wheel built from a checkout win over
+PyPI's wheel of the same version: given only `--find-links wheels`, pip takes PyPI's
+models 0.1.0a2 and the module the checkout added is missing; named by its file, the
+checkout's is installed. The empty-venv check runs this same script.
+
+How each wheel is made, and what is refused:
+
+| Rule | Why |
+|---|---|
+| Each wheel is built from the project's last **commit**, never from its folder | A `build/lib` that setuptools leaves in a checkout puts files the project deleted long ago into the wheel |
+| A project with uncommitted changes is refused, naming its files — with `--all`, also one the project does not need | Its wheel would not contain them |
+| `--force` builds such a project from its files as they are instead — the files git tracks and the new ones it does not ignore, so an ignored `build/lib` still stays out; its commit reads `<sha>+uncommitted` in the report, `wheels.yaml` and the README, and the report lists its changed files | You ship work in progress knowingly, and the wheels say which ones no commit reproduces |
+| `--force` with `--commit` is refused before anything is built | A committed wheel must be one its commit reproduces |
+| `--no-check` builds and writes the folder as a checked run does, then compares nothing with PyPI and installs nothing in an empty venv; the report says so, and the exit status is 0 | A rebuild you do not need checked — the comparison downloads PyPI's wheels and the install needs the network — runs in the time the builds take |
+| `--no-check` with `--commit` is refused before anything is built | The folder is committed only once the install check passed |
+| An unreadable `wheels.yaml` stops the run at its line, before anything is built | Rewriting it would drop the `install:` values it holds |
+| A needed project that is not on PyPI and has no checkout here is refused | There is nothing to build it from; the message names `aisland workspace configure source set <project> local` |
+| "On PyPI" counts pre-releases | pip installs `models 0.1.0a2` when no final release exists — unlike `aisland jenkins scaffold`, which asks about final releases only |
+| A PyPI name owned by someone else is reported | pip takes the higher version of the two; the report says when that is theirs |
+| Every environment marker is followed | The wheels serve another machine, whose platform is not this one's |
+| The old `*.whl` in `wheels/` go, the folder's other files stay | A rebuild leaves no stale wheel behind |
+| A zip of an unchanged folder is the same file | Every member is written in name order with one fixed time |
+| An unchanged project rebuilds byte for byte | Its wheel carries its commit's time, so git sees no change |
+| The empty venv uses the project's own `uv.toml` when it has one | A private index it needs; the workspace's root `uv.toml` is never read |
+
+A rebuild keeps each wheel's version (an unreleased project stays at `0.1.0`), so an
+environment that already has the wheels takes new ones with `python wheels/install.py --reinstall`.
+
+### Git: the folder is ignored unless you ask to commit it
+
+Wheels are heavy, so every run writes `wheels/.gitignore` holding `*`: git, `git status` and a
+`git add -A` never see the folder. `--commit` is the one way in: the run writes `*.zip` there
+instead (the zip is never committed) and, once the empty-venv check passed, commits `wheels/` in the
+project itself — that folder only, whatever else is changed or staged:
+
+```text
+Committed app/wheels: <short SHA>    (git log: chore: wheels built with aisland wheels build app --all)
+Not committed: the install check failed     (the check failed: nothing is committed)
+Nothing new to commit in app/wheels  (a rebuild of unchanged commits)
+```
+
+A run without `--commit` that finds files of `wheels/` still tracked says so, with the command
+that stops tracking them (the files stay on disk):
+
+```text
+wheels/ is tracked in app (10 files); stop tracking it with: git -C app rm -r --cached wheels
+```
+
+### One zip to carry: `aisland wheels zip` and `aisland wheels install`
+
+```bash
+aisland wheels zip app            # → app/wheels/app-wheels.zip
+aisland wheels build app --zip    # the same, at the end of a build
+```
+
+The zip holds the folder (the wheels, `wheels.yaml`, `install.py`) and a `__main__.py`, so Python
+runs it. On the other machine — which has no aisland — from the project's folder:
+
+```bash
+python ~/Downloads/app-wheels.zip              # unpack into ./wheels, then run wheels/install.py
+python ~/Downloads/app-wheels.zip --dry-run    # every other argument goes to install.py
+python app-wheels.zip --into ../app --unpack-only
+```
+
+A zip built with `--include-project` carries the project's own wheel, so it also runs in a folder
+that holds no project — any folder without a `pyproject.toml` — and unpacks into its `./wheels`
+(`--into` names a folder, made when missing). There it refuses a `wheels/` holding another
+project's wheels. The report and `aisland wheels zip` say which kind they wrote:
+
+```text
+Zip: app/wheels/app-wheels.zip (…) — install it from any folder with: python app-wheels.zip
+```
+
+The `*.whl` already in `wheels/` are replaced; other files there stay. A folder whose
+`pyproject.toml` names another project is refused before anything is unpacked:
+
+```text
+app-wheels.zip: run it from the app folder, or name it with --into (…/pyproject.toml names viewer)
+```
+
+On a workspace machine the same zip installs into another environment with aisland
+(`aisland wheels --install ZIP --python PYTHON [--into DIR]` is the short form). The
+workspace's own `.venv` is refused: install.py installs with pip, and the workspace installs its
+projects through `aisland setup`.
+
+```bash
+aisland wheels install app-wheels.zip --python ~/envs/app/bin/python --into ../app
+aisland wheels install app-wheels.zip --python ~/envs/app/bin/python -- --dry-run
+```
+
+### One wheel: `--bundle`
+
+```bash
+aisland wheels build app --bundle                       # → app/wheels/bundle/app_bundle-<version>-py3-none-any.whl
+aisland wheels build app --include-published --bundle   # the projects on PyPI inside it too
+```
+
+`--bundle` merges the project and the wheels it needs into one wheel, `<project>-bundle`, that plain
+pip installs anywhere — no zip, no `install.py`, no checkout:
+
+```bash
+pip install app_bundle-0.1.0-py3-none-any.whl
+```
+
+The separate wheels and every other file in `wheels/` are written as without the flag; the bundle
+goes into `wheels/bundle/`, which the zip leaves out. It holds the wheels the project needs that the
+scope built (`--all`'s unneeded ones stay out); everything else it needs — outside packages, the
+workspace projects taken from PyPI — it requires, as the projects inside it do, so pip fetches
+them. The project's own extras are the bundle's: `pip install "./app_bundle-0.1.0-py3-none-any.whl[http]"`. The
+project is built from its last commit, as with `--include-project`. The run installs the bundle
+alone in an empty venv of its own and imports every module; a failure there exits 1 too:
+
+What `aisland wheels build app --include-published --bundle` printed:
+
+```text
+Bundle: app/wheels/bundle/app_bundle-0.1.0-py3-none-any.whl (852 kB) — 5 projects in one wheel (app, lib, tools, viewer, models); install it with: pip install app_bundle-0.1.0-py3-none-any.whl
+  Installed alone in an empty venv (it + PyPI): all 147 modules imported
+```
+
+A wheel holds ONE distribution, so pip knows only `app-bundle`:
+
+| On the other machine | Separate wheels | The bundle |
+|---|---|---|
+| `pip show lib` | `Version: 0.4.1` | `WARNING: Package(s) not found: lib` |
+| `lib.__version__`, `app.__version__` | `0.4.1`, `0.1.0` | `0.0.0.dev0`, `0.0.0.dev0` (each reads its own distribution's version) |
+| a later `pip install X`, X requiring `lib` | already satisfied | pip installs PyPI's lib over the bundle's copy |
+| `pip uninstall` | one project | all of them |
+
+The merge refuses what would install wrongly, naming it: a wheel that is not pure Python, one path
+with different contents in two wheels, one entry point name pointing at two objects, a requirement
+the bundled version does not satisfy, a project whose `dependencies` are dynamic.
+
+Why it is built this way: [`architecture.md`](architecture.md) → "A project installed outside the
+workspace gets its unpublished dependencies as wheels" and "`--bundle`: one wheel, one name".

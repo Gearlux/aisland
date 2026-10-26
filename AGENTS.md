@@ -1,7 +1,7 @@
 # Aisland Mandates
 
 Rules only. The reasons are in [`docs/architecture.md`](docs/architecture.md), cited by the
-short names below; usage is in the [README](README.md). Root `AGENTS.md` rules are not
+short names below; usage is in the [README](README.md) and its pages under `docs/`. Root `AGENTS.md` rules are not
 repeated here.
 
 Records: [sources] project sources · [folders] the generated workspace file · [frameworks] framework
@@ -227,6 +227,25 @@ start-time port pre-flight naming the PID is the only signal). All service state
     `::test_an_existing_repository_refuses_a_workspace_file_and_changes_nothing`,
     `::test_local_in_an_existing_repository_is_refused`).
 
+## User docs (`README.md`, `docs/`)
+
+- **The README is the PyPI page: a quickstart of about 170 lines** — install, a first workspace with its output,
+  configure, a common-tasks table and an index of every page — and each topic is a `docs/<topic>.md` (user choice
+  2026-10-25: the old 2,280-line README split into fifteen pages). A new topic adds its page and its README index row
+  in one change; a feature section never grows back into the README (`tests/test_docs.py::test_the_readme_is_a_short_quickstart`,
+  `::test_the_readme_indexes_every_page`).
+- The README links only absolutely (`https://github.com/Gearlux/aisland/blob/main/…`); a page links relatively, and
+  every link lands on a file and, with an anchor, on a heading of it
+  (`::test_every_link_in_the_readme_is_absolute_or_an_anchor_of_its_own`, `::test_every_link_of_a_page_lands_on_a_file_and_a_heading`).
+- A user page names no project of the workspace aisland is developed in, nor a company: examples use `acme`, `models`,
+  `tools`, `viewer`, `app`, `lib`; the tools aisland drives (liquifai's completion, loggair's log folder) keep their
+  names (`::test_a_user_page_names_no_project_of_the_workspace`; the list is `WORKSPACE_NAMES`). No dated
+  measurements or test references on a page; those belong in `docs/architecture.md` and here.
+- An example in `examples/` is a page's runnable twin, named on its page (`::test_every_example_is_shown_on_a_page`),
+  and touches only a temporary folder: from a checkout aisland works on the workspace it is checked out in whatever
+  the current folder, so a command that changes a workspace (`setup`, `configure … set`, `clean`) has no example
+  (`TASKS.md`). Each asserts what its page shows and runs in CI's Verify Examples.
+
 ## Supervisor and services
 
 - Never `Popen` a service, track it by PID file/`pgrep`, or kill it with a signal: register
@@ -286,7 +305,7 @@ start-time port pre-flight naming the PID is the only signal). All service state
 - macOS external volumes: Full Disk Access for the RESOLVED process-compose binary, then
   `aisland supervisor down && aisland services start --background`. Never "fix" it by moving
   `DATA_ROOT`, editing Jenkinsfiles or loosening volume ownership; diagnose with a live
-  `log stream`. (README "macOS: Full Disk Access for the supervisor")
+  `log stream`. (`docs/services.md` "macOS: Full Disk Access for the supervisor")
 - `aisland jenkins init` seeds a multibranch job per `Jenkinsfile`; `--local` seeds
   `<project>.local` with `Jenkinsfile.local` embedded.
 - Jenkins (and its plugin manager) runs on the Java its WAR accepts, by FULL path — never the
@@ -351,6 +370,12 @@ Root `AGENTS.md` "Two Test Runs" (user ruling 2026-10-05). [test-stats]
   - A probe that cannot run passes with a note. Never boot a VM; VM state comes from
     `DockerService.is_running()`.
   - Not a venv linter: `pip check`'s nominal lines are not breakage.
+- `torch-ext-lock` judges THIS venv's torch, read from its metadata (`_torch_version`, never an import): torch
+  >= `_TORCH_OS_LOCK_SINCE` (2.14.1, the first measured) builds under an OS lock a killed process releases and leaves
+  its `lock` file after every build, so the check passes saying so; an older torch fails on a lock older than two
+  minutes, and only in this Python's own folder (`py<ver>_*`) — another Python's folder is another venv's
+  (`tests/test_doctor_torch_extension_lock.py::TestATorchWhoseLockCannotBlock`,
+  `::test_another_pythons_folder_is_not_this_venvs`).
 - The `colima-tls` fix stays manual and doctor-guided (user ruling 2026-08-31, do not
   re-litigate). Never auto-install the network's CA or prompt for it.
 

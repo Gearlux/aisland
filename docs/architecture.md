@@ -1409,6 +1409,28 @@ CHECKS: Tuple[Callable[[], CheckResult], ...] = (
 
 ---
 
+### `torch-ext-lock` judges this venv's torch (2026-10-25)
+
+**Context.** The check failed on any `lock` older than two minutes in any Python's folder of torch's extension
+cache. torch up to 2.13 serialises a JIT build with `FileBaton`, a lock file whose existence blocks; torch 2.14
+holds `filelock`'s OS lock instead and leaves the file behind after every build. With the workspace's venv on
+2.14.1 the check failed on every healthy build — first on a `py312` lock another venv (also 2.14.1) had left.
+
+**Decision.** Read this venv's torch from its metadata. From 2.14.1 (the first version measured: a build killed
+mid-compile left the next import waiting over 240 s on 2.13.0 and loading in 43 s on 2.14.1) the check passes
+saying why; below it, it keeps its old rule, in this Python's own folder only.
+
+**Consequences.** No false alarm with a current torch; an old torch is still caught. A venv of another Python is
+not judged by this one's torch.
+
+**Example.**
+
+```
+✓ torch-ext-lock   torch 2.14.1 holds an OS lock while it builds — a killed build leaves no lock that blocks
+```
+
+**What you may change.** Lower `_TORCH_OS_LOCK_SINCE` to 2.14.0 once a 2.14.0 build is measured the same way.
+
 ## Every pytest run of a workspace project is recorded, and the split is read from the record
 
 *2026-10-05*
