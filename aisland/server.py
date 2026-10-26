@@ -173,11 +173,15 @@ def tool_editor_colors(part: str = "") -> Dict[str, Any]:
 
 def tool_editor_set_theme(name: str) -> Dict[str, Any]:
     """Show the workspace window in theme `name` (as `editor_themes` lists it, case ignored); this machine only,
-    every other window keeps the user's theme. Returns the window's choice."""
+    every other window keeps the user's theme. Returns the window's choice. On a machine without VS Code (a remote
+    one: its window's themes are the local VS Code's) `name` is kept as typed and a `note` says it is unchecked."""
     root = get_workspace_root()
-    editor.set_theme(root, name)
+    theme = editor.set_theme(root, name)
     manager.write_code_workspace(root)
-    return _choice(editor.read_choice(root))
+    choice = _choice(editor.read_choice(root))
+    if theme is not None and not theme.checked:
+        choice["note"] = editor.UNCHECKED_THEME
+    return choice
 
 
 def tool_editor_set_color(

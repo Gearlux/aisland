@@ -68,8 +68,17 @@ This workspace: background: navy (#000080), foreground: #e0e0e0, area: both
 ```
 
 A theme is named as `theme list` prints it (case ignored); the list is read
-from VS Code's own folder and `~/.vscode/extensions`, and is empty where VS
-Code is not installed — `theme set` is refused there. A colour is a CSS name
+from VS Code's own folder and `~/.vscode/extensions`. On a remote machine —
+one you open in a remote window, over SSH or a tunnel — VS Code is not
+installed and the themes are your local VS Code's: `theme list` says so, and
+`theme set` keeps the name as you typed it, unchecked:
+
+```text
+$ aisland workspace theme set "Monokai Pro"
+==> Theme: Monokai Pro (this machine only; not checked: VS Code is not on this machine, so the theme comes from the VS Code that opens this workspace remotely)
+```
+
+Run `aisland workspace theme list` on your local machine to see the names. A colour is a CSS name
 (`navy`, `dark slate blue`) or `#RGB`, `#RGBA`, `#RRGGBB`, `#RRGGBBAA`. The
 colours hold whatever the theme: they are written unscoped into
 `workbench.colorCustomizations`, which VS Code lays over the active theme.

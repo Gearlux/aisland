@@ -225,10 +225,14 @@ def test_theme_list_prints_name_kind_and_source_and_marks_this_workspaces(vscode
     assert re.fullmatch(r"  Monokai Pro Light +light +monokai\.theme-monokai-pro-vscode", lines[-2])
 
 
-def test_theme_list_prints_nothing_without_vs_code(no_vscode: None, repo: Path) -> None:
+def test_theme_list_without_vs_code_says_the_themes_are_the_local_vs_codes(no_vscode: None, repo: Path) -> None:
+    """A remote machine: VS Code's server ships no theme, the window shows the themes of the VS Code that opens it."""
     result = _run("theme", "list")
     assert result.exit_code == 0
-    assert result.output == ""
+    assert result.output == (
+        "No VS Code themes on this machine: a remote window shows your local VS Code's themes "
+        "(run aisland workspace theme list there).\n"
+    )
 
 
 # --- choosing a theme ---------------------------------------------------------------------
@@ -281,10 +285,30 @@ def test_an_unknown_theme_is_refused_naming_the_closest_and_nothing_is_kept(
     assert not manager.code_workspace_path(repo).exists()
 
 
-def test_a_theme_cannot_be_set_without_vs_code(no_vscode: None, repo: Path) -> None:
-    result = _run("theme", "set", "Solarized Dark")
+def test_without_vs_code_a_theme_is_kept_as_typed_and_unchecked(no_vscode: None, repo: Path) -> None:
+    """A remote machine: the theme lives in the local VS Code, which reads the workspace file's setting."""
+    result = _run("theme", "set", "Monokai Pro")
+    assert result.exit_code == 0, result.output
+    assert result.output.splitlines()[-1] == (
+        "==> Theme: Monokai Pro (this machine only; not checked: VS Code is not on this machine, "
+        "so the theme comes from the VS Code that opens this workspace remotely)"
+    )
+    assert _local_config(repo) == "aisland.editor.theme Monokai Pro\n"
+    assert _settings(repo)["workbench.colorTheme"] == "Monokai Pro"
+
+
+def test_where_vs_code_is_a_theme_is_still_checked(vscode: Dict[str, Path], repo: Path) -> None:
+    """Only a machine with no theme at all keeps a name unchecked: one with themes still refuses a typo."""
+    result = _run("theme", "set", "Monokai Pro Lite")
     assert result.exit_code == 1
-    assert result.output == "Error: VS Code is not installed on this machine: there is no theme to choose\n"
+    assert "(did you mean 'Monokai Pro Light'?)" in result.output
+    assert _local_config(repo) == ""
+
+
+def test_without_vs_code_an_empty_theme_name_is_refused(no_vscode: None, repo: Path) -> None:
+    result = _run("theme", "set", "  ")
+    assert result.exit_code == 1
+    assert result.output == "Error: a theme name cannot be empty\n"
     assert _local_config(repo) == ""
 
 

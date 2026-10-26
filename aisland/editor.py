@@ -7,7 +7,9 @@ stays every other window's theme) and lays ``workbench.colorCustomizations`` wri
 whichever theme is active, so the colours hold whatever the theme.
 
 The themes are read from VS Code's own extension folder and the user's installed extensions (each
-``package.json``'s ``contributes.themes``); without VS Code there is none.
+``package.json``'s ``contributes.themes``). Every desktop VS Code ships built-in themes; the VS Code server a remote
+window runs on this machine ships none, and a theme extension is installed beside the window, on the local machine. So
+a machine with no theme is one whose window comes from elsewhere: a name is kept there as typed, unchecked.
 """
 
 import difflib
@@ -81,6 +83,14 @@ INSTALL_FOLDERS: Tuple[Path, ...] = (
     Path("/snap/code/current/usr/share/code/resources/app/extensions"),
 )
 
+#: Said beside a theme kept unchecked on a machine without VS Code's themes.
+UNCHECKED_THEME = "not checked: VS Code is not on this machine, so the theme comes from the VS Code that opens this workspace remotely"
+#: What ``theme list`` prints on such a machine.
+NO_THEMES_HERE = (
+    "No VS Code themes on this machine: a remote window shows your local VS Code's themes "
+    "(run aisland workspace theme list there)."
+)
+
 _KEY_PREFIX = "aisland.editor."
 _HEX = re.compile(r"#(?:[0-9a-fA-F]{3,4}|[0-9a-fA-F]{6}|[0-9a-fA-F]{8})")
 
@@ -102,6 +112,15 @@ class Theme:
     name: str
     kind: ThemeKind
     source: str
+
+
+@dataclass(frozen=True)
+class ChosenTheme:
+    """The theme ``set_theme`` kept: its name as VS Code spells it, and whether it was checked against the themes
+    on this machine (not where there is none — a remote machine)."""
+
+    name: str
+    checked: bool
 
 
 @dataclass(frozen=True)
@@ -201,8 +220,6 @@ def list_themes() -> List[Theme]:
 
 def find_theme(typed: str, themes: Sequence[Theme]) -> Theme:
     """The theme named ``typed``, whatever its case; refused naming the closest when there is none."""
-    if not themes:
-        raise EditorChoiceError("VS Code is not installed on this machine: there is no theme to choose")
     by_folded = {theme.name.casefold(): theme for theme in themes}
     match = by_folded.get(typed.casefold())
     if match is not None:
@@ -295,12 +312,23 @@ def _store(workspace_root: Path, field: str, value: Optional[str]) -> None:
         _git_config(workspace_root, _KEY_PREFIX + field, value)
 
 
-def set_theme(workspace_root: Path, typed: Optional[str]) -> Optional[Theme]:
-    """Keep the theme ``typed`` names (``None`` forgets it); returns the theme, as VS Code spells it."""
+def set_theme(workspace_root: Path, typed: Optional[str]) -> Optional[ChosenTheme]:
+    """Keep the theme ``typed`` names (``None`` forgets it); returns it as VS Code spells it.
+
+    Checked against this machine's themes; a machine with none (a remote one, see the module) keeps it as typed.
+    """
     _require_repository(workspace_root)
-    theme = find_theme(typed, list_themes()) if typed is not None else None
-    _store(workspace_root, "theme", theme.name if theme else None)
-    return theme
+    chosen: Optional[ChosenTheme] = None
+    if typed is not None:
+        themes = list_themes()
+        if themes:
+            chosen = ChosenTheme(find_theme(typed, themes).name, checked=True)
+        elif typed.strip():
+            chosen = ChosenTheme(typed.strip(), checked=False)
+        else:
+            raise EditorChoiceError("a theme name cannot be empty")
+    _store(workspace_root, "theme", chosen.name if chosen else None)
+    return chosen
 
 
 def set_color(workspace_root: Path, role: ColorRole, typed: Optional[str], area: Optional[ColorArea] = None) -> None:

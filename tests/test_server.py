@@ -256,6 +256,20 @@ def test_editor_set_theme_writes_the_workspace_file_and_returns_the_choice(
     assert '"workbench.colorTheme": "Solarized Dark"' in manager.code_workspace_path(repo).read_text()
 
 
+def test_without_vs_code_editor_set_theme_keeps_the_name_and_says_it_is_unchecked(
+    no_vscode: None, repo: Path  # noqa: F811
+) -> None:
+    assert _call("editor_set_theme", {"name": "Monokai Pro"}) == {
+        "theme": "Monokai Pro",
+        "background": None,
+        "foreground": None,
+        "area": "frame",
+        "note": "not checked: VS Code is not on this machine, so the theme comes from the VS Code that opens this "
+        "workspace remotely",
+    }
+    assert '"workbench.colorTheme": "Monokai Pro"' in manager.code_workspace_path(repo).read_text()
+
+
 def test_an_unknown_theme_is_refused_with_the_commands_words(vscode: Dict[str, Path], repo: Path) -> None:  # noqa: F811
     assert "no installed VS Code theme is named 'Solarzed Dark' (did you mean 'Solarized Dark'?)" in _error(
         "editor_set_theme", {"name": "Solarzed Dark"}

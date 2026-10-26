@@ -476,10 +476,18 @@ Root `AGENTS.md` "Two Test Runs" (user ruling 2026-10-05). [test-stats]
     2026-10-21) live in `git config --local aisland.editor.*` ONLY — never `workspace.toml`, the template or any
     tracked file — and `write_code_workspace` lays them over the template's settings on every write. The colours
     are written unscoped in `workbench.colorCustomizations` (they hold whatever the theme); a theme is VS Code's
-    `id || label`; without VS Code nothing is listed and `theme set` is refused; an unreadable hand-edited value is
-    skipped with a warning, never a failed setup. [editor]
+    `id || label`; an unreadable hand-edited value is skipped with a warning, never a failed setup. [editor]
     (`tests/test_editor.py::test_the_choice_lives_in_git_config_local_and_in_no_committed_file`,
     `::test_every_later_rewrite_keeps_the_choice`, `::test_the_colours_hold_whatever_the_theme`)
+  - **A machine with no VS Code theme is a remote one: `theme set` keeps the name as typed, unchecked (user ruling
+    2026-10-26).** Every desktop VS Code ships built-in themes; the VS Code server of a remote window ships none, and
+    the window's themes are the local VS Code's. The command and the MCP tool's `note` say it is unchecked, `theme
+    list` says where the themes are; a machine with any theme still refuses an unknown name. Never detect "remote"
+    by an environment variable (an `aisland tunnel connect` shell has no `code`), and never ask the terminal's
+    `$VSCODE_IPC_HOOK_CLI` socket for themes: it lists the remote's extensions only.
+    (`tests/test_editor.py::test_without_vs_code_a_theme_is_kept_as_typed_and_unchecked`,
+    `::test_where_vs_code_is_a_theme_is_still_checked`,
+    `tests/test_server.py::test_without_vs_code_editor_set_theme_keeps_the_name_and_says_it_is_unchecked`)
 
 ## Project Sources Are Two-Layered
 

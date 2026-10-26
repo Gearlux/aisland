@@ -535,9 +535,11 @@ def theme_group() -> None:
 @theme_group.command("list")
 def theme_list() -> None:
     """The themes VS Code offers on this machine: name, kind, the extension that brings it; * marks the
-    workspace's. Nothing when VS Code is not installed."""
+    workspace's. Without VS Code here (a remote machine), a line saying the themes are your local VS Code's."""
     chosen = editor.read_choice(_editor_root()).theme
     themes = editor.list_themes()
+    if not themes:
+        click.echo(editor.NO_THEMES_HERE)
     width = max((len(t.name) for t in themes), default=0)
     kind_width = max((len(t.kind) for t in themes), default=0)
     for t in themes:
@@ -548,11 +550,17 @@ def theme_list() -> None:
 @theme_group.command("set")
 @click.argument("name", shell_complete=_complete_themes)
 def theme_set(name: str) -> None:
-    """Show the workspace window in theme NAME (as `aisland workspace theme list` prints it, case ignored)."""
+    """Show the workspace window in theme NAME (as `aisland workspace theme list` prints it, case ignored).
+
+    On a machine without VS Code (a remote one: its window's themes are your local VS Code's) NAME is kept as
+    typed, unchecked."""
     root = _editor_root()
     theme = editor.set_theme(root, name)
     manager.write_code_workspace(root)
-    click.echo(f"==> Theme: {theme.name if theme else name} (this machine only)")
+    if theme is None or theme.checked:
+        click.echo(f"==> Theme: {theme.name if theme else name} (this machine only)")
+    else:
+        click.echo(f"==> Theme: {theme.name} (this machine only; {editor.UNCHECKED_THEME})")
 
 
 @theme_group.command("unset")
