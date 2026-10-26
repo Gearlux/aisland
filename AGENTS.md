@@ -459,7 +459,11 @@ Root `AGENTS.md` "Two Test Runs" (user ruling 2026-10-05). [test-stats]
   uv reads only a file of its own settings. [config]
 - `<workspace>.code-workspace` is GENERATED and gitignored (user choice 2026-10-18), written by
   `manager.write_code_workspace` on every `aisland setup` and `aisland workspace configure source set|unset`
-  (`--machine-only` included). Folders: the workspace, each project with a checkout in
+  (`--machine-only` included). **Each of setup's two editor-and-shell steps also runs alone (user request
+  2026-10-26):** `aisland workspace code-workspace` (that function; an unchanged file → `is up to date`) and
+  `aisland workspace bashrc` (`manager._link_project_bashrc`; a correct link → `already links to`, a regular file in
+  its place → one `Error:` line, untouched) — the commands call setup's own functions, never a second writer
+  (`tests/test_workspace_files_commands.py`). Folders: the workspace, each project with a checkout in
   dependency order (sorted by folder name first), then loggair's log folder when it exists.
   Settings and extensions come from `aisland/aisland/code-workspace.json` (strict JSON, no `folders`, no
   `python.analysis.extraPaths`): a shared setting changes there, never in the file. The template is

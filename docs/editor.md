@@ -41,6 +41,29 @@ included. The settings and extension recommendations come from
 in VS Code at *Workspace* scope is gone at the next setup — put a personal one
 in your *User* settings.
 
+### One file alone (`aisland workspace code-workspace|bashrc`)
+
+Each of setup's two editor-and-shell steps runs alone, without the rest of setup:
+
+```bash
+aisland workspace code-workspace   # writes acme.code-workspace
+aisland workspace bashrc           # links project.bashrc to aisland's copy
+```
+
+```text
+$ aisland workspace code-workspace
+==> Wrote acme.code-workspace (4 folders)
+$ aisland workspace code-workspace
+==> acme.code-workspace is up to date
+$ aisland workspace bashrc
+==> project.bashrc already links to aisland/project.bashrc
+```
+
+An unchanged workspace file is left as it is, so VS Code does not reload it. `project.bashrc` is a link to the copy
+aisland owns (`aisland/project.bashrc` in a checkout, `.aisland/project.bashrc` from a wheel); a link pointing
+elsewhere is replaced, and a regular file in its place is refused, since it may hold your own lines — those belong in
+`user.bashrc`, which `project.bashrc` sources last.
+
 ### This machine's theme and colours (`aisland workspace theme|color`)
 
 The workspace window can have its own theme and its own background and

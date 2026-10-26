@@ -1,4 +1,5 @@
 import json
+import os
 from pathlib import Path
 from typing import Callable, Dict, List, Optional, Tuple
 
@@ -639,6 +640,38 @@ def color_unset(role: Optional[editor.ColorRole]) -> None:
         editor.set_color(root, role, None)
     manager.write_code_workspace(root)
     click.echo(f"==> {role.capitalize() if role else 'Background and foreground'}: the theme's")
+
+
+@workspace_group.command("bashrc")
+def workspace_bashrc() -> None:
+    """Link the workspace's project.bashrc to aisland's copy — the step `aisland setup` takes, alone.
+
+    A real file in its place is refused (it may hold your own lines: put them in user.bashrc); a link pointing
+    elsewhere is replaced.
+    """
+    root = _editor_root()
+    link = root / "project.bashrc"
+    if link.exists() and not link.is_symlink():
+        raise click.ClickException(
+            f"{link} is a regular file, not a link — move your lines to {root / 'user.bashrc'}, delete it, "
+            "and run `aisland workspace bashrc` again"
+        )
+    before = os.readlink(link) if link.is_symlink() else None
+    manager._link_project_bashrc(root)
+    if before is not None and os.readlink(link) == before:
+        click.echo(f"==> {link.name} already links to {before}")
+
+
+@workspace_group.command("code-workspace")
+def workspace_code_workspace() -> None:
+    """Write the workspace's VS Code file, <workspace>.code-workspace — the step `aisland setup` takes, alone.
+
+    Its folders follow what is checked out here, its settings the template, its theme and colours this machine's
+    choice (`aisland workspace theme|color`). An unchanged file is left as it is, so VS Code does not reload.
+    """
+    root = _editor_root()
+    if manager.write_code_workspace(root) is None:
+        click.echo(f"==> {manager.code_workspace_path(root).name} is up to date")
 
 
 # --- Notebook Commands ---
