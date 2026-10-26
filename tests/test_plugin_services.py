@@ -312,3 +312,25 @@ def test_an_option_aisland_cannot_offer_is_refused_naming_the_entry_point(
     assert result.output == (
         f"Error: {workspace / 'acme' / 'pyproject.toml'}:6: plugin 'acme-db' (acme_plugin:Database): {message}\n"
     )
+
+
+def test_reset_asks_the_classs_own_question(workspace: Path, supervised: List[Dict[str, Any]]) -> None:
+    """A class whose reset wipes no data says what it removes; aisland asks that, not "wipe its data"."""
+    _module(
+        VIEWER.replace(
+            "    supervised = False\n",
+            '    supervised = False\n    reset_question = "Remove the viewer\'s image? (recordings are kept)"\n'
+            "\n    def reset(self, ctx):\n        SEEN.append('reset')\n",
+        )
+    )
+    result = _run("acme-db", "reset", input="y\n")
+    assert result.exit_code == 0, result.output
+    assert result.output.startswith("Remove the viewer's image? (recordings are kept) [y/N]: y\n")
+    assert _seen() == ["reset"]
+
+
+def test_without_a_question_of_its_own_reset_asks_aislands(workspace: Path, supervised: List[Dict[str, Any]]) -> None:
+    result = _run("acme-db", "reset", input="n\n")
+    assert result.exit_code == 1
+    assert result.output.startswith("Stop acme-db and wipe its data? [y/N]: n\n")
+    assert supervised == []

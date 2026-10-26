@@ -438,7 +438,10 @@ def unset_selection(root: Path, axis: Axis, machine_only: bool) -> int:
 def add_command(root: Path, name: str, value: str) -> str:
     """The command that adds ``value`` to selection ``name``, keeping what this machine has chosen — ``set`` takes
     the WHOLE list, so naming only the missing one would drop the rest."""
-    current = effective(root, name) or []
+    current = effective(root, name)
+    if current is None:
+        # An `extras` never chosen installs each project's `dev` (`editable_target`): keep it, or it goes.
+        current = ["dev"] if name == EXTRAS.name else []
     return " ".join(["aisland workspace configure", name, "set", *current, *([] if value in current else [value])])
 
 

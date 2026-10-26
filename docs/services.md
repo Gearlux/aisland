@@ -1,17 +1,18 @@
 # Services
 
-The services aisland runs for a workspace — Jenkins, MLflow, Label Studio, IQEngine, Docker and, on macOS, the
-SwiftBar menu — with the supervisor that keeps them running and the commands that start, stop and inspect each. A
-project of the workspace can bring more (Aim and ClearML below are an example); they run the same way.
+The services aisland runs for a workspace — Jenkins, MLflow, Docker and, on macOS, the SwiftBar menu — with the
+supervisor that keeps them running and the commands that start, stop and inspect each. A project of the workspace can
+bring more (Label Studio, IQEngine, Aim and ClearML below are examples); they run the same way, and start only when
+named.
 
 ## Default Ports
 
 | Service       | Port | URL                        |
 |---------------|------|----------------------------|
 | Jenkins       | 9080 | http://localhost:9080      |
-| Label Studio  | 9081 | http://localhost:9081      |
 | MLflow        | 5005 | http://localhost:5005      |
-| IQEngine      | 3000 | http://localhost:3000      |
+| Label Studio (a project's)  | 9081 | http://localhost:9081      |
+| IQEngine (a project's)      | 3000 | http://localhost:3000      |
 | Aim (a project's)           | 43800 | http://localhost:43800    |
 | ClearML web (a project's)   | 8080 | http://localhost:8080      |
 
@@ -317,7 +318,12 @@ the shared set (`~/data -> /Volumes/Store`) is not enough on its own: the VM see
 itself and resolves it against *its* tree (`colima ssh -- readlink ~/data` → `/Volumes/Store/`),
 so the real target must be shared — `--mount` resolves symlinks for exactly that reason.
 
-## Manage Label Studio
+## Label Studio (`aisland labelstudio`)
+
+`aisland labelstudio` exists while a project of the workspace brings Label Studio as a service class; aisland itself
+ships none. Label Studio is that project's extra, installed only when named: without it, `start` prints the command
+that adds it to the `extras` selection, keeping the extras already chosen.
+
 ```bash
 # Start Label Studio (foreground)
 aisland labelstudio start
@@ -331,7 +337,7 @@ aisland labelstudio status
 ```
 Default: [http://localhost:9081](http://localhost:9081)
 
-**Credentials — the workspace `.env` is the single source of truth.** On every start, aisland resolves each credential as *explicit CLI flag → existing `.env` value → derived default*, and writes the result back to the workspace `.env`:
+**Credentials — the workspace `.env` is the single source of truth.** On every start, the service resolves each credential as *explicit CLI flag → existing `.env` value → derived default*, and writes the result back to the workspace `.env`:
 
 | `.env` key | Default | Purpose |
 |---|---|---|
@@ -345,9 +351,12 @@ To change a credential, edit `.env` and restart (`aisland labelstudio stop && ai
 
 ## IQEngine SigMF viewer (`aisland iqengine`)
 
+`aisland iqengine` exists while a project of the workspace brings IQEngine as a service class; aisland itself ships
+none.
+
 [IQEngine](https://github.com/IQEngine/IQEngine) is a web viewer for SigMF recordings — the
 recording table with annotation counts, and a spectrogram with the annotation boxes drawn on it.
-aisland runs it as **one container over a local directory**: the image is pinned by version *and*
+It runs as **one container over a local directory**: the image is pinned by version *and*
 digest (Docker checks it; `:latest` on ghcr is a 2023 build and `:pre` moves), the directory is
 bind-mounted **read-only** at the path upstream documents, and there is no database — the index
 is rebuilt from the directory at every start.
@@ -357,7 +366,7 @@ aisland docker start                                            # a Docker daemo
 aisland iqengine start --recordings "$DATA_ROOT/my-sigmf"        # remembered as IQENGINE_RECORDINGS in .env
 aisland iqengine start                                          # next time: same directory
 aisland iqengine status | info | stop                           # stop removes the container, keeps the files
-aisland iqengine reset                                          # also drops the pinned image (re-pulled on start)
+aisland iqengine reset                                          # drops the container and the pinned image, never the files
 ```
 
 Then open http://localhost:3000 → **Local to Backend** → click a recording → **Spectrogram**;

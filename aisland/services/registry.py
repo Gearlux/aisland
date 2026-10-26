@@ -15,14 +15,12 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from functools import partial
 from pathlib import Path
-from typing import Any, Callable, Collection, List, Mapping, Protocol, Sequence, Tuple
+from typing import Any, Callable, Collection, List, Mapping, Optional, Protocol, Sequence, Tuple
 
 import click
 
 from aisland.services.docker import DockerService
-from aisland.services.iqengine import IQEngineService
 from aisland.services.jenkins import JenkinsService
-from aisland.services.labelstudio import LabelStudioService
 from aisland.services.mlflow import MLflowService
 from aisland.services.swiftbar import SwiftBarService
 
@@ -64,15 +62,15 @@ class Entry:
     takes_port: bool = False
     #: A project's class's own options, by name, with their help (offered on its start and restart).
     options: Mapping[str, str] = field(default_factory=dict)
+    #: What `aisland <name> reset` asks first, when a project's class says (its reset wipes no data); else aisland's.
+    reset_question: Optional[str] = None
 
 
 ENTRIES: Tuple[Entry, ...] = (
     Entry("docker", DockerService, by_default=True, takes_background=False),
     Entry("jenkins", JenkinsService, by_default=True, takes_background=True),
     Entry("mlflow", MLflowService, by_default=True, takes_background=True),
-    Entry("labelstudio", LabelStudioService, by_default=True, takes_background=True),
     Entry("swiftbar", SwiftBarService, by_default=True, takes_background=False),
-    Entry("iqengine", IQEngineService, by_default=False, takes_background=True),
 )
 
 
@@ -117,6 +115,7 @@ def declared(root: Path, reserved: Collection[str] = ()) -> List[Entry]:
                 takes_background=True,
                 takes_port=True,
                 options=dict(getattr(loaded.obj, "options", {})),
+                reset_question=getattr(loaded.obj, "reset_question", None),
             )
         )
     return entries

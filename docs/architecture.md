@@ -3338,3 +3338,19 @@ Docker's, so its `info` stands alone), and the context gives `workspace_name`, `
 login it wrote) and `choose_command(selection, name)` — the command that adds a tracker keeping the ones chosen, so
 the "not installed" message is word for word aisland's. aisland keeps Jenkins, MLflow, Label Studio, Docker,
 SwiftBar and IQEngine.
+
+**Amendment (2026-10-26): Label Studio moves to annotaide, IQEngine to the signal project that reads SigMF.** aisland now keeps Jenkins,
+MLflow, Docker and SwiftBar alone. Label Studio is annotaide's `labelstudio` extra, installed only when named (it
+pins its own Django); its class asks git for the default user itself, so the context did not grow. IQEngine runs
+under Docker (`supervised = False`) with its own `stop`/`status`/`reset`, and its reset wipes no data — so a class
+may name the question `aisland <name> reset` asks first (`reset_question`), which `registry.declared` carries onto
+the entry. Adding to an `extras` selection never chosen keeps `dev` in the command (`selection.add_command`): unset,
+it installs each project's `dev`, and `set labelstudio` alone would have dropped it.
+
+```python
+class IQEngine:                      # the signal project's — no aisland import
+    kind = "service"
+    supervised = False
+    options = {"recordings": "Directory of SigMF recordings to serve …"}
+    reset_question = f"Remove the IQEngine container and the {image_ref()} image? (recordings are kept)"
+```

@@ -2,12 +2,13 @@
 
 The list is `aisland/services/registry.py`, in start order. With no name, `status` and `info` cover every service;
 `start`, `stop`, `restart` and `reset` cover the services started by default (the container engine, Jenkins, MLflow,
-Label Studio, SwiftBar), stopping in the reverse order so the container engine goes last. A name no
+SwiftBar), stopping in the reverse order so the container engine goes last. A name no
 service has is refused before anything happens.
 """
 
 from __future__ import annotations
 
+from pathlib import Path
 from typing import List, Tuple
 
 import pytest
@@ -127,17 +128,22 @@ def test_the_list_holds_every_service_aisland_ships_once() -> None:
         "docker",
         "jenkins",
         "mlflow",
-        "labelstudio",
         "swiftbar",
-        "iqengine",
     ]
     assert [entry.name for entry in registry.ENTRIES if entry.by_default] == [
         "docker",
         "jenkins",
         "mlflow",
-        "labelstudio",
         "swiftbar",
     ]
+
+
+@pytest.mark.parametrize("name", ["labelstudio", "iqengine", "fiftyone", "aim", "clearml"])
+def test_a_service_a_project_brings_is_not_aislands_own(name: str) -> None:
+    """Label Studio is annotaide's, IQEngine the signal project's, FiftyOne curaitor's, Aim and ClearML the
+    trainer's: each is offered while its project is installed, and gone with it."""
+    assert name not in {entry.name for entry in registry.ENTRIES}
+    assert not (Path(registry.__file__).parent / f"{name}.py").exists()
 
 
 def test_each_entry_builds_the_service_of_its_name() -> None:

@@ -24,11 +24,7 @@ from aisland.manager import (
 from aisland.pytest_stats import DEFAULT_WINDOW_DAYS
 from aisland.services import registry as service_registry
 from aisland.services.docker import DockerService
-from aisland.services.iqengine import DEFAULT_PORT as IQENGINE_PORT
-from aisland.services.iqengine import RECORDINGS_ENV_KEY as IQENGINE_RECORDINGS_KEY
-from aisland.services.iqengine import IQEngineService
 from aisland.services.jenkins import JenkinsService
-from aisland.services.labelstudio import LabelStudioService
 from aisland.services.mlflow import MLflowService
 from aisland.services.swiftbar import SwiftBarService
 
@@ -153,7 +149,7 @@ def _declared_service_group(entry: "service_registry.Entry") -> click.Group:
         entry.make().info()
 
     @group.command(name="reset")
-    @click.confirmation_option(prompt=f"Stop {entry.name} and wipe its data?")
+    @click.confirmation_option(prompt=entry.reset_question or f"Stop {entry.name} and wipe its data?")
     def reset() -> None:
         """Stop it and wipe its data."""
         entry.make().reset()
@@ -754,9 +750,9 @@ def clean(project: str, keep_days: int, dry_run: bool, yes: bool) -> None:
     there is no `--all`, and the workspace root is refused.
 
     \b
-    aisland clean sonair --dry-run     # what would move, and which backups expire
-    aisland clean sonair               # move it, after confirming
-    aisland clean sonair --keep-days 1 # sweep harder on a full disk
+    aisland clean models --dry-run     # what would move, and which backups expire
+    aisland clean models               # move it, after confirming
+    aisland clean models --keep-days 1 # sweep harder on a full disk
     """
     from aisland.clean import clean_project
 
@@ -840,10 +836,10 @@ def backups_restore(
     (exit 1) unless `--force` replaces it.
 
     \b
-    aisland backups restore sonair                       # the most recent backup, whole
-    aisland backups restore sonair --stamp 20260804-164945
-    aisland backups restore sonair --entry checkpoints   # just this one, repeatable
-    aisland backups restore sonair --force               # overwrite what came back on its own
+    aisland backups restore models                       # the most recent backup, whole
+    aisland backups restore models --stamp 20260804-164945
+    aisland backups restore models --entry checkpoints   # just this one, repeatable
+    aisland backups restore models --force               # overwrite what came back on its own
     """
     from aisland.clean import restore_backup
 
@@ -879,9 +875,9 @@ def tests_report(project: str, days: int, as_json: bool) -> None:
     test that failed is listed for the fast run.
 
     \b
-    aisland tests report streamstudio
-    aisland tests report navigaitor --days 90
-    aisland tests report raidar --json
+    aisland tests report models
+    aisland tests report models --days 90
+    aisland tests report models --json
     """
     if not (pytest_stats.WORKSPACE_ROOT / project / "pyproject.toml").is_file():
         raise click.BadParameter(
@@ -1066,13 +1062,13 @@ def wheels_build(
     the folder unless --commit, which commits it in PROJECT when the check passed.
 
     \b
-    aisland wheels build navigaitor
-    aisland wheels build navigaitor --include-published --zip
-    aisland wheels build navigaitor --include-project --zip
-    aisland wheels build navigaitor --include-published --bundle
-    aisland wheels build navigaitor --all --commit --json
-    aisland wheels build navigaitor --all --force --zip
-    aisland wheels build navigaitor --all --zip --no-check
+    aisland wheels build models
+    aisland wheels build models --include-published --zip
+    aisland wheels build models --include-project --zip
+    aisland wheels build models --include-published --bundle
+    aisland wheels build models --all --commit --json
+    aisland wheels build models --all --force --zip
+    aisland wheels build models --all --zip --no-check
     """
     scope: wheels.WheelsScope = "all" if include_all else "needed" if include_published else "unpublished"
     report = wheels.vendor_wheels(
@@ -1124,8 +1120,8 @@ def wheels_install(zip_path: Path, python: Path, into: Optional[Path], rest: Tup
     """Unpack ZIP into the project's wheels/ and run its install.py with PYTHON; REST goes to install.py.
 
     \b
-    aisland wheels install navigaitor-wheels.zip --python ~/envs/navigaitor/bin/python
-    aisland wheels install navigaitor-wheels.zip --python ~/envs/navigaitor/bin/python -- --dry-run
+    aisland wheels install models-wheels.zip --python ~/envs/models/bin/python
+    aisland wheels install models-wheels.zip --python ~/envs/models/bin/python -- --dry-run
     """
     status = wheels.install_zip(zip_path, python, into or Path.cwd(), list(rest), workspace_root=get_workspace_root())
     raise SystemExit(status)
@@ -1347,168 +1343,6 @@ def mlflow_ui(db_file: str, port: int) -> None:
     MLflowService().ui(db_path=db_file, port=port)
 
 
-# --- IQEngine Commands ---
-
-
-@main.group()
-def iqengine() -> None:
-    """Run the IQEngine SigMF viewer over a local directory of recordings.
-
-    One pinned container (image digest checked by Docker), the directory bind-mounted
-    READ-ONLY at the path upstream documents, no database (the index is rebuilt from the
-    directory at every start). Open http://localhost:3000 -> "Local to Backend" to browse the
-    recordings, their annotation counts, and the spectrogram with the annotation boxes drawn.
-
-    Every `.sigmf-meta` needs its `<name>.sigmf-data` beside it — IQEngine skips the rest —
-    and the Docker VM must share the directory (`aisland docker start --mount DIR`); `start`
-    diagnoses both instead of showing an empty table. Requires a running Docker daemon
-    (`aisland docker start`).
-    """
-    pass
-
-
-@iqengine.command(name="start")
-@click.option(
-    "--recordings",
-    default=None,
-    metavar="DIR",
-    help=f"Directory of SigMF recordings to serve (default: ${IQENGINE_RECORDINGS_KEY} from .env, "
-    "else aisland/data/iqengine/recordings). Remembered in .env.",
-)
-@click.option("--port", default=IQENGINE_PORT, show_default=True, help="Host port for the IQEngine web UI.")
-def iqengine_start(recordings: Optional[str], port: int) -> None:
-    """Start the viewer (detached) over a recordings directory."""
-    IQEngineService().launch(recordings=recordings, port=port)
-
-
-@iqengine.command(name="stop")
-def iqengine_stop() -> None:
-    """Stop and remove the viewer container (the recordings are untouched)."""
-    IQEngineService().stop()
-
-
-@iqengine.command(name="status")
-def iqengine_status() -> None:
-    """Show whether the viewer container is running."""
-    IQEngineService().status()
-
-
-@iqengine.command(name="info")
-def iqengine_info() -> None:
-    """Show the pinned image, the served directory and the URL."""
-    IQEngineService().info()
-
-
-@iqengine.command(name="reset")
-def iqengine_reset() -> None:
-    """Remove the container and the pinned image (re-pulled on next start); keeps the recordings."""
-    IQEngineService().reset()
-
-
-# --- Label Studio Commands ---
-
-
-@main.group()
-def labelstudio() -> None:
-    """Manage local Label Studio annotation server."""
-    pass
-
-
-@labelstudio.command(name="start")
-@click.option("--port", default=9081, help="HTTP port for Label Studio.")
-@click.option("--background", "-b", is_flag=True, help="Run in background.")
-@click.option(
-    "--username",
-    default=None,
-    help="Username for default user (defaults to git email).",
-)
-@click.option(
-    "--password",
-    default=None,
-    help="Password for default user (defaults to workspace name).",
-)
-@click.option(
-    "--token",
-    default=None,
-    help="User token for API access (defaults to <workspace>_token_<hex>).",
-)
-def labelstudio_start(
-    port: int,
-    background: bool,
-    username: Optional[str],
-    password: Optional[str],
-    token: Optional[str],
-) -> None:
-    """Start Label Studio."""
-    LabelStudioService().launch(
-        port=port,
-        background=background,
-        username=username,
-        password=password,
-        user_token=token,
-    )
-
-
-@labelstudio.command(name="stop")
-def labelstudio_stop() -> None:
-    """Stop Label Studio."""
-    LabelStudioService().stop()
-
-
-@labelstudio.command(name="status")
-def labelstudio_status() -> None:
-    """Show Label Studio status."""
-    LabelStudioService().status()
-
-
-@labelstudio.command(name="info")
-def labelstudio_info() -> None:
-    """Show detailed Label Studio configuration (URL, credentials, API token)."""
-    LabelStudioService().info()
-
-
-@labelstudio.command(name="restart")
-@click.option("--port", default=9081, help="HTTP port for Label Studio.")
-@click.option("--background", "-b", is_flag=True, help="Run in background.")
-@click.option(
-    "--username",
-    default=None,
-    help="Username for default user (defaults to git email).",
-)
-@click.option(
-    "--password",
-    default=None,
-    help="Password for default user (defaults to workspace name).",
-)
-@click.option(
-    "--token",
-    default=None,
-    help="User token for API access (defaults to <workspace>_token_<hex>).",
-)
-def labelstudio_restart(
-    port: int,
-    background: bool,
-    username: Optional[str],
-    password: Optional[str],
-    token: Optional[str],
-) -> None:
-    """Restart Label Studio."""
-    LabelStudioService().restart(
-        port=port,
-        background=background,
-        username=username,
-        password=password,
-        user_token=token,
-    )
-
-
-@labelstudio.command(name="reset")
-@click.confirmation_option(prompt="Are you sure you want to wipe all Label Studio data?")
-def labelstudio_reset() -> None:
-    """Stop Label Studio and wipe all its data."""
-    LabelStudioService().reset()
-
-
 # --- SwiftBar Commands ---
 
 
@@ -1569,7 +1403,7 @@ def services(ctx: click.Context) -> None:
     """Every aisland service at once, or the ones named. Alone: the supervisor and each service's state.
 
     With no name, start/stop/restart/reset act on the services started by default (docker, jenkins, mlflow,
-    labelstudio, swiftbar); status and info cover every service. Each service also has its own group
+    swiftbar); status and info cover every service. Each service also has its own group
     (`aisland mlflow start --port 5006`).
 
     \b
@@ -2011,9 +1845,9 @@ def check(arg1: Optional[str], arg2: Optional[str]) -> None:
     """
     Run quality gates.
     aisland check                 -> All projects, all tools
-    aisland check confluid         -> All tools for confluid
+    aisland check models          -> All tools for models
     aisland check pytest          -> pytest for all projects
-    aisland check pytest confluid -> pytest for confluid
+    aisland check pytest models   -> pytest for models
     """
     run_quality_gates(arg1=arg1, arg2=arg2)
 

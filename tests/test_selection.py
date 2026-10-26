@@ -547,6 +547,19 @@ def test_a_missing_tracker_names_the_command_that_adds_it_to_the_chosen_ones(
     assert caught.value.message.endswith(f"      {command} --machine-only")
 
 
+def test_adding_an_extra_to_an_unset_selection_keeps_the_dev_extras_it_installs(workspace: Path) -> None:
+    """An `extras` never chosen installs each project's `dev`; the command that adds one more must keep it, or every
+    project's tools go at the next setup."""
+    assert s.effective(workspace, "extras") is None
+    assert s.add_command(workspace, "extras", "labelstudio") == "aisland workspace configure extras set dev labelstudio"
+    s.write_committed(workspace, "extras", ["vision"])
+    assert (
+        s.add_command(workspace, "extras", "labelstudio") == "aisland workspace configure extras set vision labelstudio"
+    )
+    s.write_committed(workspace, "extras", None)
+    assert s.add_command(workspace, "tracker", "aim") == "aisland workspace configure tracker set aim"
+
+
 # --- CI reads the committed layer only ----------------------------------------------------------------------------
 
 
