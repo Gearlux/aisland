@@ -4,7 +4,9 @@ The README is what PyPI shows, where a relative link resolves nowhere, so every 
 under ``docs/`` link each other relatively, and every link must land on a file and, with an anchor, on a heading
 of it. A user page names no project of the workspace aisland is developed in — those mean nothing to a reader of
 the package — but the tools aisland itself drives (process-compose, Jenkins, liquifai's completion, loggair's log
-folder) keep their names. ``docs/architecture.md`` is the decision record, not a user page.
+folder) keep their names. ``docs/architecture.md`` is the decision record, not a user page. The same holds for
+what the installed package shows: every command's ``--help`` and the usage text of the zip ``aisland wheels zip``
+writes.
 """
 
 from __future__ import annotations
@@ -13,7 +15,11 @@ import re
 from pathlib import Path
 from typing import Dict, Iterator, List, Set, Tuple
 
+import click
 import pytest
+
+from aisland import wheels_unzip
+from aisland.cli import main
 
 PROJECT = Path(__file__).resolve().parents[1]
 README = PROJECT / "README.md"
@@ -135,14 +141,43 @@ def test_the_readme_indexes_every_page() -> None:
     assert missing == []
 
 
+_WORKSPACE_NAME = re.compile(r"\b(" + "|".join(WORKSPACE_NAMES) + r")\b", re.IGNORECASE)
+
+
+def _commands(group: click.Group, path: Tuple[str, ...] = ("aisland",)) -> Iterator[Tuple[str, click.Command]]:
+    """Every command under ``group``, the group included, with the words that call it."""
+    yield " ".join(path), group
+    for name, command in sorted(group.commands.items()):
+        if isinstance(command, click.Group):
+            yield from _commands(command, path + (name,))
+        else:
+            yield " ".join(path + (name,)), command
+
+
 @pytest.mark.parametrize("page", [README, *_user_pages()], ids=lambda page: page.name)
 def test_a_user_page_names_no_project_of_the_workspace(page: Path) -> None:
-    pattern = re.compile(r"\b(" + "|".join(WORKSPACE_NAMES) + r")\b", re.IGNORECASE)
+    pattern = _WORKSPACE_NAME
     hits = [
         f"{page.name}:{number}: {line.strip()}"
         for number, line in enumerate(page.read_text(encoding="utf-8").splitlines(), start=1)
         if pattern.search(line)
     ]
+    assert hits == []
+
+
+@pytest.mark.parametrize(
+    "words, command", list(_commands(main)), ids=lambda value: value if isinstance(value, str) else ""
+)
+def test_a_commands_help_names_no_project_of_the_workspace(words: str, command: click.Command) -> None:
+    """``--help`` is the page a pip user reads first: its examples name ``myproject``, never this workspace's."""
+    text = command.get_help(click.Context(command, info_name=words))
+    hits = [line.strip() for line in text.splitlines() if _WORKSPACE_NAME.search(line)]
+    assert hits == []
+
+
+def test_the_wheel_zips_usage_names_no_project_of_the_workspace() -> None:
+    """The zip's ``__main__.py`` travels to machines without the workspace; its usage text says ``myproject``."""
+    hits = [line.strip() for line in (wheels_unzip.__doc__ or "").splitlines() if _WORKSPACE_NAME.search(line)]
     assert hits == []
 
 

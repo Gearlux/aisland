@@ -241,6 +241,9 @@ start-time port pre-flight naming the PID is the only signal). All service state
   `tools`, `viewer`, `app`, `lib`; the tools aisland drives (liquifai's completion, loggair's log folder) keep their
   names (`::test_a_user_page_names_no_project_of_the_workspace`; the list is `WORKSPACE_NAMES`). No dated
   measurements or test references on a page; those belong in `docs/architecture.md` and here.
+- What the installed package shows is held to the same list: every command's `--help` (its examples use `models`)
+  and the usage text of the zip `aisland wheels zip` writes (`wheels_unzip.py`'s docstring)
+  (`::test_a_commands_help_names_no_project_of_the_workspace`, `::test_the_wheel_zips_usage_names_no_project_of_the_workspace`).
 - An example in `examples/` is a page's runnable twin, named on its page (`::test_every_example_is_shown_on_a_page`),
   and touches only a temporary folder: from a checkout aisland works on the workspace it is checked out in whatever
   the current folder, so a command that changes a workspace (`setup`, `configure … set`, `clean`) has no example

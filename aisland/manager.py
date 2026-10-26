@@ -1618,9 +1618,9 @@ def run_quality_gates(arg1: Optional[str] = None, arg2: Optional[str] = None) ->
     """
     Execute quality gates.
     aisland check                 -> All projects, all tools
-    aisland check confluid         -> All tools for confluid
+    aisland check models          -> All tools for models
     aisland check pytest          -> pytest for all projects
-    aisland check pytest confluid -> pytest for confluid
+    aisland check pytest models   -> pytest for models
     """
     workspace_root = get_workspace_root()
     venv_bin = workspace_root / ".venv" / "bin"

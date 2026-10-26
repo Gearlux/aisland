@@ -8,9 +8,9 @@
 Python runs a zip that holds a ``__main__.py``, so on a machine without the workspace (and without aisland)
 the zip ``aisland wheels zip`` writes installs with plain Python, from the project's folder:
 
-    python navigaitor-wheels.zip                        # unpack into ./wheels, then python wheels/install.py
-    python navigaitor-wheels.zip --dry-run              # every other argument goes to install.py
-    python navigaitor-wheels.zip --into ../navigaitor --unpack-only
+    python models-wheels.zip                            # unpack into ./wheels, then python wheels/install.py
+    python models-wheels.zip --dry-run                  # every other argument goes to install.py
+    python models-wheels.zip --into ../models --unpack-only
 
 The folder must be the project's: its ``pyproject.toml`` names the project this zip was built for, or nothing
 is unpacked. A zip that carries the project's own wheel (``aisland wheels build <project> --include-project``)
