@@ -220,11 +220,13 @@ def test_the_regenerate_header_is_a_command_the_cli_accepts(workspace: Path) -> 
     text = manager.code_workspace_path(workspace).read_text()
     line = next(ln for ln in text.splitlines() if "To regenerate:" in ln)
     argv = line.split("To regenerate:")[1].split()
-    assert argv[:2] == ["aisland", "setup"], argv
-    command = main.get_command(click.Context(main), argv[1])
-    assert command is not None, f"`aisland {argv[1]}` is not a command"
+    assert argv == ["aisland", "workspace", "code-workspace"], argv
+    group = main.get_command(click.Context(main), argv[1])
+    assert isinstance(group, click.Group), f"`aisland {argv[1]}` is not a command group"
+    command = group.get_command(click.Context(group), argv[2])
+    assert command is not None, f"`aisland {argv[1]} {argv[2]}` is not a command"
     # The command's own parser is the authority on whatever follows its name.
-    with command.make_context(argv[1], argv[2:], resilient_parsing=False):
+    with command.make_context(argv[2], argv[3:], resilient_parsing=False):
         pass
 
 
