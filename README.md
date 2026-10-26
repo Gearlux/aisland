@@ -145,6 +145,8 @@ machine: [docs/tunnel.md](https://github.com/Gearlux/aisland/blob/main/docs/tunn
   the other aliases
 - [Services](https://github.com/Gearlux/aisland/blob/main/docs/services.md) — the supervisor, Jenkins, MLflow, Docker
   and the others, and a service a project declares
+- [Jenkins](https://github.com/Gearlux/aisland/blob/main/docs/jenkins.md) — starting it, its GitHub credential and
+  the pipelines `aisland jenkins init` seeds
 - [CI](https://github.com/Gearlux/aisland/blob/main/docs/ci.md) — the generated `Jenkinsfile`, `Jenkinsfile.local`
   and `ci.yml`, and the quality gates
 - [The environment doctor](https://github.com/Gearlux/aisland/blob/main/docs/doctor.md)

@@ -151,7 +151,7 @@ itself requires Full Disk Access on the invoking shell, so an unreadable
 database skips the check silently rather than crying wolf.
 
 ## Manage Jenkins
-For a complete guide on setting up project pipelines and credentials, see the [Jenkins Setup Workflow](../JENKINS_WORKFLOW.md).
+For a complete guide on setting up project pipelines and credentials, see the [Jenkins Setup Workflow](jenkins.md).
 
 ```bash
 # Start Jenkins (foreground)

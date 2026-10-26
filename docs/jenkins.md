@@ -30,7 +30,7 @@ Paste this into the Jenkins web interface to unlock it.
 ## Phase 2: Configuration & Plugins
 
 ### 1. Add Git Credentials (Manual Step)
-Since the Gearlux projects use private GitHub repositories, you must add your credentials to Jenkins *before* initializing pipelines:
+If your projects use private GitHub repositories, add your credentials to Jenkins *before* initializing pipelines:
 1.  Navigate to **Manage Jenkins** -> **Credentials** -> **System** -> **Global credentials (unrestricted)**.
 2.  Click **Add Credentials**.
 3.  **Kind:** SSH Username with private key OR Username with password (personal access token).
@@ -53,7 +53,7 @@ This command performs the following automated workflow:
 
 #### Initialize a Single Project:
 ```bash
-aisland jenkins init loggair
+aisland jenkins init models
 ```
 
 ---
