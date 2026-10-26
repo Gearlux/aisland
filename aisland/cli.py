@@ -22,10 +22,6 @@ from aisland.manager import (
 )
 from aisland.pytest_stats import DEFAULT_WINDOW_DAYS
 from aisland.services import registry as service_registry
-from aisland.services.aim import DEFAULT_PORT as AIM_PORT
-from aisland.services.aim import AimService
-from aisland.services.clearml import DEFAULT_WEB_PORT as CLEARML_WEB_PORT
-from aisland.services.clearml import ClearMLService
 from aisland.services.docker import DockerService
 from aisland.services.iqengine import DEFAULT_PORT as IQENGINE_PORT
 from aisland.services.iqengine import RECORDINGS_ENV_KEY as IQENGINE_RECORDINGS_KEY
@@ -117,7 +113,10 @@ def _declared_service_group(entry: "service_registry.Entry") -> click.Group:
     port = click.option("--port", type=int, default=None, help="The port to serve on (default: the service's own).")
 
     def with_port(command: Callable[..., None]) -> Callable[..., None]:
-        """`--port` for a service a project implements; a declared one's port is in its declaration."""
+        """`--port` and the class's own options for a service a project implements; a declared one's port is in its
+        declaration."""
+        for name, help_text in reversed(list(entry.options.items())):
+            command = click.option(f"--{name}", name, default=None, help=help_text)(command)
         return port(command) if entry.takes_port else command
 
     def ports(value: Optional[int]) -> Dict[str, int]:
@@ -126,9 +125,9 @@ def _declared_service_group(entry: "service_registry.Entry") -> click.Group:
     @group.command(name="start")
     @click.option("--background", "-b", is_flag=True, help="Run in the background.")
     @with_port
-    def start(background: bool, port: Optional[int] = None) -> None:
-        """Start it under the supervisor."""
-        entry.make().launch(background=background, **ports(port))
+    def start(background: bool, port: Optional[int] = None, **options: Optional[str]) -> None:
+        """Start it."""
+        entry.make().launch(background=background, **ports(port), **options)
 
     @group.command(name="stop")
     def stop() -> None:
@@ -138,9 +137,9 @@ def _declared_service_group(entry: "service_registry.Entry") -> click.Group:
     @group.command(name="restart")
     @click.option("--background", "-b", is_flag=True, help="Run in the background.")
     @with_port
-    def restart(background: bool, port: Optional[int] = None) -> None:
+    def restart(background: bool, port: Optional[int] = None, **options: Optional[str]) -> None:
         """Stop and start it."""
-        entry.make().restart(background=background, **ports(port))
+        entry.make().restart(background=background, **ports(port), **options)
 
     @group.command(name="status")
     def status() -> None:
@@ -1305,114 +1304,6 @@ def mlflow_reset() -> None:
 def mlflow_ui(db_file: str, port: int) -> None:
     """Run local MLflow UI with the given database file."""
     MLflowService().ui(db_path=db_file, port=port)
-
-
-# --- Aim Commands ---
-
-
-@main.group()
-def aim() -> None:
-    """Serve the Aim experiment-tracking UI from a local repository.
-
-    Aim needs no server infrastructure — runs live in an `.aim` repository directory and
-    `aim up` serves the comparison UI from it. The repository path is published to the
-    workspace `.env` as `AIM_REPO`, so a run config points its tracker at `$AIM_REPO` and
-    what a run writes is what this UI shows.
-
-    Requires the `aim` backend, chosen in the `tracker` selection (`aisland workspace configure tracker`).
-    """
-    pass
-
-
-@aim.command(name="start")
-@click.option("--port", default=AIM_PORT, help="HTTP port for the Aim UI.")
-@click.option("--background", "-b", is_flag=True, help="Run in background.")
-@click.option("--repo", default=None, help="Aim repository to serve (default: the workspace one).")
-def aim_start(port: int, background: bool, repo: Optional[str]) -> None:
-    """Start the Aim UI."""
-    AimService().launch(port=port, background=background, repo=repo)
-
-
-@aim.command(name="stop")
-def aim_stop() -> None:
-    """Stop the Aim UI."""
-    AimService().stop()
-
-
-@aim.command(name="status")
-def aim_status() -> None:
-    """Show Aim UI status."""
-    AimService().status()
-
-
-@aim.command(name="info")
-def aim_info() -> None:
-    """Show detailed Aim configuration (URL, repository path)."""
-    AimService().info()
-
-
-@aim.command(name="restart")
-@click.option("--port", default=AIM_PORT, help="HTTP port for the Aim UI.")
-@click.option("--background", "-b", is_flag=True, help="Run in background.")
-def aim_restart(port: int, background: bool) -> None:
-    """Restart the Aim UI."""
-    AimService().restart(port=port, background=background)
-
-
-@aim.command(name="reset")
-def aim_reset() -> None:
-    """Delete the Aim repository and its logs."""
-    AimService().reset()
-
-
-# --- ClearML Commands ---
-
-
-@main.group()
-def clearml() -> None:
-    """Run the ClearML server (upstream's docker-compose stack, workspace-local state).
-
-    Seven containers, wired by upstream's compose file at a pinned release and verified by
-    checksum; aisland layers a generated override that moves every host bind mount out of
-    `/opt/clearml` into `aisland/data/clearml/state`, so a service's data stays inside the
-    workspace.
-
-    Requires the `clearml` backend, chosen in the `tracker` selection (`aisland workspace configure tracker`),
-    and a running Docker daemon (`aisland docker start`). For tracking WITHOUT a server, `ClearMLTracker(offline=True)`
-    records to local disk and needs neither.
-    """
-    pass
-
-
-@clearml.command(name="start")
-@click.option("--port", default=CLEARML_WEB_PORT, help="HTTP port for the ClearML web UI.")
-def clearml_start(port: int) -> None:
-    """Start the ClearML server stack (detached)."""
-    ClearMLService().launch(port=port)
-
-
-@clearml.command(name="stop")
-def clearml_stop() -> None:
-    """Stop the ClearML server stack."""
-    ClearMLService().stop()
-
-
-@clearml.command(name="status")
-def clearml_status() -> None:
-    """Show the ClearML containers."""
-    ClearMLService().status()
-
-
-@clearml.command(name="info")
-def clearml_info() -> None:
-    """Show detailed ClearML configuration (pinned version, compose files, state dir)."""
-    ClearMLService().info()
-
-
-@clearml.command(name="reset")
-def clearml_reset() -> None:
-    """Tear the stack down and delete its state, volumes and compose files."""
-    ClearMLService().reset()
 
 
 # --- IQEngine Commands ---

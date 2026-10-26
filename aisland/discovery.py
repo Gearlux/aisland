@@ -399,7 +399,24 @@ def _check(plugin: Plugin, obj: object) -> str:
     for method in _KIND_METHODS[kind]:
         if not callable(getattr(obj, method, None)):
             raise DeclarationError(f"{what} is a {kind} but has no {method}(ctx)")
+    if kind == "service":
+        _check_options(what, getattr(obj, "options", {}))
     return str(kind)
+
+
+#: The options every project service already has, which a class may not declare again.
+_OWN_OPTIONS = ("port", "background")
+
+
+def _check_options(what: str, options: object) -> None:
+    """A service class's ``options``: each option's name mapped to its help, none of aisland's own."""
+    if not isinstance(options, dict) or not all(isinstance(k, str) and isinstance(v, str) for k, v in options.items()):
+        raise DeclarationError(
+            f'{what}: options must map each option\'s name to its help, as options = {{"repo": "…"}}'
+        )
+    for name in options:
+        if name in _OWN_OPTIONS:
+            raise DeclarationError(f"{what}: option {name!r} is aisland's own")
 
 
 def load(found: Discovery) -> Dict[str, Loaded]:

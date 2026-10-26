@@ -114,9 +114,9 @@ The workspace's dev-infrastructure CLI, `aisland` (click, `aisland/cli.py`):
   `docs/tunnel.md` (the README keeps three commands and its absolute link), its twin `examples/01_tunnel_terminal.py`;
   an error the page quotes is the code's, word for word (`tests/test_tunnel_docs.py`).
 - `services/`: `jenkins` (incl. `aisland jenkins scaffold`), `mlflow`, `labelstudio`,
-  `aim`, `swiftbar` run under the supervisor; `docker` (Colima), `clearml`,
-  `iqengine` run under Docker; `registry.py` lists them, `declared.py` and `plugin.py` run the ones a project brings
-  (FiftyOne is curaitor's).
+  `swiftbar` run under the supervisor; `docker` (Colima) and `iqengine` run under Docker; `registry.py` lists them,
+  `declared.py` and `plugin.py` run the ones a project brings (FiftyOne is curaitor's; Aim and ClearML are
+  matrainer's, `matrainer/services/`).
 - `setup.sh`: interpreter + venv, then `aisland setup -y` and `aisland completion install`.
 - `harness.py` + `harness/`: the agent harness — the workspace commands, their helper script and the generic
   agent rules — installed into every workspace's `.agents/` by `aisland setup` and `aisland workspace init`.
@@ -266,19 +266,23 @@ start-time port pre-flight naming the PID is the only signal). All service state
   `--port` on `start`/`restart` (`ctx.port`, `None` when not given: the class picks its default). `ServiceContext` is
   all it gets: `name`, `workspace`, `data_dir`, `port`, `background`, `run`, `write_env`, `ports`, `echo`, `fail` —
   grow it only with a real service that needs more. A moved service disappears with its project; its data folder
-  stays `data/<name>/`. Same name rules as a declared one. (`tests/test_plugin_services.py`; FiftyOne is curaitor's:
-  `curaitor/tests/test_fiftyone_service.py`)
+  stays `data/<name>/`. Same name rules as a declared one. A class may declare `options = {"name": "help"}` (offered
+  as `--name` on `start`/`restart`, `ctx.options`, `None` when not given; `port`/`background` refused, and a value of
+  another shape, naming the line), and `supervised = False` when Docker runs it (its `info(ctx)` then stands alone);
+  the context also gives `workspace_name`, `read_env()` and `choose_command(selection, name)` — the command that adds
+  a choice keeping the others (`selection.add_command`). (`tests/test_plugin_services.py`; curaitor's FiftyOne:
+  `curaitor/tests/test_fiftyone_service.py`; matrainer's Aim and ClearML: `matrainer/tests/services/`)
 - A new service extends `BaseService` and implements `launch()` (command, env, probe); the
   base owns start/stop/status/reset. One `aisland/data/<service>/` and log each; no shared
   state.
-- A Docker-run service (`docker`, `clearml`, `iqengine`) overrides `launch`/`stop`/`status`/
+- A Docker-run service (`docker`, `iqengine`) overrides `launch`/`stop`/`status`/
   `reset`; its `info()` skips `super().info()` (the supervisor line would mislead).
-- A service never installs its backend: `mlflow`, `aim`, `clearml` fail with `selection.missing_message`, naming
+- A service never installs its backend: `mlflow` fails with `selection.missing_message` (matrainer's Aim and ClearML
+  with the same text, through `ctx.choose_command`), naming
   `aisland workspace configure tracker set <the trackers already chosen> <name>` — `set` takes the whole list, so
   naming the missing one alone would drop the rest (user ruling 2026-10-23;
   `tests/test_selection.py::test_a_missing_tracker_names_the_command_that_adds_it_to_the_chosen_ones`).
-- New services write `.env` through `supervisor.write_workspace_env` (aim/clearml copies:
-  TASKS.md).
+- New services write `.env` through `supervisor.write_workspace_env` (a project's class: `ctx.write_env`).
 - macOS external volumes: Full Disk Access for the RESOLVED process-compose binary, then
   `aisland supervisor down && aisland services start --background`. Never "fix" it by moving
   `DATA_ROOT`, editing Jenkinsfiles or loosening volume ownership; diagnose with a live
@@ -300,18 +304,10 @@ start-time port pre-flight naming the PID is the only signal). All service state
   restarted for the user. (`tests/test_docker_service.py`) [containers]
 - `DockerService.is_running()` is `colima status`'s exit code, never its text; everything
   else reuses it.
-- ClearML vendors nothing. (`tests/test_clearml_service.py`)
-  - Upstream compose at a release TAG, checked against `COMPOSE_SHA256`; bump both together.
-  - The override is GENERATED from upstream and comes second in `-f`.
-  - The fixed user goes in `state/config/apiserver.conf` (0600) before `up`, never in
-    `CLEARML__…fixed_users…` env vars.
-  - An existing login is reused; minting credentials never raises.
 - IQEngine: `<image>:<version>@<digest>` (bump `IQENGINE_VERSION` + `IQENGINE_DIGEST`
   together), mount `:ro`. `start` keeps diagnosing both empty-table cases (no `.sigmf-data`;
   an unshared directory). `reset` never touches the recordings.
   (`tests/test_iqengine_service.py`) [containers]
-- Aim: `start` publishes `AIM_REPO` to `.env` (run and UI must share it), passes `--yes`, and
-  finds `aim` venv-first. (`tests/test_aim_service.py`)
 
 ## Test-run statistics (`pytest_stats.py`)
 

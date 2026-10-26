@@ -129,8 +129,6 @@ def test_the_list_holds_every_service_aisland_ships_once() -> None:
         "mlflow",
         "labelstudio",
         "swiftbar",
-        "aim",
-        "clearml",
         "iqengine",
     ]
     assert [entry.name for entry in registry.ENTRIES if entry.by_default] == [

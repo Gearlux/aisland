@@ -219,3 +219,96 @@ def test_aislands_own_fiftyone_is_gone(tmp_path: Path, monkeypatch: pytest.Monke
     monkeypatch.setattr(cli, "get_workspace_root", lambda: root)
     assert "fiftyone" not in [entry.name for entry in registry.ENTRIES]
     assert "No such command 'fiftyone'" in _run("fiftyone", "start").output
+
+
+# --- what a moved service needs beyond FiftyOne: options, the choice command, .env, its own lifecycle --------------
+
+#: A class with an option of its own and a lifecycle that is not the supervisor's.
+VIEWER = """\
+SEEN = []
+
+
+class Database:
+    kind = "service"
+    options = {"repo": "The repository to serve."}
+    supervised = False
+
+    def start(self, ctx):
+        SEEN.append(dict(ctx.options))
+        SEEN.append(ctx.choose_command("tracker", "aim"))
+        SEEN.append((ctx.workspace_name, ctx.read_env()))
+
+    def info(self, ctx):
+        ctx.echo("  Lifecycle     : its own")
+"""
+
+
+def _module(text: str) -> None:
+    (Path(sys.path[0]) / "acme_plugin.py").write_text(text)
+
+
+def test_a_class_option_is_offered_on_start_and_restart(workspace: Path) -> None:
+    _module(VIEWER)
+    for command in ("start", "restart"):
+        output = _run("acme-db", command, "--help").output
+        assert "--repo TEXT" in output and "The repository to serve." in output
+
+
+def test_an_option_given_reaches_the_class_and_one_not_given_is_none(
+    workspace: Path, supervised: List[Dict[str, Any]]
+) -> None:
+    _module(VIEWER)
+    assert _run("acme-db", "start", "-b", "--repo", "/runs/aim").exit_code == 0
+    assert _run("acme-db", "start", "-b").exit_code == 0
+    assert _run("services", "start", "acme-db").exit_code == 0
+    assert [seen for seen in _seen() if isinstance(seen, dict)] == [
+        {"repo": "/runs/aim"},
+        {"repo": None},
+        {"repo": None},
+    ]
+
+
+def test_the_class_gets_the_command_that_adds_its_choice_keeping_the_others(
+    workspace: Path, supervised: List[Dict[str, Any]]
+) -> None:
+    from aisland import selection
+
+    _module(VIEWER)
+    selection.write_committed(workspace, "tracker", ["tensorboard"])
+    assert _run("acme-db", "start").exit_code == 0
+    assert _seen()[1] == "aisland workspace configure tracker set tensorboard aim"
+
+
+def test_the_class_reads_the_workspace_env_and_its_name(workspace: Path, supervised: List[Dict[str, Any]]) -> None:
+    _module(VIEWER)
+    (workspace / ".env").write_text("ACME_USER=me\n")
+    assert _run("acme-db", "start").exit_code == 0
+    assert _seen()[2] == ("ws", {"ACME_USER": "me"})
+
+
+def test_an_unsupervised_class_prints_only_its_own_info(workspace: Path, supervised: List[Dict[str, Any]]) -> None:
+    """Its processes are not the supervisor's: aisland's supervisor lines would send an operator to the wrong tool."""
+    _module(VIEWER)
+    result = _run("acme-db", "info")
+    assert result.exit_code == 0, result.output
+    assert supervised == []
+    assert result.output == "  Lifecycle     : its own\n"
+
+
+@pytest.mark.parametrize(
+    "options, message",
+    [
+        ('["repo"]', 'options must map each option\'s name to its help, as options = {"repo": "…"}'),
+        ('{"port": "x"}', "option 'port' is aisland's own"),
+        ('{"background": "x"}', "option 'background' is aisland's own"),
+    ],
+)
+def test_an_option_aisland_cannot_offer_is_refused_naming_the_entry_point(
+    workspace: Path, options: str, message: str
+) -> None:
+    _module(VIEWER.replace('options = {"repo": "The repository to serve."}', f"options = {options}"))
+    result = _run("services")
+    assert result.exit_code == 1
+    assert result.output == (
+        f"Error: {workspace / 'acme' / 'pyproject.toml'}:6: plugin 'acme-db' (acme_plugin:Database): {message}\n"
+    )

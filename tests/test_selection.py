@@ -528,8 +528,6 @@ def test_the_command_that_adds_a_tracker_keeps_the_ones_chosen(workspace: Path) 
     "service, tracker",
     [
         ("aisland.services.mlflow.MLflowService", "mlflow"),
-        ("aisland.services.aim.AimService", "aim"),
-        ("aisland.services.clearml.ClearMLService", "clearml"),
     ],
 )
 def test_a_missing_tracker_names_the_command_that_adds_it_to_the_chosen_ones(

@@ -36,7 +36,7 @@ What this service is, and is not (all measured 2026-08-17 against the pinned ima
 
 Docker owns the lifecycle (``docker run`` / ``rm``), not the process-compose supervisor, so
 this class overrides ``launch`` / ``stop`` / ``status`` — the same shape
-:class:`~aisland.services.clearml.ClearMLService` uses.
+:class:`~aisland.services.docker.DockerService` uses for Colima.
 """
 
 from __future__ import annotations

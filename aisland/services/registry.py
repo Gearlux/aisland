@@ -12,15 +12,13 @@ and one it implements in its own code (an ``aisland.plugins`` entry point of kin
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from functools import partial
 from pathlib import Path
-from typing import Any, Callable, Collection, List, Protocol, Sequence, Tuple
+from typing import Any, Callable, Collection, List, Mapping, Protocol, Sequence, Tuple
 
 import click
 
-from aisland.services.aim import AimService
-from aisland.services.clearml import ClearMLService
 from aisland.services.docker import DockerService
 from aisland.services.iqengine import IQEngineService
 from aisland.services.jenkins import JenkinsService
@@ -64,6 +62,8 @@ class Entry:
     by_default: bool
     takes_background: bool
     takes_port: bool = False
+    #: A project's class's own options, by name, with their help (offered on its start and restart).
+    options: Mapping[str, str] = field(default_factory=dict)
 
 
 ENTRIES: Tuple[Entry, ...] = (
@@ -72,8 +72,6 @@ ENTRIES: Tuple[Entry, ...] = (
     Entry("mlflow", MLflowService, by_default=True, takes_background=True),
     Entry("labelstudio", LabelStudioService, by_default=True, takes_background=True),
     Entry("swiftbar", SwiftBarService, by_default=True, takes_background=False),
-    Entry("aim", AimService, by_default=False, takes_background=True),
-    Entry("clearml", ClearMLService, by_default=False, takes_background=True),
     Entry("iqengine", IQEngineService, by_default=False, takes_background=True),
 )
 
@@ -113,7 +111,12 @@ def declared(root: Path, reserved: Collection[str] = ()) -> List[Entry]:
         free(name, loaded.plugin.where)
         entries.append(
             Entry(
-                name, partial(PluginService, name, loaded.obj), by_default=False, takes_background=True, takes_port=True
+                name,
+                partial(PluginService, name, loaded.obj),
+                by_default=False,
+                takes_background=True,
+                takes_port=True,
+                options=dict(getattr(loaded.obj, "options", {})),
             )
         )
     return entries

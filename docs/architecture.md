@@ -3278,3 +3278,10 @@ class FiftyOne:                      # curaitor/fiftyone_service.py — no aisla
 
 - What the context offers — when a real service needs more, never ahead of one.
 - Never: a service class that imports aisland, or a project's service started by default.
+
+**Amendment (2026-10-25): Aim and ClearML move to matrainer.** The two needed more than FiftyOne, so the class may
+now declare `options` (Aim's `--repo`, offered beside `--port`) and `supervised = False` (ClearML's containers are
+Docker's, so its `info` stands alone), and the context gives `workspace_name`, `read_env()` (ClearML reuses the
+login it wrote) and `choose_command(selection, name)` — the command that adds a tracker keeping the ones chosen, so
+the "not installed" message is word for word aisland's. aisland keeps Jenkins, MLflow, Label Studio, Docker,
+SwiftBar and IQEngine.
