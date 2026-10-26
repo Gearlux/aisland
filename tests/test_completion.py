@@ -212,7 +212,7 @@ def test_the_generated_file_carries_its_provenance(rc: Path, all_present: None) 
     text = rc.read_text()
 
     assert "AUTO-GENERATED" in text
-    assert "aisland/aisland/completion.py" in text
+    assert "aisland.completion" in text
     assert f"To regenerate:  {comp.REGENERATE_COMMAND}" in text
 
 
@@ -364,3 +364,15 @@ def test_without_liquifai_the_command_reports_no_liquifai_app(
     result = CliRunner().invoke(main, ["completion", "install", "--target-rc", str(rc), "--shell", "bash"])
     assert result.exit_code == 0, result.output
     assert "    liquifai apps: (none discovered)" in result.output.splitlines()
+
+
+def test_the_file_names_no_workspace_project(rc: Path, all_present: None) -> None:
+    """What aisland writes into a user's shell file is aisland's: its block is marked `aisland`, and its
+    provenance line names the module (a pip user has no `aisland/aisland/` folder)."""
+    comp.install_completions(target_rc=rc, shell="bash", apps=LIQUIFAI_APPS)
+    text = rc.read_text()
+    block = text[text.index(comp._NON_LIQUIFAI_START) : text.index(comp._NON_LIQUIFAI_END)]
+    assert "acme" not in block.lower()  # aisland's block; liquifai's helpers hold this machine's venv path
+    assert "# >>> aisland completion for non-liquifai CLIs >>>" in text
+    assert "# <<< aisland completion for non-liquifai CLIs <<<" in text
+    assert "# Source template: aisland.completion (_render_non_liquifai)" in text
