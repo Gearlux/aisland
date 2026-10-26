@@ -334,3 +334,18 @@ def test_without_a_question_of_its_own_reset_asks_aislands(workspace: Path, supe
     assert result.exit_code == 1
     assert result.output.startswith("Stop acme-db and wipe its data? [y/N]: n\n")
     assert supervised == []
+
+
+def test_reset_help_is_the_classs_own_question(workspace: Path) -> None:
+    _module(
+        VIEWER.replace(
+            "    supervised = False\n",
+            '    supervised = False\n    reset_question = "Remove the image? (recordings are kept)"\n',
+        )
+    )
+    assert "Remove the image? (recordings are kept)" in _run("acme-db", "reset", "--help").output
+    assert "Stop it and wipe its data." not in _run("acme-db", "reset", "--help").output
+
+
+def test_without_a_question_reset_help_says_it_wipes_the_data(workspace: Path) -> None:
+    assert "Stop it and wipe its data." in _run("acme-db", "reset", "--help").output

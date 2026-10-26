@@ -293,7 +293,7 @@ start-time port pre-flight naming the PID is the only signal). All service state
   another shape, naming the line), and `supervised = False` when Docker runs it (its `info(ctx)` then stands alone);
   the context also gives `workspace_name`, `read_env()` and `choose_command(selection, name)` — the command that adds
   a choice keeping the others (`selection.add_command`; an `extras` never chosen keeps `dev`, which it installs). A
-  class whose `reset` wipes no data names what `aisland <name> reset` asks first (`reset_question`). (`tests/test_plugin_services.py`; curaitor's FiftyOne:
+  class whose `reset` wipes no data names what `aisland <name> reset` asks first and its help says (`reset_question`). (`tests/test_plugin_services.py`; curaitor's FiftyOne:
   `curaitor/tests/test_fiftyone_service.py`; matrainer's Aim and ClearML: `matrainer/tests/services/`; annotaide's
   Label Studio: `annotaide/tests/test_labelstudio_service.py`)
 - A new service extends `BaseService` and implements `launch()` (command, env, probe); the

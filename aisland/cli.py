@@ -148,10 +148,10 @@ def _declared_service_group(entry: "service_registry.Entry") -> click.Group:
         """What runs, where it is declared, its address, its log."""
         entry.make().info()
 
-    @group.command(name="reset")
+    # A class whose reset wipes no data says what it removes, in the question AND the help.
+    @group.command(name="reset", help=entry.reset_question or "Stop it and wipe its data.")
     @click.confirmation_option(prompt=entry.reset_question or f"Stop {entry.name} and wipe its data?")
     def reset() -> None:
-        """Stop it and wipe its data."""
         entry.make().reset()
 
     return group
