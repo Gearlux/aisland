@@ -233,26 +233,26 @@ class TestPypiState:
 
     def test_a_gearlux_pre_release_is_published(self, monkeypatch: pytest.MonkeyPatch) -> None:
         _pypi(monkeypatch, {"recordstream": _published("0.1.0a2")})
-        assert w.pypi_state("recordstream")[0] == "published"
+        assert w.pypi_state("recordstream", "Gearlux")[0] == "published"
 
     def test_a_name_nobody_published_is_absent(self, monkeypatch: pytest.MonkeyPatch) -> None:
         _pypi(monkeypatch, {})
-        assert w.pypi_state("torpaido") == ("absent", None)
+        assert w.pypi_state("torpaido", "Gearlux") == ("absent", None)
 
     def test_a_strangers_package_under_the_same_name_is_foreign(self, monkeypatch: pytest.MonkeyPatch) -> None:
         stranger = ("ok", {"info": {"version": "0.1.3", "project_urls": {"Home": "https://example.com"}}})
         _pypi(monkeypatch, {"purifai": stranger})
-        assert w.pypi_state("purifai")[0] == "foreign"
+        assert w.pypi_state("purifai", "Gearlux")[0] == "foreign"
 
     def test_a_gearlux_name_whose_every_file_is_yanked_is_absent(self, monkeypatch: pytest.MonkeyPatch) -> None:
         yanked = ("ok", {"info": {"version": "0.1.0", **_GEARLUX}, "releases": {"0.1.0": [{"yanked": True}]}})
         _pypi(monkeypatch, {"liquifai": yanked})
-        assert w.pypi_state("liquifai")[0] == "absent"
+        assert w.pypi_state("liquifai", "Gearlux")[0] == "absent"
 
     def test_an_unreachable_pypi_stops_naming_the_package(self, monkeypatch: pytest.MonkeyPatch) -> None:
         _pypi(monkeypatch, {"confluid": ("unreachable", "could not reach PyPI (timed out)")})
         with pytest.raises(click.ClickException, match="confluid.*could not reach PyPI"):
-            w.pypi_state("confluid")
+            w.pypi_state("confluid", "Gearlux")
 
 
 # --- what a wheel holds ----------------------------------------------------------------------

@@ -18,7 +18,9 @@ def released_packages(monkeypatch: pytest.MonkeyPatch) -> Iterator[Set[str]]:
     """
     released: Set[str] = set()
     monkeypatch.setattr(
-        "aisland.services.jenkins.released_on_pypi", lambda distribution: distribution in released, raising=False
+        "aisland.services.jenkins.released_on_pypi",
+        lambda distribution, owner: distribution in released,
+        raising=False,
     )
     yield released
 

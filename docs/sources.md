@@ -54,7 +54,7 @@ $ aisland workspace configure source
   models  local:dev/main   -         local:dev/main   on dev/main
 ```
 
-The `github` remote URL is read from `.gitmodules`, not assumed to be `github.com/Gearlux/…`, so
+The `github` remote URL is read from `.gitmodules`, not assumed to be on GitHub, so
 it also works for the submodules hosted elsewhere; an `scp`-style `git@host:org/repo` remote is
 rewritten to `git+ssh://git@host/org/repo` because pip cannot parse the scp form.
 
@@ -100,7 +100,8 @@ This machine's own choice goes to `.git/config`, one key each: `aisland.source.l
 - Both detaching kinds are verified **before** anything is emptied, because otherwise the failure
   would land after the directory was already gone:
   - `pypi` — the name must exist on PyPI **and** its published metadata must point at
-    `github.com/Gearlux/…`. PyPI names are global, so a bare existence check would let a workspace
+    `github.com/<owner>/…`, the GitHub owner of the project's own remote (a project whose remote is not on
+    GitHub cannot be matched to a release and is refused). PyPI names are global, so a bare existence check would let a workspace
     project whose name is taken by someone else install that stranger's package into the shared
     venv.
   - `github` — the `--branch` must resolve on the project's remote (`git ls-remote`).

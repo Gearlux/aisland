@@ -258,7 +258,7 @@ def _make_gearlux_workspace(tmp_path: Path, projects: dict[str, str]) -> None:
     """A fake workspace where every project is a Gearlux submodule.
 
     Writes a ``.gitmodules`` whose every entry is on ``github.com:Gearlux/`` (so
-    ``discover_gearlux_projects`` classifies each name as internal) plus one
+    ``discover_github_projects`` classifies each name as internal) plus one
     directory per project carrying the given pyproject.toml text and an inner
     package dir.
     """
@@ -285,7 +285,7 @@ def _scaffold_app(monkeypatch: pytest.MonkeyPatch, tmp_path: Path, projects: dic
 
     _make_gearlux_workspace(tmp_path, projects)
     monkeypatch.setattr(manager, "get_workspace_root", lambda: tmp_path)
-    monkeypatch.setattr("aisland.services.jenkins.is_private_gearlux_repo", lambda name: False)
+    monkeypatch.setattr("aisland.services.jenkins.is_private_repo", lambda repository: False)
     JenkinsService().scaffold_pipelines(project_name="app", force=True)
     return {
         "Jenkinsfile": (tmp_path / "app" / "Jenkinsfile").read_text(encoding="utf-8"),
@@ -578,7 +578,7 @@ class TestTheWorkflowActionsRunOnNode24:
             },
         )
         monkeypatch.setattr(manager, "get_workspace_root", lambda: tmp_path)
-        monkeypatch.setattr("aisland.services.jenkins.is_private_gearlux_repo", lambda name: True)
+        monkeypatch.setattr("aisland.services.jenkins.is_private_repo", lambda repository: True)
         JenkinsService().scaffold_pipelines(project_name="app", force=True)
         return (tmp_path / "app" / ".github" / "workflows" / "ci.yml").read_text(encoding="utf-8")
 

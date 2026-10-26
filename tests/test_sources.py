@@ -530,7 +530,7 @@ def ci_workspace(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
 
     monkeypatch.setattr(manager, "get_workspace_root", lambda: tmp_path)
     # Keep the scaffolder off the network: `gh api` would otherwise decide the token step.
-    monkeypatch.setattr("aisland.services.jenkins.is_private_gearlux_repo", lambda name: False)
+    monkeypatch.setattr("aisland.services.jenkins.is_private_repo", lambda repository: False)
     return tmp_path
 
 
@@ -604,7 +604,7 @@ class TestScaffoldAsksPypiNotTheSource:
             assert all(r == rendered[0] for r in rendered), f"released={released}"
 
     def test_github_dep_survives_its_own_empty_directory(self, ci_workspace: Path) -> None:
-        """A detached project has NO pyproject.toml, so `discover_gearlux_projects` cannot read its
+        """A detached project has NO pyproject.toml, so `discover_github_projects` cannot read its
         name from disk — without the registry fallback the dep vanished from the internal set
         entirely and CI silently resolved the PyPI release (or failed, for an unpublished one)."""
         s.write_committed_sources(
@@ -613,9 +613,9 @@ class TestScaffoldAsksPypiNotTheSource:
         # Detached == the directory is gone, exactly as `apply_source` leaves it.
         shutil.rmtree(ci_workspace / "loggair")
 
-        from aisland.services.jenkins import discover_gearlux_projects
+        from aisland.services.jenkins import discover_github_projects
 
-        assert "loggair" in discover_gearlux_projects(ci_workspace)
+        assert "loggair" in discover_github_projects(ci_workspace)
         JenkinsService().scaffold_pipelines(project_name="confluid", force=True)
         assert "git+https://github.com/Gearlux/loggair.git@main" in _generated(ci_workspace, "confluid")["ci.yml"]
 
@@ -634,7 +634,7 @@ class TestScaffoldAsksPypiNotTheSource:
         """Never a guess: an offline scaffold that assumed "unreleased" would flip every released
         dependency to a GitHub line."""
 
-        def _unreachable(distribution: str) -> bool:
+        def _unreachable(distribution: str, owner: str) -> bool:
             raise s.ReleaseProbeError(distribution, "could not reach PyPI (offline)")
 
         monkeypatch.setattr("aisland.services.jenkins.released_on_pypi", _unreachable)
@@ -652,7 +652,7 @@ class TestSourceChangesRewriteNoCI:
         monkeypatch.setattr(s, "local_override", lambda root, name: None)
         monkeypatch.setattr(s, "set_local_override", lambda *a, **k: None)
         monkeypatch.setattr(s, "apply_source", lambda *a, **k: True)
-        monkeypatch.setattr(s, "_pypi_provenance", lambda dist: (True, "0.1.0"))
+        monkeypatch.setattr(s, "_pypi_provenance", lambda dist, owner: (True, "0.1.0"))
         assert s.set_project_source("loggair", "pypi", workspace_root=ci_workspace) == 0
         assert not (ci_workspace / "confluid" / "Jenkinsfile").exists()
         assert not (ci_workspace / "confluid" / ".github").exists()
@@ -699,20 +699,20 @@ class TestReleasedOnPypi:
 
     def test_a_final_release_is_released(self, monkeypatch: pytest.MonkeyPatch) -> None:
         self._payload(monkeypatch, {"0.1.0": self._FILE, "0.2.0": self._FILE}, self._GEARLUX)
-        assert s.released_on_pypi("liquifai") is True
+        assert s.released_on_pypi("liquifai", "Gearlux") is True
 
     def test_only_pre_releases_is_not_released(self, monkeypatch: pytest.MonkeyPatch) -> None:
         """recordstream: 0.1.0a1 is all PyPI has."""
         self._payload(monkeypatch, {"0.1.0a1": self._FILE}, self._GEARLUX)
-        assert s.released_on_pypi("recordstream") is False
+        assert s.released_on_pypi("recordstream", "Gearlux") is False
 
     def test_a_fully_yanked_final_release_does_not_count(self, monkeypatch: pytest.MonkeyPatch) -> None:
         self._payload(monkeypatch, {"0.1.0": [{"filename": "x.whl", "yanked": True}]}, self._GEARLUX)
-        assert s.released_on_pypi("liquifai") is False
+        assert s.released_on_pypi("liquifai", "Gearlux") is False
 
     def test_a_strangers_package_is_not_released(self, monkeypatch: pytest.MonkeyPatch) -> None:
         self._payload(monkeypatch, {"9.9.9": self._FILE}, {"project_urls": {"Homepage": "https://example.com/x"}})
-        assert s.released_on_pypi("purifai") is False
+        assert s.released_on_pypi("purifai", "Gearlux") is False
 
     def test_404_is_not_released(self, monkeypatch: pytest.MonkeyPatch) -> None:
         import urllib.error
@@ -724,7 +724,7 @@ class TestReleasedOnPypi:
             raise urllib.error.HTTPError(url, 404, "Not Found", {}, None)  # type: ignore[arg-type]
 
         monkeypatch.setattr(urllib.request, "urlopen", _raise)
-        assert s.released_on_pypi("matrainer") is False
+        assert s.released_on_pypi("matrainer", "Gearlux") is False
 
     def test_an_unreachable_index_raises_naming_the_package(self, monkeypatch: pytest.MonkeyPatch) -> None:
         import urllib.error
@@ -737,7 +737,7 @@ class TestReleasedOnPypi:
 
         monkeypatch.setattr(urllib.request, "urlopen", _raise)
         with pytest.raises(s.ReleaseProbeError, match="liquifai"):
-            s.released_on_pypi("liquifai")
+            s.released_on_pypi("liquifai", "Gearlux")
 
 
 class TestRemoteRefExists:
@@ -789,7 +789,7 @@ class TestPypiProvenance:
             monkeypatch,
             {"version": "0.1.0", "project_urls": {"Repository": "https://github.com/Gearlux/loggair.git"}},
         )
-        assert s._pypi_provenance("loggair") == (True, "0.1.0")
+        assert s._pypi_provenance("loggair", "Gearlux") == (True, "0.1.0")
 
     def test_name_owned_by_another_project_is_rejected(self, monkeypatch: pytest.MonkeyPatch) -> None:
         """PyPI names are global: a bare existence check would install a stranger's package into
@@ -798,12 +798,12 @@ class TestPypiProvenance:
             monkeypatch,
             {"version": "9.9.9", "project_urls": {"Homepage": "https://example.com/somebody-else"}},
         )
-        ok, reason = s._pypi_provenance("loggair")
+        ok, reason = s._pypi_provenance("loggair", "Gearlux")
         assert ok is False and "owned by a different project" in reason
 
     def test_home_page_also_counts_as_provenance(self, monkeypatch: pytest.MonkeyPatch) -> None:
         self._payload(monkeypatch, {"version": "1.0", "home_page": "https://github.com/Gearlux/loggair"})
-        assert s._pypi_provenance("loggair")[0] is True
+        assert s._pypi_provenance("loggair", "Gearlux")[0] is True
 
     def test_404_is_rejected(self, monkeypatch: pytest.MonkeyPatch) -> None:
         import urllib.error
@@ -813,7 +813,7 @@ class TestPypiProvenance:
             raise urllib.error.HTTPError(url, 404, "Not Found", {}, None)  # type: ignore[arg-type]
 
         monkeypatch.setattr(urllib.request, "urlopen", _raise)
-        ok, reason = s._pypi_provenance("liquifai")
+        ok, reason = s._pypi_provenance("liquifai", "Gearlux")
         assert ok is False and "not published" in reason
 
     def test_unreachable_index_is_inconclusive_not_a_rejection(self, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -825,7 +825,7 @@ class TestPypiProvenance:
             raise urllib.error.URLError("offline")
 
         monkeypatch.setattr(urllib.request, "urlopen", _raise)
-        assert s._pypi_provenance("loggair")[0] is None
+        assert s._pypi_provenance("loggair", "Gearlux")[0] is None
 
 
 class TestSetProjectSourceRollback:
@@ -837,7 +837,7 @@ class TestSetProjectSourceRollback:
         monkeypatch.setattr(s, "local_override", lambda root, name: None)
         monkeypatch.setattr(s, "set_local_override", lambda *a, **k: None)
         monkeypatch.setattr(s, "apply_source", lambda *a, **k: False)
-        monkeypatch.setattr(s, "_pypi_provenance", lambda dist: (True, "0.1.0"))
+        monkeypatch.setattr(s, "_pypi_provenance", lambda dist, owner: (True, "0.1.0"))
 
         assert s.set_project_source("loggair", "pypi", workspace_root=ci_workspace) == 1
         assert s.read_committed_sources(ci_workspace) == {}, "a registry created by the failed run must be removed"
@@ -851,7 +851,7 @@ class TestSetProjectSourceRollback:
         monkeypatch.setattr(s, "local_override", lambda root, name: None)
         monkeypatch.setattr(s, "set_local_override", lambda *a, **k: None)
         monkeypatch.setattr(s, "apply_source", lambda *a, **k: False)
-        monkeypatch.setattr(s, "_pypi_provenance", lambda dist: (True, "0.1.0"))
+        monkeypatch.setattr(s, "_pypi_provenance", lambda dist, owner: (True, "0.1.0"))
         before = {"loggair": s.ProjectSource(kind="local", ref="dev/main")}
         s.write_committed_sources(ci_workspace, before)
 
@@ -859,7 +859,7 @@ class TestSetProjectSourceRollback:
         assert s.read_committed_sources(ci_workspace) == before
 
     def test_rejected_pypi_name_writes_nothing(self, ci_workspace: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-        monkeypatch.setattr(s, "_pypi_provenance", lambda dist: (False, "is not published on PyPI"))
+        monkeypatch.setattr(s, "_pypi_provenance", lambda dist, owner: (False, "is not published on PyPI"))
         assert s.set_project_source("loggair", "pypi", workspace_root=ci_workspace) == 1
         assert not (ci_workspace / workspace_file.FILE_NAME).exists()
 

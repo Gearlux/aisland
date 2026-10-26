@@ -49,11 +49,12 @@ A runner installs an internal dependency by asking one question — **is it rele
 | file | runs where | how it installs an internal dep |
 |---|---|---|
 | `Jenkinsfile.local` | your machine, against the workspace | **it doesn't** — it tests the `.venv` that `aisland setup` provisioned, exactly as it is |
-| `Jenkinsfile`, `ci.yml` | a runner, no workspace | **released** → no install line; `.[dev]` resolves the release from PyPI. **Not released** → `git+https://github.com/Gearlux/<dep>.git@main` |
+| `Jenkinsfile`, `ci.yml` | a runner, no workspace | **released** → no install line; `.[dev]` resolves the release from PyPI. **Not released** → `git+https://github.com/<owner>/<dep>.git@main`, the repository its remote names |
 
 "Released" means PyPI holds a **final** version (not only a pre-release such as `0.1.0a1`, not
-only yanked files) whose metadata points at `github.com/Gearlux/…` — a stranger's package under
-the same name does not count. `aisland jenkins scaffold` asks PyPI while generating; when PyPI
+only yanked files) whose metadata points at `github.com/<owner>/…`, the GitHub owner of the dependency's own
+remote — a stranger's package under the same name does not count, and a project whose remote is not on GitHub
+is never installed from GitHub. `aisland jenkins scaffold` asks PyPI while generating; when PyPI
 cannot be reached it stops and names the package instead of guessing:
 
 ```text

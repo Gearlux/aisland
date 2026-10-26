@@ -339,7 +339,7 @@ def get_workspace_name(root: Optional[Path] = None) -> str:
         ).strip()
         if output:
             # Extract name from URL (handles both https and ssh)
-            # e.g., https://github.com/Gearlux/gearlux.git -> gearlux
+            # e.g., https://github.com/acme/models.git -> models
             name = output.split("/")[-1].replace(".git", "")
             if name:
                 return name

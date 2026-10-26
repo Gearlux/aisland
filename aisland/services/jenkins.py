@@ -22,13 +22,7 @@ from aisland.selection import dev_extra_names
 from aisland.selection import extras_for as sel_extras_for
 from aisland.selection import read_committed as sel_committed
 from aisland.services.jenkins_java import JenkinsJava, choose_java, find_runtimes, newest_versioned_formula
-from aisland.sources import DEFAULT_REF, released_on_pypi
-
-# Match the Gearlux GitHub URL forms (SSH and HTTPS), capturing the repo name.
-# Trailing ``.git`` is optional. Anchored so a repo path like "Gearlux/x/y" can't
-# accidentally match — Gearlux repos are always top-level under the org.
-_GEARLUX_URL_RE = re.compile(r"(?:git@github\.com:|https://github\.com/)Gearlux/([^/]+?)(?:\.git)?$")
-_SUBMODULE_KEY_RE = re.compile(r"^submodule\.(.+)\.url$")
+from aisland.sources import DEFAULT_REF, GitHubRepository, project_repositories, released_on_pypi
 
 #: Every GitHub Action a generated ``ci.yml`` uses — the ONE place their versions live. Each is a
 #: MAJOR tag whose ``action.yml`` declares ``using: node24`` (2026-09-26: GitHub annotated every run
@@ -111,96 +105,49 @@ def _project_has_slow_tests(project_dir: Path) -> bool:
         return registers_slow_marker(tomllib.load(handle))
 
 
-def discover_gearlux_projects(workspace_root: Path) -> list[str]:
-    """Return every sibling project's PyPI distribution name that is a Gearlux GitHub submodule.
+def discover_github_projects(workspace_root: Path) -> Dict[str, GitHubRepository]:
+    """Every workspace project whose remote is on GitHub, by its PyPI distribution name, with that repository.
 
-    Walks ``<workspace_root>/.gitmodules`` for entries whose URL is on
-    ``github.com:Gearlux/`` (SSH or HTTPS form), then reads each submodule's
-    ``pyproject.toml`` for the ``[project] name`` field — the canonical
-    distribution name, which equals both the PyPI key and the GitHub repo
-    name. Submodules without a pyproject.toml or with an unparseable one are
-    silently skipped (they are not Python projects aisland needs to install).
+    The remote is the project's own (``.gitmodules``, or a clone's ``origin``: :func:`aisland.sources.project_repositories`),
+    so the owner is whoever's the workspace's projects are — no organisation is written into aisland. The name is the
+    ``[project] name`` of the project's ``pyproject.toml``; a project without one is skipped (it is no Python project
+    aisland installs) unless it is DETACHED (a ``github`` / ``pypi`` source empties its folder), whose name is the
+    committed source's ``distribution``, else its folder — omitting it would drop the git-URL pin a ``github`` source
+    exists to express. A project off GitHub (a Bitbucket server) is never one CI installs from GitHub.
 
-    Replaces a previously hard-coded list. The whole point: when a new sibling
-    project is added (a new submodule + pyproject), CI scaffolding picks it up
-    on the next ``aisland jenkins scaffold`` run with no aisland-side edit.
-
-    A DETACHED project (``github`` / ``pypi`` source, ``aisland/sources.py``) has an EMPTY
-    directory and therefore no ``pyproject.toml`` to read — so its name is taken from the
-    committed registry's ``distribution`` field instead, which exists precisely because a
-    deinit'd directory can no longer be asked. Omitting it would silently drop the dep from the
-    scaffolder's internal set: harmless for ``pypi`` (which is dropped anyway), but for
-    ``github`` it would erase the very git-URL pin the source exists to express, leaving CI to
-    resolve the PyPI release instead of the requested ref — or to fail outright when the project
-    is not published at all.
-
-    Returns:
-        Alphabetically sorted list. Topological ordering is computed by the
-        caller from each project's own deps, not here.
+    Replaces a hard-coded list: a new project (a new submodule + pyproject) is picked up on the next
+    ``aisland jenkins scaffold`` with no aisland edit.
     """
     from aisland.sources import read_committed_sources
 
-    detached_names = [
-        source.distribution or project for project, source in read_committed_sources(workspace_root).items()
-    ]
-
-    gitmodules = workspace_root / ".gitmodules"
-    if not gitmodules.exists():
-        return sorted(set(detached_names))
-
-    try:
-        cp = subprocess.run(
-            [
-                "git",
-                "config",
-                "--file",
-                str(gitmodules),
-                "--get-regexp",
-                r"submodule\..*\.url",
-            ],
-            capture_output=True,
-            text=True,
-            check=True,
-        )
-    except (FileNotFoundError, subprocess.CalledProcessError):
-        return sorted(set(detached_names))
-
-    names: list[str] = list(detached_names)
-    for line in cp.stdout.splitlines():
-        parts = line.strip().split(maxsplit=1)
-        if len(parts) != 2:
-            continue
-        cfg_key, url = parts
-        if not _GEARLUX_URL_RE.match(url.strip()):
-            continue
-        path_match = _SUBMODULE_KEY_RE.match(cfg_key)
-        if not path_match:
-            continue
-        pyproject = workspace_root / path_match.group(1) / "pyproject.toml"
-        if not pyproject.exists():
-            continue
-        try:
-            with open(pyproject, "rb") as fh:
-                data = tomllib.load(fh)
-        except (OSError, tomllib.TOMLDecodeError):
-            continue
-        dist_name = (data.get("project") or {}).get("name")
-        if isinstance(dist_name, str) and dist_name:
-            names.append(dist_name)
-    # Dedup: a detached project may ALSO still have a checkout on the machine running the
-    # scaffold (a `local` per-machine override), in which case both passes contribute its name.
-    return sorted(set(names))
+    detached = read_committed_sources(workspace_root)
+    projects: Dict[str, GitHubRepository] = {}
+    for folder, repository in project_repositories(workspace_root).items():
+        pyproject = workspace_root / folder / "pyproject.toml"
+        name: Optional[str] = None
+        if pyproject.exists():
+            try:
+                with open(pyproject, "rb") as fh:
+                    found = (tomllib.load(fh).get("project") or {}).get("name")
+            except (OSError, tomllib.TOMLDecodeError):
+                found = None
+            name = found if isinstance(found, str) and found else None
+        elif folder in detached:
+            name = detached[folder].distribution or folder
+        if name:
+            projects[name] = repository
+    return dict(sorted(projects.items()))
 
 
 @functools.lru_cache(maxsize=None)
-def is_private_gearlux_repo(name: str) -> bool:
-    """Return True iff ``Gearlux/<name>`` is a private GitHub repository.
+def is_private_repo(repository: GitHubRepository) -> bool:
+    """Return True iff ``repository`` is a private GitHub repository.
 
-    Queries ``gh api repos/Gearlux/<name> --jq .private`` with a 5 s timeout.
+    Queries ``gh api repos/<owner>/<name> --jq .private`` with a 5 s timeout.
     Falls back to True (assume private) on any error — gh missing, not
     authenticated, network down, repo doesn't exist, etc. The result is
     cached for the process so a single scaffold run makes at most one API
-    call per distinct dep name.
+    call per distinct repository.
 
     Why the conservative fallback: a previous version defaulted to False
     ("assume public") so projects with only public deps wouldn't carry a
@@ -209,12 +156,12 @@ def is_private_gearlux_repo(name: str) -> bool:
     re-scaffold silently stripped the ``Mint GitHub App token`` step from
     every ``ci.yml``, and the breakage only surfaced on the next CI run.
     Defaulting to True keeps the token step in place by default; the cost
-    on a runner that's missing ``GEARLUX_APP_*`` secrets is one no-op step,
+    on a runner that's missing the ``<OWNER>_APP_*`` secrets is one no-op step,
     not a broken build. Set the secrets at the org level once and forget.
     """
     try:
         cp = subprocess.run(
-            ["gh", "api", f"repos/Gearlux/{name}", "--jq", ".private"],
+            ["gh", "api", f"repos/{repository.owner}/{repository.name}", "--jq", ".private"],
             capture_output=True,
             text=True,
             timeout=5,
@@ -308,7 +255,7 @@ class JenkinsService(BaseService):
     def _get_latest_manager_info(self) -> dict:
         """Fetch the latest release info from GitHub API."""
         api_url = f"https://api.github.com/repos/{self.REPO}/releases/latest"
-        headers = {"User-Agent": "Gearlux-AI-Agent"}
+        headers = {"User-Agent": "aisland"}
         try:
             req = urllib.request.Request(api_url, headers=headers)
             with urllib.request.urlopen(req) as response:
@@ -1067,12 +1014,10 @@ pipeline {{
 
         click.echo(f"Scaffolding CI/CD for {project_name} (Package: {pkg_name})...")
 
-        # Internal Gearlux Dependencies — discovered, not hardcoded.
-        # Walks .gitmodules at the workspace root, includes every sibling
-        # submodule hosted at github.com:Gearlux/* that has a pyproject.toml,
-        # and returns each project's PyPI distribution name. Adding a new
-        # workspace project is now a zero-aisland-edit operation.
-        gearlux_projects = discover_gearlux_projects(workspace_root)
+        # Internal dependencies — discovered, not hardcoded: every workspace project whose remote is on
+        # GitHub, by its distribution name, with the repository a runner installs it from. Adding a new
+        # workspace project is a zero-aisland-edit operation.
+        github_projects = discover_github_projects(workspace_root)
 
         # Selected extras this project's CI installs: what it offers for each selection (aisland's `extras`, and
         # each `[tool.aisland.selection.<name>]` a project declares) intersected with that selection's COMMITTED
@@ -1192,7 +1137,7 @@ pipeline {{
         # about the workspace's sources (`workspace.toml`) (user ruling 2026-09-26: "it should always
         # point to released packages, and to GitHub for non-released ones").
         #
-        # Released (a final, non-yanked version whose metadata points at github.com/Gearlux/ —
+        # Released (a final, non-yanked version whose metadata points at github.com/<its owner>/ —
         # `sources.released_on_pypi`) -> the dep drops out of the pre-install loop and `.[dev]`
         # resolves the release from PyPI. Not released -> the runner installs GitHub `main`
         # (`DEFAULT_REF`). A source (`local` / `github` / `pypi`, any `ref`) describes ONE
@@ -1203,12 +1148,12 @@ pipeline {{
         # PyPI unreachable -> `ReleaseProbeError` stops the scaffold before any file of this
         # project is written: assuming "unreleased" would flip every released dep to a GitHub line.
         def _dep_is_released(dep: str) -> bool:
-            return released_on_pypi(dep)
+            return released_on_pypi(dep, github_projects[dep].owner)
 
-        # Collect the internal Gearlux deps CI must pre-install: the closure of
+        # Collect the internal deps CI must pre-install: the closure of
         # exactly what CI's install steps resolve, nothing more. When CI installs
         # a direct dep like `confluid` with --no-deps, `.[dev]` below still needs
-        # to resolve confluid's own BASE deps (e.g. loggair) — and Gearlux
+        # to resolve confluid's own BASE deps (e.g. loggair) — and unreleased internal
         # distribution names aren't on PyPI, so uv fails unless WE'VE ALSO
         # pre-installed those transitive deps first.
         #
@@ -1241,8 +1186,8 @@ pipeline {{
             table = data.get("project", {})
             return table if isinstance(table, dict) else {}
 
-        def _gearlux_requirements(project_table: dict, extras: frozenset[str]) -> list[Requirement]:
-            """The Gearlux requirements one node contributes: its base dependencies
+        def _internal_requirements(project_table: dict, extras: frozenset[str]) -> list[Requirement]:
+            """The internal requirements one node contributes: its base dependencies
             plus the contents of exactly the requested extras groups."""
             specs: list[str] = list(project_table.get("dependencies") or [])
             optional = project_table.get("optional-dependencies") or {}
@@ -1254,13 +1199,13 @@ pipeline {{
                     req = Requirement(spec)
                 except InvalidRequirement:
                     continue
-                if req.name in gearlux_projects:
+                if req.name in github_projects:
                     reqs.append(req)
             return reqs
 
-        # Map each Gearlux project name to its workspace dir (for locating its
+        # Map each internal project name to its workspace dir (for locating its
         # pyproject.toml). PyPI-dashed names resolve to dashless dirs.
-        def _gearlux_workspace_path(name: str) -> Path:
+        def _internal_workspace_path(name: str) -> Path:
             if (workspace_root / name).is_dir():
                 return workspace_root / name
             stripped = name.replace("-", "")
@@ -1271,7 +1216,7 @@ pipeline {{
         root_installed_extras = frozenset(["dev", "notebook", *selected_extras])
         work: list[tuple[str, frozenset[str]]] = [
             (req.name, frozenset(req.extras))
-            for req in _gearlux_requirements(_pyproject_data.get("project", {}), root_installed_extras)
+            for req in _internal_requirements(_pyproject_data.get("project", {}), root_installed_extras)
         ]
         visited: set[tuple[str, frozenset[str]]] = set()
         seen: set[str] = set()
@@ -1282,8 +1227,8 @@ pipeline {{
             visited.add(item)
             dep, dep_extras = item
             seen.add(dep)
-            sub_table = _load_project_table(_gearlux_workspace_path(dep) / "pyproject.toml")
-            work.extend((req.name, frozenset(req.extras)) for req in _gearlux_requirements(sub_table, dep_extras))
+            sub_table = _load_project_table(_internal_workspace_path(dep) / "pyproject.toml")
+            work.extend((req.name, frozenset(req.extras)) for req in _internal_requirements(sub_table, dep_extras))
 
         # A project never pre-installs itself: a dependency cycle back to the root
         # (two projects requiring each other through a dev extra) would otherwise install the
@@ -1294,8 +1239,8 @@ pipeline {{
         # Base deps suffice for ordering (every install runs --no-deps anyway).
         prereqs: dict[str, set[str]] = {name: set() for name in seen}
         for name in seen:
-            sub_table = _load_project_table(_gearlux_workspace_path(name) / "pyproject.toml")
-            for req in _gearlux_requirements(sub_table, frozenset()):
+            sub_table = _load_project_table(_internal_workspace_path(name) / "pyproject.toml")
+            for req in _internal_requirements(sub_table, frozenset()):
                 if req.name in seen and req.name != name:
                     prereqs[name].add(req.name)
 
@@ -1316,55 +1261,67 @@ pipeline {{
 
         # GH Actions — raw uv commands (valid inside `run: |` blocks).
         #
-        # Install order: git-URL Gearlux deps FIRST (--no-deps), then `-e .[dev]`.
-        # Rationale: an UNRELEASED Gearlux distribution (recordstream, torpaido, ...)
+        # Install order: git-URL internal deps FIRST (--no-deps), then `-e .[dev]`.
+        # Rationale: an UNRELEASED internal distribution (recordstream, torpaido, ...)
         # is not on PyPI (or only as a pre-release). If `.[dev]` ran first, uv would
         # try to resolve `recordstream>=0.1.0` from PyPI, fail ("not found in the
         # package registry"), and abort the whole install. A RELEASED one never
         # enters this loop — `.[dev]` resolves it from PyPI (see `_dep_is_released`).
-        # By installing each Gearlux dep from its git URL first (with --no-deps to
-        # skip its own Gearlux transitive deps — each is handled in its own loop
+        # By installing each internal dep from its git URL first (with --no-deps to
+        # skip its own internal transitive deps — each is handled in its own loop
         # iteration, topologically ordered), we pre-satisfy the constraints so
         # `-e .[dev]` resolves cleanly against the already-installed packages.
         # --system installs into the runner's Python rather than requiring a venv.
+        # The deps a runner installs from GitHub — every unreleased one — and the owners they belong to, which the
+        # generated comments and the token step name.
+        from_github = [dep for dep in internal_deps if not _dep_is_released(dep)]
+        owners = ", ".join(sorted({github_projects[dep].owner for dep in from_github}))
+
         pip_install_cmds = []
-        for dep in internal_deps:
-            if _dep_is_released(dep):
-                continue  # released — `.[dev]` resolves it from PyPI, which is the point.
-            pip_install_cmds.append(
-                f"uv pip install --system --no-deps " f"git+https://github.com/Gearlux/{dep}.git@{DEFAULT_REF}"
-            )
+        for dep in from_github:
+            pip_install_cmds.append(f"uv pip install --system --no-deps git+{github_projects[dep].url}@{DEFAULT_REF}")
 
         pip_install_str = "\n        ".join(pip_install_cmds)
         if pip_install_str:
             pip_install_str = (
-                "\n        # Internal Gearlux dependencies — installed FIRST with --no-deps so"
+                f"\n        # Internal {owners} dependencies — installed FIRST with --no-deps so"
                 "\n        # `-e .[dev]` below finds them pre-satisfied instead of hitting PyPI."
                 "\n        " + pip_install_str
             )
 
-        # Detect private Gearlux dependencies — if any, CI needs a GitHub App token
-        # to clone them (default GITHUB_TOKEN only grants access to the current repo).
-        # is_private_gearlux_repo() queries `gh api` with a per-process cache; it
-        # falls back to False (assume public) on any error, so this is safe to call
-        # in environments without gh CLI configured.
+        # Detect private dependencies — if any, CI needs a GitHub App token to clone them (default
+        # GITHUB_TOKEN only grants access to the current repo). is_private_repo() queries `gh api` with a
+        # per-process cache; it falls back to True (assume private) on any error.
         # Only deps CI actually clones from GitHub need the token — a released dep is fetched
-        # from the public index, so it must not keep the step alive on its own.
-        needs_app_token = any(is_private_gearlux_repo(dep) for dep in internal_deps if not _dep_is_released(dep))
+        # from the public index, so it must not keep the step alive on its own. One App token reaches ONE
+        # owner's repositories, so private deps of two owners are refused rather than half-authorized.
+        private_owners = sorted(
+            {github_projects[dep].owner for dep in from_github if is_private_repo(github_projects[dep])}
+        )
+        if len(private_owners) > 1:
+            raise click.ClickException(
+                f"{project_name}'s CI would clone private repositories of {len(private_owners)} GitHub owners "
+                f"({', '.join(private_owners)}); one app token reaches one owner's repositories. Release the "
+                "dependencies of all but one owner, or make their repositories public."
+            )
 
-        if needs_app_token:
+        if private_owners:
+            token_owner = private_owners[0]
+            # A secret name holds letters, digits and underscores only: `acme-labs` -> `ACME_LABS_APP_ID`.
+            secret = re.sub(r"[^A-Z0-9]", "_", token_owner.upper())
             app_token_step = (
-                """    - name: Mint GitHub App token for private Gearlux deps
+                f"""    - name: Mint GitHub App token for private {token_owner} deps
       id: app-token
       uses: """
                 + GH_ACTIONS["create-github-app-token"]
-                + """
+                + f"""
       with:
-        app-id: ${{ secrets.GEARLUX_APP_ID }}
-        private-key: ${{ secrets.GEARLUX_APP_PRIVATE_KEY }}
-        owner: Gearlux
-    - name: Configure git auth for Gearlux
-      run: git config --global url."https://x-access-token:${{ steps.app-token.outputs.token }}@github.com/".insteadOf "https://github.com/"
+        app-id: ${{{{ secrets.{secret}_APP_ID }}}}
+        private-key: ${{{{ secrets.{secret}_APP_PRIVATE_KEY }}}}
+        owner: {token_owner}
+    - name: Configure git auth for {token_owner}
+"""
+                + """      run: git config --global url."https://x-access-token:${{ steps.app-token.outputs.token }}@github.com/".insteadOf "https://github.com/"
 """
             )
         else:
@@ -1407,20 +1364,17 @@ pipeline {{
             slow_job = ""
 
         # Jenkinsfile (standard) — sh-wrapped, installs from GitHub via uv.
-        # Install order identical to the GH Actions path: `.[dev]` first, Gearlux
+        # Install order identical to the GH Actions path: `.[dev]` first, internal
         # deps LAST with --reinstall so PyPI name collisions get overwritten.
         jenkins_pip_cmds = []
-        for dep in internal_deps:
-            if _dep_is_released(dep):
-                continue  # released — `.[dev]` resolves it from PyPI.
+        for dep in from_github:
             jenkins_pip_cmds.append(
-                f'sh "${{VENV_BIN}}/uv pip install --no-deps '
-                f'git+https://github.com/Gearlux/{dep}.git@{DEFAULT_REF}"'
+                f'sh "${{VENV_BIN}}/uv pip install --no-deps git+{github_projects[dep].url}@{DEFAULT_REF}"'
             )
         jenkins_pip_str = "\n                ".join(jenkins_pip_cmds)
         if jenkins_pip_str:
             jenkins_pip_str = (
-                "\n                // Internal Gearlux dependencies — installed FIRST with --no-deps"
+                f"\n                // Internal {owners} dependencies — installed FIRST with --no-deps"
                 "\n                // so .[dev] below finds them pre-satisfied instead of hitting PyPI"
                 "\n                // (these are not released on PyPI; a released one resolves through .[dev])."
                 "\n                " + jenkins_pip_str

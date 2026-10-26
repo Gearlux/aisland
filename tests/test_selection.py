@@ -566,7 +566,7 @@ def test_adding_an_extra_to_an_unset_selection_keeps_the_dev_extras_it_installs(
 def _ci_install_line(workspace: Path, monkeypatch: pytest.MonkeyPatch, project: str) -> str:
     from aisland.services.jenkins import JenkinsService
 
-    monkeypatch.setattr("aisland.services.jenkins.is_private_gearlux_repo", lambda name: False)
+    monkeypatch.setattr("aisland.services.jenkins.is_private_repo", lambda repository: False)
     JenkinsService().scaffold_pipelines(project_name=project, force=True)
     text = (workspace / project / ".github" / "workflows" / "ci.yml").read_text()
     return next(line.strip() for line in text.splitlines() if '-e ".[' in line)

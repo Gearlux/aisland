@@ -92,7 +92,7 @@ def test_wheels_sees_the_folder_projects(acme: Path) -> None:
 
 
 def test_a_wheel_of_a_project_outside_git_is_refused(acme: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr(wheels, "pypi_state", lambda distribution: ("absent", None))
+    monkeypatch.setattr(wheels, "pypi_state", lambda distribution, owner: ("absent", None))
     with pytest.raises(click.ClickException) as raised:
         wheels.vendor_wheels(acme, "beta")
     assert raised.value.message == (

@@ -51,11 +51,12 @@ from __future__ import annotations
 
 import functools
 import json
+import re
 import subprocess
 import tomllib
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Dict, List, Literal, Optional, Tuple, cast, get_args
+from typing import Any, Dict, List, Literal, NamedTuple, Optional, Tuple, cast, get_args
 
 import click
 from packaging.version import InvalidVersion, Version
@@ -307,7 +308,7 @@ def discover_distribution(project_dir: Path) -> Optional[str]:
 def remote_url(workspace_root: Path, project: str) -> Optional[str]:
     """The submodule's configured remote from ``.gitmodules``, or ``None`` when undeclared.
 
-    Read rather than hardcoded to ``github.com/Gearlux/<name>`` so a ``github`` source also
+    Read rather than built from a GitHub owner and the name, so a ``github`` source also
     works for the submodules that are NOT on GitHub (``vendorcli`` lives on an internal Bitbucket), and so it always matches the remote the operator's git auth is
     already set up for.
     """
@@ -525,9 +526,46 @@ def known_projects(workspace_root: Path) -> List[str]:
     return sorted(names)
 
 
-#: Provenance marker every workspace project carries in its published metadata, via the
-#: ``[project.urls] Repository = "https://github.com/Gearlux/<name>.git"`` convention.
-_GEARLUX_URL_FRAGMENT = "github.com/Gearlux/"
+#: A GitHub remote in each spelling git accepts: ``git@github.com:owner/repo``, ``ssh://git@github.com/owner/repo``
+#: and ``https://github.com/owner/repo``, ``.git`` optional. A deeper path is no repository.
+_GITHUB_URL_RE = re.compile(
+    r"^(?:git@github\.com:|ssh://git@github\.com/|https://github\.com/)([^/]+)/([^/]+?)(?:\.git)?/?$"
+)
+
+
+class GitHubRepository(NamedTuple):
+    """A repository on github.com, as a project's remote names it."""
+
+    owner: str
+    name: str
+
+    @property
+    def url(self) -> str:
+        """The address a runner clones it from (``https://github.com/<owner>/<name>.git``)."""
+        return f"https://github.com/{self.owner}/{self.name}.git"
+
+
+def github_repository(url: str) -> Optional[GitHubRepository]:
+    """The GitHub repository ``url`` names, or None when it is no GitHub repository (another host, a deeper path)."""
+    match = _GITHUB_URL_RE.match(url.strip())
+    return GitHubRepository(match.group(1), match.group(2)) if match else None
+
+
+def project_repositories(workspace_root: Path) -> Dict[str, GitHubRepository]:
+    """Each project folder whose remote is on GitHub, and that repository.
+
+    The remote is the submodule's in ``.gitmodules``, or a clone's ``origin`` in a workspace without one
+    (:func:`aisland.workspace_file.workspace_projects`). A project's GitHub owner is what makes it, and its PyPI
+    release, the workspace's own: no organisation is written into aisland.
+    """
+    repositories: Dict[str, GitHubRepository] = {}
+    for found in workspace_file.workspace_projects(workspace_root):
+        repository = github_repository(found.url)
+        if repository is None:
+            continue
+        folder = (workspace_root / found.path).resolve()
+        repositories[folder.relative_to(workspace_root.resolve()).as_posix()] = repository
+    return repositories
 
 
 class ReleaseProbeError(click.ClickException):
@@ -559,16 +597,21 @@ def _pypi_json(distribution: str) -> Tuple[Literal["ok", "missing", "unreachable
         return "unreachable", f"could not reach PyPI ({e})"
 
 
-def _points_at_gearlux(info: Dict[str, Any]) -> bool:
-    """The provenance marker: the published metadata names a ``github.com/Gearlux/…`` URL."""
+def points_at_owner(info: Dict[str, Any], owner: Optional[str]) -> bool:
+    """The provenance marker: the published metadata names a ``github.com/<owner>/…`` URL (GitHub owners are
+    case-insensitive). No owner — a project whose remote is not on GitHub — matches nothing."""
+    if owner is None:
+        return False
+    prefix = f"github.com/{owner}/".lower()
     urls = list((info.get("project_urls") or {}).values()) + [info.get("home_page") or ""]
-    return any(_GEARLUX_URL_FRAGMENT in str(url) for url in urls)
+    return any(prefix in str(url).lower() for url in urls)
 
 
 @functools.lru_cache(maxsize=None)
-def released_on_pypi(distribution: str) -> bool:
+def released_on_pypi(distribution: str, owner: str) -> bool:
     """Whether ``distribution`` is RELEASED: PyPI holds at least one FINAL (non-pre-release)
-    version with a file that is not yanked, and its metadata points at ``github.com/Gearlux/``.
+    version with a file that is not yanked, and its metadata points at ``github.com/<owner>/``,
+    the owner of the project's own remote.
 
     The ONE question the CI scaffolder asks per internal dependency (user ruling 2026-09-26):
     released -> the runner installs it from PyPI (``.[dev]`` resolves it); not released -> from
@@ -588,7 +631,7 @@ def released_on_pypi(distribution: str) -> bool:
         return False
     if status == "unreachable":
         raise ReleaseProbeError(distribution, str(payload))
-    if not _points_at_gearlux(payload.get("info") or {}):
+    if not points_at_owner(payload.get("info") or {}, owner):
         return False
     for version, files in (payload.get("releases") or {}).items():
         try:
@@ -600,7 +643,7 @@ def released_on_pypi(distribution: str) -> bool:
     return False
 
 
-def _pypi_provenance(distribution: str) -> Tuple[Optional[bool], str]:
+def _pypi_provenance(distribution: str, owner: Optional[str]) -> Tuple[Optional[bool], str]:
     """Whether PyPI's ``distribution`` really is THIS workspace's project.
 
     Returns ``(True, version)``; ``(False, reason)`` when the name is absent or belongs to an
@@ -610,9 +653,10 @@ def _pypi_provenance(distribution: str) -> Tuple[Optional[bool], str]:
     already been deinit'd. The obvious one: an unpublished project fails deep inside
     ``uv pip install`` with "not found in the package registry". The subtle and worse one: PyPI
     names are GLOBAL, so a workspace project can share a name with a stranger's package, and a
-    bare existence check would happily install that stranger's code into the shared venv. The
-    workspace convention that every pyproject declares a ``github.com/Gearlux/…`` repository URL
-    makes the published metadata a usable provenance marker, so it is checked rather than assumed.
+    bare existence check would happily install that stranger's code into the shared venv. A
+    project's published metadata names its repository, so a release whose URLs point at the GitHub
+    owner of the project's own remote (``owner``) is the project's; a project whose remote is not on
+    GitHub (``owner`` None) cannot be matched to a release and is refused.
 
     An unreachable index yields ``None`` (warn and continue) — never a false negative that would
     block an offline machine.
@@ -624,10 +668,15 @@ def _pypi_provenance(distribution: str) -> Tuple[Optional[bool], str]:
         return None, str(data)
 
     info = data.get("info") or {}
-    if not _points_at_gearlux(info):
+    if owner is None:
+        return False, (
+            f"is published on PyPI (version {info.get('version')}), but its remote is not on GitHub, so aisland "
+            "cannot tell its release from a stranger's package of the same name"
+        )
+    if not points_at_owner(info, owner):
         return False, (
             f"is published on PyPI (version {info.get('version')}) but its metadata does not point at "
-            f"{_GEARLUX_URL_FRAGMENT}… — that name is owned by a different project"
+            f"github.com/{owner}/… — that name is owned by a different project"
         )
     return True, str(info.get("version") or "unknown")
 
@@ -705,7 +754,9 @@ def set_project_source(
     )
 
     if kind == "pypi":
-        published, detail = _pypi_provenance(distribution)
+        repository = github_repository(remote_url(root, project) or "")
+        owner = repository.owner if repository else None
+        published, detail = _pypi_provenance(distribution, owner)
         if published is False:
             click.echo(
                 f"Error: '{distribution}' {detail}. Publish it first, or use: "
@@ -716,7 +767,7 @@ def set_project_source(
         if published is None:
             click.echo(f"  - Warning: {detail}; continuing without verifying '{distribution}'.")
         else:
-            click.echo(f"  - Verified {distribution} {detail} on PyPI (Gearlux provenance).")
+            click.echo(f"  - Verified {distribution} {detail} on PyPI (published from github.com/{owner}).")
         source = ProjectSource(kind="pypi", version=version, distribution=distribution)
     else:
         listed = workspace_file.load(root).projects.get(project)

@@ -13,7 +13,7 @@ The run, in order:
    followed, every environment marker INCLUDED — the wheels serve another machine, whose
    platform is not this one's.
 2. **On PyPI or not** (:func:`pypi_state`): published = a version under the name whose metadata
-   points at ``github.com/Gearlux/`` and has a file that is not yanked. Pre-releases COUNT
+   points at ``github.com/<owner>/`` — the owner of the project's own remote — and has a file that is not yanked. Pre-releases COUNT
    (recordstream 0.1.0a2: pip takes it when no final release exists), which is where this
    question differs from :func:`aisland.sources.released_on_pypi`, the CI scaffolder's. A
    stranger's package under the same name is not ours — and is reported, because pip takes the
@@ -89,7 +89,7 @@ from packaging.version import InvalidVersion, Version
 
 from aisland import wheels_bundle, wheels_install, wheels_unzip
 from aisland.manager import ensure_uv_in_venv, workspace_folders
-from aisland.sources import _points_at_gearlux, _pypi_json, read_committed_sources
+from aisland.sources import _pypi_json, points_at_owner, project_repositories, read_committed_sources
 from aisland.wheels_install import WheelsFileError, read_wheels
 
 #: The folder inside the project that receives the wheels; the install line names it.
@@ -420,8 +420,12 @@ def dependency_closure(projects: Dict[str, WorkspaceProject], target: WorkspaceP
     return sorted((projects[key] for key in needed), key=lambda p: p.name)
 
 
-def pypi_state(distribution: str) -> Tuple[PypiState, Optional[Dict[str, Any]]]:
+def pypi_state(distribution: str, owner: Optional[str]) -> Tuple[PypiState, Optional[Dict[str, Any]]]:
     """Whether PyPI has ``distribution`` as THIS workspace's project, with PyPI's JSON when it answered.
+
+    The workspace's project is the release whose metadata names ``github.com/<owner>/``, the owner of the project's
+    own remote; a project whose remote is not on GitHub (``owner`` None) has no release aisland can tell apart from a
+    stranger's (``foreign``).
 
     Raises ``click.ClickException`` when PyPI cannot be reached: a guess would either ship a
     wheel PyPI already serves or leave out one it does not.
@@ -431,7 +435,7 @@ def pypi_state(distribution: str) -> Tuple[PypiState, Optional[Dict[str, Any]]]:
         return "absent", None
     if status == "unreachable":
         raise click.ClickException(f"cannot tell whether {distribution} is on PyPI: {payload}. Retry when it answers.")
-    if not _points_at_gearlux(payload.get("info") or {}):
+    if not points_at_owner(payload.get("info") or {}, owner):
         return "foreign", payload
     for files in (payload.get("releases") or {}).values():
         if any(not f.get("yanked", False) for f in files or []):
@@ -888,7 +892,13 @@ def vendor_wheels(
     else:
         covered = needed
 
-    states = {p.name: pypi_state(p.distribution) for p in covered if p.checked_out or p.name in needed_names}
+    repositories = project_repositories(workspace_root)
+
+    def _owner(project: WorkspaceProject) -> Optional[str]:
+        repository = repositories.get(project.name)
+        return repository.owner if repository else None
+
+    states = {p.name: pypi_state(p.distribution, _owner(p)) for p in covered if p.checked_out or p.name in needed_names}
 
     def _published(project: WorkspaceProject) -> bool:
         return project.name in states and states[project.name][0] == "published"

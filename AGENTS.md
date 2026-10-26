@@ -19,7 +19,8 @@ projects is a workspace, its subfolders read as submodules · [workspace-file] a
 file a machine without aisland reads · [harness] every workspace gets aisland's agent commands and rules · [editor] the editor's theme and colours are a per-machine choice laid over the
 generated workspace file · [declarations] a project declares what it brings, aisland finds it in two stages and the project never imports aisland · [mcp-server] aisland's tools are its own server, a chosen set · [aliases] a link to a folder of the workspace is a short name, never a project ·
 [tunnel-terminal] a terminal on the remote machine rides the VS Code tunnel it already runs · [local-workspace] a root
-repository no one shares tracks only the projects, and an untracked project's commits are never recorded.
+repository no one shares tracks only the projects, and an untracked project's commits are never recorded. · [github-owner] a project is the
+workspace's own by its GitHub remote, no organisation is written into aisland.
 
 ## Current state
 
@@ -512,7 +513,7 @@ Root `AGENTS.md` "Two Test Runs" (user ruling 2026-10-05). [test-stats]
 - `local` installs `selection.editable_target`, the same target as setup.
   (`tests/test_sources.py::TestApplySource::test_local_installs_the_dev_extra_and_the_selected_frameworks`)
 - Before a deinit: `pypi` resolves `distribution` (persisted only when it differs from the name); `_pypi_provenance` requires
-  `github.com/Gearlux/` metadata; `_remote_ref_exists` checks a `github` ref. Unreachable =
+  `github.com/<owner>/` metadata, the owner of the project's own remote [github-owner]; `_remote_ref_exists` checks a `github` ref. Unreachable =
   warn, never reject.
 - Never force `git switch` / `submodule deinit`. Report the remedy for the ACTUAL blocker
   (`_deinit_remedy`: dirty tree vs stale gitlink) and roll the config back.
@@ -611,8 +612,8 @@ A bare `::` pin in this section is in `tests/test_jenkins_scaffold.py`.
 
 - **CI installs what is RELEASED (user ruling 2026-09-26, do not re-litigate).** The runner
   files ask PyPI per internal dep (`released_on_pypi`: a final, non-yanked version whose
-  metadata points at `github.com/Gearlux/`): released → no install line; else
-  `git+https://github.com/Gearlux/<dep>.git@main`. They never read a source or `ref`;
+  metadata points at `github.com/<owner>/`, the owner of the dep's remote): released → no install line; else
+  `git+https://github.com/<owner>/<dep>.git@main` [github-owner]. They never read a source or `ref`;
   `aisland workspace configure source set|unset` regenerates no CI file; an unreachable PyPI stops the scaffold
   (`ReleaseProbeError`). Tests stub PyPI with the autouse `released_packages` fixture.
   (`tests/test_sources.py`: `TestScaffoldAsksPypiNotTheSource`, `TestSourceChangesRewriteNoCI`,
@@ -768,7 +769,7 @@ User choice 2026-10-08: an aisland command, only the named project's closure, bo
   (`TestTheRunWithFakedBuilds::test_force_builds_a_dirty_project_from_its_files_as_they_are_and_says_so`,
   `TestRefusals::test_force_with_commit_is_refused_before_anything_is_built`,
   `TestEndToEnd::test_force_ships_the_working_tree_of_a_dirty_project_and_checks_the_dirty_target`).
-- "On PyPI" = `pypi_state`: Gearlux metadata and a file not yanked, pre-releases INCLUDED. Never
+- "On PyPI" = `pypi_state`: metadata naming the project's GitHub owner and a file not yanked, pre-releases INCLUDED. Never
   replace it with `released_on_pypi` (final only, CI's question). An unreachable PyPI stops the
   run (`TestPypiState`).
 - The empty venv runs from a scratch folder, so the root `uv.toml` is never read; the target's
