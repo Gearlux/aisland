@@ -19,6 +19,7 @@ from typing import Any, Callable, Collection, List, Mapping, Optional, Protocol,
 
 import click
 
+from aisland import supervisor
 from aisland.services.docker import DockerService
 from aisland.services.jenkins import JenkinsService
 from aisland.services.mlflow import MLflowService
@@ -168,13 +169,15 @@ def reset(entries: Sequence[Entry], names: Sequence[str]) -> None:
 
 
 def status(entries: Sequence[Entry], names: Sequence[str]) -> None:
-    for entry in chosen(entries, names, every=True):
-        entry.make().status()
+    with supervisor.snapshot():  # one `process list` for every service's state
+        for entry in chosen(entries, names, every=True):
+            entry.make().status()
 
 
 def info(entries: Sequence[Entry], names: Sequence[str]) -> None:
-    for entry in chosen(entries, names, every=True):
-        entry.make().info()
+    with supervisor.snapshot():
+        for entry in chosen(entries, names, every=True):
+            entry.make().info()
 
 
 def _last_first(entries: Sequence[Entry], names: Sequence[str]) -> List[Entry]:

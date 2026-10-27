@@ -223,7 +223,7 @@ def test_start_server_command_shape(isolated_config: Path) -> None:
 def test_list_processes_parses_json(isolated_config: Path) -> None:
     payload = '[{"name": "mlflow", "status": "Running", "is_running": true, "pid": 42}]'
     with (
-        patch("aisland.supervisor.is_server_running", return_value=True),
+        patch("aisland.supervisor._client_reachable", return_value=True),
         patch("aisland.supervisor._run_client", return_value=_completed(stdout=payload)),
     ):
         processes = supervisor.list_processes()
@@ -232,7 +232,7 @@ def test_list_processes_parses_json(isolated_config: Path) -> None:
 
 
 def test_get_process_returns_none_without_server(isolated_config: Path) -> None:
-    with patch("aisland.supervisor.is_server_running", return_value=False):
+    with patch("aisland.supervisor._client_reachable", return_value=False):
         assert supervisor.get_process("mlflow") is None
         assert supervisor.list_processes() == {}
         assert supervisor.get_ports("mlflow") == []
@@ -243,7 +243,7 @@ def test_get_ports_parses_cli_output(isolated_config: Path) -> None:
     # Repeated entries (one per worker socket) must dedupe.
     out = "Process mlflow TCP ports: [5005 9080 5005]\n"
     with (
-        patch("aisland.supervisor.is_server_running", return_value=True),
+        patch("aisland.supervisor._client_reachable", return_value=True),
         patch("aisland.supervisor._run_client", return_value=_completed(stdout=out)),
     ):
         assert supervisor.get_ports("mlflow") == [5005, 9080]
@@ -251,7 +251,7 @@ def test_get_ports_parses_cli_output(isolated_config: Path) -> None:
 
 def test_get_ports_handles_unexpected_output(isolated_config: Path) -> None:
     with (
-        patch("aisland.supervisor.is_server_running", return_value=True),
+        patch("aisland.supervisor._client_reachable", return_value=True),
         patch("aisland.supervisor._run_client", return_value=_completed(stdout="no ports here")),
     ):
         assert supervisor.get_ports("mlflow") == []

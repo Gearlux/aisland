@@ -33,9 +33,9 @@ import shlex
 import shutil
 import sqlite3
 import subprocess
-from contextlib import closing
+from contextlib import closing, contextmanager
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, Iterator, List, Optional, Tuple
 
 import click
 import yaml
@@ -436,18 +436,51 @@ def _start_server() -> None:
         )
 
 
-def list_processes() -> Dict[str, Dict[str, Any]]:
-    """Return the server's process states keyed by name ({} if no server)."""
-    if not is_server_running():
-        return {}
-    result = _run_client(["process", "list", "--output", "json"])
-    if result.returncode != 0:
-        return {}
+#: The one `process list` answer of a snapshot (:func:`snapshot`); ``None`` outside one, or before its first question.
+_snapshot_list: Optional[Dict[str, Dict[str, Any]]] = None
+_in_snapshot = False
+
+
+@contextmanager
+def snapshot() -> Iterator[None]:
+    """Answer every :func:`list_processes` inside the block with ONE `process list`.
+
+    `aisland services status|info` asks for each service's state; a client process per service made the listing
+    slow. Nothing is kept after the block, so a wait for a process to change (:func:`wait_for`) still sees each new
+    answer."""
+    global _snapshot_list, _in_snapshot
+    _in_snapshot, _snapshot_list = True, None
     try:
-        processes = json.loads(result.stdout)
-    except json.JSONDecodeError:
-        return {}
-    return {proc["name"]: proc for proc in processes if isinstance(proc, dict) and "name" in proc}
+        yield
+    finally:
+        _in_snapshot, _snapshot_list = False, None
+
+
+def _client_reachable() -> bool:
+    """The checks that cost no process: the binary and, off Windows, the socket file."""
+    return find_binary() is not None and (os.name == "nt" or SOCKET_PATH.exists())
+
+
+def list_processes() -> Dict[str, Dict[str, Any]]:
+    """Return the server's process states keyed by name ({} if no server).
+
+    One client call: a `process list` that fails already means there is no server to ask, so no `project state`
+    first. Inside :func:`snapshot` the first answer serves the rest."""
+    global _snapshot_list
+    if _in_snapshot and _snapshot_list is not None:
+        return _snapshot_list
+    processes: Dict[str, Dict[str, Any]] = {}
+    if _client_reachable():
+        result = _run_client(["process", "list", "--output", "json"])
+        if result.returncode == 0:
+            try:
+                listed = json.loads(result.stdout)
+            except json.JSONDecodeError:
+                listed = []
+            processes = {proc["name"]: proc for proc in listed if isinstance(proc, dict) and "name" in proc}
+    if _in_snapshot:
+        _snapshot_list = processes
+    return processes
 
 
 def get_process(name: str) -> Optional[Dict[str, Any]]:
@@ -456,8 +489,9 @@ def get_process(name: str) -> Optional[Dict[str, Any]]:
 
 
 def get_ports(name: str) -> List[int]:
-    """Return the TCP ports a supervised process is listening on (best-effort)."""
-    if not is_server_running():
+    """Return the TCP ports a supervised process is listening on (best-effort); one client call, no `project
+    state` first — a failed answer holds no port list."""
+    if not _client_reachable():
         return []
     result = _run_client(["process", "ports", name])
     # Output shape (v1.116.0): "Process <name> TCP ports: [9080 9081]".
