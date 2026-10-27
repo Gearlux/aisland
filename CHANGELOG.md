@@ -23,6 +23,8 @@ The first release on PyPI: `pip install aisland`.
   code (its class may name the question `reset` asks first).
 - **`aisland jenkins scaffold`** writes a project's `Jenkinsfile`, `Jenkinsfile.local` and GitHub `ci.yml`.
 - **`aisland doctor`** checks the environment and prints the command that fixes what it finds.
+- **`aisland wheels build`** refuses, before it builds anything, a project whose setuptools discovery would take the
+  `wheels/` folder it writes for a package, and names the `[tool.setuptools.packages.find]` table that fixes it.
 - **`aisland wheels build <project>`** builds the wheels a project needs that are not on PyPI, for a machine
   without the workspace. With `--extra NAME` it also writes the extra NAME into the project's
   `pyproject.toml`, so `uv pip install -e ./<project>[NAME]` installs the project with every wheel.

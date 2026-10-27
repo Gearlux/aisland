@@ -47,6 +47,26 @@ app's own wheel (--include-project), installed in place of its folder:
 checkout of the project, and the zip installs from any folder. The empty-venv check installs and
 imports that same wheel.
 
+### The project lists its packages
+
+The `wheels/` folder sits inside the project, beside its package. A setuptools project that lists no packages leaves
+them to setuptools' automatic discovery, which takes every top-level folder with a Python name in a flat layout —
+`wheels` among them. Two packages stop its build (`Multiple top-level packages discovered in a flat-layout`), and a
+`[tool.setuptools.packages.find]` without `include` puts the folder into the project's own wheel. So `aisland wheels
+build` refuses such a project before it builds or writes anything, and names the table setuptools recommends:
+
+```text
+$ aisland wheels build your_project
+Error: your_project finds its packages automatically, so the wheels/ folder this command writes would become a second package and stop your_project from building.
+List its packages in your_project/pyproject.toml:
+    [tool.setuptools.packages.find]
+    include = ["your_project*"]
+```
+
+Add the table and run the command again. A project that already names its packages (`include`, `packages`,
+`py-modules`, an `exclude` covering `wheels*`), uses the `src` layout, has a `setup.py`, or is built by another backend
+than setuptools is not affected.
+
 ### One uv command: `--extra NAME`
 
 `--extra NAME` also writes the extra `NAME` into the project's `pyproject.toml`: it names every wheel

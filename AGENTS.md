@@ -887,6 +887,14 @@ User choice 2026-10-08: an aisland command, only the named project's closure, bo
     (`::test_the_root_records_the_rewritten_twin_of_its_commit_alone`).
   - Reflogs expire for every ref but `refs/stash`, symbolic refs included (`origin/HEAD`'s reflog kept the old
     history alive); a detached HEAD is carried through `refs/wheels-prune/head`.
+- **A project whose setuptools discovery would take `wheels/` for a package is refused before anything is built
+  (user choice 2026-10-27: refuse with the fix, never hide the folder or edit the project).** `wheels_folder_problem`:
+  a setuptools project (or no `build-backend`) without `setup.py`, with no `packages` list or `py-modules`, and either
+  automatic discovery in a flat layout (no `src/`) — two top-level packages stop its build — or a `packages.find`
+  reaching `wheels` (`where` holding `.`, no `include` or one matching it, namespaces on, no `exclude` matching it) —
+  the folder ships in its wheel. The message names the project's own package folders in the `include` setuptools
+  recommends (`your_package` when it has none); that advice, pasted in, makes the build pass
+  (`tests/test_wheels_folder_discovery.py`).
 - TAB after `wheels build` / `wheels zip` / the short form `wheels` offers the projects (`cli._complete_projects`:
   checked out here; `zip` only those with a `wheels.yaml`; the group's commands first). It reads folders and
   `pyproject.toml` only and an unreadable workspace offers nothing (`tests/test_wheels.py::TestShellCompletion`).

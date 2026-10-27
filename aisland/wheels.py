@@ -65,6 +65,7 @@ shape an MCP tool returns.
 from __future__ import annotations
 
 import ast
+import fnmatch
 import hashlib
 import io
 import json
@@ -791,6 +792,59 @@ def _find_target(projects: Dict[str, WorkspaceProject], workspace_root: Path, na
     return project
 
 
+def _package_folders(path: Path) -> List[str]:
+    """The project's top-level package folders (an ``__init__.py`` inside), its wheels folder left out."""
+    return sorted(
+        child.name
+        for child in path.iterdir()
+        if child.is_dir() and child.name != WHEELS_DIR and (child / "__init__.py").is_file()
+    )
+
+
+def wheels_folder_problem(project: WorkspaceProject) -> Optional[str]:
+    """Why ``project``'s build would take the ``wheels/`` folder this command writes for a package, or None.
+
+    setuptools discovers packages when a project lists none, and takes every folder with a Python name in a flat
+    layout — ``wheels`` among them: two top-level packages stop the build, and a ``[tool.setuptools.packages.find]``
+    without ``include`` ships the folder inside the project's wheel. setuptools' own advice is to list the packages,
+    so that is the fix this names. Left alone: another build backend, a ``setup.py`` (its arguments are code, not
+    read), a ``src`` layout, a package list or ``py-modules``, and a ``find`` that cannot reach the folder.
+    """
+    data = project.pyproject or {}
+    backend = (data.get("build-system") or {}).get("build-backend")
+    if (backend and not str(backend).startswith("setuptools")) or (project.path / "setup.py").exists():
+        return None
+    settings = (data.get("tool") or {}).get("setuptools") or {}
+    packages = settings.get("packages")
+    if isinstance(packages, list) or "py-modules" in settings:
+        return None
+    folders = _package_folders(project.path) or ["your_package"]
+    fix = f"{project.name}/pyproject.toml:\n    [tool.setuptools.packages.find]\n    include = " + json.dumps(
+        [f"{folder}*" for folder in folders]
+    ).replace('","', '", "')
+    find = packages.get("find") if isinstance(packages, dict) else None
+    if not isinstance(find, dict):
+        if (project.path / "src").is_dir():
+            return None
+        return (
+            f"{project.name} finds its packages automatically, so the {WHEELS_DIR}/ folder this command writes would "
+            f"become a second package and stop {project.name} from building.\nList its packages in {fix}"
+        )
+    where = [str(entry).rstrip("/") or "." for entry in find.get("where", ["."])]
+    takes = "." in where or "./" in where
+    include, exclude = find.get("include"), find.get("exclude") or []
+    if include:
+        takes = takes and any(fnmatch.fnmatchcase(WHEELS_DIR, pattern) for pattern in include)
+    takes = takes and find.get("namespaces", True) is not False
+    takes = takes and not any(fnmatch.fnmatchcase(WHEELS_DIR, pattern) for pattern in exclude)
+    if not takes:
+        return None
+    return (
+        f"{project.name}'s [tool.setuptools.packages.find] takes every folder, so the {WHEELS_DIR}/ folder this "
+        f"command writes would be shipped inside {project.name}'s wheel.\nName its packages in {fix}"
+    )
+
+
 def _uncommitted(project: WorkspaceProject) -> List[str]:
     """``git status --porcelain`` of the project: its changes no commit holds."""
     if _git(project.path, "rev-parse", "--is-inside-work-tree").returncode != 0:
@@ -900,6 +954,9 @@ def vendor_wheels(
         )
     projects = workspace_projects(workspace_root)
     target = _find_target(projects, workspace_root, project_name)
+    problem = wheels_folder_problem(target)
+    if problem:
+        raise click.ClickException(problem)
     needed = dependency_closure(projects, target)
     needed_names = {p.name for p in needed}
     if scope == "all":
