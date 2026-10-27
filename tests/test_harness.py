@@ -400,6 +400,22 @@ def test_a_commit_command_checks_the_branch_before_it_stages(command: str) -> No
     assert check < steps.index("1. ") and "`dev/main`" in steps[check : check + 200]
 
 
+@pytest.mark.parametrize("command", ["commit-all", "commit-session"])
+def test_a_commit_command_reads_which_submodules_are_untracked_before_it_stages_a_pointer(command: str) -> None:
+    """In a workspace whose submodules are untracked (`aisland workspace untrack`), `git add <submodule>` fails with
+    `Skipping submodule due to ignore=all`: the command reads each submodule's `ignore` first, this machine's
+    setting before `.gitmodules`, leaves an untracked one's pointer out, and says the root has nothing to record."""
+    text = (harness.HARNESS_DIR / "commands" / f"{command}.md").read_text()
+    front = yaml.safe_load(text.split("---\n")[1])
+    assert "Bash(git -C * config:*)" in front["allowed-tools"]
+    steps = text.split("---\n", 2)[2]
+    read = steps.index('git -C <root> config --get "submodule.<name>.ignore"')
+    assert read < steps.index("git add <submodule_path>")
+    assert steps.index(".gitmodules", read) > read
+    assert "nothing to record" in steps
+    assert "never `git add -f`" in steps
+
+
 def test_commit_all_stops_on_files_another_session_already_staged() -> None:
     """`/commit-all` once committed another session's staged, unfinished files while both were on `dev/main`: it now
     reads every index before it stages anything, and a non-empty one stops it until the user answers."""

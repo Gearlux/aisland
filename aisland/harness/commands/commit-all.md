@@ -1,7 +1,7 @@
 ---
 description: Commit all uncommitted code across the root repository and all submodules with appropriate, automatically generated comments.
 model: sonnet
-allowed-tools: [Bash(git add:*), Bash(git commit:*), Bash(git status:*), Bash(git diff:*), Bash(git log:*), Bash(git branch:*), Bash(git -C * branch:*), Bash(git -C * add:*), Bash(git -C * commit:*), Bash(git -C * status:*), Bash(git -C * diff:*), Bash(git -C * log:*), Bash(cd:*), Bash(for *), Bash(while *), Bash(if *), Bash(python3:*), Bash(python:*), Bash(aisland:*)]
+allowed-tools: [Bash(git add:*), Bash(git commit:*), Bash(git status:*), Bash(git diff:*), Bash(git log:*), Bash(git branch:*), Bash(git -C * branch:*), Bash(git -C * add:*), Bash(git -C * commit:*), Bash(git -C * status:*), Bash(git -C * diff:*), Bash(git -C * log:*), Bash(git -C * config:*), Bash(cd:*), Bash(for *), Bash(while *), Bash(if *), Bash(python3:*), Bash(python:*), Bash(aisland:*)]
 ---
 <!-- Shipped by aisland (aisland/harness/commands/commit-all.md), installed into .agents/workflows/ by `aisland setup` (aisland/harness.py). Change it in aisland; the rules it cites are aisland's (.agents/aisland/AGENTS.md). -->
 
@@ -30,7 +30,7 @@ When the user invokes the `/commit-all` command (or requests to commit all chang
    d. **Feedback:** Inform the user of the commit hash and message for each project.
 
 3. **Root Repository Processing:**
-   a. **Submodule Updates:** Stage all updated submodule pointers (`git add <submodule_path>`). A submodule git skips with `hint: Skipping submodule due to ignore=all` is untracked (`aisland workspace untrack`): leave it unrecorded — never `git add -f`.
+   a. **Submodule Updates:** An UNTRACKED submodule (`aisland workspace untrack`) is never recorded, and a workspace may untrack every one. Before staging any pointer, read each submodule's tracking — this machine's setting first, then the committed one: `git -C <root> config --get "submodule.<name>.ignore" || git -C <root> config -f .gitmodules --get "submodule.<name>.ignore"` (`<name>` is the submodule's name in `.gitmodules`; in most workspaces its path). `all` = untracked: leave its pointer out — never `git add -f` — and never run its `git add` chained with `&&` before a commit (git refuses it with `hint: Skipping submodule due to ignore=all` and exits 1). When every committed submodule is untracked and the root has no file of its own to commit, the root has nothing to record: make no root commit, and say so in the summary, naming the submodules (their commits live on their own branch). Otherwise stage every TRACKED submodule's updated pointer (`git add <submodule_path>`).
    b. **Other Changes:** Check for any other uncommitted changes in the root repository.
    c. **Final Commit:** Generate a summary commit message (e.g., `chore: sync submodules and update [files]`) and commit all changes to the root repository.
 
