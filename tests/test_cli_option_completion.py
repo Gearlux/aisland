@@ -45,6 +45,7 @@ BUILD_OPTIONS = [
     "--include-published",
     "--all",
     "--include-project",
+    "--extra",
     "--bundle",
     "--zip",
     "--commit",

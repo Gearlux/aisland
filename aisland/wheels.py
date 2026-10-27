@@ -80,14 +80,14 @@ import urllib.request
 import zipfile
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
-from typing import Any, Callable, Dict, List, Literal, Optional, Set, Tuple
+from typing import Any, Callable, Dict, List, Literal, Optional, Sequence, Set, Tuple
 
 import click
 from packaging.requirements import InvalidRequirement, Requirement
 from packaging.utils import canonicalize_name
 from packaging.version import InvalidVersion, Version
 
-from aisland import wheels_bundle, wheels_install, wheels_unzip
+from aisland import wheels_bundle, wheels_extra, wheels_install, wheels_unzip
 from aisland.manager import ensure_uv_in_venv, workspace_folders
 from aisland.sources import _pypi_json, points_at_owner, project_repositories, read_committed_sources
 from aisland.wheels_install import WheelsFileError, read_wheels
@@ -319,6 +319,9 @@ class WheelsReport:
     bundle_install_error: Optional[str] = None
     bundle_import_failures: List[ImportFailure] = field(default_factory=list)
     bundle_imported: List[str] = field(default_factory=list)
+    #: The extra ``--extra`` wrote into the target's ``pyproject.toml``, and whether that file changed.
+    extra: Optional[str] = None
+    extra_changed: bool = False
 
     @property
     def ok(self) -> bool:
@@ -794,6 +797,11 @@ def _uncommitted(project: WorkspaceProject) -> List[str]:
     return [line for line in _git(project.path, "status", "--porcelain").stdout.splitlines() if line]
 
 
+def _uncommitted_file(project: WorkspaceProject, name: str) -> List[str]:
+    """``git status --porcelain`` of one file of the project."""
+    return [line for line in _git(project.path, "status", "--porcelain", "--", name).stdout.splitlines() if line]
+
+
 def _outside_wheels_dir(line: str) -> bool:
     """Whether a ``git status --porcelain`` line names a path outside the project's ``wheels/``."""
     path = line[3:].split(" -> ")[-1].strip('"')
@@ -866,13 +874,16 @@ def vendor_wheels(
     check: bool = True,
     include_project: bool = False,
     bundle: bool = False,
+    extra: Optional[str] = None,
 ) -> WheelsReport:
     """``aisland wheels build <project_name>``: build, write, compare, install, import; then, when asked, commit
     the folder (only if the check passed) and zip it. ``force`` builds a project with uncommitted changes from
     its working tree instead of refusing it; ``check=False`` (``--no-check``) skips the comparison with PyPI and
     the empty-venv install; ``include_project`` (``--include-project``) builds the project's own wheel too;
     ``bundle`` (``--bundle``) merges the project's own wheel and the needed wheels into one, written into
-    ``wheels/bundle/`` and checked alone in an empty venv of its own. See the module docstring."""
+    ``wheels/bundle/`` and checked alone in an empty venv of its own; ``extra`` (``--extra NAME``) writes the extra
+    NAME, which installs every wheel built, into the target's ``pyproject.toml`` (:mod:`aisland.wheels_extra`). See
+    the module docstring."""
     if force and commit:
         raise click.ClickException(
             "--force cannot be combined with --commit: a wheel built with uncommitted changes is one no commit "
@@ -932,6 +943,14 @@ def vendor_wheels(
     published = [p for p in needed if _published(p) and p not in to_build]
     # The bundle holds the project's own code, so its project is held to the rules of its own wheel.
     dirty = _refuse_uncommitted(to_build, force, target if include_project or bundle else None)
+    pyproject = target.path / "pyproject.toml"
+    if extra is not None:
+        wheels_extra.check_extra(pyproject, extra, [p.distribution for p in to_build])
+        if commit and (lines := _uncommitted_file(target, pyproject.name)):
+            raise click.ClickException(
+                f"{target.name}/{pyproject.name} has changes no commit holds; --commit would commit them with the "
+                f"extra {extra}:\n" + "\n".join(f"    {line}" for line in lines) + "\nCommit or stash them first."
+            )
 
     folder = target.path / WHEELS_DIR
     choices = read_install_choices(folder / WHEELS_YAML)
@@ -982,15 +1001,21 @@ def vendor_wheels(
         project_wheel = own_entry if include_project else None
 
         files = {
-            README_NAME: render_readme(target.name, scope, built, project_wheel),
-            WHEELS_YAML: render_wheels_yaml(target.name, scope, built, not_built, choices, project_wheel),
-            INSTALL_SCRIPT: render_install_script(target.name, scope, include_project),
+            README_NAME: render_readme(target.name, scope, built, project_wheel, extra),
+            WHEELS_YAML: render_wheels_yaml(target.name, scope, built, not_built, choices, project_wheel, extra),
+            INSTALL_SCRIPT: render_install_script(target.name, scope, include_project, extra),
             GITIGNORE: _IGNORE_ZIP if commit else _IGNORE_ALL,
         }
         _write_wheels(folder, staged + ([own_wheel] if own_wheel and include_project else []), files)
+        extra_changed = extra is not None and wheels_extra.write_extra(
+            pyproject,
+            extra,
+            [wheels_extra.ExtraWheel(b.distribution, b.wheel) for b in built],
+            regenerate_command(target.name, scope, include_project, extra),
+        )
         bundle_path: Optional[Path] = None
         if bundle and own_wheel is not None and own_entry is not None:
-            command = bundle_command(target.name, scope, include_project)
+            command = bundle_command(target.name, scope, include_project, extra)
             bundle_path = _write_bundle(projects, target, own_wheel, own_entry, staged, built, folder, command)
 
         new_names: Dict[str, Set[str]] = {}
@@ -1047,7 +1072,11 @@ def vendor_wheels(
             and bundle_install_error is None
             and not bundle_import_failures
         ):
-            committed = _commit_wheels(target, regenerate_command(target.name, scope, include_project))
+            committed = _commit_wheels(
+                target,
+                regenerate_command(target.name, scope, include_project, extra),
+                [pyproject.name] if extra is not None else [],
+            )
             commit_note = None if committed else f"nothing new to commit in {wheels_dir}"
         else:
             commit_note = "not committed: the install check failed"
@@ -1087,6 +1116,8 @@ def vendor_wheels(
         bundle_install_error=bundle_install_error,
         bundle_import_failures=bundle_import_failures,
         bundle_imported=bundle_imported,
+        extra=extra,
+        extra_changed=extra_changed,
     )
 
 
@@ -1113,9 +1144,9 @@ def _classify(
     return breaks, [f for f in every_failure if f not in breaks]
 
 
-def bundle_command(target: str, scope: WheelsScope, include_project: bool = False) -> str:
+def bundle_command(target: str, scope: WheelsScope, include_project: bool = False, extra: Optional[str] = None) -> str:
     """The command that writes a bundle — its METADATA's ``Generated by:`` and ``To regenerate:``."""
-    return f"{regenerate_command(target, scope, include_project)} --bundle"
+    return f"{regenerate_command(target, scope, include_project, extra)} --bundle"
 
 
 def _write_bundle(
@@ -1195,16 +1226,17 @@ def _bundle_entry(
     )
 
 
-def _commit_wheels(target: WorkspaceProject, command: str) -> Optional[str]:
-    """Commit ``wheels/`` in the target — that path only, whatever else is staged or changed — and return the
-    commit's short SHA, or ``None`` when the folder holds nothing new."""
-    added = _git(target.path, "add", "-A", "--", WHEELS_DIR)
+def _commit_wheels(target: WorkspaceProject, command: str, also: Sequence[str] = ()) -> Optional[str]:
+    """Commit ``wheels/`` in the target — that path and ``also`` (``--extra``'s ``pyproject.toml``) only, whatever
+    else is staged or changed — and return the commit's short SHA, or ``None`` when they hold nothing new."""
+    paths = [WHEELS_DIR, *also]
+    added = _git(target.path, "add", "-A", "--", *paths)
     if added.returncode != 0:
-        raise click.ClickException(f"{target.name}: git add {WHEELS_DIR} failed: {added.stderr.strip()}")
-    if _git(target.path, "diff", "--cached", "--quiet", "--", WHEELS_DIR).returncode == 0:
+        raise click.ClickException(f"{target.name}: git add {' '.join(paths)} failed: {added.stderr.strip()}")
+    if _git(target.path, "diff", "--cached", "--quiet", "--", *paths).returncode == 0:
         return None
     message = f"chore: wheels built with {command}"
-    done = _git(target.path, "commit", "-q", "-m", message, "--", WHEELS_DIR)
+    done = _git(target.path, "commit", "-q", "-m", message, "--", *paths)
     if done.returncode != 0:
         raise click.ClickException(f"{target.name}: committing {WHEELS_DIR} failed: {done.stderr.strip()}")
     return _git(target.path, "rev-parse", "--short", "HEAD").stdout.strip()
@@ -1465,6 +1497,13 @@ def render_report(report: WheelsReport) -> str:
         if not report.import_failures and not report.behind:
             lines.append(f"PyPI is up to date for {target}.")
     tail = []
+    if report.extra is not None:
+        n_wheels = len(report.built)
+        state = "written into" if report.extra_changed else "unchanged in"
+        tail.append(
+            f"The extra {report.extra} ({n_wheels} wheel{'s' if n_wheels != 1 else ''}) {state} "
+            f"{target}/pyproject.toml; install it with: uv pip install -e ./{target}[{report.extra}]"
+        )
     if report.tracked_warning:
         tail.append(report.tracked_warning)
     if report.committed:
@@ -1507,9 +1546,12 @@ def _bundle_lines(report: WheelsReport) -> List[str]:
     return lines + [f"    {n_imported} other {modules} imported"]
 
 
-def regenerate_command(target: str, scope: WheelsScope, include_project: bool = False) -> str:
+def regenerate_command(
+    target: str, scope: WheelsScope, include_project: bool = False, extra: Optional[str] = None
+) -> str:
     """The command that wrote a generated file — its header's ``Generated by:`` and ``To regenerate:``."""
-    return f"aisland wheels build {target}{_SCOPE_FLAGS[scope]}{_INCLUDE_PROJECT_FLAG if include_project else ''}"
+    own = _INCLUDE_PROJECT_FLAG if include_project else ""
+    return f"aisland wheels build {target}{_SCOPE_FLAGS[scope]}{own}{f' --extra {extra}' if extra else ''}"
 
 
 def _header(prefix: str, command: str, source: str) -> List[str]:
@@ -1523,14 +1565,18 @@ def _header(prefix: str, command: str, source: str) -> List[str]:
 
 
 def render_readme(
-    target: str, scope: WheelsScope, built: List[BuiltWheel], project_wheel: Optional[BuiltWheel] = None
+    target: str,
+    scope: WheelsScope,
+    built: List[BuiltWheel],
+    project_wheel: Optional[BuiltWheel] = None,
+    extra: Optional[str] = None,
 ) -> str:
     """``wheels/README.md``: its generator, the install command, and each wheel's commit (``project_wheel``, the
-    target's own, last).
+    target's own, last); with ``extra`` (``--extra``), the uv command that installs the extra first.
 
     No date and no PyPI verdict, so a rebuild of unchanged projects changes no file.
     """
-    command = regenerate_command(target, scope, project_wheel is not None)
+    command = regenerate_command(target, scope, project_wheel is not None, extra)
     shipped = built + ([project_wheel] if project_wheel else [])
     rows = "\n".join(
         f"| {b.wheel} | {b.project} | {b.branch} | {b.commit} | {'yes' if b.needed else 'no'} |" for b in shipped
@@ -1568,6 +1614,17 @@ install {target} from its folder, editable, instead:"""
         ),
     }[scope]
     header = "\n".join(_header("", command, "aisland/aisland/wheels.py (render_readme)"))
+    if extra is not None:
+        how = f"""\
+With uv, from the folder holding {target}, install {target} editable together with every wheel
+here: its `pyproject.toml` has the extra `{extra}`, whose uv sources are these files. After the
+wheels are rebuilt, the same command takes the new ones.
+
+    uv pip install -e ./{target}[{extra}]
+
+Or with the script beside the wheels, which pip runs too.
+
+{how}"""
     return f"""\
 <!--
 =========================================================================
@@ -1600,6 +1657,7 @@ def render_wheels_yaml(
     not_built: List[NotBuilt],
     keep: Dict[str, bool],
     project_wheel: Optional[BuiltWheel] = None,
+    extra: Optional[str] = None,
 ) -> str:
     """``wheels/wheels.yaml``: each wheel, its commit, whether ``target`` needs it, and ``install:``; the target's
     own wheel (``project_wheel``) last.
@@ -1608,7 +1666,7 @@ def render_wheels_yaml(
     listed there, else whether it is needed (the target's own wheel: true). Strings are written as JSON strings,
     which YAML reads as they are (a version such as ``1.0`` would otherwise read as a number).
     """
-    command = regenerate_command(target, scope, project_wheel is not None)
+    command = regenerate_command(target, scope, project_wheel is not None, extra)
     lines = [_HEADER_RULE.rstrip("\n")]
     # The header's first line, said for this one generated file the user DOES edit: its `install:` values.
     lines += ["# AUTO-GENERATED FILE — edit only the `install:` values (a rerun keeps them)"]
@@ -1646,7 +1704,9 @@ def render_wheels_yaml(
     return "\n".join(lines) + "\n"
 
 
-def render_install_script(target: str, scope: WheelsScope, include_project: bool = False) -> str:
+def render_install_script(
+    target: str, scope: WheelsScope, include_project: bool = False, extra: Optional[str] = None
+) -> str:
     """``wheels/install.py``: :mod:`aisland.wheels_install` unchanged, under a generated header.
 
     The template's own header (between its first two rule lines) says it is the template; the copy's
@@ -1654,7 +1714,7 @@ def render_install_script(target: str, scope: WheelsScope, include_project: bool
     """
     template = Path(wheels_install.__file__).read_text(encoding="utf-8")
     shebang, _template_header, rest = template.split(_HEADER_RULE, 2)
-    command = regenerate_command(target, scope, include_project)
+    command = regenerate_command(target, scope, include_project, extra)
     header = _header("# ", command, "aisland/aisland/wheels_install.py (copied unchanged below this header)")
     return shebang + _HEADER_RULE + "\n".join(header) + "\n" + _HEADER_RULE + rest
 

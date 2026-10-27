@@ -479,6 +479,7 @@ class TestCli:
             check: bool,
             include_project: bool,
             bundle: bool,
+            extra: Optional[str],
         ) -> w.WheelsReport:
             calls.append({"project": project, "scope": scope, "commit": commit, "make_zip": make_zip})
             return _report(import_failures=[])

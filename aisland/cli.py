@@ -1028,7 +1028,7 @@ def wheels_group(
     """The wheels a project installed outside the workspace needs: build them, zip them, install a zip.
 
     \b
-    aisland wheels build PROJECT [--include-published | --all] [--include-project] [--bundle] [--zip] [--commit] [--force] [--no-check] [--json]
+    aisland wheels build PROJECT [--include-published | --all] [--include-project] [--extra NAME] [--bundle] [--zip] [--commit] [--force] [--no-check] [--json]
     aisland wheels zip PROJECT
     aisland wheels install ZIP --python PYTHON [--into DIR] [-- install.py options]
     aisland wheels PROJECT …          (= aisland wheels build PROJECT …)
@@ -1066,6 +1066,14 @@ def wheels_group(
     "installs from any folder.",
 )
 @click.option(
+    "--extra",
+    "extra",
+    metavar="NAME",
+    help="Also write the extra NAME into PROJECT's pyproject.toml, with a uv source per wheel built, so "
+    "`uv pip install -e ./PROJECT[NAME]` installs PROJECT editable with every wheel; NAME must be in its "
+    "[tool.aisland] manual-extras. --commit commits pyproject.toml too.",
+)
+@click.option(
     "--bundle",
     is_flag=True,
     help="Also merge PROJECT and the wheels it needs into ONE wheel, PROJECT/wheels/bundle/PROJECT_bundle-VERSION-"
@@ -1097,6 +1105,7 @@ def wheels_build(
     include_published: bool,
     include_all: bool,
     include_project: bool,
+    extra: Optional[str],
     bundle: bool,
     make_zip: bool,
     commit: bool,
@@ -1108,7 +1117,8 @@ def wheels_build(
 
     By default only the projects PROJECT needs that are not on PyPI are built; --include-published
     builds every project it needs that has a checkout here, --all every workspace project that has
-    one; --include-project builds PROJECT's own wheel too; --bundle merges PROJECT and the wheels it needs into
+    one; --include-project builds PROJECT's own wheel too; --extra NAME writes the extra NAME into PROJECT's
+    pyproject.toml, which installs PROJECT editable with every wheel built; --bundle merges PROJECT and the wheels it needs into
     one wheel that plain pip installs, in PROJECT/wheels/bundle. Each wheel is built from its project's last commit (a
     project with uncommitted changes is refused; --force builds it from its files as they are). wheels.yaml lists the wheels and which to install (yours to edit; a rerun keeps it);
     install.py installs them, naming each by its file, then PROJECT editable. Each dependency PROJECT
@@ -1121,6 +1131,7 @@ def wheels_build(
     aisland wheels build models
     aisland wheels build models --include-published --zip
     aisland wheels build models --include-project --zip
+    aisland wheels build models --all --extra wheels
     aisland wheels build models --include-published --bundle
     aisland wheels build models --all --commit --json
     aisland wheels build models --all --force --zip
@@ -1137,6 +1148,7 @@ def wheels_build(
         check=not no_check,
         include_project=include_project,
         bundle=bundle,
+        extra=extra,
     )
     click.echo(json.dumps(report.to_dict(), indent=2) if as_json else wheels.render_report(report), nl=as_json)
     raise SystemExit(0 if report.ok else 1)

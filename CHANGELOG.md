@@ -24,7 +24,8 @@ The first release on PyPI: `pip install aisland`.
 - **`aisland jenkins scaffold`** writes a project's `Jenkinsfile`, `Jenkinsfile.local` and GitHub `ci.yml`.
 - **`aisland doctor`** checks the environment and prints the command that fixes what it finds.
 - **`aisland wheels build <project>`** builds the wheels a project needs that are not on PyPI, for a machine
-  without the workspace.
+  without the workspace. With `--extra NAME` it also writes the extra NAME into the project's
+  `pyproject.toml`, so `uv pip install -e ./<project>[NAME]` installs the project with every wheel.
 - **A pytest plugin, `aisland_test_stats`,** loaded by every `pytest` in the environment aisland is installed in,
   records each run of a project — its seconds and each test's outcome — in `.aisland/data/test-stats/` in the
   folder above the project; `aisland workspace test-stats off [PROJECT…] [--machine-only]` turns it off for a

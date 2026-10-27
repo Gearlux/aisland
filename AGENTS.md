@@ -847,6 +847,17 @@ User choice 2026-10-08: an aisland command, only the named project's closure, bo
   failures exit 1 and block `--commit`. Without the flag every file is byte-identical and a stale bundle is removed;
   the zip never holds it (`tests/test_wheels_bundle.py::TestTheRunWithABundle::test_without_bundle_every_file_is_what_it_was_and_an_old_bundle_goes`,
   `::test_the_zip_leaves_the_bundle_out`, `TestEndToEnd::test_the_bundle_installs_alone_with_plain_pip_and_pip_knows_only_its_name`).
+- `--extra NAME` (user request 2026-10-27) writes the extra NAME — every built wheel's distribution — and a
+  `[tool.uv.sources]` entry per wheel, applied only under that extra (`{ path = "wheels/<file>", extra = NAME }`),
+  into the target's `pyproject.toml`, so `uv pip install -e ./<project>[NAME]` installs it editable with every wheel
+  and takes a wheel rebuilt under its version (`wheels_extra.py`). Both pieces sit between marker lines a rerun
+  replaces, and nothing outside them changes; the run REFUSES before any build an extra NAME missing from
+  `[tool.aisland] manual-extras` (setup would install the wheels over the checkouts), a hand-written extra NAME or
+  source for a built wheel, and a broken marker, each naming its line; `--commit` commits `pyproject.toml` with the
+  folder and refuses one with changes of its own. It is a flag, never tied to `--include-project`: aisland's own
+  `--include-project` run would put the extra into its PyPI metadata. Without the flag the file and every generated
+  file are byte-identical (`tests/test_wheels_extra.py`; the uv behaviour, offline with the real uv:
+  `::test_uv_installs_the_project_with_the_wheels_of_its_extra_and_takes_a_rebuilt_one`). [wheels]
 - TAB after `wheels build` / `wheels zip` / the short form `wheels` offers the projects (`cli._complete_projects`:
   checked out here; `zip` only those with a `wheels.yaml`; the group's commands first). It reads folders and
   `pyproject.toml` only and an unreadable workspace offers nothing (`tests/test_wheels.py::TestShellCompletion`).

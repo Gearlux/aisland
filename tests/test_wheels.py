@@ -939,6 +939,7 @@ class TestCli:
             check: bool,
             include_project: bool,
             bundle: bool,
+            extra: Optional[str],
         ) -> w.WheelsReport:
             asked.append(scope)
             return _report(import_failures=[])
