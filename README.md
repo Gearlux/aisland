@@ -118,6 +118,7 @@ needs — in its own `pyproject.toml`, under `[tool.aisland]`. It never imports 
 | write a project's CI files | `aisland jenkins scaffold <project>` | [ci](https://github.com/Gearlux/aisland/blob/main/docs/ci.md) |
 | see a project's test runs and slowest tests | `aisland tests report <project>` | [tests](https://github.com/Gearlux/aisland/blob/main/docs/tests.md) |
 | carry a project to a machine without the workspace | `aisland wheels build <project>` | [wheels](https://github.com/Gearlux/aisland/blob/main/docs/wheels.md) |
+| drop old committed wheels from a project's history | `aisland wheels prune <project> --apply` | [wheels](https://github.com/Gearlux/aisland/blob/main/docs/wheels.md#old-committed-wheels-aisland-wheels-prune-and-aisland-wheels-reset) |
 | reclaim a project's disk, and undo it | `aisland clean <project>`, `aisland backups restore` | [clean](https://github.com/Gearlux/aisland/blob/main/docs/clean.md) |
 | refresh shell completion | `aisland completion install` | [completion](https://github.com/Gearlux/aisland/blob/main/docs/completion.md) |
 | give the editor window its own theme | `aisland workspace theme set <name>` | [editor](https://github.com/Gearlux/aisland/blob/main/docs/editor.md) |

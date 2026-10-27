@@ -17,6 +17,9 @@
 #   1. fetch the root and every submodule from origin, in parallel, before anything merges;
 #   2. merge origin/<branch> into each submodule that is on the root's branch — an untracked one
 #      (`aisland workspace untrack`) on no branch is first put on the branch it follows;
+#      a repository whose origin history `aisland wheels prune` rewrote while this clone still holds
+#      the old one is not merged (the merge would bring the old history back) — it is listed with
+#      `aisland wheels reset <project>`;
 #   3. merge origin/<branch> into the root, settling pointer conflicts by the rule above —
 #      skipped while a submodule is left mid-merge, since its pointer depends on it;
 #   4. record, in one root commit, each submodule holding commits from origin that the root
@@ -163,6 +166,19 @@ stash_note() {
     printf '; your uncommitted edits to %s are set aside until the merge is committed — the next git pull-all puts them back' "$STASHED_FILES"
 }
 
+# Whether $1's HEAD still reaches a commit that a prune of origin's history rewrote: each prune's
+# record (`aisland wheels prune`, fetched into refs/wheels-prune/map, one commit per prune) lists
+# the commits it rewrote, `<old> <new>` per line, in its commit-map file.
+holds_pruned_history() {
+    local old
+    git -C "$1" rev-parse -q --verify refs/wheels-prune/map >/dev/null || return 1
+    old=$(git -C "$1" rev-list refs/wheels-prune/map | while read -r record; do
+        git -C "$1" show "$record:commit-map" 2>/dev/null
+    done | awk '{ print $1 }')
+    [ -n "$old" ] || return 1
+    git -C "$1" rev-list HEAD | grep -Fxq -f <(printf '%s\n' "$old")
+}
+
 # --- merging -------------------------------------------------------------------------------
 
 # Merge origin/$BRANCH into $1 (label $2). Returns 0 when merged or nothing came in, 1 when
@@ -184,6 +200,10 @@ merge_origin() {
     put_back "$repo" "$label" || return 1
     if ! git -C "$repo" rev-parse -q --verify "refs/remotes/origin/$BRANCH" >/dev/null; then
         need "$label" "origin has no $BRANCH — not pulled"
+        return 1
+    fi
+    if holds_pruned_history "$repo"; then
+        need "$label" "not merged: origin's history was rewritten by aisland wheels prune and this clone still holds the old one — run aisland wheels reset $label, then git pull-all again"
         return 1
     fi
     incoming=$(git -C "$repo" rev-list --count "HEAD..origin/$BRANCH")
@@ -373,13 +393,17 @@ finish() {
 }
 
 # Fetch the root (label `root`) and the folders named after it, in parallel; a failure is listed.
+# With origin's configured refspecs goes the record of its prunes (`refs/wheels-prune/*`), which
+# holds_pruned_history reads.
 fetch_all() {
     local fails
     [ $# -gt 0 ] || return 0
     fails=$(mktemp)
     printf '%s\0' "$@" | xargs -0 -n 1 -P "$FETCH_JOBS" sh -c '
         dir="$2/$3"; [ "$3" = root ] && dir="$2"
-        out=$(git -C "$dir" fetch -q --no-recurse-submodules origin 2>&1) ||
+        specs=$(git -C "$dir" config --get-all remote.origin.fetch)
+        [ -n "$specs" ] && specs="$specs +refs/wheels-prune/*:refs/wheels-prune/*"
+        out=$(git -C "$dir" fetch -q --no-recurse-submodules origin $specs 2>&1) ||
             printf "%s\t%s\n" "$3" "$(printf "%s\n" "$out" | head -n 1)" >> "$1"
     ' _ "$fails" "$WORKSPACE_ROOT"
     while IFS="$(printf '\t')" read -r label err; do

@@ -82,6 +82,7 @@ What it cannot do is listed under `needs you:` and it exits 1; fix the item and 
 | `detached HEAD — not pulled` / `on <branch>, the root is on <branch> — not pulled` | that submodule is checked out elsewhere on purpose | `git switch <branch>` in it to have it pulled |
 | `on no branch, and git switch <branch> refused: …` | an untracked submodule's uncommitted edits are in the way of its branch | commit or set them aside, run `git pull-all` again |
 | `not fetched: …` | its remote could not be reached (e.g. off VPN); the others still pull | reconnect and run again |
+| `not merged: origin's history was rewritten by aisland wheels prune and this clone still holds the old one` | origin's old committed wheels were pruned ([wheels](wheels.md#old-committed-wheels-aisland-wheels-prune-and-aisland-wheels-reset)); merging would bring the old history back, so nothing was touched | `aisland wheels reset <project>`, then run `git pull-all` again |
 | `the root records <sha>, which <submodule>'s <branch> does not contain` | the root points at a commit outside that branch; the pointer is left as recorded | check the submodule's branch |
 
 `--autostash` sets aside only the files the merge needs, in a stash named `git pull-all autostash`, merges, and puts them back. If the merge itself conflicts, your edits stay aside until you commit the merge; the next `git pull-all` puts them back.

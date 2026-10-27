@@ -882,6 +882,13 @@ class TestShellCompletion:
         assert _complete(monkeypatch, root, "aisland wheels build ") == ["app", "libx", "vendorcli"]
         assert _complete(monkeypatch, root, "aisland wheels build sai") == ["vendorcli"]
 
+    def test_prune_and_reset_offer_every_project_checked_out_here(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        root = self._root(tmp_path)
+        assert _complete(monkeypatch, root, "aisland wheels prune ") == ["app", "libx", "vendorcli"]
+        assert _complete(monkeypatch, root, "aisland wheels reset sai") == ["vendorcli"]
+
     def test_zip_offers_only_the_projects_with_a_wheels_folder(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
@@ -891,7 +898,16 @@ class TestShellCompletion:
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         root = self._root(tmp_path)
-        assert _complete(monkeypatch, root, "aisland wheels ") == ["build", "install", "zip", "app", "libx", "vendorcli"]
+        assert _complete(monkeypatch, root, "aisland wheels ") == [
+            "build",
+            "install",
+            "prune",
+            "reset",
+            "zip",
+            "app",
+            "libx",
+            "vendorcli",
+        ]
         assert _complete(monkeypatch, root, "aisland wheels sai") == ["vendorcli"]
         assert "--include-project" in _complete(monkeypatch, root, "aisland wheels vendorcli --inc")
         options = _complete(monkeypatch, root, "aisland wheels --")
@@ -899,7 +915,7 @@ class TestShellCompletion:
 
     def test_a_workspace_that_cannot_be_read_offers_nothing(self, monkeypatch: pytest.MonkeyPatch) -> None:
         assert _complete(monkeypatch, None, "aisland wheels build ") == []
-        assert _complete(monkeypatch, None, "aisland wheels ") == ["build", "install", "zip"]
+        assert _complete(monkeypatch, None, "aisland wheels ") == ["build", "install", "prune", "reset", "zip"]
 
 
 class TestCli:

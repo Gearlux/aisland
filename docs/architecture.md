@@ -3489,3 +3489,61 @@ $ aisland workspace test-stats off models
 - A listing (`aisland workspace test-stats` alone printing each project's state) — not built.
 - Never: removing the plugin's record to turn it off, or a switch the plugin needs more than the standard library to read.
 
+
+---
+
+## `aisland wheels prune`: old wheel versions leave the history; `reset` follows on every other clone (2026-10-27)
+
+### Context
+
+`aisland wheels build --commit` commits `wheels/`; every rebuild that changes a wheel adds its bytes to the history
+for good. Measured on a project with seven wheel commits: 59 wheel versions in its history (14.6 MiB), 32 of them
+held by a branch tip or a tag (7.5 MiB) — half of every clone was wheels no ref holds. The user asked to keep the
+wheels a branch or a tag holds and to drop the accumulated versions, aisland to force-push, and every other machine
+to be fixable afterwards.
+
+### Decision
+
+- **What goes:** every blob ever under `wheels/**.whl` that no tip of this clone's branches and tags or origin's
+  branches holds (origin's tags are fetched first and must equal this clone's). Nothing else is touched.
+- **How:** git-filter-repo (`prune` extra, run as `python -m git_filter_repo`) with `--strip-blobs-with-ids`,
+  `--partial`, `--prune-empty never`, `--prune-degenerate never` and `--preserve-commit-hashes`. With these the
+  rewrite is a function of each commit alone: no commit disappears and no message changes, so a second clone
+  stripping the same blobs gets the same ids (measured: identical ids, an unpushed commit carried on top). That is
+  what makes `reset` a re-run of the same strip instead of a rebase.
+- **Safety:** refuse tracked changes, a branch ahead of or behind origin's and a differing tag; bundle every ref
+  first; check every kept ref's tree is unchanged; push atomically with `--force-with-lease=<ref>:<fetched sha>`
+  per ref (no `+` in the refspec: a `+` overrides the lease); a detached HEAD is carried by a temporary ref
+  (filter-repo moves refs, never a detached HEAD); reflogs expire for every ref but the stash, symbolic ones
+  included (a clone's `origin/HEAD` keeps its own reflog of the old history).
+- **The record:** `refs/wheels-prune/map` on origin, a chain of commits, one per prune, each holding
+  `stripped-blobs` and `commit-map`. Text only, so it keeps no old commit alive; a chain, so a clone that missed
+  several prunes takes each in turn with that prune's own blob list (a union of the lists would strip a version a
+  later commit added back). The name holds no workspace or tool name: the repository may be one that must not
+  reveal them.
+- **The root:** the gitlink it records is replaced by the rewritten id of the same commit, in a commit of that path
+  alone (built in a scratch index, so the root's staged changes stay staged). The root never records a newer commit
+  of the project than before — an untracked project stays unrecorded.
+
+### Consequences
+
+- Every commit from the first stripped wheel onward gets a new id; old commits of the workspace root name ids that
+  are gone. A clone that merges origin before `reset` brings the old history back, so `git pull-all` fetches
+  `refs/wheels-prune/*` with each repository and refuses to merge one whose HEAD still reaches a commit a prune's
+  `commit-map` lists, naming `aisland wheels reset <project>`; a plain `git pull` is not guarded.
+- The host frees the stripped versions only when its own garbage collection runs.
+- A clone's local tag on a commit the prune rewrote moves with it and holds origin's files for that commit.
+
+### Example
+
+```bash
+aisland wheels prune app              # says what would go, changes nothing
+aisland wheels prune app --apply      # rewrites, force-pushes origin, re-records the root's pointer
+aisland wheels reset app              # on every other machine, before its next pull
+```
+
+### What you may change
+
+- Which refs keep their wheels (a `--keep REF` narrowing it) — not built.
+- Never: a `+` refspec beside the lease, a rewrite that drops emptied commits or rewrites messages (two clones would
+  disagree), or a record that holds old commits as parents.

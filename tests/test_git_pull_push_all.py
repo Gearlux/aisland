@@ -589,6 +589,47 @@ def test_an_inactive_submodule_is_left_untouched(ws: Workspace) -> None:
     assert list((ws.B / "beta").iterdir()) == []
 
 
+def _prune_alpha_on_origin(ws: Workspace) -> Tuple[str, str]:
+    """Machine A rewrites alpha's commit as `aisland wheels prune` would (a new id, the same files), force-pushes it
+    and pushes the prune's record to `refs/wheels-prune/map`; the old and the new id."""
+    alpha = ws.A / "alpha"
+    old = ws.head(alpha)
+    ws.git(alpha, "commit", "-q", "--amend", "-m", "init, rewritten")
+    new = ws.head(alpha)
+    ws.git(alpha, "push", "-q", "--force", "origin", BRANCH)
+    record = ws.tmp / "record"
+    ws.git(ws.tmp, "init", "-q", str(record))
+    (record / "commit-map").write_text(f"{old} {new}\n")
+    (record / "stripped-blobs").write_text("")
+    ws.git(record, "add", "-A")
+    ws.git(record, "commit", "-q", "-m", "wheels prune: 0 wheel versions stripped, 1 commits rewritten")
+    ws.git(record, "push", "-q", str(ws.tmp / "origin" / "alpha.git"), "HEAD:refs/wheels-prune/map")
+    return old, new
+
+
+def test_a_clone_still_on_a_pruned_history_is_not_merged_and_names_the_reset(ws: Workspace) -> None:
+    old, _new = _prune_alpha_on_origin(ws)
+    beta = _publish(ws, "beta", 1, "A", record=False)
+    rc, out = ws.pull_all(ws.B)
+    assert rc == 1
+    assert (
+        "  alpha                not merged: origin's history was rewritten by aisland wheels prune and this clone "
+        "still holds the old one — run aisland wheels reset alpha, then git pull-all again"
+    ) in out
+    assert ws.head(ws.B / "alpha") == old and not ws.mid_merge(ws.B / "alpha")
+    assert ws.head(ws.B / "beta") == beta
+
+
+def test_a_clone_already_on_the_pruned_history_pulls_as_usual(ws: Workspace) -> None:
+    _old, new = _prune_alpha_on_origin(ws)
+    ws.git(ws.B / "alpha", "fetch", "-q", "origin")
+    ws.git(ws.B / "alpha", "reset", "-q", "--hard", f"origin/{BRANCH}")
+    a_sha = _publish(ws, "alpha", 1, "A", record=False)
+    rc, out = ws.pull_all(ws.B)
+    assert "rewritten" not in out
+    assert ws.head(ws.B / "alpha") == a_sha and ws.contains(ws.B / "alpha", new)
+
+
 def test_an_unreachable_remote_is_listed_and_the_rest_still_pull(ws: Workspace) -> None:
     a_sha = _publish(ws, "alpha", 1, "A")
     ws.git(ws.B / "beta", "remote", "set-url", "origin", str(ws.tmp / "missing.git"))

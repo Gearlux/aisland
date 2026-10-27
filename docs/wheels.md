@@ -262,6 +262,62 @@ that stops tracking them (the files stay on disk):
 wheels/ is tracked in app (10 files); stop tracking it with: git -C app rm -r --cached wheels
 ```
 
+### Old committed wheels: `aisland wheels prune` and `aisland wheels reset`
+
+Every `--commit` that changes a wheel adds its bytes to the history for good, and every clone carries every version
+ever committed. `aisland wheels prune` removes from the history each version that no branch or tag holds — this
+clone's branches and tags, and origin's. Each branch tip and tag keeps exactly the files it has; only commit ids
+change. Without `--apply` it changes nothing and says what would go:
+
+```text
+$ aisland wheels prune app
+app: 27 of 59 wheel versions are held by no branch or tag (7.6 MB) — they go
+  kept: 32, held by dev/main, main, origin/dev/main, origin/main, v0.1.0
+aisland wheels prune app --apply   rewrites history and force-pushes origin
+```
+
+`--apply` needs git-filter-repo (`uv pip install 'aisland[prune]'`) and:
+
+1. refuses a clone with changes no commit holds, a branch with commits origin lacks or behind origin's, and a tag
+   that differs from origin's — each named in one `Error:` line, nothing changed;
+2. bundles every ref into `.git/wheels-prune/<stamp>.bundle` and prints the command that puts it back;
+3. rewrites the history, and checks that every kept branch and tag has the files it had;
+4. force-pushes origin's branches and tags in one atomic push, each leased on the commit it fetched: if someone
+   pushed meanwhile, origin refuses the whole push and stays as it was;
+5. expires this clone's reflogs (a stash keeps its entries) and drops what nothing reaches any more;
+6. when the workspace root records the project, records the rewritten id of the same commit, and commits that
+   pointer alone.
+
+```text
+$ aisland wheels prune app --apply
+app: 27 of 59 wheel versions stripped (7.6 MB), 41 commits rewritten
+  kept: 32, held by dev/main, main, origin/dev/main, origin/main, v0.1.0
+  pushed to origin: dev/main, main, v0.1.0, wheels-prune/map
+  this clone: 20.4 MB → 12.8 MB
+  the root records app at 1c0e4a2 (was 0c80aef), committed; push the root as usual
+  backup: …/.git/wheels-prune/20261027-140512-123456.bundle
+Every other clone of app: aisland wheels reset app, before its next pull
+```
+
+origin also gets `refs/wheels-prune/map`: one commit per prune, listing the wheel versions it stripped and the
+old → new commit ids. Every other clone reads it with `aisland wheels reset`, **before its next pull** — a merge
+would bring the old history back. `git pull-all` fetches the record and refuses such a project, naming the reset
+(`not merged: origin's history was rewritten by aisland wheels prune …`); a plain `git pull` does not check:
+
+```text
+$ aisland wheels reset app
+app: 1 prune taken
+  moved: dev/main 8d52967 → 1c0e4a2, main 61b2d28 → 9f31b07
+  dev/main: 1 commit origin lacks, kept on top of origin's
+  this clone: 20.4 MB → 12.8 MB
+  backup: …/.git/wheels-prune/20261027-141003-654321.bundle
+```
+
+`reset` strips the same versions the same way, so each branch that was origin's lands on origin's new commit; its
+commits origin lacks, a stash and local tags are carried over, rewritten. It refuses changes no commit holds, takes
+every prune the clone missed, and changes nothing when there is none. Both commands take `--json`. A clone of
+origin made after the prune needs nothing; old commits of the workspace root still name the project's old ids.
+
 ### One zip to carry: `aisland wheels zip` and `aisland wheels install`
 
 ```bash

@@ -21,7 +21,8 @@ generated workspace file · [declarations] a project declares what it brings, ai
 [tunnel-terminal] a terminal on the remote machine rides the VS Code tunnel it already runs · [local-workspace] a root
 repository no one shares tracks only the projects, and an untracked project's commits are never recorded. · [github-owner] a project is the
 workspace's own by its GitHub remote, no organisation is written into aisland. · [test-stats-switch] the test-run record is
-turned off per workspace, project or machine, never removed.
+turned off per workspace, project or machine, never removed. [wheels-prune] old committed wheel
+versions leave the history by one deterministic strip, which every other clone re-runs.
 
 ## Current state
 
@@ -92,6 +93,8 @@ The workspace's dev-infrastructure CLI, `aisland` (click, `aisland/cli.py`):
   `<project>/wheels/` with `wheels.yaml` and `install.py` (`wheels_install.py`), and the check of what it
   takes from PyPI; the folder git-ignored unless `--commit`, packed by `aisland wheels zip` into a zip that
   installs with plain `python` (`wheels_unzip.py`), installed elsewhere by `aisland wheels install`.
+  `wheels_prune.py`: `aisland wheels prune <project> [--apply]` strips the committed wheel versions no branch or tag
+  holds from the history and force-pushes origin; `aisland wheels reset <project>` brings another clone onto it.
 - `nightly.py`: `aisland tests nightly`, the morning report of the orchestrator's nightly runs
   (`aisland/data/nightly/<date>.md`, a desktop notification, exit 1 on a bad night), run by the
   `<workspace>.nightly-check` Jenkins job.
@@ -863,6 +866,27 @@ User choice 2026-10-08: an aisland command, only the named project's closure, bo
   file are byte-identical (`tests/test_wheels_extra.py`; the uv behaviour, offline with the real uv:
   `::test_uv_installs_the_project_with_the_wheels_of_its_extra_and_takes_a_rebuilt_one`;
   `TestTheBuildRemembersTheExtra`). [wheels]
+- **`aisland wheels prune` / `reset` (user request 2026-10-27: keep the wheels a branch or tag holds, aisland
+  force-pushes, other machines can be fixed)** (`wheels_prune.py`, `tests/test_wheels_prune.py`) [wheels-prune]:
+  - What goes is exactly the `wheels/**.whl` blobs no tip holds — this clone's branches and tags, origin's branches
+    (`::test_a_wheel_only_this_clones_branch_holds_is_kept`); every kept tip's tree is checked unchanged after the
+    rewrite. Without `--apply` nothing changes (`::test_without_apply_it_names_what_goes_and_changes_nothing`).
+  - The strip is git-filter-repo with `--prune-empty never --prune-degenerate never --preserve-commit-hashes`, so it is
+    a function of each commit and `reset` re-runs it to land on origin's ids
+    (`::test_reset_brings_another_clone_onto_the_pruned_history_keeping_its_work`). Never drop emptied commits or
+    rewrite messages, and never replace `reset` by a rebase.
+  - `--apply` refuses tracked changes, a branch ahead of or behind origin's and a differing tag, naming each, before
+    anything changes; it bundles every ref first and prints the restore command. The push is ONE atomic push leased
+    per ref on the fetched sha, never a `+` refspec, which overrides the lease
+    (`::test_a_push_made_meanwhile_refuses_the_whole_push_and_the_backup_restores`).
+  - origin's `refs/wheels-prune/map` is a chain, one commit per prune (`stripped-blobs`, `commit-map`), text only;
+    `reset` takes each prune the clone still reaches with that prune's own list (`::test_reset_takes_every_prune_it_missed`).
+    Its name carries no workspace or tool name (a Bitbucket project must not reveal them).
+  - The root's gitlink moves only to the rewritten id of the commit it already records, committed alone from a
+    scratch index — never to a newer commit, so an untracked project stays unrecorded
+    (`::test_the_root_records_the_rewritten_twin_of_its_commit_alone`).
+  - Reflogs expire for every ref but `refs/stash`, symbolic refs included (`origin/HEAD`'s reflog kept the old
+    history alive); a detached HEAD is carried through `refs/wheels-prune/head`.
 - TAB after `wheels build` / `wheels zip` / the short form `wheels` offers the projects (`cli._complete_projects`:
   checked out here; `zip` only those with a `wheels.yaml`; the group's commands first). It reads folders and
   `pyproject.toml` only and an unreadable workspace offers nothing (`tests/test_wheels.py::TestShellCompletion`).
@@ -919,6 +943,12 @@ User choice 2026-10-08: an aisland command, only the named project's closure, bo
     `::test_unrecorded_local_commits_with_nothing_incoming_are_left_alone`); the record commit
     takes only its pointers (`::test_recording_pointers_leaves_other_staged_changes_staged_and_out`).
   - `git fetch` + `git merge`, never `git pull` (`pull.*` settings, `submodule.recurse`).
+  - **A clone still on a pruned history is never merged (user request 2026-10-27).** Each fetch takes origin's
+    configured refspecs plus `+refs/wheels-prune/*:refs/wheels-prune/*`; a repository whose HEAD reaches an `<old>`
+    of any record's `commit-map` is listed `not merged: … run aisland wheels reset <project>` and left — the merge
+    would bring the stripped history back [wheels-prune]
+    (`::test_a_clone_still_on_a_pruned_history_is_not_merged_and_names_the_reset`,
+    `::test_a_clone_already_on_the_pruned_history_pulls_as_usual`). `/pull-all` leaves the reset to the user.
   - Uncommitted edits are touched only under `--autostash`, only the files the merge needs.
   - **A root without an `origin` remote (what `workspace init` makes; user request 2026-10-21)** is neither
     fetched nor merged, each submodule is pulled on ITS OWN branch, and what came in is still recorded;

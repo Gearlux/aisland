@@ -26,6 +26,9 @@ The first release on PyPI: `pip install aisland`.
 - **`aisland wheels build <project>`** builds the wheels a project needs that are not on PyPI, for a machine
   without the workspace. With `--extra NAME` it also writes the extra NAME into the project's
   `pyproject.toml`, so `uv pip install -e ./<project>[NAME]` installs the project with every wheel.
+- **`aisland wheels prune <project>`** strips from a project's history the committed wheel versions no branch or tag
+  holds and force-pushes origin; **`aisland wheels reset <project>`** brings every other clone onto the pruned
+  history (the `prune` extra).
 - **A pytest plugin, `aisland_test_stats`,** loaded by every `pytest` in the environment aisland is installed in,
   records each run of a project — its seconds and each test's outcome — in `.aisland/data/test-stats/` in the
   folder above the project; `aisland workspace test-stats off [PROJECT…] [--machine-only]` turns it off for a

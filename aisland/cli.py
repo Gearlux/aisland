@@ -11,7 +11,7 @@ from aisland import supervisor as supervisor_mod
 from aisland import tracking
 from aisland import tunnel as tunnel_mod
 from aisland import tunnel_connect as tunnel_connect_mod
-from aisland import wheels
+from aisland import wheels, wheels_prune
 from aisland import workspace as workspace_mod
 from aisland import workspace_file
 from aisland.clean import DEFAULT_KEEP_DAYS
@@ -1031,6 +1031,8 @@ def wheels_group(
     aisland wheels build PROJECT [--include-published | --all] [--include-project] [--extra NAME] [--bundle] [--zip] [--commit] [--force] [--no-check] [--json]
     aisland wheels zip PROJECT
     aisland wheels install ZIP --python PYTHON [--into DIR] [-- install.py options]
+    aisland wheels prune PROJECT [--apply] [--json]
+    aisland wheels reset PROJECT [--json]
     aisland wheels PROJECT …          (= aisland wheels build PROJECT …)
     aisland wheels --install ZIP --python PYTHON [--into DIR]
     """
@@ -1194,6 +1196,50 @@ def wheels_install(zip_path: Path, python: Path, into: Optional[Path], rest: Tup
     """
     status = wheels.install_zip(zip_path, python, into or Path.cwd(), list(rest), workspace_root=get_workspace_root())
     raise SystemExit(status)
+
+
+@wheels_group.command(name="prune")
+@click.argument("project", shell_complete=_complete_buildable)
+@click.option(
+    "--apply",
+    is_flag=True,
+    help="Rewrite the history and force-push origin; without it the run only says what would go.",
+)
+@click.option("--json", "as_json", is_flag=True, help="Print the report as JSON.")
+def wheels_prune_command(project: str, apply: bool, as_json: bool) -> None:
+    """Strip from PROJECT's history every committed wheel version no branch or tag holds.
+
+    A version stays when a branch or a tag of this clone or of origin holds it, so every branch tip and tag keeps
+    exactly its files; only commit ids change. --apply refuses a clone with changes no commit holds or a branch
+    that differs from origin's, backs every ref up into a bundle, rewrites, force-pushes origin's branches and tags
+    in one atomic push (leased: a push someone made meanwhile refuses it all), shrinks this clone and re-records
+    the workspace root's pointer to PROJECT. Every other clone then runs `aisland wheels reset PROJECT` before
+    its next pull. Needs git-filter-repo: uv pip install 'aisland[prune]'.
+
+    \b
+    aisland wheels prune models
+    aisland wheels prune models --apply
+    """
+    report = wheels_prune.prune(get_workspace_root(), project, apply=apply)
+    click.echo(json.dumps(report.to_dict(), indent=2) if as_json else wheels_prune.render_prune(report))
+
+
+@wheels_group.command(name="reset")
+@click.argument("project", shell_complete=_complete_buildable)
+@click.option("--json", "as_json", is_flag=True, help="Print the report as JSON.")
+def wheels_reset_command(project: str, as_json: bool) -> None:
+    """Bring this clone of PROJECT onto the history `aisland wheels prune` rewrote on another machine.
+
+    Strips the wheel versions of each of origin's prunes this clone still reaches — the same rewrite, so every
+    branch that was origin's lands on origin's new commit, and commits origin lacks are kept on top. Refuses a
+    clone with changes no commit holds; backs every ref up into a bundle first. Run it before the next pull: a
+    pull merges the old history back in. Nothing pruned on origin, nothing changes.
+
+    \b
+    aisland wheels reset models
+    """
+    report = wheels_prune.reset(get_workspace_root(), project)
+    click.echo(json.dumps(report.to_dict(), indent=2) if as_json else wheels_prune.render_reset(report))
 
 
 # --- Docker Commands ---
