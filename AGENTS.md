@@ -20,7 +20,8 @@ file a machine without aisland reads · [harness] every workspace gets aisland's
 generated workspace file · [declarations] a project declares what it brings, aisland finds it in two stages and the project never imports aisland · [mcp-server] aisland's tools are its own server, a chosen set · [aliases] a link to a folder of the workspace is a short name, never a project ·
 [tunnel-terminal] a terminal on the remote machine rides the VS Code tunnel it already runs · [local-workspace] a root
 repository no one shares tracks only the projects, and an untracked project's commits are never recorded. · [github-owner] a project is the
-workspace's own by its GitHub remote, no organisation is written into aisland.
+workspace's own by its GitHub remote, no organisation is written into aisland. · [test-stats-switch] the test-run record is
+turned off per workspace, project or machine, never removed.
 
 ## Current state
 
@@ -48,6 +49,8 @@ The workspace's dev-infrastructure CLI, `aisland` (click, `aisland/cli.py`):
   workspace's `[workspace] track`, this machine's `aisland.track.default` — never inferred from the other projects. Runs before
   `workspace_file.refresh` in setup. (`tests/test_setup_adds_clones.py::test_setup_never_asks`,
   `tests/test_setup_installs_git_aliases.py::test_setup_adds_the_clones_the_workspace_does_not_list`)
+- `recording.py`: `aisland workspace test-stats on|off [PROJECT…] [--machine-only]` — whether the pytest plugin
+  records a project's runs; see "Test-run statistics".
 - `tracking.py`: `aisland workspace track|untrack [PROJECT…] [--machine-only]` (user choice 2026-10-23: two commands,
   no project = every submodule; not a `configure` plugin) — whether the root records a project's commits. Committed:
   the project's `track = false` in `workspace.toml`, written as `ignore = all` in `.gitmodules`; this machine:
@@ -343,6 +346,13 @@ Root `AGENTS.md` "Two Test Runs" (user ruling 2026-10-05). [test-stats]
 - It never costs a run its result: standard library only (no `aisland.manager` import — it
   loads in every pytest start), one append per run, a failed write is one printed line
   (`::test_a_stats_folder_that_cannot_be_written_costs_one_line_never_the_runs_result`).
+- **Recording can be turned off, never removed (user choice 2026-10-27: option B, shaped like `track|untrack`).**
+  `aisland workspace test-stats on|off [PROJECT…] [--machine-only]` (`recording.py`): committed `[workspace]
+  test-stats = false` (no project named: every project, those added later included) or a project's own
+  `test-stats` where it differs; this machine `aisland.test-stats.default` / `aisland.test-stats.<project>.record`,
+  which wins; a committed switch drops this machine's choice for what it names. The plugin reads it with the
+  standard library (`pytest_stats.recording`, one `git config` call, a file it cannot read = recorded) and the report
+  says a project is off with the command that turns it on (`tests/test_recording.py`) [test-stats-switch].
 - The data folder is resolved like `manager.DATA_DIR`
   (`::test_the_records_live_in_aislands_data_folder`); after touching the entry point,
   `uv pip install -e ./aisland --no-deps` (`::test_the_plugin_is_declared_as_a_pytest11_entry_point`).

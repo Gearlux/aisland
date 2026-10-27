@@ -25,6 +25,7 @@ import os
 import statistics
 import subprocess
 import time
+import tomllib
 import xml.etree.ElementTree as ET
 from dataclasses import asdict, dataclass
 from datetime import date, datetime, timedelta
@@ -44,6 +45,15 @@ WORKSPACE_ROOT = locations.workspace_root()
 STATS_DIR = locations.state_dir() / "data" / "test-stats"
 #: The local Jenkins' job folders (`<project>.local`, `<project>`), each build's JUnit record in it.
 JENKINS_JOBS_DIR = locations.state_dir() / "data" / "jenkins" / "jobs"
+
+#: `aisland workspace test-stats on|off` (aisland/recording.py writes it): a project's `test-stats = false` and the
+#: workspace's `[workspace] test-stats = false` in `workspace.toml`; this machine's `aisland.test-stats.<project>.record`
+#: and `aisland.test-stats.default` in `.git/config`.
+RECORD_KEY = "test-stats"
+MACHINE_PREFIX = "aisland.test-stats."
+MACHINE_DEFAULT_KEY = MACHINE_PREFIX + "default"
+#: Who decided whether a project's runs are recorded.
+RecordedBy = Literal["default", "workspace.toml", "this machine"]
 
 #: The fast run's budget (user ruling 2026-10-05: "around 5 min max per project").
 FAST_RUN_BUDGET_SECONDS = 300.0
@@ -80,6 +90,8 @@ def pytest_configure(config: "pytest.Config") -> None:
         return
     if not _is_workspace_project(Path(config.rootpath)):
         return
+    if not records(WORKSPACE_ROOT, Path(config.rootpath).name):
+        return
     config.pluginmanager.register(_Recorder(config, STATS_DIR), "aisland_test_stats_recorder")
 
 
@@ -92,6 +104,73 @@ def _is_workspace_project(folder: Path) -> bool:
     """
     root = WORKSPACE_ROOT.resolve()
     return folder.resolve().parent == root and (folder / "pyproject.toml").is_file()
+
+
+def machine_key(project: str) -> str:
+    """This machine's switch for ``project`` in ``.git/config``."""
+    return f"{MACHINE_PREFIX}{project}.record"
+
+
+def _machine_switches(root: Path) -> Dict[str, bool]:
+    """This machine's ``aisland.test-stats.*`` settings in ``<root>/.git/config``; none when git cannot say."""
+    try:
+        run = subprocess.run(
+            ["git", "config", "--local", "--type=bool", "--get-regexp", r"^aisland\.test-stats\."],
+            cwd=root,
+            capture_output=True,
+            text=True,
+            timeout=10,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return {}
+    switches = {}
+    for line in run.stdout.splitlines() if run.returncode == 0 else []:
+        key, _, value = line.partition(" ")
+        switches[key] = value.strip() == "true"
+    return switches
+
+
+@dataclass(frozen=True)
+class Recording:
+    """Whether a project's runs are recorded (``on``), who decided it, and the project's name in ``workspace.toml``."""
+
+    on: bool
+    by: RecordedBy
+    project: str
+
+
+def recording(root: Path, folder: str) -> Recording:
+    """Whether runs of the project checked out in ``<root>/<folder>`` are recorded, and who decided it.
+
+    This machine's switch for the project, else this machine's for every project, else the project's ``test-stats`` in
+    ``workspace.toml``, else the workspace's, else yes. Never raises: a file it cannot read leaves the default — the
+    plugin loads in every pytest run and must never cost one.
+    """
+    try:
+        data = tomllib.loads((root / "workspace.toml").read_text(encoding="utf-8"))
+    except (OSError, UnicodeDecodeError, tomllib.TOMLDecodeError):
+        data = {}
+    name, own = folder, None
+    projects = data.get("project")
+    for project, table in projects.items() if isinstance(projects, dict) else []:
+        if isinstance(table, dict) and table.get("path", project) == folder:
+            name, own = project, table.get(RECORD_KEY)
+            break
+    machine = _machine_switches(root)
+    for key in (machine_key(name), MACHINE_DEFAULT_KEY):
+        if key in machine:
+            return Recording(machine[key], "this machine", name)
+    settings = data.get("workspace")
+    shared = settings.get(RECORD_KEY) if isinstance(settings, dict) else None
+    for value in (own, shared):
+        if isinstance(value, bool):
+            return Recording(value, "workspace.toml", name)
+    return Recording(True, "default", name)
+
+
+def records(root: Path, folder: str) -> bool:
+    """Whether runs of the project checked out in ``<root>/<folder>`` are recorded (:func:`recording`)."""
+    return recording(root, folder).on
 
 
 def run_leg(markexpr: str, slow_registered: bool) -> Leg:
@@ -276,6 +355,9 @@ class StatsReport:
     failed: List[Tally]  # every test that failed in the window, most failures first
     to_slow: List[Tally]  # never-failed fast tests, slowest first, whose time covers the overrun; empty within budget
     to_fast: List[Tally]  # slow tests that failed: they catch breaks
+    recording: bool = True  # whether local runs are recorded (`aisland workspace test-stats on|off`)
+    recorded_by: RecordedBy = "default"  # who decided it
+    switch_name: str = ""  # the project's name in workspace.toml, which `aisland workspace test-stats` takes
 
     def to_dict(self) -> Dict[str, object]:
         return asdict(self)
@@ -319,6 +401,7 @@ def build_report(
     runs, local = _local_records((stats_dir or STATS_DIR) / project, cutoff)
     builds, ci = _jenkins_records(project, jenkins_jobs_dir or JENKINS_JOBS_DIR, cutoff)
     tallies = _tallies(local + ci)
+    switch = recording(WORKSPACE_ROOT, project)
 
     fast = sorted(
         (r for r in runs if r.leg == "fast" and r.whole and r.exit in _COMPLETE_EXITS),
@@ -340,6 +423,9 @@ def build_report(
         failed=failed,
         to_slow=_to_slow(by_seconds, fast_seconds),
         to_fast=[t for t in failed if t.slow is True],
+        recording=switch.on,
+        recorded_by=switch.by,
+        switch_name=switch.project,
     )
 
 
@@ -483,9 +569,20 @@ def _duration(seconds: float) -> str:
     return f"{total // 60}m {total % 60:02d}s"
 
 
+def _not_recorded(report: StatsReport) -> str:
+    """The line saying ``report.project``'s runs are not recorded, and the command that records them again."""
+    here = " --machine-only" if report.recorded_by == "this machine" else ""
+    return (
+        f"Test runs of {report.project} are not recorded: "
+        f"`aisland workspace test-stats on {report.switch_name or report.project}{here}` records them again."
+    )
+
+
 def render_report(report: StatsReport) -> str:
     """The report as the terminal shows it."""
     if not report.local_runs and not report.ci_builds:
+        if not report.recording:
+            return f"No recorded runs of {report.project} in the last {report.days} days. {_not_recorded(report)}"
         return (
             f"No recorded runs of {report.project} in the last {report.days} days. "
             f"Run `pytest` in {report.project}/ to record one."
@@ -495,6 +592,8 @@ def render_report(report: StatsReport) -> str:
         f"{report.project} - the last {report.days} days: {report.local_runs} local runs, "
         f"{report.ci_builds} Jenkins builds"
     ]
+    if not report.recording:
+        lines.append(_not_recorded(report))
     if report.fast_run_seconds is None:
         lines.append(f"Fast run: no whole fast run recorded (plain `pytest` in {report.project}/ records one)")
     else:

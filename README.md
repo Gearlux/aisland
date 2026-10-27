@@ -20,6 +20,14 @@ needs (process-compose for the services; through Homebrew on macOS). Two extras 
 | `aisland[mcp]` | `aisland-mcp`, an MCP server that offers a chosen set of aisland's commands to an AI client |
 | `aisland[connect]` | `aisland tunnel connect`, a terminal on a remote machine over its VS Code tunnel |
 
+Installing aisland also registers a pytest plugin, `aisland_test_stats`, which every `pytest` in that environment
+loads. It records each run of a project — its seconds and each test's outcome — in `.aisland/data/test-stats/` in
+the folder **above** the project: the workspace, or for a project elsewhere its parent folder (`~/code/app` records
+into `~/code/.aisland/`). `aisland tests report` reads the record. Turn it off with `aisland workspace test-stats off [PROJECT…]
+[--machine-only]`, or for one run with `pytest -p no:aisland_test_stats`; what it writes, and every way to switch it
+off:
+[tests](https://github.com/Gearlux/aisland/blob/main/docs/tests.md#the-pytest-plugin).
+
 ## A first workspace
 
 ```bash

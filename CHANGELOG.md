@@ -25,6 +25,10 @@ The first release on PyPI: `pip install aisland`.
 - **`aisland doctor`** checks the environment and prints the command that fixes what it finds.
 - **`aisland wheels build <project>`** builds the wheels a project needs that are not on PyPI, for a machine
   without the workspace.
+- **A pytest plugin, `aisland_test_stats`,** loaded by every `pytest` in the environment aisland is installed in,
+  records each run of a project — its seconds and each test's outcome — in `.aisland/data/test-stats/` in the
+  folder above the project; `aisland workspace test-stats off [PROJECT…] [--machine-only]` turns it off for a
+  workspace, a project or this machine, and `pytest -p no:aisland_test_stats` leaves one run out.
 - **`aisland tests report <project>`** reads every recorded test run, and **`aisland clean <project>`** moves a
   project's ignored files into a backup **`aisland backups`** can restore.
 - **`aisland completion install`** writes shell completion for every command-line tool in the workspace.

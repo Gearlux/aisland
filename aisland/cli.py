@@ -8,11 +8,12 @@ from click.shell_completion import CompletionItem
 
 from aisland import configure, discovery, editor, locations, manager, nightly, pytest_stats, selection
 from aisland import supervisor as supervisor_mod
-from aisland import tracking
+from aisland import recording, tracking
 from aisland import tunnel as tunnel_mod
 from aisland import tunnel_connect as tunnel_connect_mod
 from aisland import wheels
 from aisland import workspace as workspace_mod
+from aisland import workspace_file
 from aisland.clean import DEFAULT_KEEP_DAYS
 from aisland.manager import (
     generate_gemini_settings,
@@ -284,6 +285,61 @@ def workspace_track(projects: Tuple[str, ...], machine_only: bool) -> None:
     records it once origin has them. Without --machine-only it also drops this machine's own choice.
     """
     _track(projects, True, machine_only)
+
+
+def _complete_workspace_projects(ctx: click.Context, param: click.Parameter, incomplete: str) -> List[CompletionItem]:
+    """The projects of ``workspace.toml`` whose name starts with ``incomplete``; nothing for a file it cannot read."""
+    try:
+        names = list(workspace_file.load(get_workspace_root()).projects)
+    except Exception:  # a completion callback must never break the shell
+        return []
+    return [CompletionItem(name) for name in names if name.startswith(incomplete)]
+
+
+@workspace_group.group("test-stats", cls=_Group)
+def workspace_test_stats() -> None:
+    """Whether the pytest plugin records the projects' test runs (for `aisland tests report`).
+
+    \b
+    aisland workspace test-stats off                       every project, and every one added later
+    aisland workspace test-stats off models                one project
+    aisland workspace test-stats off --machine-only        this machine only (.git/config)
+    aisland workspace test-stats on models                 recorded again
+    """
+
+
+_TEST_STATS_ARGUMENTS = [
+    click.argument("projects", nargs=-1, metavar="[PROJECT]...", shell_complete=_complete_workspace_projects),
+    click.option("--machine-only", is_flag=True, help="Change this machine only (.git/config); commit nothing."),
+]
+
+
+def _with_test_stats_arguments(command: Callable[..., None]) -> Callable[..., None]:
+    """``on`` and ``off`` take the same arguments."""
+    for decorator in reversed(_TEST_STATS_ARGUMENTS):
+        command = decorator(command)
+    return command
+
+
+@workspace_test_stats.command("off")
+@_with_test_stats_arguments
+def workspace_test_stats_off(projects: Tuple[str, ...], machine_only: bool) -> None:
+    """Stop recording PROJECT's test runs (no PROJECT: every project, and every one added later).
+
+    Written for everyone as `test-stats = false` in workspace.toml (commit it), or with --machine-only in .git/config
+    alone; this machine's choice wins over the committed one.
+    """
+    for line in recording.command(_configure_root(), projects, False, machine_only):
+        click.echo(line)
+
+
+@workspace_test_stats.command("on")
+@_with_test_stats_arguments
+def workspace_test_stats_on(projects: Tuple[str, ...], machine_only: bool) -> None:
+    """Record PROJECT's test runs again (no PROJECT: every project). Without --machine-only it also drops this
+    machine's own choice for them."""
+    for line in recording.command(_configure_root(), projects, True, machine_only):
+        click.echo(line)
 
 
 @workspace_group.command("show")
