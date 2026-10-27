@@ -23,6 +23,12 @@ The first release on PyPI: `pip install aisland`.
   code (its class may name the question `reset` asks first).
 - **`aisland jenkins scaffold`** writes a project's `Jenkinsfile`, `Jenkinsfile.local` and GitHub `ci.yml`.
 - **`aisland doctor`** checks the environment and prints the command that fixes what it finds.
+- **`aisland workspace env-example`** writes the workspace's `env.complete` (every environment variable the
+  projects read) and `env.example` (the ones a person normally sets) from each project's own two files, every line
+  commented out, a variable several projects read listed once under the project that defines it; a new machine
+  copies `env.example` to `.env`, and `--missing` prints the variables an existing `.env` does not mention.
+  `aisland setup` writes both, `workspace init` starts `.env` from them. `aisland workspace env-test` writes each
+  project's test that fails when its code reads a variable its `env.complete` does not list.
 - **`aisland wheels build`** refuses, before it builds anything, a project whose setuptools discovery would take the
   `wheels/` folder it writes for a package, and names the `[tool.setuptools.packages.find]` table that fixes it.
 - **`aisland wheels build <project>`** builds the wheels a project needs that are not on PyPI, for a machine

@@ -144,6 +144,68 @@ models                 merged origin/dev/main (3 commits)
 A switch is never forced: uncommitted edits in its way leave the project as it is, listed as
 `on no branch, and git switch dev/main refused: …`. A tracked project on no branch is still left alone.
 
+### The machine's environment: `env.complete`, `env.example` and `.env`
+
+Each project lists every environment variable a person may set for it in its `env.complete`, every line commented
+out, and the few a person normally sets in its `env.example`, in the same format:
+
+```bash
+# models: where the models find their data
+
+# -- paths
+# DATA_ROOT=/path/to/datasets   the folder every dataset config reads (README → Data)
+# MODELS_CACHE=   a cache folder; empty: none
+# not for .env: COMP_LINE COMP_POINT — set by the shell while it completes
+```
+
+A variable line is `# NAME=VALUE`, two spaces, then what it does; a secret's value stays empty. `# -- <heading>`
+groups the lines below it, and `# not for .env: NAME … — reason` names what the project reads that nobody sets in
+`.env` (set by the shell, by CI, by the project for its own child processes).
+
+`aisland workspace env-example` writes the workspace's `env.complete` and `env.example` from them — `aisland setup`
+writes them too — a section per project, each library before the projects that use it. A variable several projects
+read is listed once, under the project that defines it, the others named and their own wording kept:
+
+```
+$ aisland workspace env-example
+==> Wrote env.complete (12 variables from 4 projects)
+    no env.complete: tools
+==> Wrote env.example (3 variables from 2 projects)
+    no env.example: app, tools
+$ cp env.example .env        # a new machine: then uncomment and set what it needs
+```
+
+```bash
+# ===== models: where the models find their data
+
+# -- paths
+# DATA_ROOT=/path/to/datasets   the folder every dataset config reads (README → Data)
+#     also read by: app
+#     app: the datasets the app opens
+# MODELS_CACHE=   a cache folder; empty: none
+```
+
+Both files are per machine (they follow the projects checked out here) and ignored by git. `aisland workspace init`
+starts a new `.env` from `env.example` (from `env.complete` while no project has an `env.example`); an existing
+`.env` is never touched. To see which variables of `env.complete` an existing one lacks:
+
+```
+$ aisland workspace env-example --missing
+==> Up to date: env.complete (12 variables from 4 projects)
+==> Up to date: env.example (3 variables from 2 projects)
+==> Not in .env (1) — copy the lines you need:
+# -- models
+# MODELS_CACHE=   a cache folder; empty: none
+```
+
+A name `.env` mentions at all, set or commented out, counts as mentioned.
+
+`aisland workspace env-test [PROJECT…]` writes each project's `tests/test_env_example.py` (no project: every one
+with an `env.complete`). The test reads the project's code and its shipped configs (`config/`, `examples/`,
+`graphs/`, their comments left out) and fails, naming the file and line, on a variable its `env.complete` does not
+list, on an `env.example` variable `env.complete` lacks, and on a line of either file that would set something. It
+imports nothing of aisland. A name the code builds at run time is not seen: list it by hand.
+
 ### The same workspace on another machine: `workspace.toml`
 
 Every workspace keeps one committed file of its projects, `workspace.toml`, shaped like `.gitmodules`.

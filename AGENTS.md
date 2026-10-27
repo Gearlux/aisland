@@ -21,7 +21,8 @@ generated workspace file · [declarations] a project declares what it brings, ai
 [tunnel-terminal] a terminal on the remote machine rides the VS Code tunnel it already runs · [local-workspace] a root
 repository no one shares tracks only the projects, and an untracked project's commits are never recorded. · [github-owner] a project is the
 workspace's own by its GitHub remote, no organisation is written into aisland. · [test-stats-switch] the test-run record is
-turned off per workspace, project or machine, never removed. [wheels-prune] old committed wheel
+turned off per workspace, project or machine, never removed. [env-example] the workspace's
+`env.complete` and `env.example` are each project's own two lists, merged per machine under each variable's owner. [wheels-prune] old committed wheel
 versions leave the history by one deterministic strip, which every other clone re-runs.
 
 ## Current state
@@ -72,6 +73,8 @@ The workspace's dev-infrastructure CLI, `aisland` (click, `aisland/cli.py`):
   workspace without them, and a name that is no submodule's, are refused before anything changes. `init
   --untracked` is `untrack` for every project. (`tests/test_tracking.py`,
   `tests/test_workspace_init.py::test_untracked_hides_a_projects_new_commits_and_writes_it_down`)
+- `env_example.py`: `aisland workspace env-example [--missing]` (both files; also setup's step 5b and `init`'s `.env` seed) and
+  `aisland workspace env-test [PROJECT…]` [env-example]; see "Generated and committed workspace files".
 - `workspace_file.py`: `workspace.toml`, the workspace's committed file shaped like `.gitmodules` (the how-to for a
   machine without aisland, then a `[project."<name>"]` per project: `path`, `url`, `branch`), kept current by
   `aisland setup` (`refresh`) [workspace-file].
@@ -433,6 +436,20 @@ Root `AGENTS.md` "Two Test Runs" (user ruling 2026-10-05). [test-stats]
   `<workspace>.code-workspace`, and `.project.bashrc.completion` (`aisland completion
   install`). Never commit editor
   `extraPaths`. (`tests/test_pyrightconfig.py`, `tests/test_mcp_config.py`)
+- **The workspace's `env.complete` and `env.example` are generated per machine from each project's own two files
+  (user choices 2026-10-27: `env.complete` every variable, written by the agent; `env.example` the common ones,
+  written by the user; never committed; a generated test per project; `--missing`).** [env-example]
+  `env_example.read_project` refuses a line that is no comment (the files are copied to `.env`: they set nothing),
+  naming its line; every project file is read before either workspace file is written. The render lists a variable
+  once, under its OWNER — the first project in `env_example.project_order`, the editor file's dependency order, so the
+  library that defines it (user choice 2026-10-27) — `also read by:` the others, each other wording kept, and leaves
+  the `not for .env` names out. Setup writes them (a malformed project file is said, setup goes on); `init` seeds a
+  missing `.env` from `env.example`, else `env.complete`; nothing ever edits an existing `.env` — `--missing` prints.
+  The per-project test comes from `templates/test_env_example.py.template` (standard library + pytest only: a project
+  never imports aisland; its output black-, isort- and flake8-clean at 120); a fix to it is made in the template and
+  `aisland workspace env-test` re-run. Never write a project's `env.example` for the user.
+  (`tests/test_workspace_env_example.py`, which runs the generated test on a project that passes and on ones that
+  fail)
 - `.gemini/settings.json` and `.mcp.json` keep ABSOLUTE venv paths (clients launch from any
   cwd). MCP discovery matches a `<pkg>.server:main` whose module imports `mcp.server`, never a
   class name.

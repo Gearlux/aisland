@@ -30,6 +30,7 @@ from typing import Any, List, Sequence
 import click
 import yaml
 
+from aisland import failures
 from aisland.manager import BaseService
 
 #: The Colima profile aisland drives (its default profile). ``colima start --save-config``
@@ -170,7 +171,7 @@ class DockerService(BaseService):
 
             click.echo("Docker (Colima) started successfully.")
         except subprocess.CalledProcessError as e:
-            click.echo(f"Error starting Docker (Colima): {e}", err=True)
+            failures.report(f"Error starting Docker (Colima): {e}")
 
     def stop(self) -> None:
         """Stop the Docker engine via Colima."""
@@ -183,7 +184,7 @@ class DockerService(BaseService):
             subprocess.check_call(["colima", "stop"])
             click.echo("Docker (Colima) stopped.")
         except subprocess.CalledProcessError as e:
-            click.echo(f"Error stopping Docker (Colima): {e}", err=True)
+            failures.report(f"Error stopping Docker (Colima): {e}")
 
     def status(self) -> None:
         """Display Docker engine status."""
@@ -274,7 +275,7 @@ class DockerService(BaseService):
             )
             click.echo("  - Socket configuration complete.")
         except subprocess.CalledProcessError as e:
-            click.echo(f"  - Error configuring socket symlink: {e}")
+            failures.report(f"  - Error configuring socket symlink: {e}")
             click.echo("    (You may need to manually run: sudo ln -s " + str(colima_socket) + " /var/run/docker.sock)")
 
     def reset(self) -> None:
@@ -287,4 +288,4 @@ class DockerService(BaseService):
                 subprocess.check_call(["colima", "delete"])
                 click.echo("Docker (Colima) reset complete.")
             except subprocess.CalledProcessError as e:
-                click.echo(f"Error resetting Docker (Colima): {e}", err=True)
+                failures.report(f"Error resetting Docker (Colima): {e}")

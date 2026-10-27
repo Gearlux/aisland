@@ -6,7 +6,19 @@ from typing import Callable, Dict, List, Optional, Tuple
 import click
 from click.shell_completion import CompletionItem
 
-from aisland import configure, discovery, editor, locations, manager, nightly, pytest_stats, recording, selection
+from aisland import (
+    configure,
+    discovery,
+    editor,
+    env_example,
+    failures,
+    locations,
+    manager,
+    nightly,
+    pytest_stats,
+    recording,
+    selection,
+)
 from aisland import supervisor as supervisor_mod
 from aisland import tracking
 from aisland import tunnel as tunnel_mod
@@ -72,6 +84,24 @@ class _WorkspaceGroup(_Group):
         if not locations.workspace_found():
             raise click.ClickException(locations.missing_workspace_message())
         return rest
+
+    def invoke(self, ctx: click.Context) -> object:
+        """Run the command; a run that reported a failure it went on past (:mod:`aisland.failures`) exits 1, even
+        when the command itself ended with exit 0."""
+        failures.reset()
+        try:
+            result = super().invoke(ctx)
+        except SystemExit as stop:
+            if stop.code in (0, None) and failures.reported():
+                raise SystemExit(1) from None
+            raise
+        except click.exceptions.Exit as stop:
+            if stop.exit_code == 0 and failures.reported():
+                raise SystemExit(1) from None
+            raise
+        if failures.reported():
+            raise SystemExit(1)
+        return result
 
     def list_commands(self, ctx: click.Context) -> List[str]:
         """aisland's commands, then a group per service a project declares."""
@@ -724,6 +754,72 @@ def workspace_code_workspace() -> None:
     root = _editor_root()
     if manager.write_code_workspace(root) is None:
         click.echo(f"==> {manager.code_workspace_path(root).name} is up to date")
+
+
+@workspace_group.command("env-example")
+@click.option(
+    "--missing", is_flag=True, help="Also print the variables .env does not mention yet (.env is never edited)."
+)
+def workspace_env_example(missing: bool) -> None:
+    """Write env.example and env.complete from each project's own: the variables a person normally sets, and all.
+
+    Each line is commented out, so a new machine copies env.example (`cp env.example .env`) and uncomments what it
+    needs. A variable several projects read is listed once, under the project that defines it, naming the others.
+    An unchanged file is left as it is; `aisland setup` writes them too. --missing prints, ready to paste, the
+    variables of env.complete an existing .env does not mention.
+    """
+    root = _editor_root()
+    written = env_example.write(root)
+    for kind in env_example.KINDS:
+        name = env_example.FILE_NAMES[kind]
+        result = written[kind]
+        said = "Wrote" if result.changed else "Up to date:"
+        click.echo(f"==> {said} {name} ({env_example.counts(result)})")
+        for why in (f"no {name}", "no checkout"):
+            names = [project for project, reason in result.without if reason == why]
+            if names and (kind == "complete" or why != "no checkout"):
+                click.echo(f"    {why}: {', '.join(names)}")
+    if not missing:
+        return
+    dotenv = root / ".env"
+    if not dotenv.is_file():
+        click.echo(f"==> No .env yet: cp {env_example.EXAMPLE} .env")
+        return
+    absent = env_example.missing(root, dotenv)
+    if not absent:
+        click.echo("==> .env mentions every variable")
+        return
+    click.echo(f"==> Not in .env ({len(absent)}) — copy the lines you need:")
+    project = None
+    for owner, entry in absent:
+        if owner != project:
+            click.echo(f"# -- {owner}")
+            project = owner
+        click.echo(entry.line)
+
+
+@workspace_group.command("env-test")
+@click.argument("projects", nargs=-1, shell_complete=_complete_workspace_projects)
+def workspace_env_test(projects: Tuple[str, ...]) -> None:
+    """Write PROJECT's tests/test_env_example.py: it fails when the project reads a variable its env.complete lacks.
+
+    No PROJECT: every project with a checkout. A project without an env.complete gets no test; an unchanged test is
+    left as it is.
+    """
+    root = _editor_root()
+    folders = {name: path for name, path, _active in manager.workspace_folders(root)}
+    for name in projects:
+        if name not in folders:
+            raise click.ClickException(f"{name} is no project of this workspace")
+    for name in projects or tuple(folders):
+        folder = root / folders[name]
+        if not env_example.checked_out(folder):
+            continue
+        if not (folder / env_example.COMPLETE).is_file():
+            click.echo(f"==> {name} has no {env_example.COMPLETE}: no test written")
+            continue
+        path, changed = env_example.write_test(root, name, folders[name])
+        click.echo(f"==> Wrote {path}" if changed else f"==> {path} is up to date")
 
 
 # --- Notebook Commands ---

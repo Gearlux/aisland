@@ -2,6 +2,7 @@ import sys
 
 import click
 
+from aisland import failures
 from aisland.manager import BaseService
 from aisland.selection import missing_message
 
@@ -91,4 +92,4 @@ class MLflowService(BaseService):
         except KeyboardInterrupt:
             click.echo("\nStopping MLflow UI...")
         except Exception as e:
-            click.echo(f"Error starting MLflow UI: {e}")
+            failures.report(f"Error starting MLflow UI: {e}")

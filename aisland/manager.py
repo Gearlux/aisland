@@ -13,6 +13,7 @@ from typing import Any, Dict, List, Optional, Tuple
 import click
 from packaging.requirements import InvalidRequirement, Requirement
 
+from aisland import failures
 from aisland import editor, locations, supervisor
 from aisland.harness import install_harness
 
@@ -136,11 +137,10 @@ class BaseService:
             owner = supervisor.port_in_use(readiness["port"])
             if owner is not None:
                 owner_hint = f"PID {owner}" if owner > 0 else "an unknown process"
-                click.echo(
+                failures.report(
                     f"Error: port {readiness['port']} is already in use by {owner_hint} — "
                     f"not managed by the aisland supervisor. Stop that process first "
                     f"(it may be a {self.name} instance started by an older aisland).",
-                    err=True,
                 )
                 return
 
@@ -174,10 +174,9 @@ class BaseService:
             status = (state or {}).get("status", "unknown")
             exit_code = (state or {}).get("exit_code")
             restarts = (state or {}).get("restarts", 0)
-            click.echo(
+            failures.report(
                 f"Error: {self.name.capitalize()} failed to start "
                 f"(status: {status}, exit code: {exit_code}, restarts: {restarts}). See {self.log_file}.",
-                err=True,
             )
             return
 
@@ -210,7 +209,7 @@ class BaseService:
         supervisor.apply()
         state = supervisor.wait_for(self.name, running=False, timeout=15)
         if state is not None and state.get("is_running"):
-            click.echo(f"Error: {self.name.capitalize()} did not stop in time.", err=True)
+            failures.report(f"Error: {self.name.capitalize()} did not stop in time.")
             return
         click.echo(f"{self.name.capitalize()} stopped.")
 
@@ -277,7 +276,7 @@ class BaseService:
         if hasattr(self, "launch"):
             getattr(self, "launch")(**kwargs)
         else:
-            click.echo(f"Error: {self.name} service does not have a launch method.")
+            failures.report(f"Error: {self.name} service does not have a launch method.")
 
     def reset(self) -> None:
         """Stop the service and wipe its data directory, logs, and registration."""
@@ -378,7 +377,7 @@ def _install_brew_packages(packages: set) -> None:
     try:
         subprocess.check_call(["brew", "--version"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
     except (subprocess.CalledProcessError, FileNotFoundError):
-        click.echo("  - Error: 'brew' command not found. Homebrew is required for system provisioning.")
+        failures.report("  - Error: 'brew' command not found. Homebrew is required for system provisioning.")
         return
 
     env = os.environ.copy()
@@ -390,7 +389,7 @@ def _install_brew_packages(packages: set) -> None:
             subprocess.check_call(["brew", "install", "--quiet", pkg], env=env)
             click.echo(f"  - {pkg} installed successfully.")
         except subprocess.CalledProcessError as e:
-            click.echo(f"  - Error: Failed to install {pkg}: {e}")
+            failures.report(f"  - Error: Failed to install {pkg}: {e}")
 
 
 def _sha256(path: Path) -> str:
@@ -417,7 +416,7 @@ def _install_userspace_tool(name: str) -> None:
     """
     spec = USERSPACE_TOOLS.get(name)
     if spec is None:
-        click.echo(f"  - Error: '{name}' is not a known userspace tool. Known: {sorted(USERSPACE_TOOLS)}")
+        failures.report(f"  - Error: '{name}' is not a known userspace tool. Known: {sorted(USERSPACE_TOOLS)}")
         return
 
     version = spec["version"]
@@ -442,7 +441,7 @@ def _install_userspace_tool(name: str) -> None:
         try:
             urllib.request.urlretrieve(url, tarball)
         except Exception as e:
-            click.echo(f"  - Error: Failed to download {url}: {e}")
+            failures.report(f"  - Error: Failed to download {url}: {e}")
             if tarball.exists():
                 tarball.unlink()
             return
@@ -461,7 +460,7 @@ def _install_userspace_tool(name: str) -> None:
     if expected:
         actual = _sha256(tarball)
         if actual.lower() != expected.lower():
-            click.echo(
+            failures.report(
                 f"  - Error: checksum mismatch for {tarball.name} "
                 f"(expected {expected}, got {actual}). Refusing to install {name}; "
                 f"deleting the tarball — re-run to re-download."
@@ -488,12 +487,12 @@ def _install_userspace_tool(name: str) -> None:
                 # `filter="data"` is the safe default in py3.14+ — block links/devices outside dest.
                 tf.extractall(extract_target, filter="data")
         except Exception as e:
-            click.echo(f"  - Error: Failed to extract {tarball}: {e}")
+            failures.report(f"  - Error: Failed to extract {tarball}: {e}")
             return
 
     tool_bin_dir = extract_root / bin_subdir if bin_subdir else extract_root
     if not tool_bin_dir.is_dir():
-        click.echo(f"  - Error: Expected {tool_bin_dir} to exist after extraction.")
+        failures.report(f"  - Error: Expected {tool_bin_dir} to exist after extraction.")
         return
 
     for binary in binaries:
@@ -507,7 +506,7 @@ def _install_userspace_tool(name: str) -> None:
             if dst.is_symlink():
                 dst.unlink()
             else:
-                click.echo(f"  - Error: {dst} exists and is not a symlink; refusing to overwrite.")
+                failures.report(f"  - Error: {dst} exists and is not a symlink; refusing to overwrite.")
                 continue
         os.symlink(src, dst)
         click.echo(f"  - linked {binary} -> {src}")
@@ -688,7 +687,7 @@ def _run_installs(workspace_root: Path, uv_cmd: str, projects: List[dict]) -> Tu
             # private indexes); the editable target is absolute, so cwd doesn't change WHAT installs.
             subprocess.check_call(cmd, cwd=workspace_root)
         except subprocess.CalledProcessError as e:
-            click.echo(f"  - Error: Failed to install {', '.join(names)}: {e}")
+            failures.report(f"  - Error: Failed to install {', '.join(names)}: {e}")
             failed.extend(names)
     return failed, skipped
 
@@ -1063,8 +1062,7 @@ def _write_mcp_json(workspace_root: Path, venv_bin: Path) -> None:
 def _venv_bin_or_none(workspace_root: Path) -> Optional[Path]:
     venv_bin = workspace_root / ".venv" / "bin"
     if not venv_bin.exists():
-        click.echo(f"Error: Virtual environment not found at {workspace_root / '.venv'}. Run aisland/setup.sh first.")
-        return None
+        raise click.ClickException(f"Virtual environment not found at {workspace_root / '.venv'}. Run aisland/setup.sh first.")
     return venv_bin
 
 
@@ -1245,6 +1243,21 @@ def submodule_active_map(workspace_root: Path) -> List[Tuple[str, str, bool]]:
         else:
             active[name] = value.strip()  # git's `--get` answers the last value written; so does this
     return [(name, path, active.get(name, "").lower() != "false") for name, path in paths.items()]
+
+
+def write_generated_env_example(workspace_root: Path) -> None:
+    """Setup's step: the workspace's ``env.complete`` and ``env.example`` (``aisland workspace env-example``); a
+    project's malformed file is said and setup goes on."""
+    from aisland import env_example  # it reads the projects through this module: imported here, not at the top
+
+    try:
+        written = env_example.write(workspace_root)
+    except click.ClickException as error:
+        click.echo(f"==> env.complete and env.example not written: {error.message}")
+        return
+    for kind, result in written.items():
+        if result.changed:
+            click.echo(f"==> Wrote {env_example.FILE_NAMES[kind]} ({env_example.counts(result)})")
 
 
 def workspace_folders(workspace_root: Path) -> List[Tuple[str, str, bool]]:
@@ -1570,7 +1583,7 @@ def setup_workspace(non_interactive: bool = False, install_all: bool = False) ->
             try:
                 subprocess.check_call(browser, cwd=project_dir)
             except (subprocess.CalledProcessError, FileNotFoundError) as e:
-                click.echo(f"  - Error: Failed to install Playwright's {PLAYWRIGHT_BROWSER} for {project['name']}: {e}")
+                failures.report(f"  - Error: Failed to install Playwright's {PLAYWRIGHT_BROWSER} for {project['name']}: {e}")
 
     # 4. MCP client config — register every workspace MCP server (navigaitor,
     #    vendorcli, annotaide, …) for the Gemini CLI AND for Claude Code, with
@@ -1582,6 +1595,9 @@ def setup_workspace(non_interactive: bool = False, install_all: bool = False) ->
     # 5. The VS Code workspace file — this machine's checkouts, and loggair's log folder, which needs loggair
     #    installed to be asked.
     write_code_workspace(workspace_root)
+
+    # 5b. The workspace's example environment, made of each project's env.example (never .env itself).
+    write_generated_env_example(workspace_root)
 
     # 6. The git aliases, however aisland is installed: from a wheel they name the scripts by their path in the venv,
     #    so a recreated venv or a new aisland is pointed at by the next setup; a newly activated submodule gets them.
@@ -1610,7 +1626,7 @@ def install_git_aliases(workspace_root: Path, quiet: bool = False) -> bool:
     if result.returncode != 0:
         if quiet:
             click.echo((result.stdout or "") + (result.stderr or ""), nl=False)
-        click.echo(f"  - Error: installing the git aliases failed (bash {SETUP_GIT_SCRIPT} {workspace_root}).")
+        failures.report(f"  - Error: installing the git aliases failed (bash {SETUP_GIT_SCRIPT} {workspace_root}).")
     return result.returncode == 0
 
 
@@ -1660,17 +1676,15 @@ def run_quality_gates(arg1: Optional[str] = None, arg2: Optional[str] = None) ->
         target_project = arg1
         target_tool = arg2  # Can be None (all tools)
     elif arg1:
-        click.echo(
-            f"Error: Argument '{arg1}' is neither a project nor a supported tool ({', '.join(supported_tools)})."
+        raise click.ClickException(
+            f"Argument '{arg1}' is neither a project nor a supported tool ({', '.join(supported_tools)})."
         )
-        return
 
     # Filter projects
     if target_project:
         projects = [p for p in all_projects if p["name"] == target_project]
         if not projects:
-            click.echo(f"Error: Project '{target_project}' not found.")
-            return
+            raise click.ClickException(f"Project '{target_project}' not found.")
     else:
         projects = all_projects
 

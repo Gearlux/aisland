@@ -134,8 +134,11 @@ in that project's `AGENTS.md`. The commands in `.agents/workflows/` cite these r
     2. **`AGENTS.md`** — a new or changed invariant, default or workflow rule, its relation to existing rules explicit.
     3. **`TASKS.md`** — a finished item is DELETED (git history is the archive); follow-ups go in as `[ ]` entries.
        A task of one project lives in that project's `TASKS.md`; the root file holds only cross-project work.
-    4. **Environment variables** — each one the code reads appears in the workspace `.env` as a commented default
-       (valid values, one line of description, a pointer to the README) and in the project's README.
+    4. **Environment variables** — each one the code reads has a line in the project's `env.complete`
+       (`# NAME=VALUE  valid values, what it does, where it is documented`, or `# not for .env: NAME — reason`;
+       its `tests/test_env_example.py`, written by `aisland workspace env-test`, checks it) and appears in the
+       project's README. The project's `env.example` (the common ones) is the user's; `aisland workspace
+       env-example --missing` shows what this machine's `.env` lacks.
     5. **Configuration files** — new YAML settings in the `*.example.yaml`; a new `pyproject.toml` entry point or
        build tweak gets a comment saying why.
     6. **Docstrings** — every new module, public function, class and non-obvious decision says *why*.

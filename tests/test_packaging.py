@@ -78,6 +78,7 @@ def test_the_package_holds_the_templates_and_the_git_scripts() -> None:
         "aisland/harness/commands/push-all.md",
         "aisland/harness/commands/ship.md",
         "aisland/py.typed",
+        "aisland/templates/test_env_example.py.template",
         "aisland/templates/vscode-init-bash.sh",
     ]
 

@@ -61,6 +61,7 @@ from typing import Any, Dict, List, Literal, NamedTuple, Optional, Tuple, cast, 
 import click
 from packaging.version import InvalidVersion, Version
 
+from aisland import failures
 from aisland import locations, workspace_file
 from aisland.manager import _set_local_submodule_active, get_workspace_root, submodule_active_map
 from aisland.selection import editable_target
@@ -349,7 +350,7 @@ def _run(cmd: List[str], cwd: Path, *, quiet: bool = False) -> bool:
         return True
     except (subprocess.CalledProcessError, FileNotFoundError) as e:
         if not quiet:
-            click.echo(f"  - Error: `{' '.join(cmd)}` failed: {e}", err=True)
+            failures.report(f"  - Error: `{' '.join(cmd)}` failed: {e}")
         return False
 
 
@@ -436,10 +437,9 @@ def apply_source(workspace_root: Path, project: str, source: ProjectSource, uv_c
     if source.kind == "github":
         url = remote_url(workspace_root, project)
         if url is None:
-            click.echo(
+            failures.report(
                 f"Error: {project} has no submodule URL in .gitmodules, so a github source has "
                 f"nothing to install from. Use: aisland workspace configure source set {project} local",
-                err=True,
             )
             return False
         target = pip_vcs_url(url, source.ref)

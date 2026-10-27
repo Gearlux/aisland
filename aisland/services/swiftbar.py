@@ -6,6 +6,7 @@ from typing import Any, List, Optional
 
 import click
 
+from aisland import failures
 from aisland.manager import DATA_DIR, BaseService, get_workspace_root
 
 
@@ -218,7 +219,7 @@ class SwiftBarService(BaseService):
             subprocess.run(["open", "-a", "SwiftBar"], check=True)
             click.echo("  - SwiftBar launched.")
         except subprocess.CalledProcessError as e:
-            click.echo(f"  - Error launching SwiftBar: {e}")
+            failures.report(f"  - Error launching SwiftBar: {e}")
 
     def stop(self) -> None:
         """Stop the SwiftBar application."""
@@ -230,7 +231,7 @@ class SwiftBarService(BaseService):
             subprocess.run(["pkill", "SwiftBar"], check=False)
             click.echo("  - SwiftBar stopped.")
         except Exception as e:
-            click.echo(f"  - Error stopping SwiftBar: {e}")
+            failures.report(f"  - Error stopping SwiftBar: {e}")
 
     def restart(self, **kwargs: Any) -> None:
         """Restart SwiftBar."""
@@ -259,7 +260,7 @@ class SwiftBarService(BaseService):
                 # Key might not exist or app not installed
                 pass
             except Exception as e:
-                click.echo(f"  - Error clearing SwiftBar {key} configuration: {e}")
+                failures.report(f"  - Error clearing SwiftBar {key} configuration: {e}")
 
     def reset(self) -> None:
         """Alias for remove() to maintain consistency with other services."""

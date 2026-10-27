@@ -110,6 +110,7 @@ needs — in its own `pyproject.toml`, under `[tool.aisland]`. It never imports 
 |---|---|---|
 | create a workspace, or set up an existing repository | `aisland workspace init <folder>` | [workspace](https://github.com/Gearlux/aisland/blob/main/docs/workspace.md) |
 | bring the workspace in line after a change | `aisland setup` | [workspace](https://github.com/Gearlux/aisland/blob/main/docs/workspace.md) |
+| start this machine's `.env` from the projects' variables | `aisland workspace env-example`, then `cp env.example .env` | [workspace](https://github.com/Gearlux/aisland/blob/main/docs/workspace.md#the-machines-environment-envcomplete-envexample-and-env) |
 | choose where a project comes from | `aisland workspace configure source set <project> local\|github\|pypi` | [sources](https://github.com/Gearlux/aisland/blob/main/docs/sources.md) |
 | choose the extras the projects install | `aisland workspace configure extras set <names…>` | [selections](https://github.com/Gearlux/aisland/blob/main/docs/selections.md) |
 | pull, push or tag every project | `git pull-all`, `git push-all`, `git tag-all <tag>` | [git](https://github.com/Gearlux/aisland/blob/main/docs/git.md) |

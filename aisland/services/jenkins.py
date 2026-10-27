@@ -14,6 +14,7 @@ from typing import Any, Dict, List, Mapping, Optional, cast
 import click
 from packaging.requirements import InvalidRequirement, Requirement
 
+from aisland import failures
 from aisland.manager import BIN_DIR, BaseService, _install_brew_packages, get_workspace_root
 from aisland.selection import PLAYWRIGHT_BROWSER
 from aisland.selection import axes as sel_axes
@@ -281,7 +282,7 @@ class JenkinsService(BaseService):
         try:
             urllib.request.urlretrieve(self.URL, self.war_file)
         except Exception as e:
-            click.echo(f"Error downloading Jenkins: {e}", err=True)
+            failures.report(f"Error downloading Jenkins: {e}")
             return False
         click.echo("  - Jenkins download complete.")
         return True
@@ -359,14 +360,13 @@ class JenkinsService(BaseService):
                             if old_jar != latest_jar_path:
                                 old_jar.unlink()
                     except Exception as e:
-                        click.echo(f"Error downloading Plugin Manager: {e}", err=True)
+                        failures.report(f"Error downloading Plugin Manager: {e}")
 
                 self.manager_jar = latest_jar_path
 
         if not self.manager_jar.exists():
-            click.echo(
+            failures.report(
                 "  - Error: Plugin Manager could not be discovered or downloaded.",
-                err=True,
             )
 
     def _are_plugins_installed(self) -> bool:
@@ -433,7 +433,7 @@ class JenkinsService(BaseService):
                 click.echo("  - Jenkins plugins and dependencies synchronized.")
             return True
         except subprocess.CalledProcessError as e:
-            click.echo(f"  - Error installing plugins: {e.stderr}", err=True)
+            failures.report(f"  - Error installing plugins: {e.stderr}")
             return False
 
     def _has_remote_pipelines(self) -> bool:
@@ -635,7 +635,7 @@ class JenkinsService(BaseService):
                 return cred_ids[0]
 
         except Exception as e:
-            click.echo(f"  - Error parsing credentials.xml: {e}")
+            failures.report(f"  - Error parsing credentials.xml: {e}")
 
         return expected_id or ""
 
@@ -655,9 +655,8 @@ class JenkinsService(BaseService):
                 shutil.rmtree(project_job_dir)
                 click.echo(f"  - Removed: {project_name}")
             else:
-                click.echo(
+                failures.report(
                     f"  - Error: Jenkins job for project '{project_name}' not found.",
-                    err=True,
                 )
         else:
             import shutil
@@ -977,19 +976,15 @@ pipeline {{
         project_path = workspace_root / project_name
 
         if not project_path.exists() or not project_path.is_dir():
-            click.echo(
-                f"Error: Project directory '{project_name}' not found at {project_path}.",
-                err=True,
+            raise click.ClickException(
+                f"Project directory '{project_name}' not found at {project_path}."
             )
-            return
 
         pyproject_path = project_path / "pyproject.toml"
         if not pyproject_path.exists():
-            click.echo(
-                f"Error: pyproject.toml not found in {project_name}. Cannot scaffold.",
-                err=True,
+            raise click.ClickException(
+                f"pyproject.toml not found in {project_name}. Cannot scaffold."
             )
-            return
 
         metadata = get_project_metadata(pyproject_path)
         pkg_name = metadata["name"]
@@ -2274,23 +2269,17 @@ jobs:
         if project_name:
             project_path = workspace_root / project_name
             if not project_path.exists() or not project_path.is_dir():
-                click.echo(
-                    f"  - Error: Project directory '{project_name}' not found at {project_path}.",
-                    err=True,
+                raise click.ClickException(
+                    f"Project directory '{project_name}' not found at {project_path}."
                 )
-                return
             if not local and not (project_path / "Jenkinsfile").exists():
-                click.echo(
-                    f"  - Error: Project '{project_name}' does not have a Jenkinsfile at its root.",
-                    err=True,
+                raise click.ClickException(
+                    f"Project '{project_name}' does not have a Jenkinsfile at its root."
                 )
-                return
             if local and not (project_path / "Jenkinsfile.local").exists():
-                click.echo(
-                    f"  - Error: Project '{project_name}' does not have a Jenkinsfile.local at its root.",
-                    err=True,
+                raise click.ClickException(
+                    f"Project '{project_name}' does not have a Jenkinsfile.local at its root."
                 )
-                return
             projects = [project_path]
         else:
             if local:
@@ -2448,7 +2437,7 @@ jobs:
             tree = ET.parse(config_file)
             root = tree.getroot()
         except Exception as e:
-            click.echo(f"  - Error parsing config.xml: {e}")
+            failures.report(f"  - Error parsing config.xml: {e}")
             return
 
         # Find or create the 'views' container
@@ -2558,7 +2547,7 @@ jobs:
             tree = ET.parse(config_file)
             root = tree.getroot()
         except Exception as e:
-            click.echo(f"  - Error parsing config.xml for global properties: {e}")
+            failures.report(f"  - Error parsing config.xml for global properties: {e}")
             return
 
         # Find or create globalNodeProperties
@@ -2632,7 +2621,7 @@ jobs:
             tree = ET.parse(config_file)
             root = tree.getroot()
         except Exception as e:
-            click.echo(f"  - Error parsing config.xml for security reduction: {e}")
+            failures.report(f"  - Error parsing config.xml for security reduction: {e}")
             return
 
         if click.confirm("Disable Jenkins security entirely? (No login required, most fast/unsecure)"):
