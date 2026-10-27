@@ -3440,6 +3440,10 @@ uv pip install -e ./app[wheels]        # from the folder holding app, on the oth
 ### What you may change
 
 - Another name than `wheels`, or several runs writing several extras (each its own markers) — not built yet.
+- Remembering (user request 2026-10-27): a build without `--extra` keeps an existing block current, since a
+  forgotten flag left the sources naming wheel files the rebuild deleted and the install failed on the other
+  machine. Not with `--include-project`, whose build installs the project's own wheel and leaves the block unless
+  `--extra` is given; the regenerate command names `--extra` only there.
 - Never: tying the extra to `--include-project` (aisland's own run would publish it), or a hand-maintained copy of
   the list beside the generated one.
 

@@ -322,6 +322,10 @@ class WheelsReport:
     #: The extra ``--extra`` wrote into the target's ``pyproject.toml``, and whether that file changed.
     extra: Optional[str] = None
     extra_changed: bool = False
+    #: True when the extra was written without ``--extra``: the target's ``pyproject.toml`` holds its generated block.
+    extra_remembered: bool = False
+    #: The extra a generated block names that this run left as it is (``--include-project``, no ``--extra``).
+    extra_left: Optional[str] = None
 
     @property
     def ok(self) -> bool:
@@ -944,6 +948,21 @@ def vendor_wheels(
     # The bundle holds the project's own code, so its project is held to the rules of its own wheel.
     dirty = _refuse_uncommitted(to_build, force, target if include_project or bundle else None)
     pyproject = target.path / "pyproject.toml"
+    remembered = wheels_extra.remembered_extra(pyproject) if pyproject.is_file() else None
+    if remembered is not None and extra is not None and extra != remembered[0]:
+        raise click.ClickException(
+            f"{pyproject}:{remembered[1]}: this file's generated block writes the extra {remembered[0]!r}; --extra "
+            f"{extra} would write a second one — remove the block to rename it, or drop --extra"
+        )
+    # A block a build wrote is kept current by every later build without --extra — but not by one that builds the
+    # project's own wheel (--include-project), which installs no folder: there --extra still decides.
+    extra_remembered = extra is None and remembered is not None and not include_project
+    extra_left = remembered[0] if extra is None and remembered is not None and include_project else None
+    if extra_remembered and remembered is not None:
+        extra = remembered[0]
+    # The regenerate command names --extra only where a rerun without it would not write the extra again: once the
+    # block exists a build without --include-project keeps it current by itself.
+    command_extra = extra if include_project else None
     if extra is not None:
         wheels_extra.check_extra(pyproject, extra, [p.distribution for p in to_build])
         if commit and (lines := _uncommitted_file(target, pyproject.name)):
@@ -1001,9 +1020,11 @@ def vendor_wheels(
         project_wheel = own_entry if include_project else None
 
         files = {
-            README_NAME: render_readme(target.name, scope, built, project_wheel, extra),
-            WHEELS_YAML: render_wheels_yaml(target.name, scope, built, not_built, choices, project_wheel, extra),
-            INSTALL_SCRIPT: render_install_script(target.name, scope, include_project, extra),
+            README_NAME: render_readme(target.name, scope, built, project_wheel, extra, command_extra),
+            WHEELS_YAML: render_wheels_yaml(
+                target.name, scope, built, not_built, choices, project_wheel, command_extra
+            ),
+            INSTALL_SCRIPT: render_install_script(target.name, scope, include_project, command_extra),
             GITIGNORE: _IGNORE_ZIP if commit else _IGNORE_ALL,
         }
         _write_wheels(folder, staged + ([own_wheel] if own_wheel and include_project else []), files)
@@ -1011,11 +1032,11 @@ def vendor_wheels(
             pyproject,
             extra,
             [wheels_extra.ExtraWheel(b.distribution, b.wheel) for b in built],
-            regenerate_command(target.name, scope, include_project, extra),
+            regenerate_command(target.name, scope, include_project, command_extra),
         )
         bundle_path: Optional[Path] = None
         if bundle and own_wheel is not None and own_entry is not None:
-            command = bundle_command(target.name, scope, include_project, extra)
+            command = bundle_command(target.name, scope, include_project, command_extra)
             bundle_path = _write_bundle(projects, target, own_wheel, own_entry, staged, built, folder, command)
 
         new_names: Dict[str, Set[str]] = {}
@@ -1074,7 +1095,7 @@ def vendor_wheels(
         ):
             committed = _commit_wheels(
                 target,
-                regenerate_command(target.name, scope, include_project, extra),
+                regenerate_command(target.name, scope, include_project, command_extra),
                 [pyproject.name] if extra is not None else [],
             )
             commit_note = None if committed else f"nothing new to commit in {wheels_dir}"
@@ -1118,6 +1139,8 @@ def vendor_wheels(
         bundle_imported=bundle_imported,
         extra=extra,
         extra_changed=extra_changed,
+        extra_remembered=extra_remembered,
+        extra_left=extra_left,
     )
 
 
@@ -1500,9 +1523,15 @@ def render_report(report: WheelsReport) -> str:
     if report.extra is not None:
         n_wheels = len(report.built)
         state = "written into" if report.extra_changed else "unchanged in"
+        kept = ", which holds its generated block" if report.extra_remembered else ""
         tail.append(
             f"The extra {report.extra} ({n_wheels} wheel{'s' if n_wheels != 1 else ''}) {state} "
-            f"{target}/pyproject.toml; install it with: uv pip install -e ./{target}[{report.extra}]"
+            f"{target}/pyproject.toml{kept}; install it with: uv pip install -e ./{target}[{report.extra}]"
+        )
+    if report.extra_left is not None:
+        tail.append(
+            f"The extra {report.extra_left} in {target}/pyproject.toml was left as it is: --include-project builds "
+            f"{target}'s own wheel. Pass --extra {report.extra_left} to write it for these wheels."
         )
     if report.tracked_warning:
         tail.append(report.tracked_warning)
@@ -1570,13 +1599,16 @@ def render_readme(
     built: List[BuiltWheel],
     project_wheel: Optional[BuiltWheel] = None,
     extra: Optional[str] = None,
+    command_extra: Optional[str] = "",
 ) -> str:
     """``wheels/README.md``: its generator, the install command, and each wheel's commit (``project_wheel``, the
-    target's own, last); with ``extra`` (``--extra``), the uv command that installs the extra first.
+    target's own, last); with ``extra``, the uv command that installs the extra first. ``command_extra`` is the
+    ``--extra`` the regenerate command names (``""``: ``extra``; ``None``: none, the project remembering it).
 
     No date and no PyPI verdict, so a rebuild of unchanged projects changes no file.
     """
-    command = regenerate_command(target, scope, project_wheel is not None, extra)
+    flag = extra if command_extra == "" else command_extra
+    command = regenerate_command(target, scope, project_wheel is not None, flag)
     shipped = built + ([project_wheel] if project_wheel else [])
     rows = "\n".join(
         f"| {b.wheel} | {b.project} | {b.branch} | {b.commit} | {'yes' if b.needed else 'no'} |" for b in shipped

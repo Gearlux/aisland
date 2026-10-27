@@ -1071,7 +1071,8 @@ def wheels_group(
     metavar="NAME",
     help="Also write the extra NAME into PROJECT's pyproject.toml, with a uv source per wheel built, so "
     "`uv pip install -e ./PROJECT[NAME]` installs PROJECT editable with every wheel; NAME must be in its "
-    "[tool.aisland] manual-extras. --commit commits pyproject.toml too.",
+    "[tool.aisland] manual-extras. Once written, every later build keeps it current without --extra, except "
+    "one with --include-project. --commit commits pyproject.toml too.",
 )
 @click.option(
     "--bundle",

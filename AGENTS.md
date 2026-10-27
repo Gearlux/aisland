@@ -855,9 +855,14 @@ User choice 2026-10-08: an aisland command, only the named project's closure, bo
   `[tool.aisland] manual-extras` (setup would install the wheels over the checkouts), a hand-written extra NAME or
   source for a built wheel, and a broken marker, each naming its line; `--commit` commits `pyproject.toml` with the
   folder and refuses one with changes of its own. It is a flag, never tied to `--include-project`: aisland's own
-  `--include-project` run would put the extra into its PyPI metadata. Without the flag the file and every generated
+  `--include-project` run would put the extra into its PyPI metadata. **The block is remembered (user request
+  2026-10-27):** a build without `--extra` and without `--include-project` finds the block (`remembered_extra`, its
+  first line names the extra) and keeps it current, so the regenerate command names `--extra` only with
+  `--include-project`; with `--include-project` and no `--extra` the block is left and the report says so; another
+  name beside the block is refused naming its line. A project without the block: the file and every generated
   file are byte-identical (`tests/test_wheels_extra.py`; the uv behaviour, offline with the real uv:
-  `::test_uv_installs_the_project_with_the_wheels_of_its_extra_and_takes_a_rebuilt_one`). [wheels]
+  `::test_uv_installs_the_project_with_the_wheels_of_its_extra_and_takes_a_rebuilt_one`;
+  `TestTheBuildRemembersTheExtra`). [wheels]
 - TAB after `wheels build` / `wheels zip` / the short form `wheels` offers the projects (`cli._complete_projects`:
   checked out here; `zip` only those with a `wheels.yaml`; the group's commands first). It reads folders and
   `pyproject.toml` only and an unreadable workspace offers nothing (`tests/test_wheels.py::TestShellCompletion`).

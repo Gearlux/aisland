@@ -283,7 +283,7 @@ class TestTheBuildRun:
         assert (report.extra, report.extra_changed) == ("wheels", True)
         folder = root / "app" / "wheels"
         for name in ("README.md", "wheels.yaml", "install.py"):
-            assert "To regenerate: aisland wheels build app --extra wheels\n" in (folder / name).read_text(), name
+            assert "To regenerate: aisland wheels build app\n" in (folder / name).read_text(), name
         readme = (folder / "README.md").read_text()
         assert "    uv pip install -e ./app[wheels]\n" in readme
         assert "    python wheels/install.py\n" in readme
@@ -339,7 +339,7 @@ class TestTheBuildRun:
 
         assert report.committed is not None
         files = _git(root / "app", "show", "--name-only", "--format=%s", "HEAD").splitlines()
-        assert files[0] == "chore: wheels built with aisland wheels build app --extra wheels"
+        assert files[0] == "chore: wheels built with aisland wheels build app"
         assert "pyproject.toml" in files and "wheels/libx-0.1.0-py3-none-any.whl" in files
         assert "notes.txt" not in files
         assert _git(root / "app", "status", "--porcelain").splitlines() == ["?? notes.txt"]
@@ -365,6 +365,98 @@ class TestTheBuildRun:
         assert w.bundle_command("app", "all", True, "wheels") == (
             "aisland wheels build app --all --include-project --extra wheels --bundle"
         )
+
+
+class TestTheBuildRemembersTheExtra:
+    """Once a build wrote the extra, every later build without --include-project keeps it current, --extra or not."""
+
+    @staticmethod
+    def _with_block(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
+        """`app` whose pyproject holds the generated block for libx 0.1.0, committed (a clean project)."""
+        root = _app_and_libx(tmp_path, monkeypatch)
+        test_wheels.TestTheRunWithFakedBuilds._fake_builds(monkeypatch, {})
+        w.vendor_wheels(root, "app", extra="wheels")
+        _commit(root / "app", "the extra")
+        return root
+
+    def test_a_rebuild_without_the_option_follows_a_new_version(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        root = self._with_block(tmp_path, monkeypatch)
+        test_wheels.TestTheRunWithFakedBuilds._fake_builds(monkeypatch, {"libx": "0.2.0"})
+
+        report = w.vendor_wheels(root, "app")
+
+        assert _read(root / "app" / "pyproject.toml")["tool"]["uv"]["sources"] == {
+            "libx": [{"path": "wheels/libx-0.2.0-py3-none-any.whl", "extra": "wheels"}]
+        }
+        assert (report.extra, report.extra_changed, report.extra_remembered) == ("wheels", True, True)
+        assert w.render_report(report).endswith(
+            "\nThe extra wheels (1 wheel) written into app/pyproject.toml, which holds its generated block; install it "
+            "with: uv pip install -e ./app[wheels]\n"
+        )
+        assert "    uv pip install -e ./app[wheels]\n" in (root / "app" / "wheels" / "README.md").read_text()
+        assert "#     To regenerate: aisland wheels build app\n" in (root / "app" / "pyproject.toml").read_text()
+
+    def test_a_rebuild_of_the_projects_own_wheel_leaves_the_block_and_says_so(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        root = self._with_block(tmp_path, monkeypatch)
+        before = (root / "app" / "pyproject.toml").read_bytes()
+        test_wheels.TestTheRunWithFakedBuilds._fake_builds(monkeypatch, {"libx": "0.2.0"})
+
+        report = w.vendor_wheels(root, "app", include_project=True)
+
+        assert (root / "app" / "pyproject.toml").read_bytes() == before
+        assert (report.extra, report.extra_left) == (None, "wheels")
+        text = w.render_report(report)
+        assert (
+            "The extra wheels in app/pyproject.toml was left as it is: --include-project builds app's own wheel. "
+            "Pass --extra wheels to write it for these wheels." in text
+        )
+        assert "uv pip install" not in (root / "app" / "wheels" / "README.md").read_text()
+
+    def test_the_option_with_the_projects_own_wheel_writes_it_and_the_command_names_it(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        root = self._with_block(tmp_path, monkeypatch)
+        test_wheels.TestTheRunWithFakedBuilds._fake_builds(monkeypatch, {"libx": "0.2.0"})
+
+        report = w.vendor_wheels(root, "app", include_project=True, extra="wheels")
+
+        assert (report.extra_changed, report.extra_remembered, report.extra_left) == (True, False, None)
+        text = (root / "app" / "pyproject.toml").read_text()
+        assert "wheels/libx-0.2.0-py3-none-any.whl" in text
+        assert "#     To regenerate: aisland wheels build app --include-project --extra wheels\n" in text
+
+    def test_another_name_beside_the_block_is_refused_before_anything_is_built(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        root = self._with_block(tmp_path, monkeypatch)
+        _no_builds(monkeypatch)
+        path = root / "app" / "pyproject.toml"
+        line = we.remembered_extra(path)
+
+        with pytest.raises(click.ClickException) as error:
+            w.vendor_wheels(root, "app", extra="deps")
+
+        assert line is not None and line[0] == "wheels"
+        assert error.value.message == (
+            f"{path}:{line[1]}: this file's generated block writes the extra 'wheels'; --extra deps would write a "
+            "second one — remove the block to rename it, or drop --extra"
+        )
+
+    def test_a_project_without_the_block_is_left_alone(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+        root = _app_and_libx(tmp_path, monkeypatch)
+        path = root / "app" / "pyproject.toml"
+        before = path.read_bytes()
+        test_wheels.TestTheRunWithFakedBuilds._fake_builds(monkeypatch, {})
+
+        report = w.vendor_wheels(root, "app")
+
+        assert path.read_bytes() == before
+        assert (report.extra, report.extra_remembered, report.extra_left) == (None, False, None)
+        assert we.remembered_extra(path) is None
 
 
 class TestCli:

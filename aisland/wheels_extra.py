@@ -115,6 +115,19 @@ def _table(data: Dict[str, Any], dotted: str) -> Dict[str, Any]:
     return node if isinstance(node, dict) else {}
 
 
+#: The first line of a generated extra block names its extra: what a later build without ``--extra`` keeps current.
+_REMEMBERED = re.compile(rf"^{re.escape(BEGIN)}: the `([^`]+)` extra")
+
+
+def remembered_extra(pyproject: Path) -> Optional[Tuple[str, int]]:
+    """The extra a generated block in ``pyproject`` writes, and its 1-based line; ``None`` when it has none."""
+    for index, line in enumerate(pyproject.read_text(encoding="utf-8").splitlines()):
+        match = _REMEMBERED.match(line)
+        if match:
+            return match.group(1), index + 1
+    return None
+
+
 def check_extra(pyproject: Path, extra: str, distributions: Sequence[str]) -> None:
     """Refuse ``--extra`` before anything is built: a name that is no normalized extra name, a project that does not
     list it in ``[tool.aisland] manual-extras``, or a key outside the generated blocks that already holds the extra
