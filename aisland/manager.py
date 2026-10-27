@@ -1227,24 +1227,24 @@ def submodule_active_map(workspace_root: Path) -> List[Tuple[str, str, bool]]:
     gitmodules = workspace_root / ".gitmodules"
     if not gitmodules.exists():
         return []
+    # ONE git process for every submodule's path and `active` key: every aisland command reads this map, and a
+    # process per submodule cost 36 of them (13.9 s on a loaded machine) in a workspace of 35.
     listing = subprocess.run(
-        ["git", "config", "-f", str(gitmodules), "--get-regexp", r"^submodule\..*\.path$"],
+        ["git", "config", "-f", str(gitmodules), "--get-regexp", r"^submodule\..*\.(path|active)$"],
         cwd=workspace_root,
         text=True,
         capture_output=True,
     ).stdout
-    entries: List[Tuple[str, str, bool]] = []
+    paths: Dict[str, str] = {}
+    active: Dict[str, str] = {}
     for line in listing.splitlines():
-        key, _, path = line.partition(" ")
-        name = key[len("submodule.") : -len(".path")]
-        active_raw = subprocess.run(
-            ["git", "config", "-f", str(gitmodules), "--get", f"submodule.{name}.active"],
-            cwd=workspace_root,
-            text=True,
-            capture_output=True,
-        ).stdout.strip()
-        entries.append((name, path, active_raw.lower() != "false"))
-    return entries
+        key, _, value = line.partition(" ")
+        name, _, variable = key[len("submodule.") :].rpartition(".")
+        if variable == "path":
+            paths.setdefault(name, value)
+        else:
+            active[name] = value.strip()  # git's `--get` answers the last value written; so does this
+    return [(name, path, active.get(name, "").lower() != "false") for name, path in paths.items()]
 
 
 def workspace_folders(workspace_root: Path) -> List[Tuple[str, str, bool]]:

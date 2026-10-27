@@ -915,7 +915,9 @@ User choice 2026-10-08: an aisland command, only the named project's closure, bo
   request 2026-10-19).** [folders-as-submodules] `manager.workspace_folders` is the project list: `.gitmodules`' submodules
   when it exists, else every direct, non-hidden subfolder holding a `pyproject.toml`, active. A new
   reader of "the workspace's projects" uses it, never `submodule_active_map` (which stays the
-  submodules only: activation, deinit, mirrors). What needs a submodule is refused naming the
+  submodules only: activation, deinit, mirrors; read with ONE `git config --get-regexp` process — every command
+  reads it, and a process per submodule made `aisland --help` take 79 s on a loaded machine:
+  `tests/test_submodule_active_map.py`). What needs a submodule is refused naming the
   reason: a `github`/`pypi` source (it would empty the folder for good), a mirror, a wheel of a
   project in no git repository. (`tests/test_folder_workspace.py`)
 - **A link to a folder inside the workspace is a short name, never a project (user request 2026-10-21).** [aliases]
