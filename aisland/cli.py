@@ -6,9 +6,9 @@ from typing import Callable, Dict, List, Optional, Tuple
 import click
 from click.shell_completion import CompletionItem
 
-from aisland import configure, discovery, editor, locations, manager, nightly, pytest_stats, selection
+from aisland import configure, discovery, editor, locations, manager, nightly, pytest_stats, recording, selection
 from aisland import supervisor as supervisor_mod
-from aisland import recording, tracking
+from aisland import tracking
 from aisland import tunnel as tunnel_mod
 from aisland import tunnel_connect as tunnel_connect_mod
 from aisland import wheels
