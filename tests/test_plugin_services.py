@@ -124,6 +124,11 @@ def test_the_service_gets_its_own_commands_with_a_port_option(workspace: Path) -
     assert "--port" in _run("acme-db", "restart", "--help").output
 
 
+def test_its_help_names_the_project_that_brings_it(workspace: Path) -> None:
+    assert "Manage acme-db, a service acme brings." in _run("acme-db", "--help").output
+    assert "Manage acme-db, a service acme brings." in " ".join(_run("--help").output.split())
+
+
 def test_start_hands_the_class_its_context_and_runs_what_it_asks(
     workspace: Path, supervised: List[Dict[str, Any]]
 ) -> None:

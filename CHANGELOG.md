@@ -21,7 +21,7 @@ The first release on PyPI: `pip install aisland`.
   the projects offer.
 - **`aisland services`** runs the local services under process-compose or Docker — Jenkins, MLflow, the container
   engine, SwiftBar — and a service a project declares in its own `pyproject.toml` or implements in its own
-  code (its class may name the question `reset` asks first).
+  code (its class may name the question `reset` asks first); `aisland --help` names the project that brings each.
 - **`aisland jenkins scaffold`** writes a project's `Jenkinsfile`, `Jenkinsfile.local` and GitHub `ci.yml`.
 - **`aisland doctor`** checks the environment and prints the command that fixes what it finds.
 - **`aisland workspace env-example`** writes the workspace's `env.complete` (every environment variable the

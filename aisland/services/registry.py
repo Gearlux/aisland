@@ -65,6 +65,8 @@ class Entry:
     options: Mapping[str, str] = field(default_factory=dict)
     #: What `aisland <name> reset` asks first, when a project's class says (its reset wipes no data); else aisland's.
     reset_question: Optional[str] = None
+    #: The project that brings it (its help names it); empty for aisland's own.
+    project: str = ""
 
 
 ENTRIES: Tuple[Entry, ...] = (
@@ -103,7 +105,15 @@ def declared(root: Path, reserved: Collection[str] = ()) -> List[Entry]:
         free(name, service.where)
         if any(choice not in (selection.effective(root, needed) or []) for needed, choice in service.needs.items()):
             continue
-        entries.append(Entry(name, partial(DeclaredService, service), by_default=False, takes_background=True))
+        entries.append(
+            Entry(
+                name,
+                partial(DeclaredService, service),
+                by_default=False,
+                takes_background=True,
+                project=service.project,
+            )
+        )
     for name, loaded in discovery.load(found).items():
         if loaded.state != "installed" or loaded.kind != "service":
             continue
@@ -117,6 +127,7 @@ def declared(root: Path, reserved: Collection[str] = ()) -> List[Entry]:
                 takes_port=True,
                 options=dict(getattr(loaded.obj, "options", {})),
                 reset_question=getattr(loaded.obj, "reset_question", None),
+                project=loaded.plugin.project,
             )
         )
     return entries

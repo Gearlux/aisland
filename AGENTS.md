@@ -304,7 +304,9 @@ start-time port pre-flight naming the PID is the only signal). All service state
   `DeclaredService` — the command under the supervisor, probed only with both `port` and `ready` — appended to the
   list after aisland's own (`registry.declared`), started only when named, offered only while every `needs` choice is
   in that selection's effective choice. It gets `aisland <name> …` from `cli._WorkspaceGroup.get_command`, after
-  aisland's own commands. A name of an aisland service or command is a `DeclarationError` naming the line; the
+  aisland's own commands; its help, declared or implemented, names the project that brings it (`Entry.project`:
+  `Manage labelstudio, a service annotaide brings.`), and `tests/test_docs.py`'s no-workspace-names rule reads
+  aisland's own help without them. A name of an aisland service or command is a `DeclarationError` naming the line; the
   top-level listing (`--help`, completion) leaves the declared groups out then, every command reading them says why.
   (`tests/test_declared_services.py`)
 - **A project implements a service in its own code, importing nothing of aisland (user choices 2026-10-25).** An

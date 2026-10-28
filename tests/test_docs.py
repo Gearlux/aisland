@@ -20,6 +20,7 @@ import pytest
 
 from aisland import wheels_unzip
 from aisland.cli import main
+from aisland.services import registry
 
 PROJECT = Path(__file__).resolve().parents[1]
 README = PROJECT / "README.md"
@@ -168,8 +169,15 @@ def test_a_user_page_names_no_project_of_the_workspace(page: Path) -> None:
 @pytest.mark.parametrize(
     "words, command", list(_commands(main)), ids=lambda value: value if isinstance(value, str) else ""
 )
-def test_a_commands_help_names_no_project_of_the_workspace(words: str, command: click.Command) -> None:
-    """``--help`` is the page a pip user reads first: its examples name ``myproject``, never this workspace's."""
+def test_a_commands_help_names_no_project_of_the_workspace(
+    words: str, command: click.Command, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """``--help`` is the page a pip user reads first: its examples name ``myproject``, never this workspace's.
+
+    The services the workspace's projects bring are left out: their lines name the project that brings each, which
+    in any workspace is that workspace's own (`tests/test_plugin_services.py::test_its_help_names_the_project_that_brings_it`).
+    """
+    monkeypatch.setattr(registry, "declared", lambda root, reserved=(): [])
     text = command.get_help(click.Context(command, info_name=words))
     hits = [line.strip() for line in text.splitlines() if _WORKSPACE_NAME.search(line)]
     assert hits == []

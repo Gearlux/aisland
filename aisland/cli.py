@@ -132,9 +132,7 @@ def _service_entries() -> List["service_registry.Entry"]:
 def _declared_service_group(entry: "service_registry.Entry") -> click.Group:
     """`aisland <name> start|stop|restart|status|info|reset` for a service a project declares."""
 
-    @click.group(
-        name=entry.name, cls=_Group, help=f"Manage {entry.name}, a service a project of this workspace brings."
-    )
+    @click.group(name=entry.name, cls=_Group, help=f"Manage {entry.name}, a service {entry.project} brings.")
     def group() -> None:
         pass
 

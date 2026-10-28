@@ -82,6 +82,11 @@ def test_a_declared_service_gets_its_own_commands(tmp_path: Path, monkeypatch: p
         assert f"  {command} " in result.output
 
 
+def test_its_help_names_the_project_that_declares_it(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    _workspace(tmp_path, monkeypatch, NOTES.replace("service.notes", "service.journal"))
+    assert "Manage journal, a service notes brings." in _run("journal", "--help").output
+
+
 def test_start_runs_the_declared_command_under_the_supervisor(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, supervised: List[Dict[str, Any]]
 ) -> None:
