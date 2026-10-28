@@ -113,3 +113,31 @@ def test_aislands_own_pytest_reads_the_table_that_registers_slow(pytestconfig: p
     )
     assert collected.returncode == 0, collected.stdout + collected.stderr
     assert slow not in collected.stdout.splitlines() and "deselected" in collected.stdout
+
+
+def test_aislands_own_fast_run_is_parallel(pytestconfig: pytest.Config) -> None:
+    """Plain `pytest` runs over four worker processes: one process took 13 min on this machine against the
+    workspace's 5-minute budget, most of it waiting on git, uv and builds (user pick 3, 2026-10-28). Asked itself,
+    pytest names its workers; the plugin that gives them is in `dev`, which is all CI installs."""
+    asked = subprocess.run(
+        [
+            sys.executable,
+            "-m",
+            "pytest",
+            "-p",
+            "no:aisland_test_stats",
+            "-p",
+            "no:cacheprovider",
+            "tests/test_version.py",
+        ],
+        cwd=pytestconfig.rootpath,
+        capture_output=True,
+        text=True,
+        timeout=120,
+    )
+    assert asked.returncode == 0, asked.stdout + asked.stderr
+    assert "created: 4/4 workers" in asked.stdout, asked.stdout + asked.stderr
+    dev = tomllib.loads((pytestconfig.rootpath / "pyproject.toml").read_text())["project"]["optional-dependencies"][
+        "dev"
+    ]
+    assert any(spec.startswith("pytest-xdist") for spec in dev)

@@ -56,6 +56,9 @@ dev = [
     # The quality gates ci.yml and the Jenkinsfiles run.
     "pytest>=8.0,<9.0",
     "pytest-cov>=6.0",
+    # The fast run is parallel (addopts below): required, not optional — in one process it is minutes over the
+    # 5-minute budget the workspace holds a fast run to.
+    "pytest-xdist>=3.8,<4.0",
     "black>=24.0,<25.0",
     "isort>=5.13,<6.0",
     "flake8>=7.0",
@@ -117,5 +120,8 @@ python_files = ["test_*.py"]
 norecursedirs = ["data", ".venv", "tools", "bin"]
 # Plain `pytest` is the fast run, `pytest -m slow` the slow one (workspace rule "Two Test Runs"); a test moves to the
 # slow run when `aisland tests report aisland` lists it.
-addopts = "-m 'not slow'"
+# -n 4: the fast run is PARALLEL (user pick 3, 2026-10-28). Measured on this machine under load: 790 s in one process,
+# 490 s over six workers, every test passing — most of a test's time is git, uv and builds in subprocesses. Four, the
+# cores a GitHub runner has: more workers than cores is slower, never wrong, so CI needs no setting of its own.
+addopts = "-m 'not slow' -n 4"
 markers = ["slow: never failed and among the slowest; left out of the fast run, run by CI's slow leg"]

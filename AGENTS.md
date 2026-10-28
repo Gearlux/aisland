@@ -416,6 +416,12 @@ Root `AGENTS.md` "Two Test Runs" (user ruling 2026-10-05). [test-stats]
   mapping (`::test_the_junit_address_is_the_one_pytests_own_junit_report_writes`).
 - The report proposes moves; nothing moves a test between legs but an edit to its
   `@pytest.mark.slow` (or a `FAST_SAMPLE`). Never deselect by history at collection time.
+- **aisland's own fast run is PARALLEL — `-n 4` in `addopts`, `pytest-xdist` in `dev`** (user pick 3, 2026-10-28,
+  over moving tests to the slow run: by the report's rule even every never-failed test moved left it over budget).
+  Measured under load: 790 s in one process, 490 s over six workers, every test passing; the time is git, uv and
+  builds in subprocesses. Four is a GitHub runner's cores; more than the machine has is slower, never wrong. The
+  test-stats plugin records an xdist run as ONE whole run. A test file still passes alone (`pytest tests/x.py` runs it
+  over the workers; `-n 0` runs it in one process). (`tests/test_workspace_fast_run_default.py::test_aislands_own_fast_run_is_parallel`)
 - A project that registers `slow` sets `addopts = "-m 'not slow'"`
   (`tests/test_workspace_fast_run_default.py::test_the_real_workspace_runs_the_fast_run_by_default`).
 - aisland's own pytest settings live in `[tool.pytest.ini_options]` alone, never a `pytest.ini`: pytest reads a
