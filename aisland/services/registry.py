@@ -22,7 +22,6 @@ import click
 from aisland import supervisor
 from aisland.services.docker import DockerService
 from aisland.services.jenkins import JenkinsService
-from aisland.services.mlflow import MLflowService
 from aisland.services.swiftbar import SwiftBarService
 
 
@@ -72,7 +71,6 @@ class Entry:
 ENTRIES: Tuple[Entry, ...] = (
     Entry("docker", DockerService, by_default=True, takes_background=False),
     Entry("jenkins", JenkinsService, by_default=True, takes_background=True),
-    Entry("mlflow", MLflowService, by_default=True, takes_background=True),
     Entry("swiftbar", SwiftBarService, by_default=True, takes_background=False),
 )
 

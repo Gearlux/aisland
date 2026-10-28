@@ -14,7 +14,7 @@ source project.bashrc      # activates .venv AND exports .env AND loads completi
                            # (and defines cdp/cdd/cdm/cdr — cd into $PROJECT_ROOT, $DATA_ROOT, $MODEL_ROOT, $RUN_DIR;
                            #  `cdm mod<TAB>` completes a folder under $MODEL_ROOT — and h [word]: the history, filtered)
                            # (and tm [tmux new-session options]: a tmux session here, with this shell's environment)
-aisland <TAB>              # check docker doctor jenkins mcp mlflow ...
+aisland <TAB>              # check docker doctor jenkins mcp services ...
 aisland wheels build models <TAB>   # --include-published --all --include-project --zip ... --help
 viewer exp<TAB>            # export export-workflow
 lib <TAB>                  # run

@@ -123,9 +123,10 @@ The workspace's dev-infrastructure CLI, `aisland` (click, `aisland/cli.py`):
   control protocol is the VS Code CLI's: `tests/fake_devtunnel.py` speaks it and changes with it. The user page is
   `docs/tunnel.md` (the README keeps three commands and its absolute link), its twin `examples/01_tunnel_terminal.py`;
   an error the page quotes is the code's, word for word (`tests/test_tunnel_docs.py`).
-- `services/`: `jenkins` (incl. `aisland jenkins scaffold`), `mlflow` and `swiftbar` run under the supervisor;
+- `services/`: `jenkins` (incl. `aisland jenkins scaffold`) and `swiftbar` run under the supervisor;
   `docker` (Colima) runs on its own; `registry.py` lists them, `declared.py` and `plugin.py` run the ones a project
-  brings (FiftyOne is curaitor's; Aim and ClearML are matrainer's, `matrainer/services/`; Label Studio is annotaide's,
+  brings (FiftyOne is curaitor's; MLflow, Aim and ClearML are matrainer's, `matrainer/services/` — MLflow since
+  2026-10-28, started when named like every service a project brings; Label Studio is annotaide's,
   `annotaide/labelstudio_service.py`; IQEngine is the signal project's that reads SigMF).
 - `setup.sh`: interpreter + venv, then `aisland setup -y` and `aisland completion install`.
 - `harness.py` + `harness/`: the agent harness — the workspace commands, their helper script and the generic
@@ -332,11 +333,10 @@ start-time port pre-flight naming the PID is the only signal). All service state
   state.
 - A Docker-run service (`docker`) overrides `launch`/`stop`/`status`/
   `reset`; its `info()` skips `super().info()` (the supervisor line would mislead).
-- A service never installs its backend: `mlflow` fails with `selection.missing_message` (matrainer's Aim and ClearML
-  with the same text, through `ctx.choose_command`), naming
-  `aisland workspace configure tracker set <the trackers already chosen> <name>` — `set` takes the whole list, so
-  naming the missing one alone would drop the rest (user ruling 2026-10-23;
-  `tests/test_selection.py::test_a_missing_tracker_names_the_command_that_adds_it_to_the_chosen_ones`).
+- A service never installs its backend: a project's tracking service (matrainer's MLflow, Aim and ClearML) fails
+  naming `ctx.choose_command("tracker", <name>)` — `aisland workspace configure tracker set <the trackers already
+  chosen> <name>` (`selection.add_command`) — since `set` takes the whole list, naming the missing one alone would
+  drop the rest (user ruling 2026-10-23; `tests/test_selection.py::test_the_command_that_adds_a_tracker_keeps_the_ones_chosen`).
 - New services write `.env` through `supervisor.write_workspace_env` (a project's class: `ctx.write_env`).
 - macOS external volumes: Full Disk Access for the RESOLVED process-compose binary, then
   `aisland supervisor down && aisland services start --background`. Never "fix" it by moving
@@ -478,7 +478,8 @@ Root `AGENTS.md` "Two Test Runs" (user ruling 2026-10-05). [test-stats]
   (`server.py`, the `[mcp]` extra — never a base dependency) serves a CHOSEN set of tools (user choice 2026-10-21):
   reading `doctor`, `tests_report`, `editor_themes`, `editor_colors`, `sources`, `services_status`, `tunnel_list`;
   changing (`destructive_hint=False`) `editor_set_theme`, `editor_set_color`, `editor_unset` and
-  `service_start|stop|restart` for `jenkins` and `mlflow` ONLY. Never a tool for what prompts, runs for minutes or
+  `service_start|stop|restart` for `jenkins` and `mlflow` ONLY (`mlflow` a project's service: where no project
+  brings it, the tool returns the command's refusal). Never a tool for what prompts, runs for minutes or
   deletes (`setup`, `clean`, `backups prune`, `* reset`, `jenkins init`, `source set`), and never every click
   command generated as tools. A tool returns ONE JSON object — the data its command prints with `--json`, from the
   same function; a service tool runs the `aisland` command itself (`_run_aisland`: this interpreter, `-P`, the

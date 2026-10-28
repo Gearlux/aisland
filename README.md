@@ -3,7 +3,7 @@
 **One workspace of many Python projects, set up the same way on every machine.** aisland keeps a git repository
 whose projects are submodules, installs every project editable into the workspace's one virtual environment, and
 gives the workspace what its projects share: git aliases that pull and push them all, local services (Jenkins,
-MLflow, …) under one supervisor, generated CI files, an environment check, and the agent rules every AI coding
+and the ones the projects bring, such as MLflow) under one supervisor, generated CI files, an environment check, and the agent rules every AI coding
 session in the workspace reads.
 
 ## Install

@@ -3367,6 +3367,26 @@ class IQEngine:                      # the signal project's — no aisland impor
     reset_question = f"Remove the IQEngine container and the {image_ref()} image? (recordings are kept)"
 ```
 
+**Amendment (2026-10-28): MLflow moves to matrainer.** aisland keeps Jenkins, Docker and SwiftBar alone — the
+services every workspace may want; a tracking server is the trackers' project's. It came out of the release review:
+aisland's own MLflow failed with `aisland workspace configure tracker set mlflow`, a command that exists only where a
+project defines the `tracker` selection, so in a workspace without that project its error named a command that is
+not there. As matrainer's class it exists only where that selection does, and `selection.missing_message` went with
+it (`ctx.choose_command` is the one wording). Nothing the context offers had to grow. What changed for a user: `aisland
+mlflow` comes with the project; `aisland services start` without names no longer starts it (a project's service starts
+when named); `aisland mlflow ui <db>` is gone (`mlflow ui --backend-store-uri sqlite:///<db>` is the same). Its data
+folder is still `data/mlflow/`, so a store written before the move is served after it.
+
+```python
+class MLflow:                        # matrainer's — no aisland import
+    kind = "service"
+
+    def start(self, ctx: Any) -> None:
+        ...
+        ctx.run([sys.executable, "-m", "mlflow", "server", ..., "--backend-store-uri", _store(ctx.data_dir)],
+                port=port, ready="/health")
+```
+
 ---
 
 ## A project is the workspace's own by its GitHub remote: no organisation is written into aisland

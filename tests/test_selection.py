@@ -524,29 +524,6 @@ def test_the_command_that_adds_a_tracker_keeps_the_ones_chosen(workspace: Path) 
     assert s.add_command(workspace, "tracker", "mlflow") == "aisland workspace configure tracker set mlflow"
 
 
-@pytest.mark.parametrize(
-    "service, tracker",
-    [
-        ("aisland.services.mlflow.MLflowService", "mlflow"),
-    ],
-)
-def test_a_missing_tracker_names_the_command_that_adds_it_to_the_chosen_ones(
-    workspace: Path, monkeypatch: pytest.MonkeyPatch, service: str, tracker: str
-) -> None:
-    """The service never installs its backend; its message keeps the trackers already chosen."""
-    import importlib
-
-    module, _, name = service.rpartition(".")
-    cls = getattr(importlib.import_module(module), name)
-    s.write_committed(workspace, "tracker", ["tensorboard"])
-    monkeypatch.setattr("importlib.util.find_spec", lambda spec, *a: None)
-    with pytest.raises(click.ClickException) as caught:
-        cls().setup()
-    command = f"aisland workspace configure tracker set tensorboard {tracker}"
-    assert f"      {command}\n" in caught.value.message
-    assert caught.value.message.endswith(f"      {command} --machine-only")
-
-
 def test_adding_an_extra_to_an_unset_selection_keeps_the_dev_extras_it_installs(workspace: Path) -> None:
     """An `extras` never chosen installs each project's `dev`; the command that adds one more must keep it, or every
     project's tools go at the next setup."""

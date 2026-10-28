@@ -1,7 +1,7 @@
 """`aisland services [start|stop|restart|status|info|reset] [NAME…]`: every service from one list.
 
 The list is `aisland/services/registry.py`, in start order. With no name, `status` and `info` cover every service;
-`start`, `stop`, `restart` and `reset` cover the services started by default (the container engine, Jenkins, MLflow,
+`start`, `stop`, `restart` and `reset` cover the services started by default (the container engine, Jenkins,
 SwiftBar), stopping in the reverse order so the container engine goes last. A name no
 service has is refused before anything happens.
 """
@@ -127,21 +127,19 @@ def test_the_list_holds_every_service_aisland_ships_once() -> None:
     assert [entry.name for entry in registry.ENTRIES] == [
         "docker",
         "jenkins",
-        "mlflow",
         "swiftbar",
     ]
     assert [entry.name for entry in registry.ENTRIES if entry.by_default] == [
         "docker",
         "jenkins",
-        "mlflow",
         "swiftbar",
     ]
 
 
-@pytest.mark.parametrize("name", ["labelstudio", "iqengine", "fiftyone", "aim", "clearml"])
+@pytest.mark.parametrize("name", ["labelstudio", "iqengine", "fiftyone", "mlflow", "aim", "clearml"])
 def test_a_service_a_project_brings_is_not_aislands_own(name: str) -> None:
-    """Label Studio is annotaide's, IQEngine the signal project's, FiftyOne curaitor's, Aim and ClearML the
-    trainer's: each is offered while its project is installed, and gone with it."""
+    """Label Studio is annotaide's, IQEngine the signal project's, FiftyOne curaitor's, MLflow, Aim and ClearML
+    the trainer's: each is offered while its project is installed, and gone with it."""
     assert name not in {entry.name for entry in registry.ENTRIES}
     assert not (Path(registry.__file__).parent / f"{name}.py").exists()
 

@@ -38,7 +38,6 @@ from aisland.pytest_stats import DEFAULT_WINDOW_DAYS
 from aisland.services import registry as service_registry
 from aisland.services.docker import DockerService
 from aisland.services.jenkins import JenkinsService
-from aisland.services.mlflow import MLflowService
 from aisland.services.swiftbar import SwiftBarService
 
 #: The commands that run outside a workspace: creating one, installing a project's wheels elsewhere, and the
@@ -1495,64 +1494,6 @@ def mcp_claude() -> None:
     generate_mcp_json()
 
 
-# --- MLflow Commands ---
-
-
-@main.group()
-def mlflow() -> None:
-    """Manage local MLflow tracking server."""
-    pass
-
-
-@mlflow.command(name="start")
-@click.option("--port", default=5005, help="HTTP port for MLflow.")
-@click.option("--background", "-b", is_flag=True, help="Run in background.")
-def mlflow_start(port: int, background: bool) -> None:
-    """Start MLflow."""
-    MLflowService().launch(port=port, background=background)
-
-
-@mlflow.command(name="stop")
-def mlflow_stop() -> None:
-    """Stop MLflow."""
-    MLflowService().stop()
-
-
-@mlflow.command(name="status")
-def mlflow_status() -> None:
-    """Show MLflow status."""
-    MLflowService().status()
-
-
-@mlflow.command(name="info")
-def mlflow_info() -> None:
-    """Show detailed MLflow configuration (URL, backend store, artifacts)."""
-    MLflowService().info()
-
-
-@mlflow.command(name="restart")
-@click.option("--port", default=5005, help="HTTP port for MLflow.")
-@click.option("--background", "-b", is_flag=True, help="Run in background.")
-def mlflow_restart(port: int, background: bool) -> None:
-    """Restart MLflow."""
-    MLflowService().restart(port=port, background=background)
-
-
-@mlflow.command(name="reset")
-@click.confirmation_option(prompt="Are you sure you want to wipe all MLflow data?")
-def mlflow_reset() -> None:
-    """Stop MLflow and wipe all its data."""
-    MLflowService().reset()
-
-
-@mlflow.command(name="ui")
-@click.argument("db_file")
-@click.option("--port", default=5000, help="HTTP port for MLflow UI.")
-def mlflow_ui(db_file: str, port: int) -> None:
-    """Run local MLflow UI with the given database file."""
-    MLflowService().ui(db_path=db_file, port=port)
-
-
 # --- SwiftBar Commands ---
 
 
@@ -1612,13 +1553,13 @@ def swiftbar_reset() -> None:
 def services(ctx: click.Context) -> None:
     """Every aisland service at once, or the ones named. Alone: the supervisor and each service's state.
 
-    With no name, start/stop/restart/reset act on the services started by default (docker, jenkins, mlflow,
-    swiftbar); status and info cover every service. Each service also has its own group
-    (`aisland mlflow start --port 5006`).
+    With no name, start/stop/restart/reset act on the services started by default (docker, jenkins, swiftbar);
+    status and info cover every service, and a service a project brings starts when named. Each service also has
+    its own group (`aisland jenkins start --port 9081`).
 
     \b
     aisland services start -b
-    aisland services start mlflow aim
+    aisland services start jenkins mlflow
     aisland services stop
     """
     if ctx.invoked_subcommand is None:

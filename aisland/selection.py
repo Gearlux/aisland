@@ -445,22 +445,6 @@ def add_command(root: Path, name: str, value: str) -> str:
     return " ".join(["aisland workspace configure", name, "set", *current, *([] if value in current else [value])])
 
 
-def missing_message(what: str, name: str, value: str) -> str:
-    """What a service says when ``value`` of selection ``name`` (its backend, ``what``) is not installed: the
-    command that adds it, keeping the rest. A service never installs its backend — a silent install leaves the venv
-    holding something no selection asked for, gone again after the next ``aisland setup``."""
-    from aisland import manager
-
-    command = add_command(manager.get_workspace_root(), name, value)
-    return (
-        f"{what} is not installed in this environment.\n"
-        f"  Add it to the {name} selection, so the choice is recorded and survives the next setup:\n"
-        f"      {command}\n"
-        "  Or, for this machine only:\n"
-        f"      {command} --machine-only"
-    )
-
-
 # --- a dev dependency that needs more than pip: playwright's browser ----------------------------------------------
 
 #: The one browser a workspace test asks for — Playwright's package alone cannot open a page.

@@ -1,8 +1,8 @@
 # Services
 
-The services aisland runs for a workspace — Jenkins, MLflow, Docker and, on macOS, the SwiftBar menu — with the
-supervisor that keeps them running and the commands that start, stop and inspect each. A project of the workspace can
-bring more (Label Studio, IQEngine, Aim and ClearML below are examples); they run the same way, and start only when
+The services aisland runs for a workspace — Jenkins, Docker and, on macOS, the SwiftBar menu — with the supervisor
+that keeps them running and the commands that start, stop and inspect each. A project of the workspace can bring more
+(MLflow, Label Studio, IQEngine, Aim and ClearML below are examples); they run the same way, and start only when
 named.
 
 ## Default Ports
@@ -10,20 +10,20 @@ named.
 | Service       | Port | URL                        |
 |---------------|------|----------------------------|
 | Jenkins       | 9080 | http://localhost:9080      |
-| MLflow        | 5005 | http://localhost:5005      |
+| MLflow (a project's)        | 5005 | http://localhost:5005      |
 | Label Studio (a project's)  | 9081 | http://localhost:9081      |
 | IQEngine (a project's)      | 3000 | http://localhost:3000      |
 | Aim (a project's)           | 43800 | http://localhost:43800    |
 | ClearML web (a project's)   | 8080 | http://localhost:8080      |
 
-Jenkins, Label Studio, MLflow, Aim and IQEngine take another port with `--port` (`aisland mlflow start --port 5006`).
+Jenkins, MLflow, Label Studio, Aim and IQEngine take another port with `--port` (`aisland mlflow start --port 5006`).
 
 ## Check Status
 Retrieve service information for all infrastructure components:
 ```bash
 aisland services                  # the supervisor and every service
 aisland services start -b         # start the default ones in the background
-aisland services start mlflow aim # or only those named
+aisland services start mlflow aim # or only those named, a project's among them
 ```
 
 A project can bring a service of its own, declared in its `pyproject.toml` — no aisland code:
@@ -271,19 +271,19 @@ the previous build's report and coverage files before it runs, so Jenkins never 
 yesterday's tests for a build that ran out of time. The push pipelines (`Jenkinsfile`, `ci.yml`)
 carry no limit; a GitHub job is bounded at six hours by GitHub.
 
-## Manage MLflow
+## The MLflow tracking server (`aisland mlflow`)
+
+`aisland mlflow` exists while a project of the workspace brings MLflow as a service class; aisland itself ships none.
+It serves the runs from a SQLite store and an artifact folder inside its data folder, `data/mlflow/`.
+
 ```bash
-# Start MLflow (foreground)
-aisland mlflow start
-
-# Start MLflow (background)
-aisland mlflow start --background
-
-# Stop/Status
+aisland workspace configure tracker set mlflow tensorboard   # install the backend (once; the whole list)
+aisland mlflow start --background    # serve http://localhost:5005
+aisland mlflow info                  # URL, backend store, artifacts folder
 aisland mlflow stop
-aisland mlflow status
 ```
-Default: [http://localhost:5005](http://localhost:5005)
+
+A run config points its tracker at it with `tracking_uri: http://localhost:5005`.
 
 ## Manage Docker
 The `act` tool and other containerized services require a Docker engine. Aisland uses **Colima** for a lightweight, CLI-first Docker experience on macOS.
