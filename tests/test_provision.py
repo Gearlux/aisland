@@ -106,7 +106,7 @@ def test_shell_switch_declined_exits_cleanly(monkeypatch: pytest.MonkeyPatch, ca
 def test_userspace_install_unknown_tool_errors(monkeypatch: pytest.MonkeyPatch, capsys: Any) -> None:
     """A tool name not in the registry must be reported, not silently skipped."""
     manager._install_userspace_tool("definitely-not-a-real-tool")
-    assert "not a known userspace tool" in capsys.readouterr().out
+    assert "not a known userspace tool" in capsys.readouterr().err
 
 
 def test_userspace_install_skips_when_already_installed(
@@ -217,7 +217,7 @@ def test_userspace_install_refuses_to_clobber_real_file(
     assert not (bin_dir / "node").is_symlink()
     assert (bin_dir / "npm").is_symlink()
     assert (bin_dir / "npx").is_symlink()
-    assert "refusing to overwrite" in capsys.readouterr().out
+    assert "refusing to overwrite" in capsys.readouterr().err
 
 
 # ---------------------------------------------------------------------------
@@ -252,8 +252,7 @@ def test_userspace_install_rejects_checksum_mismatch(
 
     manager._install_userspace_tool("node")
 
-    out = capsys.readouterr().out
-    assert "checksum mismatch" in out
+    assert "checksum mismatch" in capsys.readouterr().err
     # Nothing was symlinked...
     for binary in ("node", "npm", "npx"):
         assert not (bin_dir / binary).exists()
@@ -288,9 +287,9 @@ def test_userspace_install_rejects_tampered_cached_tarball(
 
     manager._install_userspace_tool("node")
 
-    out = capsys.readouterr().out
-    assert "Using cached tarball" in out
-    assert "checksum mismatch" in out
+    captured = capsys.readouterr()
+    assert "Using cached tarball" in captured.out
+    assert "checksum mismatch" in captured.err
     assert not (cache / tarball_name).exists()
 
 

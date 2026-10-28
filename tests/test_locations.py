@@ -13,6 +13,7 @@ import os
 from pathlib import Path
 from typing import Iterator
 
+import click
 import pytest
 
 from aisland import locations, manager, pytest_stats, supervisor
@@ -220,10 +221,11 @@ def test_setup_from_a_wheel_without_a_venv_says_how_to_make_one(
 ) -> None:
     monkeypatch.setattr(locations, "FROM_CHECKOUT", False)
     monkeypatch.setattr(manager, "get_workspace_root", lambda: tmp_path)
-    manager.setup_workspace(non_interactive=True)
-    assert capsys.readouterr().out == (
-        f"Error: Virtual environment not found at {tmp_path / '.venv'}. Create it and install aisland into it: "
-        "uv venv --seed .venv && .venv/bin/pip install <the aisland wheel>\n"
+    with pytest.raises(click.ClickException) as refused:
+        manager.setup_workspace(non_interactive=True)
+    assert refused.value.message == (
+        f"Virtual environment not found at {tmp_path / '.venv'}. Create it and install aisland into it: "
+        "uv venv --seed .venv && .venv/bin/pip install <the aisland wheel>"
     )
 
 
@@ -237,6 +239,6 @@ def test_a_failing_alias_install_shows_the_script_s_output_when_quiet(
     script.write_text('echo "fatal: not a git repository"\nexit 3\n')
     monkeypatch.setattr(manager, "SETUP_GIT_SCRIPT", script)
     assert manager.install_git_aliases(tmp_path, quiet=True) is False
-    assert capsys.readouterr().out == (
-        "fatal: not a git repository\n" f"  - Error: installing the git aliases failed (bash {script} {tmp_path}).\n"
-    )
+    captured = capsys.readouterr()
+    assert captured.out == "fatal: not a git repository\n"
+    assert captured.err == f"  - Error: installing the git aliases failed (bash {script} {tmp_path}).\n"

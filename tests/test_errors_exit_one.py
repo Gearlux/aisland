@@ -243,3 +243,11 @@ def test_a_jenkins_download_that_fails_is_reported(tmp_path: Path, monkeypatch: 
     monkeypatch.setattr(jenkins.urllib.request, "urlretrieve", _offline)
     assert service.ensure_war() is False
     assert failures.reported() == 1
+
+
+def test_a_supervisor_that_does_not_stop_exits_1(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(supervisor, "is_server_running", lambda: True)
+    monkeypatch.setattr(supervisor, "_run_client", lambda args: subprocess.CompletedProcess(args, 1, "", "socket gone"))
+    result = _invoke("supervisor", "down", "--yes")
+    assert result.exit_code == 1
+    assert "Error: stopping the supervisor failed: socket gone" in result.stderr

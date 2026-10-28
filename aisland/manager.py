@@ -13,8 +13,7 @@ from typing import Any, Dict, List, Optional, Tuple
 import click
 from packaging.requirements import InvalidRequirement, Requirement
 
-from aisland import failures
-from aisland import editor, locations, supervisor
+from aisland import editor, failures, locations, supervisor
 from aisland.harness import install_harness
 
 # Path Configuration (relative to the file itself)
@@ -1059,10 +1058,24 @@ def _write_mcp_json(workspace_root: Path, venv_bin: Path) -> None:
     click.echo(f"==> Wrote {out} ({len(servers)} MCP server(s): {listed})")
 
 
+def _no_venv(workspace_root: Path) -> click.ClickException:
+    """The refusal of a command that needs the workspace's ``.venv`` when it has none, with how to make one."""
+    if locations.FROM_CHECKOUT:
+        return click.ClickException(
+            f"Virtual environment not found at {workspace_root / '.venv'}. Run aisland/setup.sh first."
+        )
+    return click.ClickException(
+        f"Virtual environment not found at {workspace_root / '.venv'}. Create it and install aisland "
+        "into it: uv venv --seed .venv && .venv/bin/pip install <the aisland wheel>"
+    )
+
+
 def _venv_bin_or_none(workspace_root: Path) -> Optional[Path]:
     venv_bin = workspace_root / ".venv" / "bin"
     if not venv_bin.exists():
-        raise click.ClickException(f"Virtual environment not found at {workspace_root / '.venv'}. Run aisland/setup.sh first.")
+        raise click.ClickException(
+            f"Virtual environment not found at {workspace_root / '.venv'}. Run aisland/setup.sh first."
+        )
     return venv_bin
 
 
@@ -1455,16 +1468,7 @@ def setup_workspace(non_interactive: bool = False, install_all: bool = False) ->
     venv_bin = workspace_root / ".venv" / "bin"
 
     if not venv_bin.exists():
-        if locations.FROM_CHECKOUT:
-            click.echo(
-                f"Error: Virtual environment not found at {workspace_root / '.venv'}. Run aisland/setup.sh first."
-            )
-        else:
-            click.echo(
-                f"Error: Virtual environment not found at {workspace_root / '.venv'}. Create it and install aisland "
-                "into it: uv venv --seed .venv && .venv/bin/pip install <the aisland wheel>"
-            )
-        return
+        raise _no_venv(workspace_root)
 
     # 0. Ensure uv is present in the venv — required by everything below and by
     #    every Jenkinsfile.local job that targets this workspace.
@@ -1583,7 +1587,9 @@ def setup_workspace(non_interactive: bool = False, install_all: bool = False) ->
             try:
                 subprocess.check_call(browser, cwd=project_dir)
             except (subprocess.CalledProcessError, FileNotFoundError) as e:
-                failures.report(f"  - Error: Failed to install Playwright's {PLAYWRIGHT_BROWSER} for {project['name']}: {e}")
+                failures.report(
+                    f"  - Error: Failed to install Playwright's {PLAYWRIGHT_BROWSER} for {project['name']}: {e}"
+                )
 
     # 4. MCP client config — register every workspace MCP server (navigaitor,
     #    vendorcli, annotaide, …) for the Gemini CLI AND for Claude Code, with
@@ -1642,16 +1648,7 @@ def run_quality_gates(arg1: Optional[str] = None, arg2: Optional[str] = None) ->
     venv_bin = workspace_root / ".venv" / "bin"
 
     if not venv_bin.exists():
-        if locations.FROM_CHECKOUT:
-            click.echo(
-                f"Error: Virtual environment not found at {workspace_root / '.venv'}. Run aisland/setup.sh first."
-            )
-        else:
-            click.echo(
-                f"Error: Virtual environment not found at {workspace_root / '.venv'}. Create it and install aisland "
-                "into it: uv venv --seed .venv && .venv/bin/pip install <the aisland wheel>"
-            )
-        return
+        raise _no_venv(workspace_root)
 
     env = os.environ.copy()
     env["PATH"] = f"{venv_bin}:{env.get('PATH', '')}"
@@ -1724,6 +1721,12 @@ def run_quality_gates(arg1: Optional[str] = None, arg2: Optional[str] = None) ->
                     stderr=subprocess.STDOUT,
                 )
                 click.echo(f"  [{click.style('PASS', fg='green')}] {current_tool_name}")
+            except FileNotFoundError:
+                click.echo(
+                    f"  [{click.style('FAIL', fg='red')}] {current_tool_name} — {cmd[0]} is not installed in "
+                    f"{venv_bin.parent} (install the project's dev extra: aisland setup)"
+                )
+                project_failed = True
             except subprocess.CalledProcessError:
                 click.echo(f"  [{click.style('FAIL', fg='red')}] {current_tool_name}")
                 # Re-run to show output if it failed
@@ -1742,4 +1745,4 @@ def run_quality_gates(arg1: Optional[str] = None, arg2: Optional[str] = None) ->
             click.echo(f"  {name:<25} : {status}")
 
     if any(not r[1] for r in results):
-        exit(1)
+        raise SystemExit(1)

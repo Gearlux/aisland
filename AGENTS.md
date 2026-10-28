@@ -21,7 +21,7 @@ generated workspace file · [declarations] a project declares what it brings, ai
 [tunnel-terminal] a terminal on the remote machine rides the VS Code tunnel it already runs · [local-workspace] a root
 repository no one shares tracks only the projects, and an untracked project's commits are never recorded. · [github-owner] a project is the
 workspace's own by its GitHub remote, no organisation is written into aisland. · [test-stats-switch] the test-run record is
-turned off per workspace, project or machine, never removed. [env-example] the workspace's
+turned off per workspace, project or machine, never removed. [failures] a command that prints an `Error:` line exits 1. [env-example] the workspace's
 `env.complete` and `env.example` are each project's own two lists, merged per machine under each variable's owner. [wheels-prune] old committed wheel
 versions leave the history by one deterministic strip, which every other clone re-runs.
 
@@ -138,6 +138,16 @@ The workspace's dev-infrastructure CLI, `aisland` (click, `aisland/cli.py`):
 Invariants: only supervisor-started services exist (one started elsewhere is invisible; the
 start-time port pre-flight naming the PID is the only signal). All service state lives under
 `<workspace>/aisland/data/` (from a wheel, `<workspace>/.aisland/data/`).
+
+## Errors exit 1
+
+- **A command that prints an `Error:` line exits 1 (user request 2026-10-27, release review).** A failure that ends
+  the command is raised as a `click.ClickException` — one `Error:` line on stderr. A failure the command goes on past
+  (a project that fails to install while setup installs the others, a service that does not start beside the others,
+  a Jenkins step) is `failures.report(...)`-ed: its line goes to stderr, the command finishes, and
+  `cli._WorkspaceGroup.invoke` turns the run into exit 1, also over a command's own `SystemExit(0)`; a non-zero code
+  of the command's own is kept. Never `click.echo("Error…")` and return: a script, CI or the MCP server's `aisland`
+  call reads the exit status (`tests/test_errors_exit_one.py`) [failures].
 
 ## Workspace root and paths
 

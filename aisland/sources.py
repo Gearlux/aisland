@@ -61,8 +61,7 @@ from typing import Any, Dict, List, Literal, NamedTuple, Optional, Tuple, cast, 
 import click
 from packaging.version import InvalidVersion, Version
 
-from aisland import failures
-from aisland import locations, workspace_file
+from aisland import failures, locations, workspace_file
 from aisland.manager import _set_local_submodule_active, get_workspace_root, submodule_active_map
 from aisland.selection import editable_target
 

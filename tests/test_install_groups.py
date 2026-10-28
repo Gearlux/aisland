@@ -82,6 +82,6 @@ class TestRunInstalls:
         self, calls: List[List[str]], tmp_path: Path, capsys: pytest.CaptureFixture[str]
     ) -> None:
         m._run_installs(tmp_path, "uv", [_project("bad"), _project("child", "bad")])
-        out = capsys.readouterr().out
-        assert "Failed to install bad" in out
-        assert "Skipping child" in out and "bad" in out
+        captured = capsys.readouterr()
+        assert "Failed to install bad" in captured.err  # a failure setup goes on past: stderr, and the run exits 1
+        assert "Skipping child" in captured.out and "bad" in captured.out

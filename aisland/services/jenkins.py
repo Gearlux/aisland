@@ -976,15 +976,11 @@ pipeline {{
         project_path = workspace_root / project_name
 
         if not project_path.exists() or not project_path.is_dir():
-            raise click.ClickException(
-                f"Project directory '{project_name}' not found at {project_path}."
-            )
+            raise click.ClickException(f"Project directory '{project_name}' not found at {project_path}.")
 
         pyproject_path = project_path / "pyproject.toml"
         if not pyproject_path.exists():
-            raise click.ClickException(
-                f"pyproject.toml not found in {project_name}. Cannot scaffold."
-            )
+            raise click.ClickException(f"pyproject.toml not found in {project_name}. Cannot scaffold.")
 
         metadata = get_project_metadata(pyproject_path)
         pkg_name = metadata["name"]
@@ -2269,17 +2265,11 @@ jobs:
         if project_name:
             project_path = workspace_root / project_name
             if not project_path.exists() or not project_path.is_dir():
-                raise click.ClickException(
-                    f"Project directory '{project_name}' not found at {project_path}."
-                )
+                raise click.ClickException(f"Project directory '{project_name}' not found at {project_path}.")
             if not local and not (project_path / "Jenkinsfile").exists():
-                raise click.ClickException(
-                    f"Project '{project_name}' does not have a Jenkinsfile at its root."
-                )
+                raise click.ClickException(f"Project '{project_name}' does not have a Jenkinsfile at its root.")
             if local and not (project_path / "Jenkinsfile.local").exists():
-                raise click.ClickException(
-                    f"Project '{project_name}' does not have a Jenkinsfile.local at its root."
-                )
+                raise click.ClickException(f"Project '{project_name}' does not have a Jenkinsfile.local at its root.")
             projects = [project_path]
         else:
             if local:

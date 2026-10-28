@@ -539,7 +539,7 @@ def shutdown_server() -> None:
     if result.returncode == 0:
         click.echo("Supervisor (process-compose) stopped.")
     else:
-        click.echo(f"Error stopping supervisor: {result.stderr.strip()}", err=True)
+        raise click.ClickException(f"stopping the supervisor failed: {result.stderr.strip()}")
 
 
 def attach() -> None:
