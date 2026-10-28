@@ -311,6 +311,7 @@ def _project(name: str, url: Path | str, branch: str = "", path: str = "") -> st
     return "\n".join(lines + ([f'branch = "{branch}"'] if branch else [])) + "\n\n"
 
 
+@pytest.mark.slow
 def test_a_workspace_file_clones_each_project_on_its_branch(tmp_path: Path) -> None:
     models = _remote(tmp_path, "models", branches=("dev",))
     tools = _remote(tmp_path, "tools")
@@ -341,6 +342,7 @@ def test_the_file_becomes_the_new_workspaces_own(tmp_path: Path) -> None:
     ]
 
 
+@pytest.mark.slow
 def test_a_workspace_file_and_add_together_clone_the_files_projects_first(tmp_path: Path) -> None:
     models = _remote(tmp_path, "models")
     tools = _remote(tmp_path, "tools")
@@ -464,6 +466,7 @@ def _move(project: Path) -> None:
     _git(project, "commit", "-q", "-m", "second")
 
 
+@pytest.mark.slow
 def test_a_local_workspace_tracks_only_its_projects_and_has_nothing_to_commit(
     tmp_path: Path, models: Path, author: None
 ) -> None:
@@ -495,6 +498,7 @@ def test_untracked_hides_a_projects_new_commits_and_writes_it_down(tmp_path: Pat
     assert _status(root) == []
 
 
+@pytest.mark.slow
 def test_untracked_in_a_shared_root_leaves_the_files_for_its_first_commit(tmp_path: Path, models: Path) -> None:
     result = _init(tmp_path, "--untracked", "--add", str(models))
     assert result.exit_code == 0, result.output
@@ -523,6 +527,7 @@ def test_a_local_workspace_without_projects_makes_no_commit(tmp_path: Path, auth
     assert not any(line.startswith("    first commit") for line in result.output.splitlines())
 
 
+@pytest.mark.slow
 def test_a_first_commit_git_refuses_is_said_and_the_workspace_still_made(
     tmp_path: Path, models: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -540,6 +545,7 @@ def test_a_first_commit_git_refuses_is_said_and_the_workspace_still_made(
     assert (tmp_path / "acme" / "models" / "pyproject.toml").is_file()
 
 
+@pytest.mark.slow
 def test_a_plain_workspace_records_its_projects_commits_as_before(tmp_path: Path, models: Path) -> None:
     _init(tmp_path, "--add", str(models))
     root = tmp_path / "acme"
@@ -587,6 +593,7 @@ def _progress(result: Result) -> list:
     return [re.sub(r"done in \d+\.\d s$", "done in T s", line) for line in result.stderr.splitlines()]
 
 
+@pytest.mark.slow
 def test_each_project_is_said_as_its_clone_starts_and_ends(tmp_path: Path) -> None:
     models = _remote(tmp_path, "models", branches=("dev",))
     tools = _remote(tmp_path, "tools")
@@ -603,6 +610,7 @@ def test_each_project_is_said_as_its_clone_starts_and_ends(tmp_path: Path) -> No
     ]
 
 
+@pytest.mark.slow
 def test_an_added_repository_is_said_by_its_repository_name_after_the_files_projects(
     tmp_path: Path, models: Path
 ) -> None:
@@ -618,6 +626,7 @@ def test_an_added_repository_is_said_by_its_repository_name_after_the_files_proj
     ]
 
 
+@pytest.mark.slow
 def test_an_optional_project_is_said_to_be_skipped_and_not_counted(tmp_path: Path) -> None:
     models = _remote(tmp_path, "models")
     viewer = _remote(tmp_path, "viewer")
@@ -643,6 +652,7 @@ def test_a_failed_clone_is_named_by_its_place_and_the_ones_after_it_are_not_star
     assert "tools" not in result.stderr
 
 
+@pytest.mark.slow
 def test_the_report_on_stdout_holds_no_progress(tmp_path: Path, models: Path) -> None:
     result = _init(tmp_path, "--add", str(models))
     assert result.exit_code == 0, result.output
@@ -655,6 +665,7 @@ def test_the_report_on_stdout_holds_no_progress(tmp_path: Path, models: Path) ->
     assert "cloning" not in result.stdout and "done in" not in result.stdout
 
 
+@pytest.mark.slow
 def test_without_a_terminal_gits_progress_stays_out(tmp_path: Path, models: Path) -> None:
     result = _init(tmp_path, "--add", f"file://{models}")
     assert result.exit_code == 0, result.output
@@ -693,6 +704,7 @@ def _on_a_terminal(cwd: Path, *args: str) -> Tuple[int, str, str]:
     return process.wait(timeout=60), seen.decode().replace("\r\n", "\n"), stdout
 
 
+@pytest.mark.slow
 def test_on_a_terminal_gits_progress_is_drawn_on_one_line_and_cleared(tmp_path: Path, models: Path) -> None:
     url = f"file://{models}"
     code, terminal, stdout = _on_a_terminal(tmp_path, "workspace", "init", str(tmp_path / "acme"), "--add", url)

@@ -151,6 +151,7 @@ def test_a_workspace_without_optional_projects_asks_nothing(ws: Path, answers: L
 # --- setup brings the folders in line ----------------------------------------------------------------------------
 
 
+@pytest.mark.slow
 def test_reconcile_checks_out_the_active_empties_the_inactive_and_tells_git(ws: Path) -> None:
     activation.reconcile(ws)
     assert list((ws / "tools").iterdir()) == []  # default off, never answered
@@ -225,6 +226,7 @@ def test_set_machine_only_records_this_machines_choice_and_applies_it(at: Path) 
     assert "active" not in workspace_file.load(at).projects["models"].others
 
 
+@pytest.mark.slow
 def test_set_makes_a_project_optional_with_that_default(at: Path) -> None:
     _configure("set", "models", "false")
     assert workspace_file.load(at).projects["models"].others == {"active": False}
@@ -233,6 +235,7 @@ def test_set_makes_a_project_optional_with_that_default(at: Path) -> None:
     assert list((at / "models").iterdir()) == []
 
 
+@pytest.mark.slow
 def test_unset_makes_a_project_always_part_of_the_workspace_again(at: Path) -> None:
     _configure("unset", "tools")
     assert "active" not in workspace_file.load(at).projects["tools"].others
@@ -240,6 +243,7 @@ def test_unset_makes_a_project_always_part_of_the_workspace_again(at: Path) -> N
     assert (at / "tools" / "pyproject.toml").is_file()
 
 
+@pytest.mark.slow
 def test_unset_machine_only_forgets_this_machines_choice(at: Path) -> None:
     activation.set_machine_choice(at, "tools", True)
     _configure("unset", "tools", "--machine-only")
@@ -262,6 +266,7 @@ def test_active_is_a_plugin_of_configure() -> None:
 # --- the commands around it --------------------------------------------------------------------------------------
 
 
+@pytest.mark.slow
 def test_init_from_clones_only_the_projects_without_an_active_key(tmp_path: Path, ws: Path) -> None:
     result = CliRunner().invoke(
         cli.main, ["workspace", "init", str(tmp_path / "fresh"), "--from", str(ws / "workspace.toml")]
@@ -326,6 +331,7 @@ def test_a_workspace_without_the_file_has_nothing_to_bring_in_line(tmp_path: Pat
     assert activation.reconcile(tmp_path) == []
 
 
+@pytest.mark.slow
 def test_an_optional_project_switched_off_before_it_was_ever_added_is_left_alone(ws: Path) -> None:
     activation.set_machine_choice(ws, "extra", False)
     assert activation.reconcile(ws) == []
@@ -333,6 +339,7 @@ def test_an_optional_project_switched_off_before_it_was_ever_added_is_left_alone
     assert "extra" not in _git(ws, "config", "-f", ".gitmodules", "--get-regexp", r"\.path$")
 
 
+@pytest.mark.slow
 def test_an_active_project_that_cannot_be_added_is_said_and_returned(
     ws: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:

@@ -116,6 +116,7 @@ def test_a_clone_on_no_branch_is_added_without_one(ws: Path, tmp_path: Path) -> 
     assert _get(ws, "config", "-f", ".gitmodules", "submodule.foo.branch") is None
 
 
+@pytest.mark.slow
 def test_in_an_untracked_workspace_it_is_untracked_too(ws: Path) -> None:
     tracking.set_committed(ws, (), track=False)
     lines = clones.add_unlisted(ws)
@@ -124,6 +125,7 @@ def test_in_an_untracked_workspace_it_is_untracked_too(ws: Path) -> None:
     assert "track" not in workspace_file.load(ws).projects["foo"].others  # it follows `[workspace] track = false`
 
 
+@pytest.mark.slow
 def test_untracked_on_this_machine_only_makes_it_so_on_this_machine_only(ws: Path) -> None:
     tracking.set_machine(ws, (), track=False)
     lines = clones.add_unlisted(ws)
@@ -131,6 +133,7 @@ def test_untracked_on_this_machine_only_makes_it_so_on_this_machine_only(ws: Pat
     assert "track" not in workspace_file.load(ws).projects["foo"].others
 
 
+@pytest.mark.slow
 def test_beside_a_tracked_project_it_stays_tracked(ws: Path, tmp_path: Path) -> None:
     _git(ws, "submodule", "add", "-q", str(_remote(tmp_path, "tools")), "tools")
     workspace_file.refresh(ws)
@@ -139,6 +142,7 @@ def test_beside_a_tracked_project_it_stays_tracked(ws: Path, tmp_path: Path) -> 
     assert _get(ws, "config", "-f", ".gitmodules", "submodule.foo.ignore") is None
 
 
+@pytest.mark.slow
 def test_a_local_root_adds_it_with_f_and_commits_it(ws: Path) -> None:
     (ws / ".gitignore").write_text("/*\n")
     local_workspace.mark(ws)
@@ -184,6 +188,7 @@ def test_a_clone_git_refuses_to_add_is_said_and_setup_goes_on(
     assert lines[1].startswith("added foo as a submodule")
 
 
+@pytest.mark.slow
 def test_a_local_root_without_gitmodules_gets_every_clone_it_holds(tmp_path: Path) -> None:
     # A clone made by hand in a `--local` root before any submodule: `workspace.toml` already lists it (it reads the
     # clones while there is no .gitmodules), yet git does not know it — setup adds each, by itself.

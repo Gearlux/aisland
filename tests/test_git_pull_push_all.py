@@ -436,6 +436,7 @@ def test_a_submodule_off_the_roots_branch_is_not_pulled(ws: Workspace, checkout:
 # there, and its branch is a local name only, so each submodule is pulled on the branch it is on.
 
 
+@pytest.mark.slow
 def test_a_root_without_origin_pulls_the_submodules_and_records_what_came_in(ws: Workspace) -> None:
     ws.git(ws.B, "remote", "remove", "origin")
     a_sha = _publish(ws, "alpha", 1, "A", record=False)
@@ -451,6 +452,7 @@ def test_a_root_without_origin_pulls_the_submodules_and_records_what_came_in(ws:
     assert ws.status(ws.B) == []
 
 
+@pytest.mark.slow
 def test_a_root_without_origin_pulls_each_submodule_on_its_own_branch(ws: Workspace) -> None:
     ws.git(ws.B, "remote", "remove", "origin")
     ws.git(ws.B, "-c", "submodule.recurse=false", "checkout", "-q", "-b", "feature")
@@ -607,6 +609,7 @@ def _prune_alpha_on_origin(ws: Workspace) -> Tuple[str, str]:
     return old, new
 
 
+@pytest.mark.slow
 def test_a_clone_still_on_a_pruned_history_is_not_merged_and_names_the_reset(ws: Workspace) -> None:
     old, _new = _prune_alpha_on_origin(ws)
     beta = _publish(ws, "beta", 1, "A", record=False)
@@ -620,6 +623,7 @@ def test_a_clone_still_on_a_pruned_history_is_not_merged_and_names_the_reset(ws:
     assert ws.head(ws.B / "beta") == beta
 
 
+@pytest.mark.slow
 def test_a_clone_already_on_the_pruned_history_pulls_as_usual(ws: Workspace) -> None:
     _old, new = _prune_alpha_on_origin(ws)
     ws.git(ws.B / "alpha", "fetch", "-q", "origin")
@@ -729,6 +733,7 @@ def test_the_push_all_alias_pushes_the_submodules_before_the_root(ws: Workspace)
     assert ws.git(origin / "alpha.git", "rev-parse", BRANCH) == ws.head(ws.B / "alpha")
 
 
+@pytest.mark.slow
 def test_the_push_all_alias_pushes_the_submodules_of_a_root_without_origin(ws: Workspace) -> None:
     _install_aliases(ws, ws.B)
     ws.git(ws.B, "remote", "remove", "origin")

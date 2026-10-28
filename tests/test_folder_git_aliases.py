@@ -301,6 +301,7 @@ def test_pull_all_pulls_a_root_that_is_a_repository_last(repo_root: Folder) -> N
     ]
 
 
+@pytest.mark.slow
 def test_pull_all_skips_a_root_repository_without_origin(repo_root: Folder) -> None:
     repo_root.git(repo_root.root, "remote", "remove", "origin")
     repo_root.publish("alpha", "two\n")
@@ -324,6 +325,7 @@ def test_pull_all_in_a_root_without_origin_and_no_clone_pulls_nothing(repo_root:
 # --- push-all -----------------------------------------------------------------------------------------------------
 
 
+@pytest.mark.slow
 def test_push_all_skips_a_root_repository_without_origin(repo_root: Folder) -> None:
     repo_root.git(repo_root.root, "remote", "remove", "origin")
     (repo_root.root / "alpha" / "f.txt").write_text("local\n")

@@ -160,6 +160,7 @@ def test_a_project_tracked_in_an_untracked_workspace_keeps_its_own_choice(
     assert all("track" not in project.others for project in workspace_file.load(ws).projects.values())
 
 
+@pytest.mark.slow
 def test_doing_it_twice_changes_nothing_more(ws: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     _run(ws, monkeypatch, "untrack", "models")
     again = _run(ws, monkeypatch, "untrack", "models")
@@ -197,6 +198,7 @@ def test_machine_only_tracks_here_what_everyone_else_untracks(ws: Path, monkeypa
     assert _status(ws) == [" M models"]
 
 
+@pytest.mark.slow
 def test_the_committed_choice_takes_over_this_machines_again(ws: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     _run(ws, monkeypatch, "untrack", "models", "--machine-only")
     _run(ws, monkeypatch, "track", "models")
@@ -204,6 +206,7 @@ def test_the_committed_choice_takes_over_this_machines_again(ws: Path, monkeypat
     assert _get(ws, "config", "--local", "submodule.models.ignore") is None
 
 
+@pytest.mark.slow
 def test_this_machines_choice_survives_a_deinit_and_setup_writes_it_back(
     ws: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -247,6 +250,7 @@ def test_without_submodules_untrack_is_the_choice_for_the_projects_to_come(
     assert result.output == "Error: 'models' is no submodule of the workspace (the submodules: none)\n"
 
 
+@pytest.mark.slow
 def test_machine_only_for_every_project_covers_those_added_later(ws: Path, tmp_path: Path) -> None:
     tracking.set_machine(ws, (), track=False)
     assert _git(ws, "config", "--local", "aisland.track.default") == "false"
@@ -260,6 +264,7 @@ def test_machine_only_for_every_project_covers_those_added_later(ws: Path, tmp_p
 # --- a local workspace commits its .gitmodules ----------------------------------------------------------------------
 
 
+@pytest.mark.slow
 def test_in_a_local_workspace_the_change_is_committed(ws: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     local_workspace.mark(ws)
     head = _git(ws, "rev-parse", "HEAD")
@@ -304,6 +309,7 @@ def test_untrack_puts_a_project_on_no_branch_on_its_branch_at_origins_newest(
     assert _git(ws / "models", "rev-parse", "HEAD") == newest
 
 
+@pytest.mark.slow
 def test_a_project_without_a_local_branch_gets_one_tracking_origin(ws: Path, tmp_path: Path) -> None:
     tracking.set_committed(ws, ("models",), track=False)
     _detach(ws, "models")
@@ -314,6 +320,7 @@ def test_a_project_without_a_local_branch_gets_one_tracking_origin(ws: Path, tmp
     assert _git(ws / "models", "rev-parse", "--abbrev-ref", "main@{u}") == "origin/main"
 
 
+@pytest.mark.slow
 def test_the_branch_gitmodules_names_is_followed_and_dot_is_the_roots(ws: Path, tmp_path: Path) -> None:
     remote = tmp_path / "remote" / "tools"
     _git(remote, "branch", "release")
@@ -335,6 +342,7 @@ def test_a_tracked_project_on_no_branch_is_left_on_its_commit(ws: Path, tmp_path
     assert _git(ws / "models", "rev-parse", "HEAD") == before
 
 
+@pytest.mark.slow
 def test_a_switch_git_refuses_is_said_and_the_project_left(ws: Path, tmp_path: Path) -> None:
     tracking.set_committed(ws, ("models",), track=False)
     before = _detach(ws, "models")
@@ -349,6 +357,7 @@ def test_a_switch_git_refuses_is_said_and_the_project_left(ws: Path, tmp_path: P
     assert _git(ws / "models", "rev-parse", "HEAD") == before
 
 
+@pytest.mark.slow
 def test_an_unreachable_origin_still_switches_to_the_branch_it_knows(ws: Path, tmp_path: Path) -> None:
     tracking.set_committed(ws, ("models",), track=False)
     _detach(ws, "models")
@@ -364,6 +373,7 @@ def test_setup_puts_untracked_projects_on_their_branch(ws: Path, tmp_path: Path)
     assert _git(ws / "models", "rev-parse", "HEAD") == newest
 
 
+@pytest.mark.slow
 def test_a_local_branch_with_commits_of_its_own_is_switched_to_and_not_merged(ws: Path, tmp_path: Path) -> None:
     tracking.set_committed(ws, ("models",), track=False)
     (ws / "models" / "mine.txt").write_text("mine\n")

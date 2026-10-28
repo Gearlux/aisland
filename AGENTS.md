@@ -283,6 +283,11 @@ start-time port pre-flight naming the PID is the only signal). All service state
   container engine last). A name no service has is refused before anything is done. There are no top-level
   `aisland start|stop|restart|status|info|reset`; a new service is one `Entry` and never a hand-written list in
   `cli.py`. (`tests/test_services_command.py`)
+- **`aisland services` asks process-compose as little as it can.** Each question is a client process (0.2-0.4 s on a
+  loaded machine): `list_processes` and `get_ports` ask their own question alone (a failed one already means no
+  server — no `project state` first), and `registry.status`/`info` run inside `supervisor.snapshot()`, where ONE
+  `process list` answers every service. Nothing outlives the block, so `wait_for` still sees each new answer.
+  (`tests/test_supervisor_snapshot.py`)
 - **A project declares a service in its `pyproject.toml` and writes no aisland code (user choice 2026-10-24).**
   `[tool.aisland.service.<name>]` (`command`, `port`, `ready`, `needs`) becomes a `services/declared.py`
   `DeclaredService` — the command under the supervisor, probed only with both `port` and `ready` — appended to the
