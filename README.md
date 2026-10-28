@@ -10,6 +10,7 @@ session in the workspace reads.
 
 ```bash
 pip install aisland
+aisland --version          # which aisland runs: aisland, version <its version>
 ```
 
 aisland runs on macOS and Linux with Python 3.12 or newer, git and bash (the git aliases and the shell start-up

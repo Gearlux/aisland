@@ -25,6 +25,7 @@ The first release on PyPI: `pip install aisland`.
   SwiftBar — and a service a project declares in its own `pyproject.toml` or implements in its own
   code (its class may name the question `reset` asks first); `aisland --help` names the project that brings each.
 - **`aisland jenkins scaffold`** writes a project's `Jenkinsfile`, `Jenkinsfile.local` and GitHub `ci.yml`.
+- **`aisland --version`** says which aisland runs, inside a workspace or not.
 - **`aisland doctor`** checks the environment and prints the command that fixes what it finds.
 - **The workspace's `.env`** is read the way `project.bashrc` sources it — quotes, `export`, `$VAR` — by the services
   and Jenkins alike.

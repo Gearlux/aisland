@@ -439,3 +439,4 @@ def test_the_release_checks_the_build_strictly_and_smoke_tests_the_wheel(release
     )
     smoke = _step(release_workflow, "build", "Smoke-test the built wheel in a clean venv")["run"]
     assert "cd /tmp" in smoke and "dist/*.whl" in smoke and "aisland --help" in smoke
+    assert 'aisland --version | grep -qx "aisland, version ${GITHUB_REF_NAME#v}"' in smoke

@@ -194,6 +194,9 @@ def _declared_service_group(entry: "service_registry.Entry") -> click.Group:
 
 
 @click.group(cls=_WorkspaceGroup)
+# The installed distribution's version (aisland.__version__ reads the same metadata); eager, so it answers before the
+# workspace check, outside a workspace too.
+@click.version_option(package_name="aisland", prog_name="aisland")
 def main() -> None:
     """Aisland Manager: Multi-service development infrastructure."""
 

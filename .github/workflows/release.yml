@@ -82,6 +82,7 @@ jobs:
         /tmp/smoke/bin/pip install --quiet dist/*.whl
         cd /tmp
         /tmp/smoke/bin/aisland --help > /dev/null
+        /tmp/smoke/bin/aisland --version | grep -qx "aisland, version ${GITHUB_REF_NAME#v}"
         /tmp/smoke/bin/python -P -c "import aisland; assert aisland.__version__ not in ('', '0.0.0.dev0'); print('version', aisland.__version__)"
         GIT_CONFIG_GLOBAL=/dev/null /tmp/smoke/bin/aisland workspace init smoke-workspace
         test -d smoke-workspace/.git
