@@ -15,8 +15,9 @@
 #   Workflow name:     release.yml
 #   Environment:       pypi
 #
-# Pinned by tests/test_packaging.py (the trigger, the tag guard run against a
-# pyproject.toml, the strict check, the smoke test, Trusted Publishing).
+# Pinned by tests/test_packaging.py (the trigger, the gates and tests the build
+# waits on, the tag guard run against a pyproject.toml, the strict check, the
+# smoke test, Trusted Publishing).
 # =========================================================================
 name: Release to PyPI
 
@@ -25,8 +26,36 @@ on:
     tags: ["v*"]
 
 jobs:
+  # The tag's commit passes the quality gates and BOTH test runs before anything is built: a tag pushed from a
+  # commit CI never checked, or checked red, never reaches PyPI.
+  tests:
+    name: Quality gates & every test
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+    - uses: actions/checkout@v7
+    - name: Set up Python 3.12
+      uses: actions/setup-python@v7
+      with:
+        python-version: "3.12"
+    - name: Install uv
+      uses: astral-sh/setup-uv@v7
+    - name: Install dependencies
+      run: uv pip install --system -e ".[dev]"
+    - name: Run Isort
+      run: isort --check-only .
+    - name: Run Black
+      run: black --check .
+    - name: Run Flake8
+      run: flake8 .
+    - name: Run Mypy
+      run: mypy .
+    - name: Run the fast and the slow tests
+      run: pytest tests -m ''
+
   build:
     name: Build & verify distribution
+    needs: [tests]
     runs-on: ubuntu-latest
     steps:
     - uses: actions/checkout@v7

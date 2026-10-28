@@ -414,6 +414,24 @@ def test_the_tag_guard_refuses_a_tag_that_is_not_the_version(
     assert (result.returncode == 0) is accepted, result.stdout + result.stderr
 
 
+def test_the_release_is_built_only_after_the_gates_and_every_test_pass(release_workflow: Workflow) -> None:
+    """A tag pushed from a commit CI never checked (or checked red) must not reach PyPI: the build waits on a job
+    that runs the quality gates and both test runs, fast and slow, under a time limit."""
+    jobs = release_workflow["jobs"]
+    assert jobs["build"]["needs"] == ["tests"]
+    tests = jobs["tests"]
+    assert 0 < tests["timeout-minutes"] <= 60
+    runs = [step["run"].strip() for step in tests["steps"] if "run" in step]
+    assert runs == [
+        'uv pip install --system -e ".[dev]"',
+        "isort --check-only .",
+        "black --check .",
+        "flake8 .",
+        "mypy .",
+        "pytest tests -m ''",
+    ]
+
+
 def test_the_release_checks_the_build_strictly_and_smoke_tests_the_wheel(release_workflow: Workflow) -> None:
     assert _step(release_workflow, "build", "Build sdist + wheel")["run"].strip() == "python -m build"
     assert _step(release_workflow, "build", "Check package metadata")["run"].strip() == (

@@ -26,6 +26,19 @@ def released_packages(monkeypatch: pytest.MonkeyPatch) -> Iterator[Set[str]]:
 
 
 @pytest.fixture(autouse=True)
+def git_identity(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Every commit a test makes has an author, whatever this machine's git configuration says.
+
+    GitHub's runners have no ``user.name``/``user.email``: a test committing through aisland (``wheels build
+    --commit``) then failed with "Author identity unknown" there and passed here. git's own variables win over
+    every configuration file, so the test sees one identity on every machine (``tests/test_git_identity.py``).
+    """
+    for role in ("AUTHOR", "COMMITTER"):
+        monkeypatch.setenv(f"GIT_{role}_NAME", "aisland tests")
+        monkeypatch.setenv(f"GIT_{role}_EMAIL", "tests@aisland.invalid")
+
+
+@pytest.fixture(autouse=True)
 def tunnel_state(monkeypatch: pytest.MonkeyPatch, tmp_path_factory: pytest.TempPathFactory) -> Path:
     """Every test sees an EMPTY tunnel state, whatever this machine's own tunnel is doing.
 

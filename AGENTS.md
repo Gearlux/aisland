@@ -178,11 +178,14 @@ start-time port pre-flight naming the PID is the only signal). All service state
     suite need there: the tools, `liquifai`, and `setuptools`, `wheel` and `uv` (the build and wheels tests build
     without isolation and run the uv beside the interpreter). A test asserting the REAL workspace (its root, the
     servers it ships, its shell init) carries `needs_workspace` (`tests/workspace_layout.py`) and is skipped there
-    with its reason, never failed (`tests/test_workspace_layout.py`). Reproduce CI in a fresh venv holding only
-    `aisland[dev]`, with a copy of aisland alone, before changing either.
+    with its reason, never failed (`tests/test_workspace_layout.py`). The runners have no git identity: every test
+    commits as `conftest.git_identity`'s author (`tests/test_git_identity.py`), never as the machine's. Reproduce CI
+    in a fresh venv holding only `aisland[dev]` and `pip`, in a `git clone` of aisland alone, with `HOME` an empty
+    folder, before changing either.
   - A release ships `LICENSE` (`license-files`), `CHANGELOG.md` (`MANIFEST.in`) and `aisland/py.typed`, and the
     newest `## [<version>]` of the CHANGELOG is `pyproject.toml`'s version. It is published by the hand-written
-    `.github/workflows/release.yml` on a `v<version>` tag: the tag guard, `python -m build`, `twine check --strict`,
+    `.github/workflows/release.yml` on a `v<version>` tag: the quality gates and both test runs (`pytest tests -m ''`,
+    a 45-minute limit; the build waits on them), the tag guard, `python -m build`, `twine check --strict`,
     a smoke test of the wheel in a clean venv from `/tmp` (`--help`, the version, `workspace init`), then Trusted
     Publishing from the `pypi` environment. Change a step and its test together (`tests/test_packaging.py`:
     `::test_the_tag_guard_refuses_a_tag_that_is_not_the_version` runs the guard's own script).
