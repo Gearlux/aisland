@@ -431,6 +431,24 @@ def test_a_submodule_off_the_roots_branch_is_not_pulled(ws: Workspace, checkout:
     assert ws.head(ws.B / "alpha") == before
 
 
+def test_a_submodule_on_its_own_dev_branch_is_pulled_on_it_and_its_pointer_left(ws: Workspace) -> None:
+    """A `dev/<name>` branch is a branch commits go to, so it is pulled like the root's; the root, on another
+    branch, records none of it."""
+    ws.git(ws.A / "alpha", "checkout", "-q", "-b", "dev/feature")
+    ws.git(ws.A / "alpha", "push", "-q", "origin", "dev/feature")
+    ws.git(ws.B / "alpha", "fetch", "-q", "origin")
+    ws.git(ws.B / "alpha", "checkout", "-q", "-b", "dev/feature", "origin/dev/feature")
+    recorded = ws.recorded(ws.B, "alpha")
+    feature = ws.change(ws.A / "alpha", "f.txt", 2, "feature")
+    ws.git(ws.A / "alpha", "push", "-q", "origin", "dev/feature")
+
+    rc, out = ws.pull_all(ws.B)
+    assert rc == 0, out
+    assert "merged origin/dev/feature (1 commit)" in out
+    assert ws.head(ws.B / "alpha") == feature
+    assert ws.recorded(ws.B, "alpha") == recorded
+
+
 # --- a root without a remote ------------------------------------------------------------------
 # `aisland workspace init` makes the root with `git init` and adds no remote: nothing to fetch or merge
 # there, and its branch is a local name only, so each submodule is pulled on the branch it is on.

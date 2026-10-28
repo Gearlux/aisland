@@ -29,7 +29,7 @@ When the user invokes `/pull-all`:
 
 5. **Rerun** `git pull-all` after steps 2–4. Repeat until it exits 0 or only step-6 items remain. The same item back after three rounds → stop and report (aisland rules → "Problem-Solving Rigor").
 
-6. **Items that stay the user's** — report them verbatim and change nothing: `not fetched: …` (network, VPN), `detached HEAD — not pulled` and `on <branch>, the root is on <branch> — not pulled` (a deliberate checkout), `on no branch, and git switch <branch> refused: …` (an untracked submodule whose uncommitted edits are in the way of its branch), `origin has no <branch>`, `the root records <sha>, which <submodule>'s <branch> does not contain`, `could not put back your uncommitted edits …`, `not merged: origin's history was rewritten by aisland wheels prune … — run aisland wheels reset <project>` (resetting rewrites that clone's history: the user runs it).
+6. **Items that stay the user's** — report them verbatim and change nothing: `not fetched: …` (network, VPN), `detached HEAD — not pulled` and `on <branch>, the root is on <branch> — not pulled` (a deliberate checkout outside `dev/*`; a submodule on its own `dev/<name>` is pulled on that branch and its pointer left unrecorded), `on no branch, and git switch <branch> refused: …` (an untracked submodule whose uncommitted edits are in the way of its branch), `origin has no <branch>`, `the root records <sha>, which <submodule>'s <branch> does not contain`, `could not put back your uncommitted edits …`, `not merged: origin's history was rewritten by aisland wheels prune … — run aisland wheels reset <project>` (resetting rewrites that clone's history: the user runs it).
 
 7. **Report**
    - `git pull-all`'s last output, as printed.

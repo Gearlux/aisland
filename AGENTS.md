@@ -563,8 +563,12 @@ Root `AGENTS.md` "Two Test Runs" (user ruling 2026-10-05). [test-stats]
 User choice 2026-10-16: an aisland command, submodules only, run by `/push-all` and `/ship`.
 [mirror] (`tests/test_mirrors.py`)
 - The primary is the `.gitmodules` remote; the mirror (remote `mirror`) only receives. A sync
-  copies the PRIMARY's `dev/main`, `main` and tags (`ls-remote origin`), never local branches
-  (`TestSync::test_the_mirror_follows_the_primary_not_unpushed_local_commits`).
+  copies `dev/main`, `main` (always) and every other branch of the local checkout, each at the PRIMARY's commit
+  (`ls-remote origin`), and the tags — never a local commit; a local branch the primary lacks is reported `absent`,
+  a primary-only branch is not copied (user request 2026-10-28;
+  `TestSync::test_the_mirror_follows_the_primary_not_unpushed_local_commits`,
+  `::test_a_local_dev_branch_is_copied_at_the_primarys_commit_after_the_two_long_lived_ones`,
+  `::test_a_local_branch_never_pushed_is_reported_and_not_pushed`, `::test_a_branch_only_on_the_primary_is_not_copied`).
 - Never force, never delete, never overwrite a tag: a moved branch and a differing tag are
   REFUSED with the remedy, a mirror-only ref is left (`TestSync::test_a_branch_the_mirror_moved_is_refused_and_left_alone`,
   `::test_a_tag_that_differs_on_the_mirror_is_refused_not_overwritten`,
@@ -985,7 +989,10 @@ User choice 2026-10-08: an aisland command, only the named project's closure, bo
   - **A root without an `origin` remote (what `workspace init` makes; user request 2026-10-21)** is neither
     fetched nor merged, each submodule is pulled on ITS OWN branch, and what came in is still recorded;
     `push-all` (both forms) skips that root and says so. With an origin, a submodule off the root's
-    branch stays listed, never pulled (`::test_a_root_without_origin_pulls_each_submodule_on_its_own_branch`,
+    branch stays listed, never pulled — unless it is on a `dev/<name>` branch of its own, which is merged with
+    `origin/dev/<name>` and never recorded in the root (user request 2026-10-28;
+    `::test_a_submodule_on_its_own_dev_branch_is_pulled_on_it_and_its_pointer_left`,
+    `::test_a_root_without_origin_pulls_each_submodule_on_its_own_branch`,
     `::test_the_push_all_alias_pushes_the_submodules_of_a_root_without_origin`,
     `tests/test_folder_git_aliases.py::test_pull_all_skips_a_root_repository_without_origin`).
   - **An untracked submodule is never recorded (user request 2026-10-23).** `ignore = all` for it (`tracking.py`)

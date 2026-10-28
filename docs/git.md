@@ -59,7 +59,7 @@ Automatic merge failed; fix conflicts and then commit the result.
 `git pull-all` handles both. In order, it:
 
 1. **fetches** the root and every submodule from `origin`, in parallel, before anything merges;
-2. **merges** `origin/<branch>` into each submodule that is on the root's branch;
+2. **merges** `origin/<branch>` into each submodule that is on the root's branch, and `origin/dev/<name>` into one on a `dev/<name>` branch of its own (the root records no pointer for that one);
 3. **merges** `origin/<branch>` into the root. A pointer conflict is settled to the submodule's checked-out commit **only when that commit contains both sides** (the commit git itself names as "a possible merge resolution"), and the merge is committed;
 4. **records** the submodules that hold commits from origin the root does not record yet, in one commit — `chore: sync submodule pointers after pull-all (<submodules>)` — leaving anything else you staged staged. A pointer never moves backwards, and a submodule whose only unrecorded commits are your own local ones is left for you (`/commit-all` records it).
 
@@ -79,7 +79,7 @@ What it cannot do is listed under `needs you:` and it exits 1; fix the item and 
 | `CONFLICT in <files>` | both sides changed the same lines; that repository is left mid-merge (a submodule's conflict also holds back the root, whose pointers depend on it) | resolve, `git add`, `git commit`, run `git pull-all` again |
 | `not merged: uncommitted edits to <files> would be overwritten` | the merge changes files you are editing; nothing was touched | commit them, or run `git pull-all --autostash` |
 | `your uncommitted edits to <files> clash with the pulled changes` | `--autostash` put your edits back over lines the pull changed; the file has conflict markers, and a copy is in `git stash list` as `git pull-all autostash (applied with conflicts)` | fix the markers, `git reset -q -- <file>`, then `git stash drop` that copy |
-| `detached HEAD — not pulled` / `on <branch>, the root is on <branch> — not pulled` | that submodule is checked out elsewhere on purpose | `git switch <branch>` in it to have it pulled |
+| `detached HEAD — not pulled` / `on <branch>, the root is on <branch> — not pulled` | that submodule is checked out on purpose on a branch outside `dev/*` | `git switch <branch>` in it to have it pulled |
 | `on no branch, and git switch <branch> refused: …` | an untracked submodule's uncommitted edits are in the way of its branch | commit or set them aside, run `git pull-all` again |
 | `not fetched: …` | its remote could not be reached (e.g. off VPN); the others still pull | reconnect and run again |
 | `not merged: origin's history was rewritten by aisland wheels prune and this clone still holds the old one` | origin's old committed wheels were pruned ([wheels](wheels.md#old-committed-wheels-aisland-wheels-prune-and-aisland-wheels-reset)); merging would bring the old history back, so nothing was touched | `aisland wheels reset <project>`, then run `git pull-all` again |

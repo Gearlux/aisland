@@ -1699,8 +1699,13 @@ root                   recorded submodule pointers: beta
 ### What you may change
 
 - The wording, with `tests/test_git_pull_push_all.py` and `tests/test_folder_git_aliases.py`.
-- What must not change: with an origin, a submodule off the root's branch is never pulled
-  (`::test_a_submodule_off_the_roots_branch_is_not_pulled`).
+- What must not change: with an origin, a submodule off the root's branch and outside `dev/*` is
+  never pulled (`::test_a_submodule_off_the_roots_branch_is_not_pulled`).
+- (2026-10-28, user request) A submodule on a `dev/<name>` branch of its own is pulled on THAT
+  branch — commits go to any `dev/*` branch, and `/push-all` pushes it, so it must be pulled first
+  or its push is rejected. The root, on another branch, records no pointer for it: the root's
+  branch is not where that work lives
+  (`::test_a_submodule_on_its_own_dev_branch_is_pulled_on_it_and_its_pointer_left`).
 
 ---
 
@@ -2199,6 +2204,12 @@ syncing (pulling from both) would make a second primary, with merges between the
   remote, named `mirror`, that only receives.
 - `aisland mirror sync` pushes the PRIMARY's `dev/main`, `main` and tags (read with
   `git ls-remote origin`, the missing objects fetched by id), never the local branches.
+- (2026-10-28, user request) It also copies every other branch the local checkout has — the
+  local branch list chooses WHICH branches, the primary still says WHAT each holds. `dev/main` and
+  `main` stay always copied, so a checkout on `dev/<name>` alone keeps the mirror's `main` current.
+  A local branch the primary lacks is reported `not on the primary`, not pushed and not a failure;
+  a branch only on the primary is not copied (someone else's branch reaches the mirror from
+  their machine's sync). The rows widen to the project's longest branch name.
 - It never forces and never deletes: a branch the mirror has commits on that the primary lacks
   is refused with the commit and the merge command; a differing tag is refused; a mirror-only
   branch or tag is left alone.
@@ -2233,7 +2244,8 @@ aisland mirror sync
 
 ### What you may change
 
-- `MIRRORED_BRANCHES` in `aisland/mirrors.py`, with the README section and `tests/test_mirrors.py`.
+- `MIRRORED_BRANCHES` (the always-copied ones) and `_branches` in `aisland/mirrors.py`, with `docs/sources.md` and
+  `tests/test_mirrors.py`.
 - What must not change: no force, no delete, no tag overwrite; the primary's state is what is
   copied; an unmarked `mirror` remote is never touched.
 

@@ -574,9 +574,10 @@ def workspace_mirror() -> None:
 @workspace_mirror.command("sync")
 @click.argument("project", required=False)
 def workspace_mirror_sync(project: Optional[str]) -> None:
-    """Push the primary's dev/main, main and tags to PROJECT's mirror (default: every mirror).
+    """Push the primary's dev/main, main, every other branch checked out here and tags to PROJECT's mirror.
 
-    Fast-forward only: a branch the mirror moved is refused, a tag that differs is never overwritten, and nothing on
+    Default: every mirror. Each branch is copied as the primary has it, so an unpushed commit never reaches the
+    mirror, and a local branch the primary lacks is reported, not pushed. Fast-forward only: a branch the mirror moved is refused, a tag that differs is never overwritten, and nothing on
     the mirror is ever deleted. Exit 1 when anything was refused or failed.
     """
     from aisland.mirrors import run_sync

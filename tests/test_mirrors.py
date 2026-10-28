@@ -8,7 +8,8 @@ own git configuration is neither read nor touched.
 What a mirror must guarantee, each pinned below:
 - the two configuration layers (committed: the project's ``mirror`` in ``workspace.toml``; per-machine:
   ``aisland.mirror.<project>.mirror``) and the ``mirror`` remote that follows the effective one;
-- a sync pushes the primary's ``dev/main``, ``main`` and tags, fast-forward only;
+- a sync pushes ``dev/main``, ``main``, every other local branch and the tags, each as the primary has it,
+  fast-forward only;
 - it never forces, never deletes, never overwrites a tag, and refuses a branch the mirror moved;
 - a project without a mirror is never contacted, one without a checkout is skipped;
 - ``aisland workspace configure mirror`` (the listing) pushes nothing.
@@ -352,6 +353,54 @@ class TestSync:
         assert result.state == "synced"
         assert _outcomes(result)["main"] == "absent"
 
+    def test_a_local_dev_branch_is_copied_at_the_primarys_commit_after_the_two_long_lived_ones(
+        self, ws: Workspace
+    ) -> None:
+        seed = ws.seeds["alpha"]
+        ws.git(seed, "switch", "-q", "-c", "dev/rtdetr")
+        pushed = ws.commit("alpha", "rtdetr")
+        ws.git(seed, "push", "-q", "origin", "dev/rtdetr")
+        sub = ws.root / "alpha"
+        ws.git(sub, "fetch", "-q", "origin")
+        ws.git(sub, "switch", "-q", "-c", "dev/rtdetr", "origin/dev/rtdetr")
+        (sub / "local.txt").write_text("not pushed\n")
+        ws.git(sub, "add", "local.txt")
+        ws.git(sub, "commit", "-q", "-m", "local only")
+        m.set_mirror("alpha", ws.mirror_url(), workspace_root=ws.root)
+
+        [result] = m.sync(workspace_root=ws.root)
+        assert [ref.ref for ref in result.refs] == [BRANCH, "main", "dev/rtdetr", "tags"]
+        assert _outcomes(result)["dev/rtdetr"] == "pushed"
+        assert ws.mirror_refs()["refs/heads/dev/rtdetr"] == pushed
+
+    def test_a_local_branch_never_pushed_is_reported_and_not_pushed(self, ws: Workspace) -> None:
+        ws.git(ws.root / "alpha", "branch", "scratch")
+        m.set_mirror("alpha", ws.mirror_url(), workspace_root=ws.root)
+
+        [result] = m.sync(workspace_root=ws.root)
+        assert result.state == "synced"
+        assert _outcomes(result)["scratch"] == "absent"
+        assert "refs/heads/scratch" not in ws.mirror_refs()
+
+    def test_a_branch_only_on_the_primary_is_not_copied(self, ws: Workspace) -> None:
+        seed = ws.seeds["alpha"]
+        ws.git(seed, "branch", "dev/elsewhere")
+        ws.git(seed, "push", "-q", "origin", "dev/elsewhere")
+        m.set_mirror("alpha", ws.mirror_url(), workspace_root=ws.root)
+
+        [result] = m.sync(workspace_root=ws.root)
+        assert "dev/elsewhere" not in _outcomes(result)
+        assert "refs/heads/dev/elsewhere" not in ws.mirror_refs()
+
+    def test_dev_main_and_main_are_copied_when_this_checkout_has_neither(self, ws: Workspace) -> None:
+        sub = ws.root / "alpha"
+        ws.git(sub, "switch", "-q", "-c", "scratch")
+        ws.git(sub, "branch", "-q", "-D", BRANCH)
+        m.set_mirror("alpha", ws.mirror_url(), workspace_root=ws.root)
+
+        [result] = m.sync(workspace_root=ws.root)
+        assert _outcomes(result) == {BRANCH: "pushed", "main": "pushed", "scratch": "absent", "tags": "pushed"}
+
     def test_a_project_without_a_mirror_is_never_contacted(self, ws: Workspace) -> None:
         m.set_mirror("alpha", ws.mirror_url(), workspace_root=ws.root)
         ws.git(ws.root / "beta", "remote", "set-url", "origin", "/nowhere/beta.git")
@@ -422,6 +471,16 @@ class TestCli:
         assert f"==> alpha → {ws.mirror_url()}" in result.output
         assert f"{BRANCH:<10}pushed (new branch)" in result.output
         assert "tags      pushed v0.1.0" in result.output
+
+    def test_a_long_branch_name_widens_every_row_of_its_project(self, ws: Workspace) -> None:
+        runner = CliRunner()
+        self._set(runner, ws)
+        ws.git(ws.root / "alpha", "branch", "dev/a-long-branch")
+
+        result = runner.invoke(cli_main, ["workspace", "mirror", "sync"])
+        assert f"    {BRANCH:<19}pushed (new branch)" in result.output
+        assert f"    {'dev/a-long-branch':<19}not on the primary" in result.output
+        assert f"    {'tags':<19}pushed v0.1.0" in result.output
 
     def test_sync_exits_1_when_a_ref_is_refused(self, ws: Workspace) -> None:
         runner = CliRunner()

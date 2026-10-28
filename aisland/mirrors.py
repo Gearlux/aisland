@@ -2,8 +2,8 @@
 
 A submodule's PRIMARY is the remote ``.gitmodules`` names — the one every machine clones from,
 pulls from and pushes to (``origin``). A MIRROR is a second host that receives a copy of the
-primary and nothing else: ``aisland workspace mirror sync`` pushes the primary's ``dev/main``, ``main`` and
-tags to it, and nothing is ever pulled from it. The use is a project that must be visible on two
+primary and nothing else: ``aisland workspace mirror sync`` pushes the primary's ``dev/main``, ``main``, every
+other branch the local checkout has, and the tags to it, and nothing is ever pulled from it. The use is a project that must be visible on two
 hosts (a GitHub organisation and a Bitbucket server, say) while one of them stays the place work
 happens.
 
@@ -23,9 +23,11 @@ Tags follow the same rule: a missing tag is pushed, a tag of the same name point
 REFUSED (never overwritten), a mirror-only tag is left alone. Nothing is forced, so a mirror that
 someone pushed to directly can never lose that work to a sync.
 
-What is pushed is the PRIMARY's state (``git ls-remote origin``), not the local branches: a
-commit you have not pushed to the primary does not reach the mirror either, so the two hosts
-can only ever differ by the mirror being behind.
+Which branches is the local checkout's choice (``dev/main`` and ``main`` always, then every branch
+under ``refs/heads/``); what is pushed for each is the PRIMARY's state (``git ls-remote origin``):
+a commit you have not pushed to the primary does not reach the mirror either, so the two hosts
+can only ever differ by the mirror being behind. A local branch the primary has not got is
+reported ``not on the primary`` and not pushed; a branch only on the primary is not copied.
 
 Two configuration layers, the same split as :mod:`aisland.sources`:
 
@@ -69,7 +71,8 @@ MIRROR_REMOTE = "mirror"
 #: The remote that carries the primary (``git submodule`` names it so).
 PRIMARY_REMOTE = "origin"
 
-#: The branches a sync copies — the workspace's two long-lived ones.
+#: The branches a sync always copies — the workspace's two long-lived ones, checked out here or not. Every other
+#: local branch follows them (``_branches``).
 MIRRORED_BRANCHES: Tuple[str, ...] = ("dev/main", "main")
 
 #: Marks a ``mirror`` remote as aisland's own, so nothing else's is ever removed.
@@ -351,7 +354,7 @@ def set_mirror(
     click.echo(f"    {where}; {remote}")
     branches = ", ".join(MIRRORED_BRANCHES)
     click.echo(
-        f"    Note: each sync copies {project}'s {branches} and tags from {host_of(primary)} to {host_of(url)}"
+        f"    Note: each sync copies {project}'s {branches}, every other branch checked out here and tags from {host_of(primary)} to {host_of(url)}"
         " — make sure its code may live there."
     )
     click.echo(f"    Push to it with: aisland workspace mirror sync {project}")
@@ -397,6 +400,13 @@ def _missing_objects(path: Path, shas: List[str]) -> List[str]:
 
 def _plural(n: int, word: str) -> str:
     return f"{n} {word}" if n == 1 else f"{n} {word}s"
+
+
+def _branches(path: Path) -> List[str]:
+    """The branches a sync copies: ``MIRRORED_BRANCHES``, then every other local branch by name."""
+    listing = _git_out(path, "for-each-ref", "--format=%(refname)", "refs/heads/")
+    local = {ref[len("refs/heads/") :] for ref in listing.splitlines() if ref}
+    return list(MIRRORED_BRANCHES) + sorted(local - set(MIRRORED_BRANCHES))
 
 
 def _branch_result(
@@ -477,7 +487,7 @@ def sync_project(workspace_root: Path, project: str, push: bool = True) -> Proje
 
     results: List[RefResult] = []
     specs: List[str] = []
-    for branch in MIRRORED_BRANCHES:
+    for branch in _branches(path):
         ref = f"refs/heads/{branch}"
         result, spec = _branch_result(path, rel, branch, primary_refs.get(ref), mirror_refs.get(ref), push)
         results.append(result)
@@ -507,11 +517,11 @@ def sync(project: Optional[str] = None, workspace_root: Optional[Path] = None, p
 # --- rendering (the CLI's) -------------------------------------------------------------------
 
 
-def _sync_line(result: RefResult) -> str:
-    """One row of ``aisland workspace mirror sync``: ``dev/main  pushed (3 commits)``."""
+def _sync_line(result: RefResult, width: int = 10) -> str:
+    """One row of ``aisland workspace mirror sync``: ``dev/main  pushed (3 commits)``, the name padded to ``width``."""
     if result.outcome == "refused":
         first, *rest = result.detail.splitlines()
-        text = f"REFUSED: {first}" + "".join(f"\n{'':14}{line}" for line in rest)
+        text = f"REFUSED: {first}" + "".join(f"\n{'':{width + 4}}{line}" for line in rest)
     elif result.ref == "tags" and result.outcome in ("pushed", "to push"):
         text = f"{result.outcome} {result.detail}"
     elif result.outcome in ("pushed", "to push"):
@@ -521,7 +531,7 @@ def _sync_line(result: RefResult) -> str:
         text = "not on the primary"
     else:
         text = result.outcome
-    return f"    {result.ref:<10}{text}"
+    return f"    {result.ref:<{width}}{text}"
 
 
 def _state_word(result: RefResult) -> str:
@@ -554,8 +564,9 @@ def run_sync(project: Optional[str] = None) -> int:
             continue
         if result.state == "failed":
             click.echo(f"    FAILED: {result.note}")
+        width = max([10, *(len(ref.ref) + 2 for ref in result.refs)])
         for ref in result.refs:
-            click.echo(_sync_line(ref))
+            click.echo(_sync_line(ref, width))
     return 1 if any(r.state in ("refused", "failed") for r in results) else 0
 
 

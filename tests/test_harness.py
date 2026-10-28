@@ -403,6 +403,17 @@ def test_a_commit_command_checks_the_branch_before_it_stages(command: str) -> No
     assert "other than `dev/main`" not in rule
 
 
+def test_push_all_pushes_each_repository_on_the_dev_branch_it_is_on() -> None:
+    """A repository on `dev/<name>` is pushed on that branch, not skipped for differing from the root's; one outside
+    `dev/*` is skipped and reported."""
+    text = (harness.HARNESS_DIR / "commands" / "push-all.md").read_text()
+    step2 = text[text.index("2. **What to push.**") : text.index("3. **Push the submodules**")]
+    assert "`dev/*` branch it is on" in step2 and "branch outside `dev/*`" in step2
+    assert "`BRANCH` = the root's branch" not in step2 and "A submodule not on `$BRANCH`" not in step2
+    step4 = text[text.index("4. **Push the root last**") : text.index("5. **Mirrors.**")]
+    assert "origin/<the submodule's own branch>" in step4 and "origin/$BRANCH` (a push" not in step4
+
+
 @pytest.mark.parametrize("command", ["commit-all", "commit-session"])
 def test_a_commit_command_reads_which_submodules_are_untracked_before_it_stages_a_pointer(command: str) -> None:
     """In a workspace whose submodules are untracked (`aisland workspace untrack`), `git add <submodule>` fails with

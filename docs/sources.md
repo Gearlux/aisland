@@ -127,20 +127,24 @@ aisland workspace configure mirror set tools git@github.com:Org/tools.git
 ```
 ==> tools: mirror → git@github.com:Org/tools.git
     recorded in workspace.toml (commit it); remote `mirror` added to tools
-    Note: each sync copies tools' dev/main, main and tags from bitbucket.example.com to github.com — make sure its code may live there.
+    Note: each sync copies tools' dev/main, main, every other branch checked out here and tags from bitbucket.example.com to github.com — make sure its code may live there.
     Push to it with: aisland workspace mirror sync tools
 ```
 
-`aisland workspace mirror sync` pushes the primary's `dev/main`, `main` and tags to every mirror (or to
-the one project named). The `/push-all` and `/ship` agent commands that `aisland setup` installs into the workspace run it as their last step, so after the first
+`aisland workspace mirror sync` pushes `dev/main`, `main`, every other branch the project's checkout has, and
+the tags to every mirror (or to the one project named). Each branch goes as the primary has it: a commit you have not
+pushed does not reach the mirror, a local branch the primary has not got is reported `not on the primary`, and a
+branch that exists only on the primary is not copied. The `/push-all` and `/ship` agent commands that `aisland setup` installs into the workspace run it as their last step, so after the first
 `set` you rarely type it.
 
 ```
 $ aisland workspace mirror sync
 ==> tools → git@github.com:Org/tools.git
-    dev/main  pushed (3 commits)
-    main      in sync
-    tags      pushed v0.4.0, v0.4.1
+    dev/main    pushed (3 commits)
+    main        in sync
+    dev/parser  pushed (new branch)
+    scratch     not on the primary
+    tags        pushed v0.4.0, v0.4.1
 ```
 
 | command | effect |

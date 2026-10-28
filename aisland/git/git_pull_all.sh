@@ -15,7 +15,8 @@
 #
 # Steps:
 #   1. fetch the root and every submodule from origin, in parallel, before anything merges;
-#   2. merge origin/<branch> into each submodule that is on the root's branch — an untracked one
+#   2. merge origin/<branch> into each submodule that is on the root's branch or on a dev/* branch
+#      of its own (merged with origin's copy of THAT branch; the root records none of it) — an untracked one
 #      (`aisland workspace untrack`) on no branch is first put on the branch it follows;
 #      a repository whose origin history `aisland wheels prune` rewrote while this clone still holds
 #      the old one is not merged (the merge would bring the old history back) — it is listed with
@@ -500,10 +501,12 @@ else
     fetch_all "${SUBMODULES[@]}"
 fi
 
-# 2. The submodules: each on the root's branch, or, when the root has no origin, on its own.
+# 2. The submodules: each on the root's branch or a dev/* branch of its own, or, when the root has no
+# origin, on whatever branch it is on.
 ROOT_BRANCH="$BRANCH"
 SUBMODULE_MID_MERGE=0
 for sm in "${SUBMODULES[@]}"; do
+    BRANCH="$ROOT_BRANCH"
     sub="$WORKSPACE_ROOT/$sm"
     if mid_merge "$sub"; then
         left=$(unmerged "$sub")
@@ -525,7 +528,7 @@ for sm in "${SUBMODULES[@]}"; do
         need "$sm" "detached HEAD — not pulled"
         continue
     fi
-    if [ "$ROOT_REMOTE" = 0 ]; then
+    if [ "$ROOT_REMOTE" = 0 ] || [ "${branch#dev/}" != "$branch" ]; then
         BRANCH="$branch"
     elif [ "$branch" != "$BRANCH" ]; then
         need "$sm" "on $branch, the root is on $BRANCH — not pulled"
