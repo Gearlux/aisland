@@ -21,7 +21,7 @@ generated workspace file · [declarations] a project declares what it brings, ai
 [tunnel-terminal] a terminal on the remote machine rides the VS Code tunnel it already runs · [local-workspace] a root
 repository no one shares tracks only the projects, and an untracked project's commits are never recorded. · [github-owner] a project is the
 workspace's own by its GitHub remote, no organisation is written into aisland. · [test-stats-switch] the test-run record is
-turned off per workspace, project or machine, never removed. [failures] a command that prints an `Error:` line exits 1. [env-example] the workspace's
+turned off per workspace, project or machine, never removed. [failures] a command that prints an `Error:` line exits 1. [on-demand-tools] aisland's own tools are installed when a feature first needs one, after asking. [env-example] the workspace's
 `env.complete` and `env.example` are each project's own two lists, merged per machine under each variable's owner. [wheels-prune] old committed wheel
 versions leave the history by one deterministic strip, which every other clone re-runs.
 
@@ -283,7 +283,8 @@ start-time port pre-flight naming the PID is the only signal). All service state
   6. No secret literal in the document: `${VAR}` refs to `.env` keys, and `apply()` layers
      `read_workspace_env()` over `os.environ`. No literal `$` in any value.
 - Unix: socket in `aisland/data/`; Windows: TCP `AISLAND_SUPERVISOR_PORT` (default 9089).
-  process-compose comes from Homebrew (macOS) or `USERSPACE_TOOLS` (Linux).
+  process-compose comes from Homebrew (macOS) or `USERSPACE_TOOLS` (Linux), installed by the first command that
+  needs it once the user agrees (`supervisor.ensure_binary` → `provision.ask_to_install`) [on-demand-tools].
 - Every `USERSPACE_TOOLS` entry pins a per-arch `sha256`, checked before extraction; bump
   `version` and digests in one edit; a missing digest is never shipped.
   (`tests/test_provision.py::test_registry_pins_wellformed_sha256_for_every_tool`)
@@ -342,8 +343,8 @@ start-time port pre-flight naming the PID is the only signal). All service state
   bare `java` on PATH, which a shell profile points at the newest JDK (26 broke Jenkins on
   2026-10-06). `services/jenkins_java.py` probes each installed JDK, newest first, with
   `java -jar jenkins.war --version`; no Java version is written into aisland, and the bare
-  `openjdk` formula is never one of aisland's tools. On macOS `provision.install` installs the
-  `openjdk@N` the WAR names. (`tests/test_jenkins_java.py`,
+  `openjdk` formula is never one of aisland's tools. On macOS `provision.install` (the provision command, never
+  setup) and `aisland jenkins start` after asking install the `openjdk@N` the WAR names. (`tests/test_jenkins_java.py`,
   `tests/test_workspace_provision.py::test_aisland_never_needs_the_floating_openjdk_formula`)
 
 ## Docker, containers, trackers
@@ -604,7 +605,17 @@ the package. (`tests/test_workspace_provision.py`)
   to read; `::test_aislands_pyproject_declares_no_tools_of_its_own`).
 - `aisland workspace provision` lists this platform's tools, one row each (who needs it, installed or not — Homebrew's
   list, a tap-qualified name by its last part; a userspace tool by its binaries in `BIN_DIR`), `--json` the same
-  rows; `install` is what `aisland setup` runs. There is no `aisland provision`.
+  rows; `install` installs every one, aisland's own and Jenkins' Java included. There is no `aisland provision`.
+- **aisland installs its own tool only when a feature first needs it, after asking (user choice 2026-10-28, option 1
+  of the release review).** `aisland setup` runs `provision.install(root, aislands_own=False)`: the projects'
+  declarations only, no Java. A feature that finds its tool missing calls `provision.ask_to_install(name)` (the
+  supervisor's process-compose, `docker start`'s colima and docker, `swiftbar start`'s SwiftBar) or asks itself
+  (`jenkins` before downloading its WAR, `JenkinsService.ensure_war_asking`, and before installing Java,
+  `java_asking`, whose refusal is the WAR's own `refusal()`); `aisland check` without `act` fails that gate naming
+  `install_command`. A question is asked only when stdin and stdout are a terminal (`provision.agree`); without one, or
+  on a "no", the command refuses with the line that installs the tool and installs nothing — a script, CI or an MCP
+  call never installs software as a side effect. Never install one of aisland's tools without that question
+  (`tests/test_installs_on_demand.py`) [on-demand-tools].
 
 ## What the projects declare (`discovery.py`)
 

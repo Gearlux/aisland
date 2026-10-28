@@ -102,35 +102,24 @@ def find_binary() -> Optional[str]:
 
 
 def ensure_binary() -> str:
-    """Return the process-compose binary path, installing it if missing.
-
-    macOS installs via Homebrew (the ``f1bonacc1/tap`` tap — also declared in
-    aisland's ``[tool.aisland.sys-dependencies]`` so ``aisland setup`` /
-    ``setup.sh`` provision it up front); Linux installs the upstream release
-    binary into ``aisland/bin`` via the userspace-tools registry.
+    """Return the process-compose binary path; a missing one is installed once the user agrees
+    (:func:`aisland.provision.ask_to_install`: Homebrew's ``f1bonacc1/tap`` on macOS, the pinned release into
+    ``aisland/bin`` on Linux), else the command refuses naming the line that installs it.
     """
     binary = find_binary()
     if binary:
         return binary
 
-    # Circular-dependency exception to the top-level-imports mandate:
-    # manager.py imports this module (BaseService delegates to it), so the
-    # installer helpers must be imported lazily here.
-    import platform
+    # Circular-dependency exception to the top-level-imports mandate: provision imports manager, which imports this
+    # module (BaseService delegates to it), so provision is imported here.
+    from aisland import provision
 
-    from aisland.manager import _install_brew_packages, _install_userspace_tool
-
-    click.echo("process-compose not found — installing...")
-    system = platform.system()
-    if system == "Darwin":
-        _install_brew_packages({"f1bonacc1/tap/process-compose"})
-    elif system == "Linux":
-        _install_userspace_tool("process-compose")
+    provision.ask_to_install("process-compose")
     binary = find_binary()
     if binary is None:
         raise click.ClickException(
-            "process-compose is required to manage aisland services and could not be installed. "
-            "Install it manually (https://github.com/F1bonacc1/process-compose) or re-run 'aisland setup'."
+            "process-compose is still not found after installing it. Install it by hand: "
+            f"{provision.install_command('process-compose')}"
         )
     return binary
 

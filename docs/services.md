@@ -111,13 +111,16 @@ aisland supervisor attach   # process-compose TUI dashboard (q to detach)
 aisland supervisor down     # stop ALL supervised services + the supervisor
 ```
 
-**Installation**: macOS via Homebrew (`f1bonacc1/tap/process-compose`,
-one of aisland's own [system tools](workspace.md#system-tools-aisland-workspace-provision), installed by
-`aisland setup`); Linux via the userspace registry into aisland's
-`bin/` folder (no sudo). Userspace downloads are verified against a pinned
-per-architecture SHA-256 before extraction — a mismatch aborts the install
-rather than running an unverified binary. If missing at `start` time, aisland
-installs it on demand.
+**Installation**: the first command that needs process-compose asks before installing it — macOS via Homebrew
+(`f1bonacc1/tap/process-compose`), Linux into aisland's `bin/` folder (no sudo), verified against a pinned
+per-architecture SHA-256 before extraction. Without a terminal, or on a "no", the command stops and installs nothing:
+
+```text
+Error: aisland's services need process-compose, which is not installed. Install it: brew install f1bonacc1/tap/process-compose
+```
+
+`aisland docker start` asks the same way for colima and docker, `aisland swiftbar start` for SwiftBar, and
+`aisland workspace provision install` installs every one of them at once.
 
 ### macOS: Full Disk Access for the supervisor (external data volumes)
 
@@ -194,9 +197,9 @@ Error: Jenkins 2.555.2 runs on Java 21 or 25, and none is installed (found 26.0.
 Fix: brew install openjdk@25
 ```
 
-On macOS, `aisland setup` (and `aisland workspace provision install`) installs that Java for you. It downloads the
-WAR if it is missing, asks it, and installs the `openjdk@N` formula for the newest release
-named. A machine with no Java that can ask (none at all, or only Java 8) first gets the newest
+On macOS, `aisland jenkins start` asks before it downloads the WAR and before it installs that Java (`aisland
+workspace provision install` does both without asking). It asks the WAR, and installs the `openjdk@N` formula for the
+newest release named. A machine with no Java that can ask (none at all, or only Java 8) first gets the newest
 `openjdk@N` to ask with. Setup never installs or upgrades the bare `openjdk` formula, and
 never changes the `java` on your `PATH`. On Linux, install the JDK the message names and set
 `JAVA_HOME` to it. `aisland doctor` reports the same problem as the `jenkins-java` check.

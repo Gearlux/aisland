@@ -1501,7 +1501,7 @@ def setup_workspace(non_interactive: bool = False, install_all: bool = False) ->
     # 1. The system tools the workspace needs (aisland's own and the projects' sys-dependencies).
     from aisland import provision  # local: provision imports this module
 
-    provision.install(workspace_root)
+    provision.install(workspace_root, aislands_own=False)
 
     # 1b. Activation (aisland.activation): ask about each optional project (an `active` key in workspace.toml), then
     #     check each project out or empty it as this machine has it — adding one the workspace does not have yet — so
@@ -1722,10 +1722,13 @@ def run_quality_gates(arg1: Optional[str] = None, arg2: Optional[str] = None) ->
                 )
                 click.echo(f"  [{click.style('PASS', fg='green')}] {current_tool_name}")
             except FileNotFoundError:
-                click.echo(
-                    f"  [{click.style('FAIL', fg='red')}] {current_tool_name} — {cmd[0]} is not installed in "
-                    f"{venv_bin.parent} (install the project's dev extra: aisland setup)"
-                )
+                if cmd[0] == "act":  # a system tool, not the project's dev extra
+                    from aisland import provision  # local: provision imports this module
+
+                    missing = f"act is not installed — {provision.install_command('act')}"
+                else:
+                    missing = f"{cmd[0]} is not installed in {venv_bin.parent} (install the project's dev extra: aisland setup)"
+                click.echo(f"  [{click.style('FAIL', fg='red')}] {current_tool_name} — {missing}")
                 project_failed = True
             except subprocess.CalledProcessError:
                 click.echo(f"  [{click.style('FAIL', fg='red')}] {current_tool_name}")

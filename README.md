@@ -12,8 +12,10 @@ session in the workspace reads.
 pip install aisland
 ```
 
-aisland runs on macOS and Linux with Python 3.12 or newer. `aisland setup` installs the system tools a workspace
-needs (process-compose for the services; through Homebrew on macOS). Two extras add optional parts:
+aisland runs on macOS and Linux with Python 3.12 or newer. `aisland setup` installs the system tools your projects
+declare. aisland's own — process-compose for the services, Docker, Java for Jenkins — are installed the first time a
+command needs one, after asking you; without a terminal the command stops and prints the install line instead. Two
+extras add optional parts:
 
 | Extra | Adds |
 |---|---|
@@ -53,7 +55,7 @@ uv venv --seed .venv && .venv/bin/pip install aisland
     AGENTS.md                 written (imports the rules; CLAUDE.md and GEMINI.md link to it)
 ```
 
-`aisland setup` then installs the system tools, installs every project editable into `.venv`, and writes the
+`aisland setup` then installs the system tools the projects declare, installs every project editable into `.venv`, and writes the
 editor's workspace file and `project.bashrc`, the shell start-up file:
 
 ```bash

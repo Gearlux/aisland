@@ -22,6 +22,7 @@ the VM currently shares, which is what :meth:`DockerService.configured_mounts` r
 """
 
 import os
+import shutil
 import subprocess
 from dataclasses import dataclass
 from pathlib import Path
@@ -30,7 +31,7 @@ from typing import Any, List, Sequence
 import click
 import yaml
 
-from aisland import failures
+from aisland import failures, provision
 from aisland.manager import BaseService
 
 #: The Colima profile aisland drives (its default profile). ``colima start --save-config``
@@ -145,6 +146,9 @@ class DockerService(BaseService):
                 restarting the engine (and every container on it) unasked.
         """
         wanted = [parse_mount(spec) for spec in mounts]  # validated before colima is touched
+        for tool in ("colima", "docker"):  # the engine and its client: installed only once the user agrees
+            if shutil.which(tool) is None:
+                provision.ask_to_install(tool)
         if self.is_running():
             configured = self.configured_mounts()
             missing = [mount for mount in wanted if not covers(configured, mount)]

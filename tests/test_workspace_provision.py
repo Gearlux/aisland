@@ -268,7 +268,7 @@ def test_setup_provisions_through_the_same_install(tmp_path: Path, monkeypatch: 
     (root / ".venv" / "bin").mkdir(parents=True)
     seen: List[Path] = []
 
-    def stop(workspace: Path) -> None:
+    def stop(workspace: Path, aislands_own: bool = True) -> None:
         seen.append(workspace)
         raise _Stop()
 

@@ -303,7 +303,7 @@ def test_setup_asks_then_reconciles(tmp_path: Path, monkeypatch: pytest.MonkeyPa
     monkeypatch.setattr(manager, "ensure_uv_in_venv", lambda venv_bin: "uv")
     monkeypatch.setattr(manager, "_link_project_bashrc", lambda root: None)
     monkeypatch.setattr(manager, "install_harness", lambda root: [])
-    monkeypatch.setattr("aisland.provision.install", lambda root: None)
+    monkeypatch.setattr("aisland.provision.install", lambda root, aislands_own=True: None)
 
     def resolve(root: Path, non_interactive: bool) -> None:
         calls.append(f"resolve {non_interactive}")

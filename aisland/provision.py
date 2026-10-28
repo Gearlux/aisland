@@ -12,12 +12,18 @@ whose aisland came from a wheel has no such file to read, and would get no servi
 
 On macOS ``install`` runs Homebrew for every ``brew`` tool, then installs the Java the Jenkins WAR accepts; on Linux it
 downloads every ``userspace`` tool into aisland's ``bin/``; elsewhere it installs nothing and says so.
+
+``aisland setup`` installs only what the PROJECTS declare (``install(root, aislands_own=False)``). aisland's own tools
+are installed when a feature first needs one (:func:`ask_to_install`): in a terminal the user is asked, and without
+one — or on a "no" — the command refuses with the line that installs it, having installed nothing.
+``aisland workspace provision install``, which the user asks for by name, still installs everything.
 """
 
 from __future__ import annotations
 
 import platform
 import subprocess
+import sys
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Dict, List, Optional, Set, Tuple
@@ -42,6 +48,16 @@ AISLAND_TOOLS: Dict[ToolKind, Tuple[str, ...]] = {
 }
 
 
+#: Who needs each of aisland's own tools, the subject of the question :func:`ask_to_install` asks.
+NEEDED_BY: Dict[str, str] = {
+    "process-compose": "aisland's services need",
+    "colima": "aisland docker needs",
+    "docker": "aisland docker needs",
+    "swiftbar": "aisland swiftbar needs",
+    "act": "aisland check's act gate needs",
+}
+
+
 @dataclass(frozen=True)
 class Tool:
     """One tool this machine needs: its name, how it is installed and the projects needing it (``aisland`` first)."""
@@ -61,14 +77,15 @@ def this_platform() -> Optional[ToolKind]:
     return None
 
 
-def tools(root: Path) -> List[Tool]:
-    """The tools this machine needs, by name — aisland's own and every checked-out project's, each once.
+def tools(root: Path, aislands_own: bool = True) -> List[Tool]:
+    """The tools this machine needs, by name — aisland's own (unless ``aislands_own`` is False) and every
+    checked-out project's, each once.
 
     Raises :class:`aisland.discovery.DeclarationError` for a declaration aisland cannot use."""
     kind = this_platform()
     if kind is None:
         return []
-    needed: Dict[str, List[str]] = {name: ["aisland"] for name in AISLAND_TOOLS[kind]}
+    needed: Dict[str, List[str]] = {name: ["aisland"] for name in AISLAND_TOOLS[kind]} if aislands_own else {}
     for tool in discovery.discover(root).system_tools:
         if tool.kind == kind and tool.project not in needed.setdefault(tool.name, []):
             needed[tool.name].append(tool.project)
@@ -113,19 +130,25 @@ def nothing_here() -> str:
     return f"aisland installs no system tools on {platform.system()}."
 
 
-def install(root: Path) -> None:
-    """Install every tool this machine needs (``aisland workspace provision install`` and ``aisland setup``)."""
+def install(root: Path, aislands_own: bool = True) -> None:
+    """Install every tool this machine needs: ``aisland workspace provision install`` (everything) and ``aisland
+    setup`` (``aislands_own=False``: the projects' declarations only — aisland's own come when a feature needs one)."""
     click.echo(f"==> Installing the system tools the workspace needs ({root})...")
-    needed = tools(root)
+    needed = tools(root, aislands_own)
     kind = this_platform()
     if kind is None:
         click.echo(f"  - {nothing_here()}")
         return
     names = {tool.name for tool in needed}
+    if not names:
+        click.echo("  - none: no project declares a system tool")
+        return
     if kind == "brew":
         click.echo(f"  - Homebrew: {', '.join(sorted(names))}")
         manager._install_brew_packages(names)
         manager._maybe_offer_shell_switch(names)
+        if not aislands_own:
+            return
         # Jenkins' Java is no declared formula: the WAR names the Java it runs on (services/jenkins_java.py).
         # Imported here because services.jenkins imports aisland.manager, which imports this module lazily.
         from aisland.services.jenkins import JenkinsService
@@ -134,4 +157,51 @@ def install(root: Path) -> None:
         return
     click.echo(f"  - aisland's downloads: {', '.join(sorted(names))}")
     for name in sorted(names):
+        manager._install_userspace_tool(name)
+
+
+def _can_ask() -> bool:
+    """Whether a person is there to answer: both standard input and output are a terminal."""
+    return sys.stdin.isatty() and sys.stdout.isatty()
+
+
+def agree(question: str) -> bool:
+    """``question`` asked in a terminal (yes by default); False, without asking, when no one is there to answer."""
+    return _can_ask() and click.confirm(question, default=True)
+
+
+def _formula(name: str) -> str:
+    """The Homebrew formula of aisland's tool ``name`` (``process-compose`` -> ``f1bonacc1/tap/process-compose``)."""
+    return next((formula for formula in AISLAND_TOOLS["brew"] if formula.rsplit("/", 1)[-1] == name), name)
+
+
+def install_command(name: str) -> str:
+    """The line that installs aisland's tool ``name`` on this machine."""
+    kind = this_platform()
+    if kind == "brew":
+        return f"brew install {_formula(name)}"
+    if kind == "userspace" and name in AISLAND_TOOLS["userspace"]:
+        return "aisland workspace provision install"
+    return f"install {name} with this system's package manager"
+
+
+def ask_to_install(name: str) -> None:
+    """A feature found aisland's tool ``name`` missing: install it once the user agrees, else refuse.
+
+    The refusal names the line that installs it, and nothing is installed — without a terminal no one is asked (a
+    script or CI never installs software as a side effect). A tool aisland cannot install here is refused at once.
+    """
+    kind = this_platform()
+    missing = f"{NEEDED_BY[name]} {name}, which is not installed."
+    if kind == "brew":
+        how: Optional[str] = install_command(name)
+    elif kind == "userspace" and name in AISLAND_TOOLS["userspace"]:
+        how = "aisland downloads it into its bin folder"
+    else:
+        how = None
+    if how is None or not agree(f"{missing} Install it ({how})?"):
+        raise click.ClickException(f"{missing} Install it: {install_command(name)}")
+    if kind == "brew":
+        manager._install_brew_packages({_formula(name)})
+    else:
         manager._install_userspace_tool(name)

@@ -123,6 +123,7 @@ def test_docker_that_fails_to_start_is_reported(monkeypatch: pytest.MonkeyPatch,
     monkeypatch.setattr(manager, "DATA_DIR", tmp_path)
     engine = docker.DockerService()
     monkeypatch.setattr(engine, "is_running", lambda: False)
+    monkeypatch.setattr(docker.shutil, "which", lambda name: f"/usr/local/bin/{name}")  # colima and docker are there
 
     def _fails(argv: list[str]) -> int:
         raise subprocess.CalledProcessError(1, argv)
@@ -138,6 +139,7 @@ def test_swiftbar_that_fails_to_launch_is_reported(monkeypatch: pytest.MonkeyPat
     monkeypatch.setattr(manager, "DATA_DIR", tmp_path)
     bar = swiftbar.SwiftBarService()
     monkeypatch.setattr(bar, "_require_macos", lambda: True)
+    monkeypatch.setattr(swiftbar, "swiftbar_installed", lambda: True)
 
     def _fails(argv: list[str], **kwargs: object) -> None:
         raise subprocess.CalledProcessError(1, argv)

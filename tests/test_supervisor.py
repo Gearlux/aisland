@@ -355,12 +355,16 @@ def test_find_binary_prefers_path_then_vendored(tmp_path: Path, monkeypatch: pyt
 
 
 def test_ensure_binary_raises_when_uninstallable(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The user agreed to the install, and process-compose is still not there afterwards."""
+    from aisland import provision
+
+    monkeypatch.setattr(provision, "agree", lambda question: True)
     with (
         patch("aisland.supervisor.find_binary", return_value=None),
         patch("aisland.manager._install_brew_packages"),
         patch("aisland.manager._install_userspace_tool"),
     ):
-        with pytest.raises(click.ClickException, match="process-compose is required"):
+        with pytest.raises(click.ClickException, match="process-compose is still not found after installing it"):
             supervisor.ensure_binary()
 
 

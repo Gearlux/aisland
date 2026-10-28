@@ -6,8 +6,13 @@ from typing import Any, List, Optional
 
 import click
 
-from aisland import failures
+from aisland import failures, provision
 from aisland.manager import DATA_DIR, BaseService, get_workspace_root
+
+
+def swiftbar_installed() -> bool:
+    """Whether the SwiftBar app is in this machine's or this user's Applications folder (where Homebrew's cask puts it)."""
+    return any((folder / "SwiftBar.app").exists() for folder in (Path("/Applications"), Path.home() / "Applications"))
 
 
 class SwiftBarService(BaseService):
@@ -210,9 +215,11 @@ class SwiftBarService(BaseService):
             click.echo(f"\nPlease manually point SwiftBar to: {self.plugins_dir}")
 
     def launch(self) -> None:
-        """Start the SwiftBar application."""
+        """Start the SwiftBar application — installed first, once the user agrees, when it is missing."""
         if not self._require_macos():
             return
+        if not swiftbar_installed():
+            provision.ask_to_install("swiftbar")
 
         click.echo("Starting SwiftBar...")
         try:

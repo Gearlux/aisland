@@ -304,8 +304,8 @@ From a wheel, the git aliases `aisland setup` installs (`git pull-all`, …) nam
 their place in the venv: after recreating the venv or installing a new aisland, run
 `aisland setup` again. The editor file names the workspace's own folder
 (`${workspaceFolder:acme}`, the `acme-bash` terminal profile) and takes the bash on `PATH` when
-the template's is missing on the machine. `aisland setup` installs aisland's own system tools (process-compose for
-the services, Docker) from a wheel too ([System tools](#system-tools-aisland-workspace-provision)).
+the template's is missing on the machine. aisland's own system tools (process-compose for
+the services, Docker) are installed when a command first needs one ([System tools](#system-tools-aisland-workspace-provision)).
 
 ### What the projects declare (`aisland workspace show`)
 
@@ -344,8 +344,8 @@ Error: /path/to/app/pyproject.toml:8: app offers 'jax' for selection 'framework'
 
 ### System tools (`aisland workspace provision`)
 
-A project declares the tools it needs from outside Python in its `pyproject.toml`; aisland adds its own (the service
-supervisor, Docker, Colima, `act`, SwiftBar):
+A project declares the tools it needs from outside Python in its `pyproject.toml`; aisland has its own (the service
+supervisor, Docker, Colima, `act`, SwiftBar, and Java for Jenkins):
 
 ```toml
 [tool.aisland.sys-dependencies]
@@ -359,10 +359,14 @@ $ aisland workspace provision
   act                            brew  aisland       yes
   node                           brew  viewer        no
   …
-$ aisland workspace provision install      # install them; `aisland setup` does the same
+$ aisland workspace provision install      # install every one of them, aisland's own included
 ```
 
-On macOS `install` also installs the Java the Jenkins server runs on. A wrong declaration stops every command before
+`aisland setup` installs only what the projects declare. aisland's own tool is installed when a command first needs
+it — `aisland services start` the supervisor, `aisland docker start` Colima and Docker, `aisland swiftbar start`
+SwiftBar, `aisland jenkins start` its WAR and Java — after the command asks; with no terminal to ask in, or on a "no",
+it stops with the line that installs the tool and installs nothing. `aisland check` without `act` fails that gate with
+the same line. On macOS `aisland workspace provision install` also installs the Java the Jenkins server runs on. A wrong declaration stops every command before
 anything is installed, naming the file and the line:
 
 ```text

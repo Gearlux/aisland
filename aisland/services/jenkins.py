@@ -3,7 +3,6 @@ import json
 import os
 import re
 import subprocess
-import sys
 import time
 import tomllib
 import urllib.request
@@ -14,7 +13,7 @@ from typing import Any, Dict, List, Mapping, Optional, cast
 import click
 from packaging.requirements import InvalidRequirement, Requirement
 
-from aisland import failures
+from aisland import failures, provision
 from aisland.manager import BIN_DIR, BaseService, _install_brew_packages, get_workspace_root
 from aisland.selection import PLAYWRIGHT_BROWSER
 from aisland.selection import axes as sel_axes
@@ -291,19 +290,36 @@ class JenkinsService(BaseService):
         """Ask the downloaded WAR which installed JDK it runs on (see :mod:`aisland.services.jenkins_java`)."""
         return choose_java(self.war_file, find_runtimes())
 
-    def _java_or_exit(self) -> Path:
-        """The `java` Jenkins runs on, by full path — or print why there is none and exit 1.
+    def java_asking(self) -> Path:
+        """The `java` Jenkins runs on, by full path — the one it accepts installed first, once the user agrees.
 
         Never the bare `java` on PATH: a shell profile puts the newest JDK there, and Jenkins
         refuses any Java its launcher does not name — a refusal the supervisor would only
-        retry three times and record in its log.
+        retry three times and record in its log. Without an accepted Java and without a yes (no terminal, or
+        "no") the command refuses with the formula that installs one, having installed nothing.
         """
         choice = self.resolve_java()
         if choice.runtime is None:
-            click.echo(choice.refusal(), err=True)
-            sys.exit(1)
+            if provision.this_platform() == "brew" and provision.agree(
+                f"{choice.problem()}. Install one ({choice.remedy()})?"
+            ):
+                self.provision_java()
+                choice = self.resolve_java()
+            if choice.runtime is None:
+                raise click.ClickException(choice.refusal().removeprefix("Error: "))
         click.echo(choice.describe())
         return choice.runtime.java
+
+    def ensure_war_asking(self) -> bool:
+        """The Jenkins WAR, downloaded once the user agrees; without a yes the command refuses, downloading nothing."""
+        if self.war_file.exists():
+            return True
+        missing = f"Jenkins needs its WAR ({self.URL}), which is not downloaded yet."
+        if not provision.agree(f"{missing} Download it?"):
+            raise click.ClickException(
+                f"{missing} Run the command in a terminal and answer yes, or: aisland workspace provision install"
+            )
+        return self.ensure_war()
 
     def provision_java(self) -> None:
         """Install, through Homebrew, the newest Java this Jenkins accepts — unless one already is.
@@ -335,8 +351,8 @@ class JenkinsService(BaseService):
 
     def setup(self) -> None:
         """Download Jenkins binary and the latest plugin manager."""
-        if not self.ensure_war():
-            sys.exit(1)
+        if not self.ensure_war_asking():
+            raise SystemExit(1)  # the download's failure is already reported
 
         # Check for latest manager version
         info = self._get_latest_manager_info()
@@ -413,7 +429,7 @@ class JenkinsService(BaseService):
         import subprocess
 
         cmd = [
-            str(self._java_or_exit()),
+            str(self.java_asking()),
             "-jar",
             str(self.manager_jar),
             "--war",
@@ -513,7 +529,7 @@ class JenkinsService(BaseService):
     def launch(self, port: int = 9080, background: bool = False) -> None:
         """Start the Jenkins server."""
         self.setup()
-        java = self._java_or_exit()
+        java = self.java_asking()
         click.echo(f"Jenkins: http://localhost:{port}")
         self.check_credentials_and_print_instructions(port)
 
