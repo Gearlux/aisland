@@ -432,6 +432,12 @@ def test_the_release_is_built_only_after_the_gates_and_every_test_pass(release_w
     ]
 
 
+def test_every_release_job_has_a_time_limit(release_workflow: Workflow) -> None:
+    """Never GitHub's six hours: the tests as long as the slow run allows, the build and the upload a few minutes."""
+    jobs = release_workflow["jobs"]
+    assert {name: job.get("timeout-minutes") for name, job in jobs.items()} == {"tests": 45, "build": 15, "publish": 10}
+
+
 def test_the_release_checks_the_build_strictly_and_smoke_tests_the_wheel(release_workflow: Workflow) -> None:
     assert _step(release_workflow, "build", "Build sdist + wheel")["run"].strip() == "python -m build"
     assert _step(release_workflow, "build", "Check package metadata")["run"].strip() == (

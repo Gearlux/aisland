@@ -1358,6 +1358,18 @@ Finished: FAILURE
   report's paths unmeasured), an abort before the limit is rethrown, and every pytest step removes
   its report files first.
 
+**Amendment (2026-10-28, user pick: three times the table): GitHub's jobs get limits too.** The push pipelines had
+none, waiting for a runner's durations to measure; until then a hung job held a GitHub runner for its six-hour
+default. `ci.yml`'s jobs that run the project's code now get `RUNNER_LIMIT_FACTOR` × their stage's limit — unit tests
+45, slow tests 180, examples 45, notebooks 45 minutes — from the same table, so a change to `STAGE_LIMITS` moves both;
+the quality gates still get none. `release.yml` (hand-written) limits its own jobs: tests 45, build 15, publish 10. The
+push `Jenkinsfile` stays unlimited: it runs on a Jenkins nobody has measured.
+
+```python
+RUNNER_LIMIT_FACTOR = 3
+runner_limit("Slow Tests")      # 180 → `timeout-minutes: 180` on the slow-tests job
+```
+
 ## A recurring environment skew becomes a doctor check, not a note
 
 *2026-07-27; widened to the Docker layer 2026-08-31 and to Jenkins' Java 2026-10-07*

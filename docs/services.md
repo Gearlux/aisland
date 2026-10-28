@@ -280,8 +280,10 @@ The limits are one table in aisland, the same for every project. Abort clicked b
 limit stays an abort. The process the stage was waiting on may outlive it: Jenkins gives it 20 s
 and goes on without it. A pytest killed this way writes no report, and each pytest step removes
 the previous build's report and coverage files before it runs, so Jenkins never records
-yesterday's tests for a build that ran out of time. The push pipelines (`Jenkinsfile`, `ci.yml`)
-carry no limit; a GitHub job is bounded at six hours by GitHub.
+yesterday's tests for a build that ran out of time. The GitHub workflow `ci.yml` gives each of those jobs three
+times its stage's limit (unit tests 45, slow tests 180, examples and notebooks 45 minutes), since a GitHub runner is
+slower than the machine the table was measured on; past it GitHub fails the job. The push `Jenkinsfile` carries no
+limit.
 
 ## The MLflow tracking server (`aisland mlflow`)
 

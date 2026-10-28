@@ -649,14 +649,33 @@ class TestALongStageHasATimeLimit:
         assert "limited('Slow Tests'" not in local
         assert local.count("limited(") == len(STAGE_LIMITS), "three calls and the definition"
 
-    def test_the_push_pipelines_carry_no_limit(self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
-        """The CON pin: a runner's build is bounded by the runner (GitHub: six hours a job); limits measured on a
-        runner are a follow-up (aisland/TASKS.md), never this machine's numbers."""
-        files = _scaffolded(monkeypatch, tmp_path, _make_pyproject_with_slow_marker)
-        for name in ("Jenkinsfile", "ci.yml"):
-            content = files[name]
-            assert "limited(" not in content and "timeout(" not in content, name
-            assert "timeout-minutes" not in content, name
+    def test_the_push_jenkinsfile_carries_no_limit(self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+        """The CON pin: the push Jenkinsfile's limits stay a follow-up (aisland/TASKS.md)."""
+        content = _scaffolded(monkeypatch, tmp_path, _make_pyproject_with_slow_marker)["Jenkinsfile"]
+        assert "limited(" not in content and "timeout(" not in content
+
+    def test_each_github_job_running_the_projects_code_has_three_times_its_jenkins_limit(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ) -> None:
+        """A GitHub runner is slower than this machine, whose runs `STAGE_LIMITS` was measured on: each job gets
+        RUNNER_LIMIT_FACTOR (3) times its stage's limit (user pick 2026-10-28), instead of GitHub's six hours. The
+        quality gates run tools, not the project's code, and get none, as in Jenkins."""
+        import yaml
+
+        from aisland.services.jenkins import RUNNER_LIMIT_FACTOR, STAGE_LIMITS
+
+        jobs = yaml.safe_load(_scaffolded(monkeypatch, tmp_path, _make_pyproject_with_slow_marker)["ci.yml"])["jobs"]
+        stages = {
+            "unit-tests": "Unit Tests",
+            "slow-tests": "Slow Tests",
+            "verify-examples": "Verify Examples",
+            "verify-notebooks": "Verify Notebooks",
+        }
+        assert RUNNER_LIMIT_FACTOR == 3
+        assert {job: jobs[job].get("timeout-minutes") for job in stages} == {
+            job: STAGE_LIMITS[stage] * 3 for job, stage in stages.items()
+        }
+        assert "timeout-minutes" not in jobs["quality-gates"]
 
     def test_each_pytest_call_first_removes_the_files_it_writes(
         self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path

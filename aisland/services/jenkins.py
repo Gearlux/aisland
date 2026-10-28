@@ -62,6 +62,17 @@ STAGE_LIMITS: Dict[str, int] = {
     "Verify Examples": 15,
     "Verify Notebooks": 15,
 }
+#: A GitHub job's limit is its stage's times this (user pick 2026-10-28): a runner is slower than this machine, whose
+#: runs the table was measured on, and without one a hung job holds the runner for GitHub's six hours. `ci.yml`'s
+#: `timeout-minutes` come from here; the quality gates get none, as in Jenkins.
+RUNNER_LIMIT_FACTOR = 3
+
+
+def runner_limit(stage: str) -> int:
+    """The `timeout-minutes` of the GitHub job running ``stage``."""
+    return STAGE_LIMITS[stage] * RUNNER_LIMIT_FACTOR
+
+
 #: The one line a stage past its limit writes (Groovy interpolation); `nightly._TIMED_OUT` reads it from the console.
 TIMED_OUT_MESSAGE = "${stage} timed out after ${minutes} min - its limit in Jenkinsfile.local (STAGE_LIMITS in aisland/services/jenkins.py)"
 #: The helper `Jenkinsfile.local` defines above `pipeline {`; each long stage's steps run inside it. Measured 2026-10-15
@@ -1325,6 +1336,7 @@ pipeline {{
     name: Slow Tests
     needs: [quality-gates]
     runs-on: ubuntu-latest
+    timeout-minutes: {runner_limit('Slow Tests')}
     steps:
     - uses: {GH_ACTIONS['checkout']}
 {app_token_step}    - name: Set up Python 3.12
@@ -2107,6 +2119,7 @@ jobs:
     name: Unit Tests & Coverage
     needs: [quality-gates]
     runs-on: ubuntu-latest
+    timeout-minutes: {runner_limit('Unit Tests')}
     steps:
     - uses: {GH_ACTIONS['checkout']}
 {app_token_step}    - name: Set up Python 3.12
@@ -2137,6 +2150,7 @@ jobs:
     name: Verify Examples
     needs: [unit-tests]
     runs-on: ubuntu-latest
+    timeout-minutes: {runner_limit('Verify Examples')}
     steps:
     - uses: {GH_ACTIONS['checkout']}
 {app_token_step}    - name: Set up Python 3.12
@@ -2171,6 +2185,7 @@ jobs:
     name: Verify Notebooks
     needs: [unit-tests]
     runs-on: ubuntu-latest
+    timeout-minutes: {runner_limit('Verify Notebooks')}
     steps:
     - uses: {GH_ACTIONS['checkout']}
 {app_token_step}    - name: Set up Python 3.12

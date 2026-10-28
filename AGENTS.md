@@ -756,8 +756,10 @@ A bare `::` pin in this section is in `tests/test_jenkins_scaffold.py`.
   longest healthy run of 2026-10-10..15) is the ONE table; each such stage's steps run inside the
   `limited` helper the file defines (`_LIMITED_HELPER`), which past the limit FAILS the stage with
   `TIMED_OUT_MESSAGE` — the stage and the limit named — and rethrows an abort clicked before it.
-  Initialize and the quality gates get none; the push pipelines get none (a runner's limits are
-  measured on the runner: `TASKS.md`). Each pytest step first removes the files it writes
+  Initialize and the quality gates get none. **`ci.yml`'s jobs get `RUNNER_LIMIT_FACTOR` (3) times their stage's
+  limit (`runner_limit`, user pick 2026-10-28 over waiting to measure a runner: a hung job held one for GitHub's six
+  hours)**; the push `Jenkinsfile` still gets none (`TASKS.md`). `release.yml`'s jobs: tests 45, build 15, publish 10
+  (`tests/test_packaging.py::test_every_release_job_has_a_time_limit`). Each pytest step first removes the files it writes
   (`rm -f test-report.xml coverage.xml`, `rm -f slow-test-report.xml`, both Jenkins templates): a
   pytest killed before its report leaves the previous build's for the `junit` step
   (annotaide.local #37 recorded #36's 2 859 cases). `aisland tests nightly` quotes the timed-out
