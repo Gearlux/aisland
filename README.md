@@ -12,7 +12,8 @@ session in the workspace reads.
 pip install aisland
 ```
 
-aisland runs on macOS and Linux with Python 3.12 or newer. `aisland setup` installs the system tools your projects
+aisland runs on macOS and Linux with Python 3.12 or newer, git and bash (the git aliases and the shell start-up
+file `project.bashrc` are bash). `aisland setup` installs the system tools your projects
 declare. aisland's own — process-compose for the services, Docker, Java for Jenkins — are installed the first time a
 command needs one, after asking you; without a terminal the command stops and prints the install line instead. Two
 extras add optional parts:
@@ -144,6 +145,17 @@ aisland tunnel connect <workspace>    # a terminal, from your machine
 
 Signing in, a box that cannot download the VS Code CLI, remembered workspaces, and what `connect` needs on your
 machine: [docs/tunnel.md](https://github.com/Gearlux/aisland/blob/main/docs/tunnel.md).
+
+## Environment variables
+
+None is needed; each changes one default. `env.complete` lists them with every variable the projects read.
+
+| Variable | What it changes |
+|---|---|
+| `AISLAND_WORKSPACE` | aisland installed from a wheel: the workspace it works on (default: the one the current folder belongs to) |
+| `AISLAND_TUNNEL_HOME` | where `aisland tunnel` keeps its state (default: `~/.aisland/tunnel`) |
+| `AISLAND_SUPERVISOR_PORT` | Windows: the supervisor's TCP port (default: 9089; Unix uses a socket) |
+| `TORCH_EXTENSIONS_DIR` | the folder `aisland doctor` checks for a stale torch build lock (default: torch's own cache) |
 
 ## Documentation
 

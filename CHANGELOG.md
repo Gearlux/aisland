@@ -16,7 +16,8 @@ The first release on PyPI: `pip install aisland`.
   editable into the workspace's one `.venv`, the git aliases (`git pull-all`, `git push-all`), the editor's
   workspace file and the shell start-up file `project.bashrc`. While `init` clones, it says each project as it
   starts and ends, with git's download progress on a terminal. A project written into `workspace.toml` with its url
-  is cloned by the next `aisland setup`, and setup leaves every project's `git status` as it found it.
+  is cloned by the next `aisland setup`, and setup leaves every project's `git status` as it found it. An `init` that
+  fails half way removes the folder it made, so the same command runs again.
 - **`aisland workspace configure`** chooses, per project, where it comes from (`source`: a checkout, GitHub or
   PyPI), whether this machine has it (`active`) and where it is mirrored (`mirror`), and per workspace the extras
   the projects offer.
@@ -25,6 +26,8 @@ The first release on PyPI: `pip install aisland`.
   code (its class may name the question `reset` asks first); `aisland --help` names the project that brings each.
 - **`aisland jenkins scaffold`** writes a project's `Jenkinsfile`, `Jenkinsfile.local` and GitHub `ci.yml`.
 - **`aisland doctor`** checks the environment and prints the command that fixes what it finds.
+- **The workspace's `.env`** is read the way `project.bashrc` sources it — quotes, `export`, `$VAR` — by the services
+  and Jenkins alike.
 - **`aisland workspace env-example`** writes the workspace's `env.complete` (every environment variable the
   projects read) and `env.example` (the ones a person normally sets) from each project's own two files, every line
   commented out, a variable several projects read listed once under the project that defines it; a new machine
@@ -45,7 +48,8 @@ The first release on PyPI: `pip install aisland`.
   workspace, a project or this machine, and `pytest -p no:aisland_test_stats` leaves one run out.
 - **`aisland tests report <project>`** reads every recorded test run, and **`aisland clean <project>`** moves a
   project's ignored files into a backup **`aisland backups`** can restore.
-- **`aisland completion install`** writes shell completion for every command-line tool in the workspace.
+- **`aisland completion install`** writes shell completion for every command-line tool in the workspace; a project
+  names its click scripts in `[tool.aisland] click-commands`.
 - **`aisland tunnel`** opens a VS Code Remote Tunnel to a remote machine, and `aisland tunnel connect` (the
   `[connect]` extra) a terminal on it over that tunnel.
 - **`aisland-mcp`** (the `[mcp]` extra) offers a chosen set of these commands to an AI client.

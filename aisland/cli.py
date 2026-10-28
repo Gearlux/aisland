@@ -1,7 +1,7 @@
 import json
 import os
 from pathlib import Path
-from typing import Callable, Dict, List, Optional, Tuple
+from typing import Callable, Dict, List, Optional, Tuple, cast
 
 import click
 from click.shell_completion import CompletionItem
@@ -49,7 +49,7 @@ class _Command(click.Command):
     """A command whose TAB on an empty word offers its options.
 
     Click offers a command's options only once the word starts with `-`; it reaches this method only when no
-    argument is left to fill (an argument's values come first), so `aisland wheels build vendorcli <TAB>` lists
+    argument is left to fill (an argument's values come first), so `aisland wheels build models <TAB>` lists
     build's options — those not typed yet — as `-<TAB>` would.
     """
 
@@ -102,13 +102,21 @@ class _WorkspaceGroup(_Group):
             raise SystemExit(1)
         return result
 
+    def _declared(self, ctx: click.Context) -> List["service_registry.Entry"]:
+        """The services the projects bring, worked out once per run: `--help` asks each listed group for its help,
+        and every lookup reads each project's declarations and the installed plugins again."""
+        key = "aisland.declared-services"
+        if key not in ctx.meta:
+            ctx.meta[key] = service_registry.declared(get_workspace_root(), reserved=self.commands)
+        return cast(List["service_registry.Entry"], ctx.meta[key])
+
     def list_commands(self, ctx: click.Context) -> List[str]:
         """aisland's commands, then a group per service a project declares."""
         names = super().list_commands(ctx)
         if not locations.workspace_found():
             return names
         try:
-            declared = service_registry.declared(get_workspace_root(), reserved=self.commands)
+            declared = self._declared(ctx)
         except discovery.DeclarationError:
             return names  # the listing (--help, completion) stays usable; every command that reads them says why
         return names + sorted(entry.name for entry in declared)
@@ -117,7 +125,7 @@ class _WorkspaceGroup(_Group):
         command = super().get_command(ctx, cmd_name)
         if command is not None or not locations.workspace_found():
             return command
-        for entry in service_registry.declared(get_workspace_root(), reserved=self.commands):
+        for entry in self._declared(ctx):
             if entry.name == cmd_name:
                 return _declared_service_group(entry)
         return None
@@ -521,9 +529,9 @@ def workspace_configure(ctx: click.Context) -> None:
     \b
     aisland workspace configure                                  every plugin, and how to set it
     aisland workspace configure source                           where each project's package comes from
-    aisland workspace configure source set loggair pypi
-    aisland workspace configure source set loggair local --branch dev/main --machine-only
-    aisland workspace configure source unset loggair
+    aisland workspace configure source set models pypi
+    aisland workspace configure source set models local --branch dev/main --machine-only
+    aisland workspace configure source unset models
     aisland workspace configure framework set torch keras
     aisland workspace configure tracker set mlflow --machine-only
     """
@@ -1401,7 +1409,7 @@ def jenkins() -> None:
 
 
 @jenkins.command(name="start")
-@click.option("--port", default=9080, help="HTTP port for Jenkins.")
+@click.option("--port", default=JenkinsService.DEFAULT_PORT, help="HTTP port for Jenkins.")
 @click.option("--background", "-b", is_flag=True, help="Run in background.")
 def jenkins_start(port: int, background: bool) -> None:
     """Start Jenkins."""
@@ -1427,7 +1435,7 @@ def jenkins_info() -> None:
 
 
 @jenkins.command(name="restart")
-@click.option("--port", default=9080, help="HTTP port for Jenkins.")
+@click.option("--port", default=JenkinsService.DEFAULT_PORT, help="HTTP port for Jenkins.")
 @click.option("--background", "-b", is_flag=True, help="Run in background.")
 def jenkins_restart(port: int, background: bool) -> None:
     """Restart Jenkins."""

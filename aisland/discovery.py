@@ -9,6 +9,7 @@ asks "which frameworks?" before the project that defines that question is instal
 
     [tool.aisland]
     manual-extras = ["remote"]               # extras setup installs only when named: never by blank, -y or --all
+    click-commands = ["acme"]                # scripts of [project.scripts] that are click commands: completed
 
     [tool.aisland.service.aim]               # a service the project needs, run by aisland's supervisor
     command = ["aim", "up", "--repo", "{data}", "--port", "{port}"]
@@ -31,7 +32,7 @@ import re
 import tomllib
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Dict, List, Literal, Mapping, Optional, Tuple, cast, get_args
+from typing import Any, Dict, List, Literal, Mapping, Optional, Sequence, Tuple, cast, get_args
 
 import click
 
@@ -152,6 +153,8 @@ class Discovery:
     plugins: Dict[str, Plugin] = field(default_factory=dict)
     undefined: Dict[str, List[str]] = field(default_factory=dict)
     system_tools: List[SystemTool] = field(default_factory=list)
+    #: The programs the projects declare as click commands (``[tool.aisland] click-commands``), each once.
+    click_commands: List[str] = field(default_factory=list)
 
 
 # --- locating a table in the text ----------------------------------------------------------------------------------
@@ -279,6 +282,27 @@ def _manual_extras(projects: List[Tuple[str, Path, str, Dict[str, Any]]]) -> Non
                 )
 
 
+def _click_commands(projects: List[Tuple[str, Path, str, Dict[str, Any]]], found: Discovery) -> None:
+    """Each ``[tool.aisland] click-commands``: scripts of the project's own ``[project.scripts]`` whose program is a
+    click command, which ``aisland completion install`` gives click's completion. Declared, never guessed: whether a
+    script is click cannot be read without importing its module, and click's protocol runs the program."""
+    for project, path, text, data in projects:
+        tool = data.get("tool", {}).get("aisland", {})
+        if "click-commands" not in tool:
+            continue
+        header = table_line(text, "tool", "aisland")
+        where = Where(path, key_line(text, header, "click-commands") if header else None)
+        names = _strings(tool["click-commands"])
+        if names is None:
+            raise DeclarationError(f'{where}: click-commands must be a list of script names, as ["acme"]')
+        scripts = data.get("project", {}).get("scripts", {})
+        for name in names:
+            if name not in scripts:
+                raise DeclarationError(f"{where}: {project} declares no script {name!r} in [project.scripts]")
+            if name not in found.click_commands:
+                found.click_commands.append(name)
+
+
 def _system_tools(projects: List[Tuple[str, Path, str, Dict[str, Any]]], found: Discovery) -> None:
     """Each project's ``[tool.aisland.sys-dependencies]``: ``brew`` and ``userspace`` lists of tool names, a userspace
     tool one aisland can download. Refused here, before anything is installed — the installer would otherwise skip a
@@ -368,6 +392,7 @@ def discover(root: Path) -> Discovery:
     found = Discovery()
     _selections(projects, found)
     _manual_extras(projects)
+    _click_commands(projects, found)
     _services(projects, found)
     _plugins(projects, found)
     _system_tools(projects, found)
@@ -382,10 +407,16 @@ def _normalized(name: str) -> str:
     return re.sub(r"[-_.]+", "-", name).lower()
 
 
-def _entry_point(plugin: Plugin) -> Optional[importlib.metadata.EntryPoint]:
+def _entry_point(
+    plugin: Plugin, installed: Sequence[importlib.metadata.EntryPoint]
+) -> Optional[importlib.metadata.EntryPoint]:
     """The installed entry point of ``plugin``: its name, in the group, from the declaring project's distribution."""
-    for entry in importlib.metadata.entry_points(group=ENTRY_POINT_GROUP, name=plugin.name):
-        if entry.dist is not None and _normalized(entry.dist.name) == _normalized(plugin.distribution):
+    for entry in installed:
+        if (
+            entry.name == plugin.name
+            and entry.dist is not None
+            and _normalized(entry.dist.name) == _normalized(plugin.distribution)
+        ):
             return entry
     return None
 
@@ -425,8 +456,10 @@ def load(found: Discovery) -> Dict[str, Loaded]:
     Only what a workspace project declares is loaded — an installed package of the same group that no project of
     this workspace declares is not a plugin of this workspace. A class is instantiated with no arguments."""
     loaded: Dict[str, Loaded] = {}
+    # One scan of the installed distributions for every plugin: each scan reads every distribution's metadata.
+    installed = list(importlib.metadata.entry_points(group=ENTRY_POINT_GROUP)) if found.plugins else []
     for name, plugin in found.plugins.items():
-        entry = _entry_point(plugin)
+        entry = _entry_point(plugin, installed)
         if entry is None:
             loaded[name] = Loaded(plugin, "not installed")
             continue

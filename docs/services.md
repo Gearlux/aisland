@@ -24,7 +24,16 @@ Retrieve service information for all infrastructure components:
 aisland services                  # the supervisor and every service
 aisland services start -b         # start the default ones in the background
 aisland services start mlflow aim # or only those named, a project's among them
+aisland services status           # each service's state
+aisland services info             # each one's URL, credentials and paths
+aisland services restart jenkins  # stop and start those named
+aisland services stop             # stop the default ones, the container engine last
+aisland services reset jenkins    # stop it and wipe its data (asks first)
 ```
+
+Without a name, `start`, `stop`, `restart` and `reset` act on the services started by default — Docker, Jenkins and
+SwiftBar — and `status` and `info` on every service. Each service also has its own group with the same verbs
+(`aisland jenkins status`).
 
 A project can bring a service of its own, declared in its `pyproject.toml` — no aisland code:
 
@@ -166,6 +175,9 @@ aisland jenkins start --background
 # Stop/Status
 aisland jenkins stop
 aisland jenkins status
+
+# Stop and start again, in the background
+aisland jenkins restart --background
 ```
 Default: [http://localhost:9080](http://localhost:9080)
 
@@ -297,6 +309,9 @@ aisland docker stop
 
 # Check Docker status
 aisland docker status
+
+# Stop Docker and wipe all its data (asks first; --yes does not)
+aisland docker reset
 ```
 
 **Sharing host directories with the VM (`--mount`).** A `docker run -v <host>:<target>` binds a
@@ -320,6 +335,22 @@ for you — a VM restart stops every container on it. A symlink under `$HOME` th
 the shared set (`~/data -> /Volumes/Store`) is not enough on its own: the VM sees the symlink
 itself and resolves it against *its* tree (`colima ssh -- readlink ~/data` → `/Volumes/Store/`),
 so the real target must be shared — `--mount` resolves symlinks for exactly that reason.
+
+## The SwiftBar menu (`aisland swiftbar`, macOS)
+
+SwiftBar shows the workspace's Jenkins builds and GitHub Actions runs in the menu bar. `init` writes its scripts into
+aisland's data folder — one for every Jenkins job of the workspace's projects, one for each project's GitHub
+repository — and offers to point SwiftBar at that folder:
+
+```bash
+aisland swiftbar init      # write the scripts and point SwiftBar at them
+aisland swiftbar start     # start the SwiftBar app (installed after asking, when missing)
+aisland swiftbar info      # its plugin folder and the scripts registered
+aisland swiftbar restart
+aisland swiftbar stop
+aisland swiftbar remove    # stop it and clear its plugin folder setting when it points here
+aisland swiftbar reset     # the same as remove
+```
 
 ## Label Studio (`aisland labelstudio`)
 

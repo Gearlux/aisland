@@ -13,7 +13,7 @@ from typing import Any, Dict, List, Mapping, Optional, cast
 import click
 from packaging.requirements import InvalidRequirement, Requirement
 
-from aisland import failures, provision
+from aisland import failures, provision, supervisor
 from aisland.manager import BIN_DIR, BaseService, _install_brew_packages, get_workspace_root
 from aisland.selection import PLAYWRIGHT_BROWSER
 from aisland.selection import axes as sel_axes
@@ -176,28 +176,6 @@ def is_private_repo(repository: GitHubRepository) -> bool:
     return cp.stdout.strip().lower() == "true"
 
 
-def _parse_dotenv(env_path: Path) -> dict[str, str]:
-    """Parse KEY=VALUE pairs from a workspace ``.env`` file.
-
-    A loose reading of what ``project.bashrc`` sources (``set -a; source .env; set +a``): skip blank and
-    comment lines, split on the first ``=``, strip surrounding quotes. Unlike the shell it expands no ``$VAR``.
-    Returns an empty dict when the file is absent so callers can no-op silently.
-    """
-    if not env_path.exists():
-        return {}
-    result: dict[str, str] = {}
-    for raw in env_path.read_text().splitlines():
-        line = raw.strip()
-        if not line or line.startswith("#") or "=" not in line:
-            continue
-        key, _, value = line.partition("=")
-        key = key.strip()
-        value = value.strip().strip('"').strip("'")
-        if key:
-            result[key] = value
-    return result
-
-
 def pyproject_to_workspace_dir(pyproject_name: str, initialized_set: set) -> str:
     """Map a pyproject distribution name to its workspace directory name.
 
@@ -221,6 +199,8 @@ class JenkinsService(BaseService):
 
     URL = "https://get.jenkins.io/war-stable/latest/jenkins.war"
     REPO = "jenkinsci/plugin-installation-manager-tool"
+    #: The port Jenkins starts on unless `--port` says otherwise; everything else asks :meth:`url`.
+    DEFAULT_PORT = 9080
 
     PLUGINS = [
         "workflow-multibranch",
@@ -526,7 +506,7 @@ class JenkinsService(BaseService):
             )
             click.echo("=" * 65 + "\n")
 
-    def launch(self, port: int = 9080, background: bool = False) -> None:
+    def launch(self, port: int = DEFAULT_PORT, background: bool = False) -> None:
         """Start the Jenkins server."""
         self.setup()
         java = self.java_asking()
@@ -571,13 +551,15 @@ class JenkinsService(BaseService):
             password = admin_pass_file.read_text().strip()
             click.echo(f"    Initial Admin Password: {password}")
 
+    def url(self) -> str:
+        """Where Jenkins answers: the port it runs on, else :attr:`DEFAULT_PORT` (it is not running, or not here)."""
+        ports = self.get_ports()
+        return f"http://localhost:{ports[0] if ports else self.DEFAULT_PORT}"
+
     def info(self) -> None:
         """Show detailed Jenkins configuration."""
         super().info()
-        default_port = 9080
-        ports = self.get_ports()
-        url_port = ports[0] if ports else default_port
-        click.echo(f"  URL           : http://localhost:{url_port}")
+        click.echo(f"  URL           : {self.url()}")
         click.echo(f"  JENKINS_HOME  : {self.service_data_dir}")
         click.echo(f"  WAR file      : {self.war_file}")
         if self.war_file.exists():
@@ -692,7 +674,7 @@ class JenkinsService(BaseService):
         click.echo("  - Issuing Safe Restart to Jenkins (waiting for active jobs)...")
         admin_pass_file = self.service_data_dir / "secrets/initialAdminPassword"
 
-        url = "http://localhost:9080"
+        url = self.url()
 
         if admin_pass_file.exists():
             password = admin_pass_file.read_text().strip()
@@ -814,8 +796,8 @@ class JenkinsService(BaseService):
 
         # `agent none`: the orchestrator only TRIGGERS jobs (`build job:` needs no node). Holding a
         # built-in executor for the whole run left one of the node's two executors for the projects,
-        # so every "parallel" phase ran one project at a time (2026-09-13: vendorcli waited 875 s for
-        # recordstream; annotaide and purifai sat at "Waiting for next available executor").
+        # so every "parallel" phase ran one project at a time (2026-09-13: one project waited 875 s for
+        # another; two more sat at "Waiting for next available executor").
         # The LOCAL orchestrator runs every night (`NIGHTLY_CRON`). The `triggers` directive re-applies the timer at
         # every run — a pipeline without one clears the job's timer on its first run — and the job's properties below
         # arm it as soon as the job is seeded, before any run.
@@ -1423,6 +1405,8 @@ if found != checkout.as_uri():
 print(f"{{dist}} -> {{checkout}}")
 PY"""'''
 
+        jenkins_url = self.url()
+
         # Helper to write file safely
         def _validate_jenkinsfile(content: str, desc: str) -> bool:
             """POST the content to Jenkins' declarative linter. Returns True if the file
@@ -1434,7 +1418,7 @@ PY"""'''
 
             try:
                 # Fetch CSRF crumb — required for all POSTs even with security disabled.
-                crumb_req = urllib.request.Request("http://localhost:9080/crumbIssuer/api/json")
+                crumb_req = urllib.request.Request(f"{jenkins_url}/crumbIssuer/api/json")
                 with urllib.request.urlopen(crumb_req, timeout=3) as resp:
                     crumb_data = json.loads(resp.read().decode())
                 crumb_header = {crumb_data["crumbRequestField"]: crumb_data["crumb"]}
@@ -1445,7 +1429,7 @@ PY"""'''
             try:
                 body = urllib.parse.urlencode({"jenkinsfile": content}).encode()
                 req = urllib.request.Request(
-                    "http://localhost:9080/pipeline-model-converter/validate",
+                    f"{jenkins_url}/pipeline-model-converter/validate",
                     data=body,
                     headers={
                         **crumb_header,
@@ -2583,7 +2567,7 @@ jobs:
 
         workspace_root = get_workspace_root()
         dotenv_path = workspace_root / ".env"
-        dotenv_vars = _parse_dotenv(dotenv_path)
+        dotenv_vars = supervisor.read_workspace_env(workspace_root)  # the one reader: what the shell reads
         if dotenv_vars:
             click.echo(f"  - Loaded {len(dotenv_vars)} key(s) from {dotenv_path}")
         else:

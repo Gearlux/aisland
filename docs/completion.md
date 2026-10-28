@@ -57,8 +57,19 @@ them silently gets no completion at all:
 | Family | Who | Mechanism |
 |---|---|---|
 | liquifai apps | `lib`, `models`, `tools-cli`, … | the `liquifai.apps` entry-point group, handed to liquifai when it is installed (without it this family is empty) |
-| click apps | `aisland`, `app` | click's `_<PROG>_COMPLETE` protocol |
+| click apps | `aisland`, and the scripts a project lists in `[tool.aisland] click-commands` | click's `_<PROG>_COMPLETE` protocol |
 | argparse apps | `viewer-export` | `argcomplete` |
+
+A project names its click scripts in its own `pyproject.toml` — whether a script is a click command cannot be told
+without running it, and click's protocol runs the program:
+
+```toml
+[project.scripts]
+app = "app.cli:main"
+
+[tool.aisland]
+click-commands = ["app"]                  # each one a script of [project.scripts]
+```
 
 **Where it writes.** By default, the workspace-local `.project.bashrc.completion`, which
 `project.bashrc` sources — so your global `~/.bashrc` stays clean and the tracked tree stays

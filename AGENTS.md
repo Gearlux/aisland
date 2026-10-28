@@ -240,6 +240,11 @@ start-time port pre-flight naming the PID is the only signal). All service state
   aisland finds — a link counts, and
   `init`'s `.gitignore` says `.venv` (not `.venv/`) so the link is ignored; never add a venv-name setting without
   asking. (`tests/test_workspace_init.py`)
+  - **A new workspace whose `init` fails half way is removed (user request 2026-10-28, release review).** A folder
+    `init` made, or found empty, goes when a clone fails or the run is interrupted, and the error says so: the same
+    command runs again. A folder that held files is never deleted (the error names `.git` and `.gitmodules` to remove);
+    an existing repository set up in place is left as it stopped (`tests/test_workspace_init.py::test_a_failed_init_from_a_file_removes_the_folder_it_made_and_runs_again`
+    and its neighbours).
   - `init` writes over a starting file ONLY when `--rewrite <file>` names it (a closed set, `workspace.StartingFile`);
     the old copy becomes `<file>.bak`, and a `.bak` already there refuses the whole run before anything is written.
     In an existing repository `--rewrite` writes the named files and nothing else (no git, submodules, aliases or
@@ -271,6 +276,13 @@ start-time port pre-flight naming the PID is the only signal). All service state
 - What the installed package shows is held to the same list: every command's `--help` (its examples use `models`)
   and the usage text of the zip `aisland wheels zip` writes (`wheels_unzip.py`'s docstring)
   (`::test_a_commands_help_names_no_project_of_the_workspace`, `::test_the_wheel_zips_usage_names_no_project_of_the_workspace`).
+  Every file of the package — code, comments, templates — names no private project, platform or company
+  (`tests/test_no_private_names.py::test_no_file_of_the_package_names_a_private_project_or_a_company`); comments may
+  still name the workspace's projects (root rule "Docs Never Name Dependent Projects" exempts them), code may not
+  (the completion table, a fallback address, a template's placeholder name are gone, 2026-10-28).
+- Every command, each verb of each group, is shown on a page or the README (`::test_every_command_is_shown_on_a_page`),
+  and every variable `env.complete` lists for a person to set is in the README's table
+  (`::test_every_variable_aisland_reads_is_in_the_readme`).
 - An example in `examples/` is a page's runnable twin, named on its page (`::test_every_example_is_shown_on_a_page`),
   and touches only a temporary folder: from a checkout aisland works on the workspace it is checked out in whatever
   the current folder, so a command that changes a workspace (`setup`, `configure … set`, `clean`) has no example
@@ -289,6 +301,12 @@ start-time port pre-flight naming the PID is the only signal). All service state
      does it): `project update` ignores an unchanged document.
   6. No secret literal in the document: `${VAR}` refs to `.env` keys, and `apply()` layers
      `read_workspace_env()` over `os.environ`. No literal `$` in any value.
+- **`.env` is read as the shell reads it, by ONE reader (user request 2026-10-28, release review).**
+  `supervisor.read_workspace_env` is what `project.bashrc`'s `set -a; source .env` exports: `export`, quotes (single
+  literal, double expanded, `\` escapes), `$VAR`/`${VAR}` from an earlier line then the environment (unset = empty),
+  a trailing ` # note` dropped, a line bash reads as no assignment (`KEY = value`) skipped. Services, `apply()` and
+  Jenkins read it; never a second parser. `write_workspace_env` single-quotes a value the shell would change, so both
+  read it back verbatim (`tests/test_workspace_env.py`, every case checked against bash itself).
 - Unix: socket in `aisland/data/`; Windows: TCP `AISLAND_SUPERVISOR_PORT` (default 9089).
   process-compose comes from Homebrew (macOS) or `USERSPACE_TOOLS` (Linux), installed by the first command that
   needs it once the user agrees (`supervisor.ensure_binary` → `provision.ask_to_install`) [on-demand-tools].
@@ -305,7 +323,11 @@ start-time port pre-flight naming the PID is the only signal). All service state
   loaded machine): `list_processes` and `get_ports` ask their own question alone (a failed one already means no
   server — no `project state` first), and `registry.status`/`info` run inside `supervisor.snapshot()`, where ONE
   `process list` answers every service. Nothing outlives the block, so `wait_for` still sees each new answer.
-  (`tests/test_supervisor_snapshot.py`)
+  (`tests/test_supervisor_snapshot.py`) The services the projects bring are worked out ONCE per CLI run
+  (`cli._WorkspaceGroup._declared`, in `ctx.meta`: `--help` asks every group for its help), and `discovery.load` scans
+  the installed entry points once for every plugin — each scan reads every distribution's metadata (`aisland --help`
+  2.4 s → 0.9 s on 2026-10-28; `tests/test_plugin_services.py::test_one_help_finds_the_projects_services_once`,
+  `::test_loading_reads_the_installed_entry_points_once`).
 - **A project declares a service in its `pyproject.toml` and writes no aisland code (user choice 2026-10-24).**
   `[tool.aisland.service.<name>]` (`command`, `port`, `ready`, `needs`) becomes a `services/declared.py`
   `DeclaredService` — the command under the supervisor, probed only with both `port` and `ready` — appended to the
@@ -347,6 +369,10 @@ start-time port pre-flight naming the PID is the only signal). All service state
   `log stream`. (`docs/services.md` "macOS: Full Disk Access for the supervisor")
 - `aisland jenkins init` seeds a multibranch job per `Jenkinsfile`; `--local` seeds
   `<project>.local` with `Jenkinsfile.local` embedded.
+- **Jenkins' port is written once, `JenkinsService.DEFAULT_PORT` (9080); everything that talks to it asks
+  `JenkinsService.url()`** — the port it runs on, else the default: `info`, the safe restart, the scaffold's
+  Jenkinsfile validation, `aisland tests nightly`'s links, the SwiftBar menu's links, the CLI's `--port` default
+  (`tests/test_jenkins_port.py`). Never type the number elsewhere.
 - Jenkins (and its plugin manager) runs on the Java its WAR accepts, by FULL path — never the
   bare `java` on PATH, which a shell profile points at the newest JDK (26 broke Jenkins on
   2026-10-06). `services/jenkins_java.py` probes each installed JDK, newest first, with
@@ -525,8 +551,8 @@ Root `AGENTS.md` "Two Test Runs" (user ruling 2026-10-05). [test-stats]
   (`tests/test_workspace_files_commands.py`). Folders: the workspace, each project with a checkout in
   dependency order (sorted by folder name first), then loggair's log folder when it exists.
   Settings and extensions come from `aisland/aisland/code-workspace.json` (strict JSON, no `folders`, no
-  `python.analysis.extraPaths`): a shared setting changes there, never in the file. The template is
-  written for `acme`: its `${workspaceFolder:acme}` and `acme-bash` take the workspace's name, and
+  `python.analysis.extraPaths`): a shared setting changes there, never in the file. The template names the
+  workspace `WORKSPACE`: its `${workspaceFolder:WORKSPACE}` and `WORKSPACE-bash` take the workspace's name, and
   this platform's profile keeps its shell when the machine has it, else the bash on PATH (in acme on
   this machine the output is unchanged). (`::test_another_workspace_s_settings_name_its_own_folder`)
   (`tests/test_code_workspace.py`) [folders]
@@ -783,7 +809,11 @@ A bare `::` pin in this section is in `tests/test_jenkins_scaffold.py`.
   `setup.sh` calls it in one line. Never move it back into shell. (`tests/test_completion.py`)
   [completion]
   - liquifai apps: `install_for_apps`, in-process. click apps: `_<PROG>_COMPLETE`, bash
-    guarded on `BASH_VERSINFO >= 4.4`. argcomplete: no member; never add a `streamstudio` row.
+    guarded on `BASH_VERSINFO >= 4.4` — `aisland` (`NON_LIQUIFAI_CLIS`, its only row) and every script a project
+    lists in `[tool.aisland] click-commands` (`completion.workspace_click_clis`, read by discovery: never import a
+    script to tell — measured 2 min importing every project's CLI, and a `main` wrapping a click group is a plain
+    function; user request 2026-10-28). Never name a workspace CLI in aisland. argcomplete: no member; never add a
+    `streamstudio` row. (`tests/test_completion.py::test_a_projects_declared_click_command_is_found_without_importing_it`)
   - liquifai is never a dependency of aisland, not even behind an extra: a venv without it has no liquifai app, so
     the install hands nothing over and writes the other families; the default shell is `completion.login_shell`
     (`$SHELL`'s name, else bash), never liquifai's (`tests/test_completion.py::test_without_liquifai_the_other_clis_are_still_installed`

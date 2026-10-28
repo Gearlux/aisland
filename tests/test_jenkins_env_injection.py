@@ -18,7 +18,7 @@ from pathlib import Path
 import pytest
 
 from aisland import manager
-from aisland.services.jenkins import JenkinsService, _parse_dotenv
+from aisland.services.jenkins import JenkinsService
 
 _MINIMAL_CONFIG_XML = """<?xml version='1.1' encoding='UTF-8'?>
 <hudson>
@@ -38,40 +38,7 @@ def _read_envvars(config_file: Path) -> dict[str, str]:
     return dict(zip(strings[::2], strings[1::2]))
 
 
-# --------------------------------------------------------------------------- #
-# _parse_dotenv unit cases
-# --------------------------------------------------------------------------- #
-
-
-def test_parse_dotenv_missing_file_returns_empty(tmp_path: Path) -> None:
-    assert _parse_dotenv(tmp_path / "does-not-exist.env") == {}
-
-
-def test_parse_dotenv_skips_comments_and_blanks(tmp_path: Path) -> None:
-    env = tmp_path / ".env"
-    env.write_text(
-        "\n"
-        "# a comment\n"
-        "DATA_ROOT=/tmp/data\n"
-        "   \n"
-        "# DATA_ROOT=/wrong (commented assignment must be ignored)\n"
-        'HF_HOME="/tmp/hf"\n'
-        "QUOTED_SINGLE='/tmp/single'\n"
-        "BARE=value\n"
-    )
-    parsed = _parse_dotenv(env)
-    assert parsed == {
-        "DATA_ROOT": "/tmp/data",
-        "HF_HOME": "/tmp/hf",
-        "QUOTED_SINGLE": "/tmp/single",
-        "BARE": "value",
-    }
-
-
-def test_parse_dotenv_keeps_equals_in_value(tmp_path: Path) -> None:
-    env = tmp_path / ".env"
-    env.write_text("TOKEN=abc=def=ghi\n")
-    assert _parse_dotenv(env) == {"TOKEN": "abc=def=ghi"}
+# The `.env` reader's cases: tests/test_workspace_env.py (Jenkins reads it with supervisor.read_workspace_env).
 
 
 # --------------------------------------------------------------------------- #

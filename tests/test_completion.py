@@ -36,6 +36,16 @@ def fake_apps(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(lc, "discover_liquifai_apps", lambda prefix=None: list(LIQUIFAI_APPS))
 
 
+#: The real discovery of the workspace's click scripts, kept before the autouse stub replaces it.
+_WORKSPACE_CLICK_CLIS = comp.workspace_click_clis
+
+
+@pytest.fixture(autouse=True)
+def no_workspace_clis(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The workspace these tests run in has click scripts of its own; a test names the ones it means."""
+    monkeypatch.setattr(comp, "workspace_click_clis", lambda root=None: [])
+
+
 @pytest.fixture
 def all_present(monkeypatch: pytest.MonkeyPatch) -> None:
     """Every program resolves — the normal, fully-installed workspace."""
@@ -60,10 +70,39 @@ def test_the_families_land_in_one_file(rc: Path, all_present: None) -> None:
     for app in LIQUIFAI_APPS:  # (a) liquifai
         assert f"# >>> liquifai completion for {app} >>>" in text
     assert "_AISLAND_COMPLETE=bash_source aisland" in text  # (b) click
-    assert "_HYDRAIDE_COMPLETE=bash_source hydraide" in text  # (b) click — confluid's preprocessor command
 
     assert report.liquifai_apps == LIQUIFAI_APPS
-    assert report.non_liquifai == ["aisland", "hydraide"]
+    assert report.non_liquifai == ["aisland"]
+
+
+def test_a_projects_declared_click_command_is_found_without_importing_it(tmp_path: Path) -> None:
+    """aisland names no workspace CLI: a project lists its click scripts in `[tool.aisland] click-commands`."""
+    root = tmp_path / "ws"
+    (root / "tools").mkdir(parents=True)
+    (root / "tools" / "pyproject.toml").write_text(
+        '[project]\nname = "tools"\nversion = "0.1.0"\n\n[project.scripts]\n'
+        'tool = "nosuch_module:main"\nplain = "nosuch_module:plain"\n\n[tool.aisland]\nclick-commands = ["tool"]\n'
+    )
+    assert _WORKSPACE_CLICK_CLIS(root) == [comp.NonLiquifaiCli("tool", "click")]
+
+
+def test_a_workspace_whose_declarations_are_refused_completes_no_project_cli(tmp_path: Path) -> None:
+    root = tmp_path / "ws"
+    (root / "tools").mkdir(parents=True)
+    (root / "tools" / "pyproject.toml").write_text(
+        '[project]\nname = "tools"\nversion = "0.1.0"\n\n[tool.aisland]\nclick-commands = ["missing"]\n'
+    )
+    assert _WORKSPACE_CLICK_CLIS(root) == []
+
+
+def test_a_found_click_script_is_installed_beside_aisland(
+    rc: Path, all_present: None, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    found = [comp.NonLiquifaiCli("tool", "click"), comp.NonLiquifaiCli("matrainer", "click")]
+    monkeypatch.setattr(comp, "workspace_click_clis", lambda root=None: found)
+    report = comp.install_completions(target_rc=rc, shell="bash", apps=["matrainer"])
+    assert "_TOOL_COMPLETE=bash_source tool" in rc.read_text()
+    assert report.non_liquifai == ["aisland", "tool"]  # a liquifai app keeps its own block, never a second one
 
 
 def test_a_streamstudio_row_would_be_a_SECOND_dead_block(rc: Path, all_present: None) -> None:

@@ -304,6 +304,37 @@ def init_workspace(
         )
     _say(f"==> {'Setting up' if existing else 'Creating'} workspace in {root}")
     if existing:
+        _build(root, existing, plan, from_file, rewrite, local, untracked)
+        return
+    # A new workspace that fails half way (a project that cannot be cloned, an interrupt) leaves nothing it made, so
+    # the same command runs again; a folder that held files before is never deleted.
+    made_here = not root.exists() or not any(root.iterdir())
+    try:
+        _build(root, existing, plan, from_file, rewrite, local, untracked)
+    except (click.ClickException, KeyboardInterrupt, OSError, subprocess.CalledProcessError) as exc:
+        message = exc.message if isinstance(exc, click.ClickException) else f"init stopped: {exc or type(exc).__name__}"
+        if made_here:
+            shutil.rmtree(root, ignore_errors=True)
+            raise click.ClickException(
+                f"{message}\n{root} is removed again: this init made it. Run the same command once the cause is fixed."
+            ) from exc
+        raise click.ClickException(
+            f"{message}\n{root} held files before this init, so it is left as it stopped: remove {root / '.git'} and "
+            ".gitmodules, then run the same command again."
+        ) from exc
+
+
+def _build(
+    root: Path,
+    existing: bool,
+    plan: Sequence[Tuple[str, Optional[Tuple[str, Optional[str], Optional[str]]]]],
+    from_file: Optional[Path],
+    rewrite: Sequence[StartingFile],
+    local: bool,
+    untracked: bool,
+) -> None:
+    """Make or set up the workspace at ``root`` (:func:`init_workspace` checked every refusal first)."""
+    if existing:
         rows = [_row(".git/", "kept (an existing repository)")]
     else:
         root.mkdir(parents=True, exist_ok=True)
@@ -353,5 +384,5 @@ def init_workspace(
     click.echo("Next:")
     click.echo(f"    cd {root}")
     if not runs_from_venv_of(root):
-        click.echo("    uv venv --seed .venv && .venv/bin/pip install <the aisland wheel>")
+        click.echo("    uv venv --seed .venv && .venv/bin/pip install aisland")
     click.echo("    .venv/bin/aisland setup")

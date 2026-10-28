@@ -472,3 +472,33 @@ def test_a_service_without_a_port_shows_so(tmp_path: Path, monkeypatch: pytest.M
     monkeypatch.setattr(cli, "get_workspace_root", lambda: root)
     result = CliRunner().invoke(cli.main, ["workspace", "show"])
     assert result.output.splitlines() == ["Declared by the projects:", "  service  db  p  no port"]
+
+
+# --- click commands --------------------------------------------------------------------------------------------------
+
+_SCRIPTS = '[project]\nname = "tools"\n\n[project.scripts]\ntool = "tools.cli:main"\nother = "tools.cli:other"\n\n'
+
+
+def test_a_projects_click_commands_are_its_declared_scripts_each_once(tmp_path: Path) -> None:
+    root = _workspace(
+        tmp_path,
+        {
+            "tools": _SCRIPTS + '[tool.aisland]\nclick-commands = ["tool", "other"]\n',
+            "more": _SCRIPTS + '[tool.aisland]\nclick-commands = ["tool"]\n',
+        },
+    )
+    assert sorted(discovery.discover(root).click_commands) == ["other", "tool"]
+
+
+@pytest.mark.parametrize(
+    "declaration, message",
+    [
+        ('click-commands = "tool"', 'click-commands must be a list of script names, as ["acme"]'),
+        ('click-commands = ["missing"]', "tools declares no script 'missing' in [project.scripts]"),
+    ],
+)
+def test_a_click_command_that_is_no_script_of_the_project_is_refused_naming_its_line(
+    tmp_path: Path, declaration: str, message: str
+) -> None:
+    root = _workspace(tmp_path, {"tools": _SCRIPTS + f"[tool.aisland]\n{declaration}\n"})
+    assert _refusal(root) == f"{root / 'tools' / 'pyproject.toml'}:9: {message}"

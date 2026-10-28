@@ -89,11 +89,11 @@ class JenkinsApi:
 
 
 def jenkins_url() -> str:
-    """Inside a Jenkins build Jenkins' own address (`JENKINS_URL`); elsewhere the running Jenkins' port, else 9080."""
+    """Inside a Jenkins build Jenkins' own address (`JENKINS_URL`); elsewhere the running Jenkins', else its default
+    port's (:meth:`JenkinsService.url`)."""
     if os.environ.get("JENKINS_URL"):
         return os.environ["JENKINS_URL"]
-    ports = JenkinsService().get_ports()
-    return f"http://localhost:{ports[0] if ports else 9080}/"
+    return f"{JenkinsService().url()}/"
 
 
 def orchestrator_job() -> str:

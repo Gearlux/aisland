@@ -309,7 +309,7 @@ def remote_url(workspace_root: Path, project: str) -> Optional[str]:
     """The submodule's configured remote from ``.gitmodules``, or ``None`` when undeclared.
 
     Read rather than built from a GitHub owner and the name, so a ``github`` source also
-    works for the submodules that are NOT on GitHub (``vendorcli`` lives on an internal Bitbucket), and so it always matches the remote the operator's git auth is
+    works for the submodules that are NOT on GitHub (a private project on an internal Bitbucket), and so it always matches the remote the operator's git auth is
     already set up for.
     """
     gitmodules = workspace_root / ".gitmodules"

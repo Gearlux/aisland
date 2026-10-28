@@ -156,11 +156,12 @@ def test_settings_and_extensions_come_from_the_template(workspace: Path) -> None
     manager.write_code_workspace(workspace)
     written = _read(workspace)
     written.pop("folders")
-    assert written == json.loads(manager.CODE_WORKSPACE_TEMPLATE.read_text())
+    template = manager.CODE_WORKSPACE_TEMPLATE.read_text().replace("WORKSPACE", workspace.name)
+    assert written == json.loads(template)
 
 
 def test_another_workspace_s_settings_name_its_own_folder(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    """The template is written for `acme`; in `acme` every `${workspaceFolder:acme}` names `acme`."""
+    """The template names the workspace `WORKSPACE`; in `acme` every `${workspaceFolder:WORKSPACE}` names `acme`."""
     root = tmp_path / "acme"
     _project(root, "models")
     monkeypatch.setattr(manager, "_loggair_log_dir", lambda workspace_root: None)
@@ -302,3 +303,18 @@ def test_the_real_workspace_keeps_the_file_out_of_git() -> None:
     assert ignored.returncode == 0, f"{path.name} is not ignored by {root / '.gitignore'}"
     tracked = subprocess.run(["git", "ls-files", "--error-unmatch", path.name], cwd=root, capture_output=True)
     assert tracked.returncode != 0, f"{path.name} is still tracked: git rm --cached {path.name}"
+
+
+def test_a_workspace_without_loggair_is_told_nothing_about_it(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """A workspace whose venv has no loggair has no log folder to list; setup does not name a tool it never used."""
+    _fake_python(tmp_path, 'echo "$0: No module named loggair" >&2\nexit 1\n')
+    assert manager._loggair_log_dir(tmp_path) is None
+    assert capsys.readouterr().out == ""
+
+
+def test_a_loggair_whose_report_fails_is_said(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+    _fake_python(tmp_path, "echo 'Traceback: boom' >&2\nexit 1\n")
+    assert manager._loggair_log_dir(tmp_path) is None
+    assert "`python -m loggair --json` failed" in capsys.readouterr().out

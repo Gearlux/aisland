@@ -29,7 +29,7 @@ uv venv --seed .venv && .venv/bin/pip install aisland
     git aliases               pull-all, push-all, … in the local git config
 Next:
     cd /Users/you/work/acme
-    uv venv --seed .venv && .venv/bin/pip install <the aisland wheel>
+    uv venv --seed .venv && .venv/bin/pip install aisland
     .venv/bin/aisland setup
 ```
 
@@ -268,6 +268,16 @@ $ .venv/bin/aisland workspace init . --from workspace.toml
 Error: workspace.toml:7: project 'tools' has no url
 ```
 
+A project that cannot be cloned (a wrong url, no access) stops `init` and removes the folder it made, so the same
+command runs again once the cause is fixed. A folder that held files before is never removed: the error says what
+init left in it.
+
+```text
+$ aisland workspace init ~/work/acme --from workspace.toml
+Error: [2/2] tools: could not add https://github.com/acme/tools.git as a submodule: fatal: repository 'https://github.com/acme/tools.git/' not found
+/home/you/work/acme is removed again: this init made it. Run the same command once the cause is fixed.
+```
+
 While it clones, `init` says each project as it starts and ends, on stderr — on a terminal git's own download
 progress is drawn on one line below it; the report it ends with goes to stdout alone:
 
@@ -338,6 +348,9 @@ choices = ["torch", "keras"]              # each one an extra of this project; o
 command = ["notes-server", "--port", "8123"]
 port = 8123
 ready = "/health"
+
+[tool.aisland]
+click-commands = ["app"]                  # scripts of [project.scripts] that are click commands: shell completion
 
 [project.entry-points."aisland.plugins"]  # code, for what a declaration cannot say
 acme-db = "acme_plugin:Database"

@@ -194,3 +194,24 @@ def test_every_example_is_shown_on_a_page() -> None:
     pages = "\n".join(page.read_text(encoding="utf-8") for page in _user_pages())
     unnamed = [example.name for example in sorted(EXAMPLES.glob("*.py")) if f"examples/{example.name}" not in pages]
     assert unnamed == []
+
+
+def test_every_command_is_shown_on_a_page() -> None:
+    """A user finds every command — each verb of each group — in the README or a page, not only in `--help`. The
+    command groups a project brings are its own docs' (they are not aisland's `main.commands`)."""
+    from aisland.cli import main
+
+    text = README.read_text(encoding="utf-8") + "".join(page.read_text(encoding="utf-8") for page in _user_pages())
+    missing = [
+        words
+        for words, command in _commands(main)
+        if not command.hidden and not re.search(re.escape(words) + r"(?![\w-])", text)
+    ]
+    assert not missing, "commands no page shows:\n" + "\n".join(missing)
+
+
+def test_every_variable_aisland_reads_is_in_the_readme() -> None:
+    """`env.complete` lists the variables a person may set (`# NAME=…`); the README's table names each."""
+    listed = re.findall(r"^# ([A-Z][A-Z0-9_]+)=", (PROJECT / "env.complete").read_text(encoding="utf-8"), re.M)
+    readme = README.read_text(encoding="utf-8")
+    assert listed and not [name for name in listed if f"`{name}`" not in readme]

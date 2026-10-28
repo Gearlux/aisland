@@ -8,6 +8,7 @@ import click
 
 from aisland import failures, provision
 from aisland.manager import DATA_DIR, BaseService, get_workspace_root
+from aisland.services.jenkins import JenkinsService
 
 
 def swiftbar_installed() -> bool:
@@ -326,6 +327,8 @@ class SwiftBarService(BaseService):
             click.echo("            Please check your terminal's permissions for the 'aisland' data directory.")
 
         projects_str = " ".join([f'"{p}"' for p in projects])
+        # The menu links the Jenkins running now, on the port it runs on (else its default).
+        jenkins_url = JenkinsService().url()
 
         content = f"""#!/bin/bash
 # =========================================================================
@@ -410,10 +413,10 @@ process_item() {{
 
     if [ "$IS_BRANCH" == "true" ]; then
         ENCODED_BRANCH=$(echo "$DISPLAY_NAME" | sed 's/\\//%2F/g')
-        URL="http://localhost:9080/job/${{PROJECT_NAME}}/job/${{ENCODED_BRANCH}}"
+        URL="{jenkins_url}/job/${{PROJECT_NAME}}/job/${{ENCODED_BRANCH}}"
         DROPDOWN_TEXT+="${{DISPLAY_NAME}}: ${{STATUS_STR}} | href=${{URL}}\\n"
     else
-        URL="http://localhost:9080/job/${{PROJECT_NAME}}"
+        URL="{jenkins_url}/job/${{PROJECT_NAME}}"
         DROPDOWN_TEXT+="Status: ${{STATUS_STR}} | href=${{URL}}\\n"
     fi
 }}
@@ -458,7 +461,7 @@ echo "---"
 echo -e "$DROPDOWN_TEXT"
 echo "---"
 echo "Refresh Now | refresh=true"
-echo "Open Jenkins | href=http://localhost:9080"
+echo "Open Jenkins | href={jenkins_url}"
 """
         script_path.write_text(content)
         script_path.chmod(0o755)

@@ -3738,3 +3738,63 @@ Error: aisland's services need process-compose, which is not installed. Install 
 - Which features ask for which tool (`provision.NEEDED_BY`).
 - Never: installing one of aisland's tools without asking, or asking where no one can answer.
 
+
+---
+
+## The release review's second pass: one reader, one port, declared CLIs, a quick listing, an init that cleans up (2026-10-28)
+
+### Context
+
+Six findings of the release review, picked together:
+
+1. `aisland --help` took 2.4 s in a workspace bringing six services: `registry.declared` ran once for the listing and
+   once per group (click asks each for its short help), and every run scanned the installed entry points once per
+   plugin — 42 scans, each reading every distribution's metadata.
+2. The package carried names of the workspace it was written in: a completion row for one project's CLI
+   (`hydraide`), a fallback e-mail address, a private project and a company in comments, the editor template's
+   placeholder name, a setup note naming a log tool in workspaces that never had it.
+3. The install command `init` and the venv error printed was a placeholder (`<the aisland wheel>`); twelve commands
+   were on no page; the README listed no requirement but Python and no environment variable.
+4. Jenkins' port 9080 was typed in thirteen places: started with `--port 9081`, it still got its safe restart, its
+   Jenkinsfile validation and the SwiftBar links on 9080.
+5. Two `.env` readers disagreed with each other and with the shell that sources the file: the services kept the
+   quotes of `KEY="a b"`, Jenkins stripped them, neither expanded `$HOME`, read `export` or dropped a trailing
+   comment, and the services' writer wrote a value with a space unquoted, which the shell then runs as a command.
+6. `init --from` stopped by a project that cannot be cloned left a repository holding the first projects, and the
+   same command then refused it ("already a git repository").
+
+### Decision
+
+1. The group works out the projects' services once per run (`ctx.meta`), and `discovery.load` scans the entry points
+   once. 0.9 s remain: importing the plugin classes, which their groups need.
+2. A project names its click scripts in `[tool.aisland] click-commands` (stage 1 of discovery, refused naming the line
+   when no `[project.scripts]` entry has the name). Importing each script to ask "is it click?" was measured first:
+   2 minutes in this workspace, and it still missed the one CLI it was for, whose `main` is a plain function calling a
+   click group. The template's placeholder is `WORKSPACE`; the unused fallback address is gone; the private and
+   company names left the comments, pinned over every file of the package.
+3. The commands print `pip install aisland`; the pages show every command (pinned) and the README the requirements
+   and the variables (pinned against `env.complete`).
+4. `JenkinsService.DEFAULT_PORT` and `JenkinsService.url()`.
+5. `supervisor.read_workspace_env` reads what bash exports (each case pinned against bash itself), and
+   `write_workspace_env` quotes what bash would change.
+6. A folder `init` made or found empty is removed when it fails; a folder that held files never is.
+
+### Consequences
+
+A workspace with a click CLI of its own declares it, or it gets no completion — the same opt-in as everything else a
+project brings. `KEY = value` in `.env` now sets nothing, as in the shell (it used to set `KEY`).
+
+### Example
+
+```toml
+[project.scripts]
+app = "app.cli:main"
+
+[tool.aisland]
+click-commands = ["app"]
+```
+
+### What you may change
+
+- The shell forms the reader understands, each with a case checked against bash.
+- Never: a second `.env` parser, a port typed beside `DEFAULT_PORT`, importing a project's code to discover its CLI.

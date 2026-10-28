@@ -92,7 +92,7 @@ def test_a_new_folder_becomes_a_workspace(tmp_path: Path) -> None:
     assert result.stdout.splitlines()[-4:] == [
         "Next:",
         f"    cd {root}",
-        "    uv venv --seed .venv && .venv/bin/pip install <the aisland wheel>",
+        "    uv venv --seed .venv && .venv/bin/pip install aisland",
         "    .venv/bin/aisland setup",
     ]
 
@@ -726,3 +726,50 @@ def test_on_a_terminal_a_failed_clone_says_gits_error_without_its_progress(tmp_p
     error = "Error:" + terminal.split("Error:", 1)[1].split("\n")[0]  # the progress drawn before it ends no line
     assert f"Error: [1/1] models: could not add file://{models} as a submodule: fatal: " in error
     assert "%" not in error and "remote:" not in error
+
+
+# --- a failed init leaves nothing it made ----------------------------------------------------------------------------
+
+
+def test_a_failed_init_from_a_file_removes_the_folder_it_made_and_runs_again(tmp_path: Path) -> None:
+    """A project that cannot be cloned stopped `init --from` half way: a repository with the first project in it,
+    which the same command then refused ("already a git repository, with a workspace.toml of its own")."""
+    models = _remote(tmp_path, "models")
+    missing = tmp_path / "remote" / "tools"
+    listed = _workspace_toml(tmp_path, _project("models", models) + _project("tools", missing))
+    result = _init(tmp_path, "--from", str(listed))
+    assert result.exit_code == 1
+    root = tmp_path / "acme"
+    assert f"Error: [2/2] tools: could not add {missing} as a submodule:" in result.output
+    assert f"{root} is removed again: this init made it. Run the same command once the cause is fixed." in result.output
+    assert not root.exists()
+    _remote(tmp_path, "tools")
+    again = _init(tmp_path, "--from", str(listed))
+    assert again.exit_code == 0, again.output
+
+
+def test_an_empty_folder_init_was_given_is_removed_too(tmp_path: Path) -> None:
+    (tmp_path / "acme").mkdir()
+    result = _init(tmp_path, "--add", str(tmp_path / "remote" / "nothing"))
+    assert result.exit_code == 1
+    assert not (tmp_path / "acme").exists()
+
+
+def test_a_folder_that_held_files_is_never_removed_and_the_message_says_what_to_remove(tmp_path: Path) -> None:
+    root = tmp_path / "acme"
+    root.mkdir()
+    (root / "notes.txt").write_text("mine\n")
+    result = _init(tmp_path, "--add", str(tmp_path / "remote" / "nothing"))
+    assert result.exit_code == 1
+    assert (root / "notes.txt").read_text() == "mine\n"
+    assert (
+        f"{root} held files before this init, so it is left as it stopped: remove {root / '.git'} and "
+        ".gitmodules, then run the same command again." in result.output
+    )
+
+
+def test_an_existing_repository_set_up_in_place_is_left_as_it_stopped(tmp_path: Path) -> None:
+    root = _existing_workspace(tmp_path)
+    result = _init(tmp_path, "--add", str(tmp_path / "remote" / "nothing"))
+    assert result.exit_code == 1
+    assert (root / ".git").is_dir() and "is removed again" not in result.output

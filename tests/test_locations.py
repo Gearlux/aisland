@@ -225,7 +225,7 @@ def test_setup_from_a_wheel_without_a_venv_says_how_to_make_one(
         manager.setup_workspace(non_interactive=True)
     assert refused.value.message == (
         f"Virtual environment not found at {tmp_path / '.venv'}. Create it and install aisland into it: "
-        "uv venv --seed .venv && .venv/bin/pip install <the aisland wheel>"
+        "uv venv --seed .venv && .venv/bin/pip install aisland"
     )
 
 

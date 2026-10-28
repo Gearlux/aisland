@@ -300,16 +300,6 @@ class BaseService:
         click.echo(f"{self.name.capitalize()} data reset.")
 
 
-def get_git_email() -> str:
-    """Get the git user email from the current project."""
-    try:
-        # Use workspace root to ensure we get the project's git config
-        root = get_workspace_root()
-        return subprocess.check_output(["git", "-C", str(root), "config", "user.email"], text=True).strip()
-    except (subprocess.CalledProcessError, FileNotFoundError):
-        return "gearlux@gearlux.com"
-
-
 def get_workspace_root() -> Path:
     """The workspace root: found from the package's location in a checkout, from where aisland runs when it comes
     from a wheel (:mod:`aisland.locations`, which holds the marker rule)."""
@@ -877,8 +867,8 @@ def _sync_mypy_path(workspace_root: Path, projects: List[dict]) -> None:
     the ``mypy_path`` search path (the run-mypy-from-workspace-root mandate),
     so setup keeps exactly that line complete. Append-only by design:
 
-    * entries are never removed — inactive submodules (e.g. ``vendorcli`` on a
-      non-corporate machine) stay listed, and mypy silently ignores path
+    * entries are never removed — inactive submodules (a private project on a
+      machine without its access) stay listed, and mypy silently ignores path
       entries that don't exist on this machine, so the committed file stays
       identical across machines instead of churning per activation set;
     * hand-added nested entries (``confluid/confluid``, ``aisland/aisland``)
@@ -986,7 +976,7 @@ def _with_workspace_env(workspace_root: Path, servers: Dict[str, dict]) -> Dict[
     """Each server started through bash sourcing ``<workspace>/project.bashrc`` first.
 
     A client starts a server with ITS OWN environment, never the workspace's ``.env`` (measured
-    2026-10-21: the desktop app's vendorcli-mcp ran with ``DATA_ROOT`` unset, so a download that names
+    2026-10-21: a desktop app's MCP server ran with ``DATA_ROOT`` unset, so a download that names
     no folder landed where the server happened to start). The shell init exports ``.env`` and sets
     ``PROJECT_ROOT`` the way a terminal gets them, so a server sees what a run from a shell sees;
     ``.env``'s values are never copied into the client file, which would put its secrets there.
@@ -1046,7 +1036,7 @@ def _no_venv(workspace_root: Path) -> click.ClickException:
         )
     return click.ClickException(
         f"Virtual environment not found at {workspace_root / '.venv'}. Create it and install aisland "
-        "into it: uv venv --seed .venv && .venv/bin/pip install <the aisland wheel>"
+        "into it: uv venv --seed .venv && .venv/bin/pip install aisland"
     )
 
 
@@ -1121,7 +1111,9 @@ def _loggair_log_dir(workspace_root: Path) -> Optional[Path]:
         click.echo("  - Note: loggair did not report its log folder within 60 s; no log folder listed.")
         return None
     if result.returncode != 0:
-        click.echo("  - Note: `python -m loggair --json` failed; no log folder listed.")
+        # A workspace without loggair has no log folder to list, and nothing to be told about a tool it never used.
+        if "No module named loggair" not in result.stderr:
+            click.echo("  - Note: `python -m loggair --json` failed; no log folder listed.")
         return None
     try:
         log_dir = json.loads(result.stdout).get("resolved", {}).get("log_dir")
@@ -1134,7 +1126,7 @@ def _loggair_log_dir(workspace_root: Path) -> Optional[Path]:
 
 
 #: The workspace the template is written for: its `${workspaceFolder:<name>}` references and terminal profile name.
-_TEMPLATE_WORKSPACE = "acme"
+_TEMPLATE_WORKSPACE = "WORKSPACE"
 #: The key of this platform's terminal profiles in the template.
 _PROFILE_PLATFORMS = {"Darwin": "osx", "Linux": "linux"}
 
@@ -1149,9 +1141,8 @@ def _terminal_shell(path: str) -> str:
 def _code_workspace_settings(name: str) -> Dict[str, Any]:
     """The template's settings and extensions for the workspace ``name`` on this machine.
 
-    The template is written for `acme`: every `${workspaceFolder:acme}` and the `acme-bash` profile name
-    become the workspace's own name, so they resolve in a workspace with another name (in `acme` the text is
-    unchanged). This platform's terminal profiles keep their shell when the machine has it and take the bash on
+    The template names the workspace `WORKSPACE`: every `${workspaceFolder:WORKSPACE}` and the `WORKSPACE-bash`
+    profile name become the workspace's own name, so they resolve in a workspace of any name. This platform's terminal profiles keep their shell when the machine has it and take the bash on
     PATH when it does not; the other platform's profiles are left as written.
     """
     text = CODE_WORKSPACE_TEMPLATE.read_text()
@@ -1394,7 +1385,7 @@ def _write_root_uv_toml(workspace_root: Path, activated: List[dict]) -> None:
     """Generate ``<workspace>/uv.toml`` = workspace base merged with each activated project's uv.toml.
 
     Gitignored + regenerated on every setup (like ``pyrightconfig.json`` / ``.gemini/settings.json``)
-    so a private index (e.g. vendorcli's Company Artifactory URLs) is present ONLY when that project
+    so a private index (a company's artifact repository) is present ONLY when that project
     is activated — never committed, so a machine that doesn't activate it never stalls on the index.
     """
     import tomllib
@@ -1533,7 +1524,7 @@ def setup_workspace(non_interactive: bool = False, install_all: bool = False) ->
             click.echo(f"==> {axis.name}: {', '.join(selected)}")
 
     # 2c. Generated root uv.toml — workspace base merged with each activated project's uv.toml,
-    #     so a private index (e.g. vendorcli's Company Artifactory URLs) is present ONLY when that
+    #     so a private index (a company's artifact repository) is present ONLY when that
     #     project is active. Written BEFORE the install loop so `uv pip install` sees the index.
     _write_root_uv_toml(workspace_root, install_order)
 
@@ -1571,8 +1562,8 @@ def setup_workspace(non_interactive: bool = False, install_all: bool = False) ->
                     f"  - Error: Failed to install Playwright's {PLAYWRIGHT_BROWSER} for {project['name']}: {e}"
                 )
 
-    # 4. MCP client config — register every workspace MCP server (navigaitor,
-    #    vendorcli, annotaide, …) for the Gemini CLI AND for Claude Code, with
+    # 4. MCP client config — register every workspace MCP server (every
+    #    `<pkg>.server:main` script) for the Gemini CLI AND for Claude Code, with
     #    locally-resolved absolute venv paths. Written after the editable installs
     #    so the console scripts exist.
     _write_gemini_settings(workspace_root, venv_bin)

@@ -149,17 +149,13 @@ def test_read_workspace_env_parses_and_skips_noise(tmp_path: Path) -> None:
         "# comment\n"
         "\n"
         "LABELSTUDIO_TOKEN=abc123\n"
-        "SPACED_KEY = spaced value\n"
+        "SPACED_KEY = spaced value\n"  # bash runs a command named SPACED_KEY: no assignment
         "malformed-line-without-equals\n"
         "DATA_ROOT=/data/gert\n"
     )
     with patch("aisland.supervisor._workspace_root", return_value=tmp_path):
         values = supervisor.read_workspace_env()
-    assert values == {
-        "LABELSTUDIO_TOKEN": "abc123",
-        "SPACED_KEY": "spaced value",
-        "DATA_ROOT": "/data/gert",
-    }
+    assert values == {"LABELSTUDIO_TOKEN": "abc123", "DATA_ROOT": "/data/gert"}
 
 
 def test_read_workspace_env_missing_file(tmp_path: Path) -> None:

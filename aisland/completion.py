@@ -9,12 +9,13 @@ makes it a one-second command, and puts it where aisland's own tests can reach i
 
 **Three families, because the workspace has three kinds of CLI:**
 
-* **liquifai apps** (``recordstream``, ``matrainer``, ``sonair``, ``annotaide``, …) declare
+* **liquifai apps** declare
   themselves in the ``liquifai.apps`` entry-point group. :func:`liquifai.completion.install_for_apps`
   discovers and installs them — called in-process, not through the
   ``liquifai-install-completions`` console script, so a missing PATH entry cannot silently
   skip the whole family.
-* **click apps** (``aisland``, ``hydraide``) ship their own ``_<PROG>_COMPLETE`` protocol.
+* **click apps** ship their own ``_<PROG>_COMPLETE`` protocol: ``aisland``, and every script a workspace project
+  declares a click command (``[tool.aisland] click-commands``, :func:`workspace_click_clis`).
 * **argparse apps** use argcomplete's ``register-python-argcomplete``. No workspace CLI is in
   this family today (``streamstudio`` moved to liquifai on 2026-08-26); the rendering stays
   because the next third-party argparse CLI needs it.
@@ -67,15 +68,23 @@ class NonLiquifaiCli(NamedTuple):
     kind: CliKind
 
 
-#: DATA, not behaviour — a new non-liquifai CLI is one row here. Kept a plain table for the
-#: same reason sonair's backend table is: the per-kind rendering differs in one string.
-NON_LIQUIFAI_CLIS: Tuple[NonLiquifaiCli, ...] = (
-    NonLiquifaiCli("aisland", "click"),
-    NonLiquifaiCli("hydraide", "click"),  # confluid's preprocessor command (confluid[cli]) — 2026-08-17
-    # streamstudio was here as "argcomplete" until 2026-08-26, when its CLI became a liquifai app
-    # (`[project.entry-points."liquifai.apps"] streamstudio = "streamstudio.cli:app"`). It is now
-    # discovered with the rest of that family — a row here would register a SECOND, dead block.
-)
+#: aisland's own CLI, always. A workspace project's click CLI is found from what the project declares
+#: (:func:`workspace_click_clis`), never named here; an argcomplete CLI has no declaration yet, so the next one is a
+#: row of this table.
+NON_LIQUIFAI_CLIS: Tuple[NonLiquifaiCli, ...] = (NonLiquifaiCli("aisland", "click"),)
+
+
+def workspace_click_clis(root: Optional[Path] = None) -> List[NonLiquifaiCli]:
+    """The click CLIs the workspace's projects declare (``[tool.aisland] click-commands``, read by
+    :mod:`aisland.discovery` without importing anything). A workspace whose declarations aisland cannot use (a
+    :class:`~aisland.discovery.DeclarationError`) completes none: every command that reads them says why."""
+    from aisland import discovery
+
+    try:
+        found = discovery.discover(root or get_workspace_root())
+    except discovery.DeclarationError:
+        return []
+    return [NonLiquifaiCli(prog, "click") for prog in found.click_commands]
 
 
 class CompletionReport(NamedTuple):
@@ -139,8 +148,8 @@ def _argcomplete_block(prog: str, shell: str) -> List[str]:
     return [f'eval "$(register-python-argcomplete --shell {shell} {prog} 2>/dev/null)" || true']
 
 
-def _render_non_liquifai(shell: str) -> Tuple[str, List[str]]:
-    """The whole non-liquifai block, plus the programs it covers."""
+def _render_non_liquifai(shell: str, discovered: Sequence[NonLiquifaiCli] = ()) -> Tuple[str, List[str]]:
+    """The whole non-liquifai block — aisland's own and the ``discovered`` ones — plus the programs it covers."""
     lines = [
         _NON_LIQUIFAI_START,
         "# AUTO-GENERATED — DO NOT EDIT BY HAND.",
@@ -158,7 +167,7 @@ def _render_non_liquifai(shell: str) -> Tuple[str, List[str]]:
         _INTERACTIVE_ONLY,
     ]
     covered: List[str] = []
-    for cli in NON_LIQUIFAI_CLIS:
+    for cli in (*NON_LIQUIFAI_CLIS, *discovered):
         if not _program_exists(cli.prog):
             continue
         body = _click_block(cli.prog, shell) if cli.kind == "click" else _argcomplete_block(cli.prog, shell)
@@ -238,7 +247,10 @@ def install_completions(
 
     pruned = _prune_stale(rc) if (prune and installed) else []
 
-    block, covered = _render_non_liquifai(shell)
+    # A liquifai app keeps its own block, and aisland's own row is already there: neither gets a second one.
+    taken = {*installed, *(cli.prog for cli in NON_LIQUIFAI_CLIS)}
+    discovered = [cli for cli in workspace_click_clis() if cli.prog not in taken]
+    block, covered = _render_non_liquifai(shell, discovered)
     text = _strip_block(rc.read_text() if rc.exists() else "", _NON_LIQUIFAI_START, _NON_LIQUIFAI_END)
     if text and not text.endswith("\n"):
         text += "\n"

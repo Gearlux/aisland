@@ -38,3 +38,20 @@ def test_no_file_of_aisland_names_bridge_or_signals() -> None:
             if FORBIDDEN.search(line):
                 hits.append(f"{path.relative_to(PROJECT)}:{number}: {line.strip()}")
     assert not hits, "aisland names bridge or signals — use a general acme project instead:\n" + "\n".join(hits)
+
+
+#: The private project, the platform and the company names the published package must not carry (root `AGENTS.md`:
+#: "The private and company names no project's user docs carry"), and the address a fallback once hard-coded.
+PRIVATE = re.compile(r"company|vendorcli|platform|gearlux@", re.IGNORECASE)
+
+
+def test_no_file_of_the_package_names_a_private_project_or_a_company() -> None:
+    """What the wheel ships — code, comments, help, templates — goes to PyPI, read by anyone."""
+    hits = [
+        f"{path.relative_to(PROJECT)}:{number}: {line.strip()}"
+        for path in _project_files()
+        if path.relative_to(PROJECT).parts[0] == "aisland"
+        for number, line in enumerate(path.read_text(encoding="utf-8", errors="ignore").splitlines(), start=1)
+        if PRIVATE.search(line)
+    ]
+    assert not hits, "the published package names a private project or a company:\n" + "\n".join(hits)

@@ -354,3 +354,42 @@ def test_reset_help_is_the_classs_own_question(workspace: Path) -> None:
 
 def test_without_a_question_reset_help_says_it_wipes_the_data(workspace: Path) -> None:
     assert "Stop it and wipe its data." in _run("acme-db", "reset", "--help").output
+
+
+# --- what a listing costs -------------------------------------------------------------------------------------------
+
+
+def test_one_help_finds_the_projects_services_once(workspace: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """`aisland --help` lists every group and asks each for its short help: the services the projects bring are
+    worked out ONCE for the run, not once per group (it took 2.4 s with six such services)."""
+    calls: List[Path] = []
+    declared = registry.declared
+
+    def counting(root: Path, reserved: Any = ()) -> List[registry.Entry]:
+        calls.append(root)
+        return declared(root, reserved)
+
+    monkeypatch.setattr(registry, "declared", counting)
+    result = _run("--help")
+    assert result.exit_code == 0, result.output
+    assert "Manage acme-db, a service acme brings." in " ".join(result.output.split())
+    assert len(calls) == 1
+
+
+def test_loading_reads_the_installed_entry_points_once(workspace: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Each scan of the installed distributions reads every one's metadata; one scan serves every plugin."""
+    from aisland import discovery
+
+    scans: List[Dict[str, Any]] = []
+    real = discovery.importlib.metadata.entry_points
+
+    def counting(**params: Any) -> Any:
+        scans.append(params)
+        return real(**params)
+
+    monkeypatch.setattr(discovery.importlib.metadata, "entry_points", counting)
+    found = discovery.discover(workspace)
+    found.plugins["acme-db-copy"] = found.plugins["acme-db"]  # a second plugin of the same project
+    loaded = discovery.load(found)
+    assert {name: item.state for name, item in loaded.items()} == {"acme-db": "installed", "acme-db-copy": "installed"}
+    assert len(scans) == 1
