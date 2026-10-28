@@ -990,7 +990,8 @@ User choice 2026-10-08: an aisland command, only the named project's closure, bo
     fetched nor merged, each submodule is pulled on ITS OWN branch, and what came in is still recorded;
     `push-all` (both forms) skips that root and says so. With an origin, a submodule off the root's
     branch stays listed, never pulled — unless it is on a `dev/<name>` branch of its own, which is merged with
-    `origin/dev/<name>` and never recorded in the root (user request 2026-10-28;
+    `origin/dev/<name>` and never recorded in the root (user request 2026-10-28; unrecorded is a user ruling of the
+    same day, do not re-litigate — recording it would point the root's branch at work only that `dev/<name>` holds;
     `::test_a_submodule_on_its_own_dev_branch_is_pulled_on_it_and_its_pointer_left`,
     `::test_a_root_without_origin_pulls_each_submodule_on_its_own_branch`,
     `::test_the_push_all_alias_pushes_the_submodules_of_a_root_without_origin`,
