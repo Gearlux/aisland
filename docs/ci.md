@@ -51,6 +51,12 @@ A runner installs an internal dependency by asking one question — **is it rele
 | `Jenkinsfile.local` | your machine, against the workspace | **it doesn't** — it tests the `.venv` that `aisland setup` provisioned, exactly as it is |
 | `Jenkinsfile`, `ci.yml` | a runner, no workspace | **released** → no install line; `.[dev]` resolves the release from PyPI. **Not released** → `git+https://github.com/<owner>/<dep>.git@main`, the repository its remote names |
 
+**A project that does not live on GitHub** (its remote is another server, such as a company's Bitbucket) never
+names a GitHub project in its CI files. Its unreleased dependencies come from the wheels it commits, through the
+extra `aisland wheels build <project> --extra wheels --commit` writes ([wheels](wheels.md)): the scaffold adds that
+extra to the install line, and refuses — naming the dependencies and that command — when a dependency has no wheel
+there.
+
 "Released" means PyPI holds a **final** version (not only a pre-release such as `0.1.0a1`, not
 only yanked files) whose metadata points at `github.com/<owner>/…`, the GitHub owner of the dependency's own
 remote — a stranger's package under the same name does not count, and a project whose remote is not on GitHub

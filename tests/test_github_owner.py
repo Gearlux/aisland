@@ -213,6 +213,69 @@ def test_a_project_off_github_is_never_installed_from_github(acme: Path, pypi: D
     assert "tools.git" not in _ci(acme, "app")["ci.yml"]
 
 
+def _wheels_extra(root: Path, project: str, deps: list[str], covered: list[str]) -> None:
+    """``project``'s pyproject with the block `aisland wheels build --extra wheels` writes, covering ``covered``."""
+    from aisland.wheels_extra import BEGIN, END
+
+    listed = ", ".join(f'"{d}"' for d in deps)
+    wheels = ", ".join(f'"{d}"' for d in covered)
+    (root / project / "pyproject.toml").write_text(
+        f'[project]\nname = "{project}"\nversion = "0.0.0"\ndependencies = [{listed}]\n\n'
+        f"[project.optional-dependencies]\n{BEGIN}: the `wheels` extra\nwheels = [{wheels}]\n{END}\n\n"
+        '[tool.aisland]\nmanual-extras = ["wheels"]\n'
+    )
+
+
+def test_a_project_off_github_installs_its_unreleased_dependencies_from_its_wheels_extra(
+    acme: Path, pypi: Dict[str, Any]
+) -> None:
+    """A project that does not live on GitHub never names one in its CI files (a company's repository must not
+    reveal the workspace it is developed in): its unreleased dependencies come from the wheels it commits."""
+    _wheels_extra(acme, "tools", ["lib>=0.0.0"], ["lib"])
+    JenkinsService().scaffold_pipelines(project_name="tools", force=True)
+    files = _ci(acme, "tools")
+    for name, text in files.items():
+        assert "github.com" not in text and "acme" not in text, name
+    assert 'uv pip install --system -e ".[dev,wheels]"' in files["ci.yml"]
+    assert 'uv pip install -e .[dev,wheels]"' in files["Jenkinsfile"]
+
+
+def test_a_project_off_github_without_wheels_for_an_unreleased_dependency_is_refused_and_writes_nothing(
+    acme: Path, pypi: Dict[str, Any]
+) -> None:
+    _project(acme, "tools", ["lib>=0.0.0"])
+    with pytest.raises(click.ClickException) as refused:
+        JenkinsService().scaffold_pipelines(project_name="tools", force=True)
+    assert refused.value.message == (
+        "tools does not live on GitHub, so its CI files never name a project that does, and lib is not released on "
+        "PyPI. Ship it as wheels with the project — aisland wheels build tools --extra wheels --commit (the extra listed "
+        "in [tool.aisland] manual-extras) — then scaffold again."
+    )
+    assert not (acme / "tools" / "Jenkinsfile").exists()
+
+
+def test_a_wheels_extra_missing_an_unreleased_dependency_is_refused_naming_it(acme: Path, pypi: Dict[str, Any]) -> None:
+    _project(acme, "util", [])
+    from aisland import manager
+
+    (acme / ".gitmodules").write_text(
+        (acme / ".gitmodules").read_text() + '[submodule "util"]\n\tpath = util\n\turl = git@github.com:acme/util.git\n'
+    )
+    _wheels_extra(acme, "tools", ["lib>=0.0.0", "util>=0.0.0"], ["lib"])
+    with pytest.raises(click.ClickException, match="and util is not released on PyPI"):
+        JenkinsService().scaffold_pipelines(project_name="tools", force=True)
+    assert manager.get_workspace_root() == acme
+
+
+def test_a_project_off_github_needing_only_released_dependencies_needs_no_wheels(
+    acme: Path, pypi: Dict[str, Any]
+) -> None:
+    pypi["lib"] = _release("https://github.com/acme/lib")
+    _project(acme, "tools", ["lib>=0.0.0"])
+    JenkinsService().scaffold_pipelines(project_name="tools", force=True)
+    assert "github.com" not in _ci(acme, "tools")["ci.yml"]
+
+
 def test_the_private_check_asks_github_about_the_owners_repository(monkeypatch: pytest.MonkeyPatch) -> None:
     import subprocess
 

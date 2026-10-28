@@ -8,10 +8,11 @@ import tomllib
 import urllib.request
 import xml.etree.ElementTree as ET
 from pathlib import Path
-from typing import Any, Dict, List, Mapping, Optional, cast
+from typing import Any, Dict, List, Mapping, Optional, Sequence, cast
 
 import click
 from packaging.requirements import InvalidRequirement, Requirement
+from packaging.utils import canonicalize_name
 
 from aisland import failures, provision, supervisor
 from aisland.manager import BIN_DIR, BaseService, _install_brew_packages, get_workspace_root
@@ -148,6 +149,34 @@ def discover_github_projects(workspace_root: Path) -> Dict[str, GitHubRepository
         if name:
             projects[name] = repository
     return dict(sorted(projects.items()))
+
+
+def _unreleased_from_wheels(project_name: str, pyproject_path: Path, unreleased: Sequence[str]) -> str:
+    """The extra whose wheels hold every one of ``unreleased`` for a project off GitHub, which its CI installs instead
+    of naming GitHub; refused, naming the ones no wheel holds and the command that ships them, before anything is
+    written."""
+    from aisland import wheels_extra
+
+    found = wheels_extra.remembered_extra(pyproject_path)
+    covered: set[str] = set()
+    if found is not None:
+        data = tomllib.loads(pyproject_path.read_text(encoding="utf-8"))
+        for spec in (data.get("project", {}).get("optional-dependencies", {}) or {}).get(found[0], []) or []:
+            try:
+                covered.add(canonicalize_name(Requirement(str(spec)).name))
+            except InvalidRequirement:
+                continue
+    missing = [dep for dep in unreleased if canonicalize_name(dep) not in covered]
+    if found is not None and not missing:
+        return found[0]
+    names = ", ".join(missing)
+    verb, them = ("is", "it") if len(missing) == 1 else ("are", "them")
+    extra = found[0] if found is not None else "wheels"
+    raise click.ClickException(
+        f"{project_name} does not live on GitHub, so its CI files never name a project that does, and {names} {verb} "
+        f"not released on PyPI. Ship {them} as wheels with the project — aisland wheels build {project_name} --extra "
+        f"{extra} --commit (the extra listed in [tool.aisland] manual-extras) — then scaffold again."
+    )
 
 
 @functools.lru_cache(maxsize=None)
@@ -1275,6 +1304,13 @@ pipeline {{
         # The deps a runner installs from GitHub — every unreleased one — and the owners they belong to, which the
         # generated comments and the token step name.
         from_github = [dep for dep in internal_deps if not _dep_is_released(dep)]
+        # A project that does not live on GitHub (a company's Bitbucket server) never names a project that does in its
+        # CI files: they would reveal the workspace it is developed in. Its unreleased dependencies come from the wheels
+        # it commits (`aisland wheels build --extra`), installed through that extra; without them it is refused.
+        if from_github and project_name not in project_repositories(workspace_root):
+            wheels_extra_name = _unreleased_from_wheels(project_name, pyproject_path, from_github)
+            ci_extras = ",".join(dict.fromkeys(ci_extras.split(",") + [wheels_extra_name]))
+            from_github = []
         owners = ", ".join(sorted({github_projects[dep].owner for dep in from_github}))
 
         pip_install_cmds = []

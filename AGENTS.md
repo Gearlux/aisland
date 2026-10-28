@@ -721,6 +721,15 @@ A bare `::` pin in this section is in `tests/test_jenkins_scaffold.py`.
   (`ReleaseProbeError`). Tests stub PyPI with the autouse `released_packages` fixture.
   (`tests/test_sources.py`: `TestScaffoldAsksPypiNotTheSource`, `TestSourceChangesRewriteNoCI`,
   `TestReleasedOnPypi`) [sources]
+- **A project that does not live on GitHub never names one in its CI files (user request 2026-10-28; a company's
+  repository must not reveal the workspace it is developed in).** For a project whose folder is not in
+  `sources.project_repositories` (its remote is off github.com), the unreleased dependencies are never git-URL lines:
+  they come from the wheels it commits, through the extra `aisland wheels build --extra` writes
+  (`wheels_extra.remembered_extra`), added to the install line; a dependency no wheel of that extra holds — or no
+  such extra — refuses the scaffold, naming the dependencies and `aisland wheels build <project> --extra <name>
+  --commit`, before any file is written (`jenkins._unreleased_from_wheels`). A released dependency needs nothing.
+  (`tests/test_github_owner.py::test_a_project_off_github_installs_its_unreleased_dependencies_from_its_wheels_extra`
+  and its neighbours)
 - **`Jenkinsfile.local` installs nothing (user instruction 2026-09-13).** `Initialize` only
   checks, with `python3 -P`, that the project's DISTRIBUTION records this checkout, else
   stops naming `aisland setup`. A new dependency fails until `aisland setup`; never add an
