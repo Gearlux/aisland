@@ -27,11 +27,10 @@ the report names the missing import line instead.
 import hashlib
 import json
 import os
-import subprocess
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple
 
-from aisland import locations
+from aisland import git_exclude, locations
 
 #: aisland's harness, in the package (a wheel carries it: ``[tool.setuptools.package-data]``).
 HARNESS_DIR = locations.PACKAGE_DIR / "harness"
@@ -182,30 +181,6 @@ def _project_folders(root: Path) -> List[Path]:
     )
 
 
-def _exclude_in_its_repository(path: Path) -> None:
-    """Keep ``path`` out of git in the repository that holds it, through that repository's ``.git/info/exclude``: the
-    link is per machine, and a line in each project's tracked ``.gitignore`` would change every project."""
-    top = subprocess.run(
-        ["git", "-C", str(path.parent), "rev-parse", "--show-toplevel"], capture_output=True, text=True
-    ).stdout.strip()
-    exclude = subprocess.run(
-        ["git", "-C", str(path.parent), "rev-parse", "--path-format=absolute", "--git-path", "info/exclude"],
-        capture_output=True,
-        text=True,
-    ).stdout.strip()
-    if not top or not exclude:
-        return  # in no repository: nothing could commit it
-    # The parent resolved, never the link itself: resolving `.claude/commands` would follow it to the workflows.
-    line = "/" + (path.parent.resolve() / path.name).relative_to(Path(top).resolve()).as_posix()
-    target = Path(exclude)
-    content = target.read_text() if target.is_file() else ""
-    if line in (entry.strip() for entry in content.splitlines()):
-        return
-    target.parent.mkdir(parents=True, exist_ok=True)
-    sep = "" if (not content or content.endswith("\n")) else "\n"
-    target.write_text(content + sep + line + "\n")
-
-
 def _workspace_agents_md(root: Path) -> Optional[str]:
     """Write ``AGENTS.md`` (and ``CLAUDE.md`` / ``GEMINI.md`` linking to it) when there is none; name a missing import
     line in an existing one, never editing it."""
@@ -262,6 +237,6 @@ def install_harness(root: Path, link: Optional[bool] = None) -> List[str]:
         if line:
             report.append(line)
         elif (project / ".claude" / "commands").is_symlink():
-            _exclude_in_its_repository(project / ".claude" / "commands")
+            git_exclude.exclude(project / ".claude", ["commands"])
     _ignore(root, [name for _source, name in shipped] + [RECORD])
     return report

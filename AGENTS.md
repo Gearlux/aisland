@@ -227,7 +227,10 @@ start-time port pre-flight naming the PID is the only signal). All service state
   `init --from`, `setup`), `[workspace]`, then a `[project."<name>"]` per project — `path` (its folder; the name when
   left out), `url`, `branch`; other keys of a project (later steps' settings) are kept as written. `aisland setup`
   keeps it current (`refresh`, from `.gitmodules` or the clones): a new project added, a changed url or path followed,
-  a gone project dropped, a branch written once KEPT (only a project without one gets `.gitmodules`' branch); a project
+  a project the workspace lacks KEPT when it has a url — setup's activation step clones it, so writing a row is a way
+  to add a project and removing one means deleting its row too (user choice 2026-10-28, release review 3a;
+  `tests/test_activation.py::test_setup_clones_a_project_written_into_the_file_by_hand`) — dropped otherwise, a
+  branch written once KEPT (only a project without one gets `.gitmodules`' branch); a project
   is matched by its path first, so a hand-written name survives; nothing changed, the file is not touched. `init
   --from` clones each project into its path on its branch and copies the file in; there is no `export`. A link in the
   workspace folder is written as the project's `path` (user ruling 2026-10-21: links come back as direct checkouts).
@@ -452,7 +455,9 @@ Root `AGENTS.md` "Two Test Runs" (user ruling 2026-10-05). [test-stats]
 ## Generated and committed workspace files
 
 - Generated, gitignored, rewritten from discovery (never a hand list): root and per-project
-  `pyrightconfig.json` (relative paths; each project's `.gitignore` gains the entry),
+  `pyrightconfig.json` (relative paths; kept out of git with the editable install's `**/*.egg-info/` through the
+  project's own `.git/info/exclude`, never a `.gitignore` — setup leaves every project's `git status` as it was,
+  user choice 2026-10-28, `git_exclude.py`, `tests/test_setup_leaves_projects_clean.py`),
   `project.bashrc`, `.gemini/settings.json`, `.mcp.json`, root `uv.toml`,
   `<workspace>.code-workspace`, and `.project.bashrc.completion` (`aisland completion
   install`). Never commit editor

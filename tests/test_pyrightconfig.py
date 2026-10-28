@@ -10,7 +10,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-from aisland.manager import _ensure_gitignore_line, _write_pyrightconfig
+from aisland.manager import _write_pyrightconfig
 
 
 def _fake_projects(workspace: Path, names: list[str]) -> list[dict]:
@@ -123,33 +123,3 @@ class TestWritePerProjectPyrightConfig:
 
         data = json.loads((tmp_path / "confluid" / "pyrightconfig.json").read_text())
         assert data["extraPaths"] == []
-
-    def test_gitignore_gains_artifact_entry(self, tmp_path: Path) -> None:
-        _write_pyrightconfig(tmp_path, _fake_projects(tmp_path, ["confluid"]))
-        assert "/pyrightconfig.json" in (tmp_path / "confluid" / ".gitignore").read_text().splitlines()
-
-
-class TestEnsureGitignoreLine:
-    def test_creates_missing_gitignore(self, tmp_path: Path) -> None:
-        _ensure_gitignore_line(tmp_path, "/pyrightconfig.json")
-        assert (tmp_path / ".gitignore").read_text() == "/pyrightconfig.json\n"
-
-    def test_appends_preserving_existing_content(self, tmp_path: Path) -> None:
-        (tmp_path / ".gitignore").write_text("*.pyc\n")
-        _ensure_gitignore_line(tmp_path, "/pyrightconfig.json")
-        assert (tmp_path / ".gitignore").read_text() == "*.pyc\n/pyrightconfig.json\n"
-
-    def test_appends_newline_separator_when_missing(self, tmp_path: Path) -> None:
-        (tmp_path / ".gitignore").write_text("*.pyc")
-        _ensure_gitignore_line(tmp_path, "/pyrightconfig.json")
-        assert (tmp_path / ".gitignore").read_text() == "*.pyc\n/pyrightconfig.json\n"
-
-    def test_idempotent_exact_match(self, tmp_path: Path) -> None:
-        (tmp_path / ".gitignore").write_text("/pyrightconfig.json\n")
-        _ensure_gitignore_line(tmp_path, "/pyrightconfig.json")
-        assert (tmp_path / ".gitignore").read_text() == "/pyrightconfig.json\n"
-
-    def test_idempotent_unanchored_variant_counts_as_covered(self, tmp_path: Path) -> None:
-        (tmp_path / ".gitignore").write_text("pyrightconfig.json\n")
-        _ensure_gitignore_line(tmp_path, "/pyrightconfig.json")
-        assert (tmp_path / ".gitignore").read_text() == "pyrightconfig.json\n"

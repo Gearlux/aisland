@@ -13,7 +13,7 @@ from typing import Any, Dict, List, Optional, Tuple
 import click
 from packaging.requirements import InvalidRequirement, Requirement
 
-from aisland import editor, failures, locations, supervisor
+from aisland import editor, failures, git_exclude, locations, supervisor
 from aisland.harness import install_harness
 
 # Path Configuration (relative to the file itself)
@@ -807,28 +807,6 @@ _PYRIGHT_EXCLUDE = [
 ]
 
 
-def _ensure_gitignore_line(project_dir: Path, line: str) -> None:
-    """Append ``line`` to the project's ``.gitignore`` unless already covered (append-only, idempotent).
-
-    A generator that drops an artifact into a COMMITTED repo must also keep that
-    artifact out of git — otherwise every setup dirties the tree (the same
-    reasoning as the root ``.gitignore`` entries for ``pyrightconfig.json`` /
-    ``uv.toml``). Append-only like ``_sync_mypy_path``: existing entries are
-    never touched, and an entry with or without the leading ``/`` counts as
-    already covering the artifact.
-    """
-    gitignore = project_dir / ".gitignore"
-    covered = {line, line.lstrip("/")}
-    if gitignore.exists():
-        content = gitignore.read_text()
-        if any(entry.strip() in covered for entry in content.splitlines()):
-            return
-        sep = "" if (not content or content.endswith("\n")) else "\n"
-        gitignore.write_text(content + sep + line + "\n")
-    else:
-        gitignore.write_text(line + "\n")
-
-
 def _write_pyrightconfig(workspace_root: Path, projects: List[dict]) -> None:
     """Generate ``pyrightconfig.json`` at the workspace root AND inside every project.
 
@@ -855,13 +833,13 @@ def _write_pyrightconfig(workspace_root: Path, projects: List[dict]) -> None:
     Portability: every path is RELATIVE to the file that carries it — no
     hardcoded absolute path, satisfying the workspace No-Hardcoded-Paths
     mandate. All copies are generated artifacts (gitignored — the root via the
-    root ``.gitignore``, each project via ``_ensure_gitignore_line``) and are
+    root ``.gitignore``, each project via its ``.git/info/exclude``) and are
     rewritten on every ``aisland setup`` so they always track the live project
     set.
 
     Plain JSON (no comments): ``pyrightconfig.json`` is consumed by an external
     tool whose comment tolerance we don't control, so provenance is carried by
-    the ``.gitignore`` entry + this function rather than an in-file header.
+    the exclude entry + this function rather than an in-file header.
     """
     extra_paths = sorted(os.path.relpath(p["path"], workspace_root) for p in projects)
     config = {
@@ -884,7 +862,9 @@ def _write_pyrightconfig(workspace_root: Path, projects: List[dict]) -> None:
             "exclude": list(_PYRIGHT_EXCLUDE),
         }
         (project_dir / "pyrightconfig.json").write_text(json.dumps(project_config, indent=4) + "\n")
-        _ensure_gitignore_line(project_dir, "/pyrightconfig.json")
+        # Kept out of git with the editable install's metadata, in the project's own `.git/info/exclude`: a
+        # `.gitignore` line would be a file to commit in every project (aisland.git_exclude).
+        git_exclude.exclude(project_dir, ["pyrightconfig.json", "**/*.egg-info/"])
     click.echo(f"==> Wrote per-project pyrightconfig.json into {len(projects)} project dir(s)")
 
 

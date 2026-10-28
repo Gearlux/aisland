@@ -209,8 +209,8 @@ imports nothing of aisland. A name the code builds at run time is not seen: list
 ### The same workspace on another machine: `workspace.toml`
 
 Every workspace keeps one committed file of its projects, `workspace.toml`, shaped like `.gitmodules`.
-`aisland setup` keeps it current — a new submodule is added, a changed url or folder followed, a project
-that is gone dropped — and its first lines say how to start on a machine that has no aisland yet:
+`aisland setup` keeps it current — a new submodule is added, a changed url or folder followed — and its first lines
+say how to start on a machine that has no aisland yet:
 
 ```toml
 # workspace.toml — the acme workspace: its projects and its choices, committed.
@@ -240,6 +240,23 @@ branch it is cloned on (without one, the repository's default branch). A branch 
 kept: setup only writes one for a project that has none. A link in the workspace folder to a project
 (`ml -> machine_learning`) is written as its `path`, so a workspace that uses links comes back with
 direct checkouts.
+
+**Add a project by writing it in.** A project the file lists with a `url` that the workspace does not have yet is
+cloned by the next `aisland setup`, as a submodule on its `branch`:
+
+```text
+$ cat >> workspace.toml
+[project."lib"]
+url = "git@github.com:acme/lib.git"
+branch = "main"
+$ .venv/bin/aisland setup
+  - workspace.toml: lib is not in the workspace yet; setup adds it
+  ...
+  - add lib (active)
+```
+
+So removing a project means removing its section too: a submodule removed with `git rm` while its section stays is
+cloned back by the next setup.
 
 Take the file to the new machine and follow its three steps in the folder that will hold the workspace.
 `init --from` clones each project as a submodule into its `path` on its `branch`, before any `--add`, and

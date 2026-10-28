@@ -263,8 +263,9 @@ def test_a_url_changed_in_gitmodules_is_followed_and_said(tmp_path: Path) -> Non
 
 
 def test_a_project_no_longer_in_the_workspace_is_dropped_and_said(tmp_path: Path) -> None:
+    """Only when nothing could bring it back: with a url, setup adds it instead (`tests/test_activation.py`)."""
     root = _superproject(tmp_path, ("models", _remote(tmp_path, "models"), None))
-    _file(root, '[project."old"]\nurl = "x"\n')
+    _file(root, '[project."old"]\npath = "old"\n')
     assert workspace_file.refresh(root) == [
         "workspace.toml: dropped old (no longer in the workspace)",
         "workspace.toml: added models",

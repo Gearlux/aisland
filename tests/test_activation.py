@@ -279,10 +279,40 @@ def test_init_from_clones_only_the_projects_without_an_active_key(tmp_path: Path
 
 
 def test_setup_keeps_an_optional_project_the_workspace_does_not_have_yet(ws: Path) -> None:
-    (ws / "workspace.toml").write_text((ws / "workspace.toml").read_text() + '\n[project."gone"]\nurl = "x"\n')
+    """`extra` (optional, not checked out) stays listed; a project with no url to clone from is dropped."""
+    (ws / "workspace.toml").write_text((ws / "workspace.toml").read_text() + '\n[project."gone"]\npath = "gone"\n')
     lines = workspace_file.refresh(ws)
     assert lines == ["workspace.toml: dropped gone (no longer in the workspace)"]
     assert list(workspace_file.load(ws).projects) == ["models", "tools", "extra"]
+
+
+def _write_lib(ws: Path, tmp_path: Path) -> None:
+    lib = _remote(tmp_path, "lib")
+    (ws / "workspace.toml").write_text(
+        (ws / "workspace.toml").read_text() + f'\n[project."lib"]\nurl = "{lib}"\nbranch = "main"\n'
+    )
+
+
+def test_a_project_written_into_the_file_by_hand_is_kept_for_setup_to_add(ws: Path, tmp_path: Path) -> None:
+    """The file is a way to add a project: a listed project with a url the workspace lacks is not gone (user choice
+    2026-10-28, release review 3a). To remove one, its row goes too."""
+    _write_lib(ws, tmp_path)
+    before = (ws / "workspace.toml").read_text()
+    assert workspace_file.refresh(ws) == ["workspace.toml: lib is not in the workspace yet; setup adds it"]
+    assert (ws / "workspace.toml").read_text() == before
+
+
+@pytest.mark.slow
+def test_setup_clones_a_project_written_into_the_file_by_hand(
+    ws: Path, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    _write_lib(ws, tmp_path)
+    workspace_file.refresh(ws)
+    assert activation.reconcile(ws) == []
+    assert "  - add lib (active)" in capsys.readouterr().out
+    assert (ws / "lib" / "pyproject.toml").is_file()
+    assert _git(ws, "config", "-f", ".gitmodules", "submodule.lib.branch") == "main"
+    assert workspace_file.refresh(ws) == []  # listed and present: nothing more to say
 
 
 @pytest.mark.parametrize("flag", ["--activate", "--deactivate"])

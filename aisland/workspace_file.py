@@ -361,8 +361,8 @@ def workspace_projects(root: Path) -> List[Found]:
 def refresh(root: Path) -> List[str]:
     """Bring ``<root>/workspace.toml`` in line with the projects the workspace holds; one line per change.
 
-    A new project is added with its path, url and branch; a changed url or path is followed; a project that is gone
-    is dropped. A branch already written is kept (``aisland workspace configure source`` changes it), and every other
+    A new project is added with its path, url and branch; a changed url or path is followed; a project the workspace
+    lacks stays when it has a url (setup's activation step clones it) and is dropped otherwise. A branch already written is kept (``aisland workspace configure source`` changes it), and every other
     setting of a project stays as written. A project of the file is matched by its folder first, so a name written by
     hand survives. Nothing changed: the file is not touched. Raises :class:`FileError` for a file aisland cannot use."""
     current = load(root)
@@ -374,13 +374,17 @@ def refresh(root: Path) -> List[str]:
         for project in current.projects.values()
         if project.path not in kept_paths and project.name not in {f.name for f in found}
     ]
-    # An optional project (an `active` key) the workspace does not have is not gone: it is not switched on here.
+    # An optional project (an `active` key) the workspace does not have is not gone: it is not switched on here. Nor is
+    # one with a url to clone from: the file is a way to add a project, and setup's activation step clones it (user
+    # choice 2026-10-28). Only a project the workspace lacks and nothing could bring back is dropped.
     optional = [project for project in gone if "active" in project.others]
+    to_add = [project for project in gone if project not in optional and project.url is not None]
     lines = [
         f"{FILE_NAME}: dropped {project.name} (no longer in the workspace)"
         for project in gone
-        if project not in optional
+        if project not in optional and project not in to_add
     ]
+    lines += [f"{FILE_NAME}: {project.name} is not in the workspace yet; setup adds it" for project in to_add]
     projects: Dict[str, Project] = {}
     for item in found:
         old = by_path.get(item.path) or current.projects.get(item.name)
@@ -397,7 +401,7 @@ def refresh(root: Path) -> List[str]:
             branch = item.branch
             lines.append(f"{FILE_NAME}: {old.name} branch {branch}")
         projects[old.name] = Project(old.name, item.path, item.url, branch, dict(old.others))
-    for project in optional:
+    for project in optional + to_add:
         projects[project.name] = project
     updated = WorkspaceFile(dict(current.settings), projects)
     if updated != current or (updated.projects and not (root / FILE_NAME).is_file()):

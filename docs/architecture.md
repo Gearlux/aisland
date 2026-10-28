@@ -2915,6 +2915,24 @@ workspace_file.refresh(Path("~/work/acme").expanduser())   # ['workspace.toml: a
 - The how-to comments (`workspace_file._header`) and the wording of `refresh`'s lines.
 - A new key of a project belongs to a plugin of the redesign, never to `workspace_file.py`.
 
+**Amendment (2026-10-28, release review): a row with a url is a project to add, and setup leaves projects clean.**
+Writing `[project."lib"]` with a url into the file and running setup dropped the row as "no longer in the workspace" —
+and with it the file, when that was its only row. The activation step already cloned any listed project the
+workspace lacked (the optional ones); `refresh` had removed this one before it got there. Now `refresh` keeps a listed
+project with a url the workspace lacks, saying `lib is not in the workspace yet; setup adds it`, and only a row
+nothing could clone is dropped. The cost, accepted by the user: a project leaves the workspace only when its row
+goes too (a `git rm` alone is undone by the next setup). In the same review, setup stopped dirtying the projects it
+sets up: it created a `.gitignore` in each one for its `pyrightconfig.json`, and the editable install left
+`<name>.egg-info/` — two untracked entries that made `aisland wheels build` refuse every project needing it. Both are
+now lines in the project's own `.git/info/exclude` (`git_exclude.exclude`, which the agent harness already used for
+its link): per machine, never committed, and no project file is created or edited. A `/pyrightconfig.json` line a
+project already committed stays; it is the project's.
+
+```python
+git_exclude.exclude(project_dir, ["pyrightconfig.json", "**/*.egg-info/"])
+# <project>/.git/info/exclude gains:  /pyrightconfig.json   /**/*.egg-info/
+```
+
 ---
 
 ## `aisland workspace configure`: one set of commands built from each plugin's keys; `source` the first
