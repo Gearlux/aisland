@@ -9,7 +9,7 @@ allowed-tools: [Bash(git add:*), Bash(git commit:*), Bash(git status:*), Bash(gi
 
 When the user invokes the `/commit-all` command (or requests to commit all changes):
 
-0a. **Branch check, before anything is staged** (aisland rules → "Everything Goes To `dev/main` — Never Create A Branch"): for the root and every repository with uncommitted changes, `git -C <repo> branch --show-current`. Any that prints something other than `dev/main` — another branch, or nothing (a detached HEAD) — → stage and commit NOTHING anywhere; report each such repository with its branch to the user and stop.
+0a. **Branch check, before anything is staged** (aisland rules → "Commits Go To A `dev/*` Branch — Never Create A Branch"): for the root and every repository with uncommitted changes, `git -C <repo> branch --show-current`. Each may be on any `dev/*` branch (`dev/main`, `dev/<name>`), and each commit goes to the branch its repository is on. Any that prints something outside `dev/*` — `main`, another branch, or nothing (a detached HEAD) — → stage and commit NOTHING anywhere; report each such repository with its branch to the user and stop.
 
 0b. **Files someone else already staged, before anything is staged:** for the root and every submodule, `git -C <repo> diff --cached --name-only`. `/commit-all` has staged nothing yet, so anything listed was staged by another session — often one halfway through `/commit-session`, its files not finished — or by the user. Then stage and commit NOTHING anywhere; show each repository with its staged files, e.g.
 

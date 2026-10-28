@@ -391,13 +391,16 @@ def test_a_command_that_commits_runs_on_sonnet(command: str) -> None:
 
 @pytest.mark.parametrize("command", ["commit-all", "commit-session"])
 def test_a_commit_command_checks_the_branch_before_it_stages(command: str) -> None:
-    """The rules say these two stop on a checkout that is not on `dev/main`; the command must say how, first."""
+    """The rules say these two stop on a checkout outside the `dev/*` branches; the command must say how, first."""
     text = (harness.HARNESS_DIR / "commands" / f"{command}.md").read_text()
     front = yaml.safe_load(text.split("---\n")[1])
     assert "Bash(git -C * branch:*)" in front["allowed-tools"]
     steps = text.split("---\n", 2)[2]
     check = steps.index("git -C <repo> branch --show-current")
-    assert check < steps.index("1. ") and "`dev/main`" in steps[check : check + 200]
+    assert check < steps.index("1. ")
+    rule = steps[check : steps.index("\n", check)]
+    assert "any `dev/*` branch" in rule and "outside `dev/*` — `main`" in rule and "detached HEAD" in rule
+    assert "other than `dev/main`" not in rule
 
 
 @pytest.mark.parametrize("command", ["commit-all", "commit-session"])

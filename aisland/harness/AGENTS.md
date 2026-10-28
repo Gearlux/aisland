@@ -276,11 +276,12 @@ in that project's `AGENTS.md`. The commands in `.agents/workflows/` cite these r
   gates — the work was checked when its task ended. Never add the gates back to it.
 - **Never Delete `dev/main`:** it is the staging branch for `main`; merging a pull request from it never uses
   `--delete-branch`.
-- **Everything Goes To `dev/main` — Never Create A Branch (user ruling 2026-10-20):** every commit, in the root and in
-  every project, lands on `dev/main`. No session runs `git checkout -b`, `git switch -c` or `git branch <new>` in a
-  workspace checkout: sessions share one working tree, so one session's branch moves HEAD for all, and their commits
-  land on it unseen. A checkout found on another branch is reported to the user, never committed on.
-  `/commit-all` and `/commit-session` report the branch before staging and stop when it is not `dev/main`.
+- **Commits Go To A `dev/*` Branch — Never Create A Branch (user rulings 2026-10-20, 2026-10-28):** every commit, in
+  the root and in every project, lands on a `dev/*` branch — `dev/main` or another `dev/<name>` the user made. No
+  session runs `git checkout -b`, `git switch -c` or `git branch <new>` in a workspace checkout: sessions share one
+  working tree, so one session's branch moves HEAD for all, and their commits land on it unseen. A checkout found on
+  a branch outside `dev/*` (`main`, a feature branch, a detached HEAD) is reported to the user, never committed on.
+  `/commit-all` and `/commit-session` report the branch before staging and stop when it is not a `dev/*` branch.
 - **Revert By Reversing The Exact Patch:** undo your own edit by reversing exactly that edit, never by
   `git checkout -- <file>`, `git restore` or a stash of the whole file — those discard everyone's uncommitted changes
   in it.
