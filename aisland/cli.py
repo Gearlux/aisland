@@ -1378,9 +1378,10 @@ def wheels_reset_command(project: str, as_json: bool) -> None:
     """Bring this clone of PROJECT onto the history `aisland wheels prune` rewrote on another machine.
 
     Strips the wheel versions of each of origin's prunes this clone still reaches — the same rewrite, so every
-    branch that was origin's lands on origin's new commit, and commits origin lacks are kept on top. Refuses a
-    clone with changes no commit holds; backs every ref up into a bundle first. Run it before the next pull: a
-    pull merges the old history back in. Nothing pruned on origin, nothing changes.
+    branch that was origin's lands on origin's new commit, and commits origin lacks are kept on top. Changes no
+    commit holds are set aside and put back; every ref is backed up into a bundle first. When the workspace root
+    still records an old commit of PROJECT, it records the commit's rewritten twin — also in a clone already reset.
+    Run it before the next pull: a pull merges the old history back in. Nothing pruned on origin, nothing changes.
 
     \b
     aisland wheels reset models

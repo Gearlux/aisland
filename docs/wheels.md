@@ -329,13 +329,18 @@ $ aisland wheels reset app
 app: 1 prune taken
   moved: dev/main 8d52967 → 1c0e4a2, main 61b2d28 → 9f31b07
   dev/main: 1 commit origin lacks, kept on top of origin's
+  uncommitted changes set aside and put back: README.md
   this clone: 20.4 MB → 12.8 MB
+  the root records app at 1c0e4a2 (was 8d52967), committed; push the root as usual
   backup: …/.git/wheels-prune/20261027-141003-654321.bundle
 ```
 
 `reset` strips the same versions the same way, so each branch that was origin's lands on origin's new commit; its
-commits origin lacks, a stash and local tags are carried over, rewritten. It refuses changes no commit holds, takes
-every prune the clone missed, and changes nothing when there is none. Both commands take `--json`. A clone of
+commits origin lacks, a stash and local tags are carried over, rewritten. It runs on a clone in any state: changes
+no commit holds are set aside and put back (staged ones staged again), untracked files are left, a detached HEAD
+follows its commit. When the workspace root records an old commit of the project — tracked or untracked — it
+records that commit's rewritten twin, committed alone; a clone already reset gets only that. It takes every prune
+the clone missed, and changes nothing when there is none. Both commands take `--json`. A clone of
 origin made after the prune needs nothing; old commits of the workspace root still name the project's old ids.
 
 ### One zip to carry: `aisland wheels zip` and `aisland wheels install`

@@ -43,7 +43,8 @@ connect = ["msgpack>=1.2"]
 # `aisland-mcp`, the MCP server (aisland/server.py): only a machine whose AI client calls aisland's tools needs it.
 mcp = ["mcp>=2.0"]
 # `aisland wheels prune --apply` and `aisland wheels reset` rewrite history with git-filter-repo
-# (aisland/wheels_prune.py, run as `python -m git_filter_repo`); only a clone that rewrites needs it.
+# (aisland/wheels_prune.py, run as `python -m aisland.filter_repo`, which reads a multi-line config value);
+# only a clone that rewrites needs it.
 prune = ["git-filter-repo>=2.47"]
 # What CI installs (`.[dev]`): the [connect], [mcp] and [prune] extras' packages, so their tests run — spelled out, not
 # `<name>[connect]`, so the line never depends on the distribution's name.

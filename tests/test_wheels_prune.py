@@ -15,9 +15,11 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Dict, Optional
 
+import git_filter_repo
 import pytest
 from click.testing import CliRunner
 
+from aisland import filter_repo
 from aisland import wheels_prune as wp
 from aisland.cli import main
 
@@ -412,7 +414,7 @@ def test_reset_a_second_time_changes_nothing(tmp_path: Path, setup: Setup) -> No
     wp.reset(other_root, "models")
     before = _refs(other_root / "models")
     report = wp.reset(other_root, "models")
-    assert report.prunes == 0 and report.backup is None
+    assert report.prunes == 0 and report.backup is None and report.root_pointer is None
     assert _refs(other_root / "models") == before
     assert wp.render_reset(report) == "models: already on origin's history — nothing to reset"
 
@@ -426,12 +428,146 @@ def test_reset_with_nothing_pruned_on_origin_changes_nothing(tmp_path: Path, set
 
 
 @pytest.mark.slow
-def test_reset_refuses_a_change_no_commit_holds(tmp_path: Path, setup: Setup) -> None:
+def test_reset_sets_uncommitted_changes_aside_and_puts_them_back(tmp_path: Path, setup: Setup) -> None:
     other_root = _second_clone(tmp_path, setup)
+    other = other_root / "models"
     wp.prune(setup.root, "models", apply=True)
-    (other_root / "models" / "code.py").write_text("changed\n")
-    with pytest.raises(wp.PruneError, match="models has changes no commit holds: M code.py"):
+    (other / "code.py").write_text("staged\n")
+    _git(other, "add", "code.py")
+    (other / "code.py").write_text("staged, then edited\n")
+    (other / "pyproject.toml").write_text('[project]\nname = "models"\nversion = "0.2.0"\n')
+    (other / "notes.txt").write_text("untracked\n")
+
+    report = wp.reset(other_root, "models")
+
+    assert report.prunes == 1
+    assert _git(other, "rev-parse", "main") == _git(setup.origin, "rev-parse", "main")
+    assert (other / "code.py").read_text() == "staged, then edited\n"
+    assert _git(other, "show", ":code.py") == "staged"
+    assert "0.2.0" in (other / "pyproject.toml").read_text()
+    assert (other / "notes.txt").read_text() == "untracked\n"
+    assert _git(other, "stash", "list") == ""
+    assert report.set_aside == ["MM code.py", "M pyproject.toml"]
+    assert "  uncommitted changes set aside and put back: code.py, pyproject.toml" in wp.render_reset(report)
+
+
+@pytest.mark.slow
+def test_a_reset_that_fails_after_setting_changes_aside_says_where_they_are(
+    tmp_path: Path, setup: Setup, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    other_root = _second_clone(tmp_path, setup)
+    other = other_root / "models"
+    wp.prune(setup.root, "models", apply=True)
+    (other / "code.py").write_text("mine\n")
+
+    def failing_strip(repo: Path, *args: object, **kwargs: object) -> Dict[str, str]:
+        raise wp.PruneError("models: git-filter-repo failed: broken")
+
+    monkeypatch.setattr(wp, "strip", failing_strip)
+    with pytest.raises(wp.PruneError) as failed:
         wp.reset(other_root, "models")
+    put_back = (
+        f"git -C {other} stash apply --index refs/wheels-prune/set-aside && "
+        f"git -C {other} update-ref -d refs/wheels-prune/set-aside"
+    )
+    assert failed.value.message.endswith(f"put them back with: {put_back}")
+    subprocess.run(put_back, shell=True, check=True, capture_output=True)
+    assert (other / "code.py").read_text() == "mine\n"
+
+
+def test_git_filter_repo_reads_a_config_value_written_over_several_lines(tmp_path: Path) -> None:
+    """git-filter-repo 2.47.0 reads `git config --list` as `key=value` lines; aisland runs it with a reader of
+    `--null`'s output, so an alias of several lines (aisland's own, before 2026-10-29) no longer stops it."""
+    repo = tmp_path / "repo"
+    _git(tmp_path, "init", "-q", str(repo))
+    _git(repo, "config", "alias.many", "!f() {\n    echo one;\n}; f")
+    with (repo / ".git" / "config").open("a") as config:
+        config.write("[core]\n\tflag\n")  # a key with no value at all
+    with pytest.raises(ValueError):
+        git_filter_repo.GitUtils.get_config_settings(str(repo))
+    settings = filter_repo.config_settings(str(repo))
+    assert settings[b"alias.many"] == b"!f() {\n    echo one;\n}; f"
+    assert settings[b"core.flag"] == b""
+    assert settings[b"core.bare"] == b"false"
+    # The reader aisland replaces is still git-filter-repo's: replacing a name it no longer has would do nothing.
+    assert callable(getattr(git_filter_repo.GitUtils, "get_config_settings"))
+
+
+@pytest.mark.slow
+def test_prune_and_reset_run_with_an_alias_of_several_lines_in_the_config(tmp_path: Path, setup: Setup) -> None:
+    other_root = _second_clone(tmp_path, setup)
+    other = other_root / "models"
+    for repo in (setup.repo, other):
+        _git(repo, "config", "alias.tag-all", '!f() {\n    git tag -a "$1";\n}; f')
+    assert wp.prune(setup.root, "models", apply=True).applied
+    assert wp.reset(other_root, "models").prunes == 1
+    assert _git(other, "rev-parse", "main") == _git(setup.origin, "rev-parse", "main")
+    assert "\n" in _git(other, "config", "alias.tag-all")  # the user's config is left as it was
+
+
+def _record_in_root(root: Path, commit: str, *, untracked: bool = False) -> None:
+    if untracked:
+        (root / ".gitmodules").write_text(
+            '[submodule "models"]\n\tpath = models\n\turl = ../origin/models.git\n\tignore = all\n'
+        )
+        _git(root, "add", ".gitmodules")
+    _git(root, "update-index", "--add", "--cacheinfo", f"160000,{commit},models")
+    _commit_index(root, "record models")
+
+
+@pytest.mark.slow
+def test_reset_records_the_rewritten_twin_of_the_roots_commit_alone(tmp_path: Path, setup: Setup) -> None:
+    other_root = _second_clone(tmp_path, setup)
+    recorded = _git(other_root / "models", "rev-parse", "HEAD~1")
+    _record_in_root(other_root, recorded)
+    (other_root / "staged.txt").write_text("mine\n")
+    _git(other_root, "add", "staged.txt")
+    wp.prune(setup.root, "models", apply=True)
+
+    report = wp.reset(other_root, "models")
+
+    twin = _git(setup.origin, "rev-parse", "main~1")
+    assert report.root_pointer == (recorded, twin)
+    assert _git(other_root, "rev-parse", "HEAD:models") == twin
+    assert _git(other_root, "log", "-1", "--format=%s") == (
+        "chore: sync submodule pointer — models: wheels pruned from its history"
+    )
+    assert _git(other_root, "show", "--name-only", "--format=", "HEAD") == "models"
+    assert _git(other_root, "diff", "--cached", "--name-only") == "staged.txt"
+    assert (
+        f"  the root records models at {twin[:7]} (was {recorded[:7]}), committed; push the root as usual"
+        in wp.render_reset(report)
+    )
+
+
+@pytest.mark.slow
+def test_a_clone_already_reset_still_moves_an_untracked_projects_pointer(tmp_path: Path, setup: Setup) -> None:
+    other_root = _second_clone(tmp_path, setup)
+    recorded = _git(other_root / "models", "rev-parse", "HEAD")
+    wp.prune(setup.root, "models", apply=True)
+    wp.reset(other_root, "models")
+    _record_in_root(other_root, recorded, untracked=True)  # the root still names the commit from before the prune
+
+    report = wp.reset(other_root, "models")
+
+    twin = _git(setup.origin, "rev-parse", "main")
+    assert report.prunes == 0 and report.backup is None
+    assert report.root_pointer == (recorded, twin)
+    assert _git(other_root, "rev-parse", "HEAD:models") == twin
+    assert wp.render_reset(report) == (
+        "models: already on origin's history — nothing to reset\n"
+        f"  the root records models at {twin[:7]} (was {recorded[:7]}), committed; push the root as usual"
+    )
+
+
+@pytest.mark.slow
+def test_reset_leaves_a_root_recording_a_commit_no_prune_rewrote(tmp_path: Path, setup: Setup) -> None:
+    other_root = _second_clone(tmp_path, setup)
+    _record_in_root(other_root, _git(other_root / "models", "rev-parse", "HEAD~5"))  # before any wheel
+    head = _git(other_root, "rev-parse", "HEAD")
+    wp.prune(setup.root, "models", apply=True)
+    assert wp.reset(other_root, "models").root_pointer is None
+    assert _git(other_root, "rev-parse", "HEAD") == head
 
 
 @pytest.mark.slow

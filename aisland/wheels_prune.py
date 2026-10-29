@@ -25,9 +25,14 @@ The run, in order (``--apply``; without it the run fetches, counts and changes n
    rewritten twin and committed alone — the root keeps the commit it last recorded, under its new id, so an
    untracked project is no more recorded than before.
 
-:func:`reset` runs on every other clone: it fetches the record, strips each prune's versions this clone still
-reaches with the same filter (its unpushed commits, merges and local tags rewritten on top as they are), checks
-each branch that was origin's landed on the commit origin's record names, and shrinks the clone the same way.
+:func:`reset` runs on every other clone, in whatever state it is: it fetches the record, sets the changes no commit
+holds aside (in :data:`_SET_ASIDE_REF`, rewritten with the rest), strips each prune's versions this clone still reaches with the same filter (its unpushed
+commits, merges, local tags and stash rewritten on top as they are), puts the changes back, checks each branch that
+was origin's landed on the commit origin's record names, shrinks the clone the same way and, like the prune, moves
+the root's pointer to the rewritten twin of the commit it records — also in a clone a reset already brought over.
+
+git-filter-repo runs through :mod:`aisland.filter_repo`, which reads the git config NUL-separated: a value over
+several lines stops git-filter-repo's own reader.
 """
 
 from __future__ import annotations
@@ -68,6 +73,10 @@ _STASH = "refs/stash"
 
 #: Holds a detached HEAD's commit while the rewrite runs.
 _HEAD_REF = "refs/wheels-prune/head"
+
+#: Holds a reset's changes no commit held (a ``git stash create`` commit) while the rewrite runs; never the user's
+#: stash, whose reflog git-filter-repo does not carry.
+_SET_ASIDE_REF = "refs/wheels-prune/set-aside"
 
 #: Every network call: a host asking for a password fails instead of waiting on a prompt no one sees.
 _NETWORK_ENV = {"GIT_TERMINAL_PROMPT": "0"}
@@ -129,6 +138,9 @@ class ResetReport:
         moved: Each ref that changed, ``(ref, old, new)``.
         ahead: Each branch now holding commits origin lacks, and how many — its unpushed work, kept.
         tags_differing: Tags this clone holds that differ from origin's, left as they are.
+        set_aside: The changes no commit held (``git status --porcelain`` lines), set aside during the rewrite and
+            put back.
+        root_pointer: ``(old, new)`` when the root's pointer was re-recorded.
         backup: The bundle holding every ref as it was (None: nothing changed).
         restore: The command that puts the backup back.
         size_before: This clone's object store before, in bytes.
@@ -140,6 +152,8 @@ class ResetReport:
     moved: List[Tuple[str, str, str]] = field(default_factory=list)
     ahead: Dict[str, int] = field(default_factory=dict)
     tags_differing: List[str] = field(default_factory=list)
+    set_aside: List[str] = field(default_factory=list)
+    root_pointer: Optional[Tuple[str, str]] = None
     backup: Optional[str] = None
     restore: Optional[str] = None
     size_before: Optional[int] = None
@@ -285,13 +299,14 @@ def _blob_bytes(repo: Path, blobs: Sequence[str]) -> int:
 
 
 def _filter_repo() -> List[str]:
-    """The command that runs git-filter-repo with this interpreter, or a refusal naming the extra."""
+    """The command that runs git-filter-repo with this interpreter — through :mod:`aisland.filter_repo`, which reads
+    a config value of several lines — or a refusal naming the extra."""
     if importlib.util.find_spec("git_filter_repo") is None:
         raise PruneError(
             f"rewriting history needs git-filter-repo, which aisland's [{EXTRA}] extra installs: "
             f"uv pip install 'aisland[{EXTRA}]'"
         )
-    return [sys.executable, "-m", "git_filter_repo"]
+    return [sys.executable, "-m", "aisland.filter_repo"]
 
 
 def _restore_command(repo: Path, bundle: Path) -> str:
@@ -379,7 +394,7 @@ def _hold_head(repo: Path) -> List[str]:
 def _follow_head(repo: Path, held: Sequence[str]) -> None:
     """Put the work tree on HEAD's rewritten commit: a detached HEAD goes to where :data:`_HEAD_REF` was carried; a
     branch's files are reset to its new tip (an old commit's tree may have lost a wheel). The tree held no tracked
-    change — the run refused one — so nothing of the user's is lost."""
+    change — a prune refused one, a reset set it aside — so nothing of the user's is lost."""
     if held:
         _git(repo, "checkout", "-q", "--detach", _HEAD_REF)
         _git(repo, "update-ref", "-d", _HEAD_REF)
@@ -453,6 +468,13 @@ def _push(repo: Path, updates: Dict[str, Tuple[Optional[str], str]], restore: st
             f"{(done.stdout + done.stderr).strip()}\n"
             f"This clone is rewritten; put it back with: {restore}"
         )
+
+
+def _root_pointer(workspace_root: Path, repo: Path, changed: Dict[str, str]) -> Optional[Tuple[str, str]]:
+    """:func:`_record_root_pointer` for the project in ``repo``, when the workspace root is a repository of its own."""
+    if workspace_root == repo or not (workspace_root / ".git").exists():
+        return None
+    return _record_root_pointer(workspace_root, repo.relative_to(workspace_root).as_posix(), changed)
 
 
 def _record_root_pointer(workspace_root: Path, path: str, changed: Dict[str, str]) -> Optional[Tuple[str, str]]:
@@ -548,8 +570,7 @@ def prune(workspace_root: Path, project_name: str, apply: bool = False) -> Prune
 
     _shrink(repo)
     report.size_after = _store_size(repo)
-    if (workspace_root / ".git").exists() and workspace_root != repo:
-        report.root_pointer = _record_root_pointer(workspace_root, target.name, changed)
+    report.root_pointer = _root_pointer(workspace_root, repo, changed)
     return report
 
 
@@ -588,49 +609,92 @@ def _reachable(repo: Path, refs: Sequence[str]) -> Set[str]:
     return set(_git(repo, "rev-list", *refs).split()) if refs else set()
 
 
+def _set_aside(repo: Path) -> List[str]:
+    """Hold the changes no commit holds in :data:`_SET_ASIDE_REF` and clear them from the work tree (untracked files
+    stay); their ``git status`` lines. Staged changes come back staged (:func:`_put_back`)."""
+    changes = [line.strip() for line in _tracked_changes(repo)]
+    if changes:
+        commit = _git(repo, "stash", "create", "aisland wheels reset: changes set aside during the rewrite").strip()
+        _git(repo, "update-ref", _SET_ASIDE_REF, commit)
+        _git(repo, "reset", "-q", "--hard", "HEAD")
+    return changes
+
+
+def _put_back_command(repo: Path) -> str:
+    return f"git -C {repo} stash apply --index {_SET_ASIDE_REF} && git -C {repo} update-ref -d {_SET_ASIDE_REF}"
+
+
+def _put_back(repo: Path, name: str) -> None:
+    """The changes :func:`_set_aside` held, applied on the rewritten HEAD, and the ref removed."""
+    if _run(repo, "stash", "apply", "-q", "--index", _SET_ASIDE_REF).returncode != 0:
+        raise PruneError(
+            f"{name} is on origin's history, but its uncommitted changes did not go back on. "
+            f"They are kept; put them back with: {_put_back_command(repo)}"
+        )
+    _git(repo, "update-ref", "-d", _SET_ASIDE_REF)
+
+
 def reset(workspace_root: Path, project_name: str) -> ResetReport:
     """``aisland wheels reset PROJECT``: see the module's docstring."""
     target = _find_target(workspace_projects(workspace_root), workspace_root, project_name)
     repo = target.path
     _check_repository(repo, target.name)
     report = ResetReport(project=target.name, prunes=0)
-    changes = _tracked_changes(repo)
-    if changes:
-        raise PruneError(
-            "\n".join(
-                [f"{target.name} has changes no commit holds: {line.strip()}" for line in changes]
-                + ["Commit or stash them first. Nothing was changed."]
-            )
-        )
     origin = _origin_refs(repo)
     if PRUNE_REF not in origin:
         return report
     _git(repo, "fetch", "-q", "--no-tags", "origin", f"+{PRUNE_REF}:{PRUNE_REF}", network=True)
     prunes = _prunes(repo)
+    expected = _compose(prunes)
 
-    before = _refs(repo, *_LOCAL_NAMESPACES, _STASH)
-    local_refs = sorted(before)
-    reachable = _reachable(repo, [*local_refs, "HEAD"])
-    pending = [one for one in prunes if reachable & set(one.changed)]
-    if not pending:
+    reachable = _reachable(repo, [*_refs(repo, *_LOCAL_NAMESPACES, _STASH), "HEAD"])
+    if not any(reachable & set(one.changed) for one in prunes):
         _fetch(repo, origin)
+        report.root_pointer = _root_pointer(workspace_root, repo, expected)
         return report
 
     _filter_repo()
+    report.set_aside = _set_aside(repo)
+    try:
+        _rewrite(repo, target.name, origin, prunes, expected, report)
+    except PruneError as error:
+        if report.set_aside:
+            raise PruneError(
+                f"{error.message}\nYour uncommitted changes are kept; once the refs are back, put them back with: "
+                f"{_put_back_command(repo)}"
+            ) from error
+        raise
+    if report.set_aside:
+        _put_back(repo, target.name)
+    report.root_pointer = _root_pointer(workspace_root, repo, expected)
+    return report
+
+
+def _rewrite(
+    repo: Path,
+    name: str,
+    origin: Dict[str, str],
+    prunes: Sequence[_Prune],
+    expected: Dict[str, str],
+    report: ResetReport,
+) -> None:
+    """The reset's rewrite of a clone holding no uncommitted change: the backup, each prune it still reaches, the
+    check that every branch that was origin's landed where origin's record says, and the shrink."""
+    before = _refs(repo, *_LOCAL_NAMESPACES, _STASH)
+    local_refs = sorted(before)
     report.size_before = _store_size(repo)
     bundle, restore = _backup(repo)
     report.backup, report.restore = str(bundle), restore
-    held_head = _hold_head(repo)
+    held = [*_hold_head(repo), *([_SET_ASIDE_REF] if report.set_aside else [])]
     for one in prunes:
         # A prune this clone already took (or never reached) has no old commit left to rewrite.
-        if not _reachable(repo, [*local_refs, *held_head]) & set(one.changed):
+        if not _reachable(repo, [*local_refs, *held]) & set(one.changed):
             continue
-        strip(repo, one.stripped, [*local_refs, *held_head], restore)
+        strip(repo, one.stripped, [*local_refs, *held], restore)
         report.prunes += 1
-    _follow_head(repo, held_head)
+    _follow_head(repo, [ref for ref in held if ref == _HEAD_REF])
 
     _fetch(repo, origin)
-    expected = _compose(prunes)
     after = _refs(repo, *_LOCAL_NAMESPACES, _STASH)
     wrong = []
     for ref, old in sorted(before.items()):
@@ -641,9 +705,7 @@ def reset(workspace_root: Path, project_name: str) -> ResetReport:
             wrong.append(f"{_short(ref)} is {new[:7]} here, origin's record says {expected[old][:7]}")
     if wrong:
         raise PruneError(
-            "\n".join(
-                [f"{target.name}: the rewrite here does not match origin's:", *wrong, f"Put it back with: {restore}"]
-            )
+            "\n".join([f"{name}: the rewrite here does not match origin's:", *wrong, f"Put it back with: {restore}"])
         )
     for ref in sorted(after):
         if not ref.startswith("refs/heads/"):
@@ -658,7 +720,6 @@ def reset(workspace_root: Path, project_name: str) -> ResetReport:
     )
     _shrink(repo)
     report.size_after = _store_size(repo)
-    return report
 
 
 # --- the reports --------------------------------------------------------------------------------------
@@ -689,18 +750,25 @@ def render_prune(report: PruneReport) -> str:
     if report.size_before is not None and report.size_after is not None:
         lines.append(f"  this clone: {_size(report.size_before)} → {_size(report.size_after)}")
     if report.root_pointer:
-        old, new = report.root_pointer
-        lines.append(f"  the root records {name} at {new[:7]} (was {old[:7]}), committed; push the root as usual")
+        lines.append(_root_pointer_line(name, report.root_pointer))
     lines.append(f"  backup: {report.backup}")
     lines.append(f"Every other clone of {name}: aisland wheels reset {name}, before its next pull")
     return "\n".join(lines)
+
+
+def _root_pointer_line(name: str, root_pointer: Tuple[str, str]) -> str:
+    old, new = root_pointer
+    return f"  the root records {name} at {new[:7]} (was {old[:7]}), committed; push the root as usual"
 
 
 def render_reset(report: ResetReport) -> str:
     """The report a person reads; :meth:`ResetReport.to_dict` is the one a program reads."""
     name = report.project
     if not report.prunes:
-        return f"{name}: already on origin's history — nothing to reset"
+        lines = [f"{name}: already on origin's history — nothing to reset"]
+        if report.root_pointer:
+            lines.append(_root_pointer_line(name, report.root_pointer))
+        return "\n".join(lines)
     lines = [f"{name}: {report.prunes} prune{'s' * (report.prunes != 1)} taken"]
     moved = ", ".join(f"{ref} {old[:7]} → {new[:7]}" for ref, old, new in report.moved)
     lines.append(f"  moved: {moved or 'nothing'}")
@@ -708,7 +776,12 @@ def render_reset(report: ResetReport) -> str:
         lines.append(f"  {branch}: {count} commit{'s' * (count != 1)} origin lacks, kept on top of origin's")
     if report.tags_differing:
         lines.append(f"  tags that differ from origin's, left as they are: {', '.join(report.tags_differing)}")
+    if report.set_aside:
+        paths = ", ".join(line.split(None, 1)[1] for line in report.set_aside)
+        lines.append(f"  uncommitted changes set aside and put back: {paths}")
     if report.size_before is not None and report.size_after is not None:
         lines.append(f"  this clone: {_size(report.size_before)} → {_size(report.size_after)}")
+    if report.root_pointer:
+        lines.append(_root_pointer_line(name, report.root_pointer))
     lines.append(f"  backup: {report.backup}")
     return "\n".join(lines)

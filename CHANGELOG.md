@@ -53,7 +53,8 @@ The first release on PyPI: `pip install aisland`.
   **`aisland wheels install`** unpacks one into a project's `wheels/` and installs it into the environment you name.
 - **`aisland wheels prune <project>`** strips from a project's history the committed wheel versions no branch or tag
   holds and force-pushes origin; **`aisland wheels reset <project>`** brings every other clone onto the pruned
-  history (the `prune` extra).
+  history (the `prune` extra), whatever its state: uncommitted changes are set aside and put back, a config value
+  over several lines is read, and the workspace root's pointer moves to the rewritten commit.
 - **A pytest plugin, `aisland_test_stats`,** loaded by every `pytest` in the environment aisland is installed in,
   records each run of a project of an aisland workspace — its seconds and each test's outcome — in the workspace's
   `.aisland/data/test-stats/`, and writes nothing beside a repository of its own; `aisland workspace test-stats off [PROJECT…] [--machine-only]` turns it off for a

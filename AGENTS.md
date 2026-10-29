@@ -119,7 +119,8 @@ The workspace's dev-infrastructure CLI, `aisland` (click, `aisland/cli.py`):
   takes from PyPI; the folder git-ignored unless `--commit`, packed by `aisland wheels zip` into a zip that
   installs with plain `python` (`wheels_unzip.py`), installed elsewhere by `aisland wheels install`.
   `wheels_prune.py`: `aisland wheels prune <project> [--apply]` strips the committed wheel versions no branch or tag
-  holds from the history and force-pushes origin; `aisland wheels reset <project>` brings another clone onto it.
+  holds from the history and force-pushes origin; `aisland wheels reset <project>` brings another clone onto it, in
+  any state (`filter_repo.py`: git-filter-repo run with a config reader of `--null`).
 - `nightly.py`: `aisland tests nightly`, the morning report of the orchestrator's nightly runs
   (`aisland/data/nightly/<date>.md`, a desktop notification, exit 1 on a bad night), run by the
   `<workspace>.nightly-check` Jenkins job.
@@ -1052,7 +1053,22 @@ User choice 2026-10-08: an aisland command, only the named project's closure, bo
     Its name carries no workspace or tool name (a Bitbucket project must not reveal them).
   - The root's gitlink moves only to the rewritten id of the commit it already records, committed alone from a
     scratch index — never to a newer commit, so an untracked project stays unrecorded
-    (`::test_the_root_records_the_rewritten_twin_of_its_commit_alone`).
+    (`::test_the_root_records_the_rewritten_twin_of_its_commit_alone`). `reset` does the same through every prune's
+    map composed, also when the clone has nothing left to strip
+    (`::test_reset_records_the_rewritten_twin_of_the_roots_commit_alone`,
+    `::test_a_clone_already_reset_still_moves_an_untracked_projects_pointer`).
+  - **`reset` runs on a clone in ANY state (user ruling 2026-10-29: "whether or not it's untracked … everything
+    should work").** Changes no commit holds go into `refs/wheels-prune/set-aside` (`git stash create`), are
+    rewritten with the refs and applied back with `--index` — never `git stash push/pop`: filter-repo moves
+    `refs/stash` without its reflog and the pop left the old history's entry
+    (`::test_reset_sets_uncommitted_changes_aside_and_puts_them_back`); a failure keeps the ref and names the
+    command (`::test_a_reset_that_fails_after_setting_changes_aside_says_where_they_are`). Never add a refusal back
+    to `reset`; `prune --apply` keeps its refusals (it pushes).
+  - git-filter-repo runs as `python -m aisland.filter_repo` (`filter_repo.py`), which reads the config with
+    `--null`: 2.47.0's own reader takes `git config --list` as `key=value` lines and dies on a value of several
+    lines. Never rewrite the user's config to suit it
+    (`::test_git_filter_repo_reads_a_config_value_written_over_several_lines`,
+    `::test_prune_and_reset_run_with_an_alias_of_several_lines_in_the_config`).
   - Reflogs expire for every ref but `refs/stash`, symbolic refs included (`origin/HEAD`'s reflog kept the old
     history alive); a detached HEAD is carried through `refs/wheels-prune/head`.
 - **A project whose setuptools discovery would take `wheels/` for a package is refused before anything is built

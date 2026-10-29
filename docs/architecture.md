@@ -3568,7 +3568,7 @@ to be fixable afterwards.
 
 - **What goes:** every blob ever under `wheels/**.whl` that no tip of this clone's branches and tags or origin's
   branches holds (origin's tags are fetched first and must equal this clone's). Nothing else is touched.
-- **How:** git-filter-repo (`prune` extra, run as `python -m git_filter_repo`) with `--strip-blobs-with-ids`,
+- **How:** git-filter-repo (`prune` extra, run as `python -m aisland.filter_repo`) with `--strip-blobs-with-ids`,
   `--partial`, `--prune-empty never`, `--prune-degenerate never` and `--preserve-commit-hashes`. With these the
   rewrite is a function of each commit alone: no commit disappears and no message changes, so a second clone
   stripping the same blobs gets the same ids (measured: identical ids, an unpushed commit carried on top). That is
@@ -3595,6 +3595,33 @@ to be fixable afterwards.
   `commit-map` lists, naming `aisland wheels reset <project>`; a plain `git pull` is not guarded.
 - The host frees the stripped versions only when its own garbage collection runs.
 - A clone's local tag on a commit the prune rewrote moves with it and holds origin's files for that commit.
+
+### Reset runs on a clone in any state (2026-10-29)
+
+The first reset on another machine failed twice where a person expected one command to do it: git-filter-repo
+2.47.0 (the newest release) reads `git config --list` as `key=value` lines and died with `ValueError: dictionary
+update sequence element #25 has length 1` on aisland's own multi-line aliases of before that day, and a clone with
+an edit was refused. Afterwards the root still recorded the old commit (`32da69a`), which `git submodule update`
+would fetch back. The user ruled that `aisland wheels reset <project>` must work whatever the clone's state,
+tracked or untracked.
+
+- **The config:** git-filter-repo runs as `python -m aisland.filter_repo`, which replaces its one config reader by
+  one over `git config --list --null` (a value may hold newlines, a key may have none) and calls its own `main`.
+  The user's config is never rewritten. A test pins that git-filter-repo still has the reader it replaces.
+- **Changes no commit holds:** a `git stash create` commit in `refs/wheels-prune/set-aside`, rewritten with the
+  other refs, applied with `--index` on the new HEAD and the ref removed. Not `git stash push`: filter-repo moves
+  `refs/stash` without its reflog, so the pop left an entry naming the old history. A failure keeps the ref and
+  prints the command that puts the changes back.
+- **The root:** what prune does (the gitlink to the rewritten twin of the commit it records, committed alone),
+  through every prune's map composed; also when the clone itself has nothing left to strip.
+
+Measured on a copy of a real clone before its reset (old history, six multi-line alias lines, an edit, a root
+recording the old commit, `ignore = all`): one `reset` in 8 s — `dev/main 268e226 → de5f0b2`, the edit back, the
+root at `de9223d`, the aliases untouched.
+
+```bash
+aisland wheels reset app              # any clone, any state: rewritten, edits put back, root re-recorded
+```
 
 ### Example
 
