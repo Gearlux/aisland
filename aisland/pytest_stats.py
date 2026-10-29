@@ -13,8 +13,9 @@ tests are slow and which ones break is read from statistics, never guessed. CI k
   and answers what the rule asks: the fast run's time against the budget, the slowest fast tests, the tests that
   failed, what to move to the slow run and what back into the fast run.
 
-The plugin must never cost a run its result: it records only a run whose rootdir is ``<workspace>/<project>``, imports
-only the standard library (it loads in every pytest start, so no ``aisland.manager`` with its click and yaml), and a
+The plugin must never cost a run its result: it records only a run whose rootdir is ``<workspace>/<project>`` of an
+aisland workspace (one holding ``workspace.toml`` or ``.gitmodules``, :func:`aisland.locations.is_workspace`), imports
+only the standard library (it loads in every pytest start, so no ``aisland.paths`` with the rest of aisland behind it), and a
 record it cannot write is one printed line. ``-p no:aisland_test_stats`` disables it for one run.
 """
 
@@ -37,7 +38,7 @@ from aisland import locations
 if TYPE_CHECKING:
     import pytest
 
-# Resolved exactly as `aisland.manager` resolves `DATA_DIR`, through `aisland.locations` (standard library only;
+# Resolved exactly as `aisland.paths` resolves `DATA_DIR`, through `aisland.locations` (standard library only;
 # pinned by `tests/test_pytest_stats.py::test_the_records_live_in_aislands_data_folder`).
 #: The workspace root.
 WORKSPACE_ROOT = locations.workspace_root()
@@ -81,14 +82,16 @@ _COMPLETE_EXITS = (0, 1)
 
 
 def pytest_configure(config: "pytest.Config") -> None:
-    """Start recording when this run is a workspace project's own: pytest's rootdir is `<workspace>/<project>`."""
+    """Start recording when this run is a workspace project's own: pytest's rootdir is `<workspace>/<project>` and
+    the workspace is an aisland one (`locations.is_workspace`) — a repository of its own gets nothing written beside
+    it."""
     if hasattr(config, "workerinput"):  # an xdist worker: its controller records the run
         return
     # A Jenkins build: the local Jenkins builds IN the project folder (`customWorkspace`) with the workspace `.venv`,
     # and keeps its own JUnit record, which `build_report` reads; recording the run here would count it twice.
     if os.environ.get("JENKINS_URL"):
         return
-    if not _is_workspace_project(Path(config.rootpath)):
+    if not locations.is_workspace(WORKSPACE_ROOT) or not _is_workspace_project(Path(config.rootpath)):
         return
     if not records(WORKSPACE_ROOT, Path(config.rootpath).name):
         return

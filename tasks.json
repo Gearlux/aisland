@@ -1,4 +1,4 @@
-// VSCode tasks for opening Acme workspace services in the integrated
+// VSCode tasks for opening the workspace services in the integrated
 // Simple Browser. Canonical copy lives here at `aisland/tasks.json`;
 // `aisland/setup.sh` symlinks `<workspace_root>/.vscode/tasks.json` to it
 // during bootstrap so VSCode picks it up automatically.

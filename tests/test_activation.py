@@ -19,7 +19,7 @@ from typing import List, Optional
 import pytest
 from click.testing import CliRunner
 
-from aisland import activation, cli, manager, workspace_file
+from aisland import activation, cli, locations, manager, workspace_file
 
 _AUTHOR = {"GIT_AUTHOR_NAME": "t", "GIT_AUTHOR_EMAIL": "t@t", "GIT_COMMITTER_NAME": "t", "GIT_COMMITTER_EMAIL": "t@t"}
 
@@ -329,9 +329,9 @@ def test_setup_asks_then_reconciles(tmp_path: Path, monkeypatch: pytest.MonkeyPa
     class _Stop(Exception):
         pass
 
-    monkeypatch.setattr(manager, "get_workspace_root", lambda: tmp_path)
+    monkeypatch.setattr(locations, "workspace_root", lambda: tmp_path)
     monkeypatch.setattr(manager, "ensure_uv_in_venv", lambda venv_bin: "uv")
-    monkeypatch.setattr(manager, "_link_project_bashrc", lambda root: None)
+    monkeypatch.setattr(manager, "link_project_bashrc", lambda root: None)
     monkeypatch.setattr(manager, "install_harness", lambda root: [])
     monkeypatch.setattr("aisland.provision.install", lambda root, aislands_own=True: None)
 

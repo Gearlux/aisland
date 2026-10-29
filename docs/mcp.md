@@ -58,7 +58,7 @@ command `aisland-mcp` to your client's server list yourself.
 | `tunnel_list` | `aisland tunnel list --json` |
 | `editor_themes`, `editor_colors(part)` | the VS Code themes here, the CSS colour names, this window's choice |
 | `editor_set_theme(name)`, `editor_set_color(role, color, area)`, `editor_unset(what)` | `aisland workspace theme\|color set\|unset` |
-| `service_start(name)`, `service_stop(name)`, `service_restart(name)` | `aisland jenkins\|mlflow start\|stop\|restart`, in the background |
+| `service_start(name)`, `service_stop(name)`, `service_restart(name)` | `aisland <name> start\|stop\|restart` for any service of the workspace — aisland's own or one a project brings — in the background where it runs under the supervisor |
 
 Every tool answers with one JSON object, and a refusal is the tool's error in the command's own
 words (`no installed VS Code theme is named 'Solarzed Dark' (did you mean 'Solarized Dark'?)`).

@@ -17,9 +17,9 @@ from typing import Dict, List, Sequence, Tuple
 import pytest
 from click.testing import CliRunner
 
-from aisland import pytest_stats
+from aisland import locations, pytest_stats
 from aisland.cli import main
-from aisland.manager import DATA_DIR
+from aisland.paths import DATA_DIR
 from tests.workspace_layout import needs_workspace
 
 pytest_plugins = ["pytester"]
@@ -46,6 +46,7 @@ testpaths = ["tests"]
 
 _TESTS = """\
 import pytest
+from aisland import projects
 
 
 def test_passes():
@@ -218,12 +219,27 @@ def test_a_jenkins_build_is_left_to_jenkins_own_record(
 
 
 def test_a_project_folder_of_a_workspace_without_gitmodules_is_recorded(
-    pytester: pytest.Pytester, project: Path
+    pytester: pytest.Pytester, project: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """A workspace without `.gitmodules` reads its project folders as submodules (`manager.workspace_folders`)."""
+    """A workspace without `.gitmodules` reads its project folders as submodules (`projects.workspace_folders`); its
+    `workspace.toml` makes it an aisland workspace, from a wheel too."""
     (pytester.path / ".gitmodules").unlink()
+    (pytester.path / "workspace.toml").write_text("")
+    monkeypatch.setattr(locations, "FROM_CHECKOUT", False)
     _run(pytester)
     assert (pytester.path / "stats" / "proj" / f"{date.today()}.jsonl").stat().st_size > 0
+
+
+def test_a_repository_of_its_own_gets_nothing_written_beside_it(
+    pytester: pytest.Pytester, project: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """aisland from a wheel, `pytest` in `~/code/app`: `~/code` holds neither `workspace.toml` nor `.gitmodules`, so it
+    is no aisland workspace and nothing is written into it."""
+    (pytester.path / ".gitmodules").unlink()
+    monkeypatch.setattr(locations, "FROM_CHECKOUT", False)
+    monkeypatch.delenv(locations.WORKSPACE_ENV, raising=False)
+    _run(pytester)
+    assert not (pytester.path / "stats").exists()
 
 
 def test_a_run_writes_todays_file_and_removes_files_past_the_retention(

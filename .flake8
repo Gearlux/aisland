@@ -1,6 +1,6 @@
 [flake8]
 max-line-length = 120
-exclude = .venv,data,aisland_manager.egg-info,git,__pycache__
+exclude = .venv,data,build,dist,*.egg-info,git,__pycache__
 # E203 (whitespace before ':') conflicts with black's slice formatting, e.g.
 # `key[len(a) : -len(b)]`; black owns style, so we ignore it (matches other projects).
 ignore = E501, W503, E203

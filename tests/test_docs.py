@@ -144,6 +144,14 @@ def test_the_readme_indexes_every_page() -> None:
 
 _WORKSPACE_NAME = re.compile(r"\b(" + "|".join(WORKSPACE_NAMES) + r")\b", re.IGNORECASE)
 
+#: The user's choice (2026-10-29): the example of a project's service. The one place a page names a project of the
+#: workspace, and only inside this link.
+SERVICES_EXAMPLE_LINK = (
+    "[matrainer's MLflow, Aim and ClearML servers]"
+    "(https://github.com/Gearlux/matrainer/blob/main/docs/backends.md"
+    "#the-tracking-servers-as-workspace-services-matrainerservices)"
+)
+
 
 def _commands(group: click.Group, path: Tuple[str, ...] = ("aisland",)) -> Iterator[Tuple[str, click.Command]]:
     """Every command under ``group``, the group included, with the words that call it."""
@@ -158,9 +166,12 @@ def _commands(group: click.Group, path: Tuple[str, ...] = ("aisland",)) -> Itera
 @pytest.mark.parametrize("page", [README, *_user_pages()], ids=lambda page: page.name)
 def test_a_user_page_names_no_project_of_the_workspace(page: Path) -> None:
     pattern = _WORKSPACE_NAME
+    text = page.read_text(encoding="utf-8")
+    if page.name == "services.md":
+        text = text.replace(SERVICES_EXAMPLE_LINK, "")
     hits = [
         f"{page.name}:{number}: {line.strip()}"
-        for number, line in enumerate(page.read_text(encoding="utf-8").splitlines(), start=1)
+        for number, line in enumerate(text.splitlines(), start=1)
         if pattern.search(line)
     ]
     assert hits == []

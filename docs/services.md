@@ -1,29 +1,23 @@
 # Services
 
 The services aisland runs for a workspace — Jenkins, Docker and, on macOS, the SwiftBar menu — with the supervisor
-that keeps them running and the commands that start, stop and inspect each. A project of the workspace can bring more
-(MLflow, Label Studio, IQEngine, Aim and ClearML below are examples); they run the same way, and start only when
-named.
+that keeps them running and the commands that start, stop and inspect each. A project of the workspace can bring more services; they run the same way and start only when named.
+For an example, see [matrainer's MLflow, Aim and ClearML servers](https://github.com/Gearlux/matrainer/blob/main/docs/backends.md#the-tracking-servers-as-workspace-services-matrainerservices).
 
 ## Default Ports
 
 | Service       | Port | URL                        |
 |---------------|------|----------------------------|
 | Jenkins       | 9080 | http://localhost:9080      |
-| MLflow (a project's)        | 5005 | http://localhost:5005      |
-| Label Studio (a project's)  | 9081 | http://localhost:9081      |
-| IQEngine (a project's)      | 3000 | http://localhost:3000      |
-| Aim (a project's)           | 43800 | http://localhost:43800    |
-| ClearML web (a project's)   | 8080 | http://localhost:8080      |
 
-Jenkins, MLflow, Label Studio, Aim and IQEngine take another port with `--port` (`aisland mlflow start --port 5006`).
+Jenkins takes another port with `--port` (`aisland jenkins start --port 9081`).
 
 ## Check Status
 Retrieve service information for all infrastructure components:
 ```bash
 aisland services                  # the supervisor and every service
 aisland services start -b         # start the default ones in the background
-aisland services start mlflow aim # or only those named, a project's among them
+aisland services start notes      # or only those named, a project's among them
 aisland services status           # each service's state
 aisland services info             # each one's URL, credentials and paths
 aisland services restart jenkins  # stop and start those named
@@ -94,7 +88,7 @@ single-binary, native-process orchestrator with docker-compose semantics. The
   configurable via `AISLAND_SUPERVISOR_PORT`, default 9089), so multiple
   workspace checkouts never collide.
 - **Readiness, not just liveness**: every service carries an HTTP readiness
-  probe (Jenkins `/login`, MLflow `/health`, Label Studio `/health`).
+  probe (Jenkins `/login`, a project's service the path it declares).
   `aisland services` shows `ready: Ready` once the service actually
   answers, not merely when its process exists.
 - **Crash recovery**: services restart automatically on failure (up to 3
@@ -102,7 +96,7 @@ single-binary, native-process orchestrator with docker-compose semantics. The
 - **Port pre-flight**: `start` refuses to launch when the service's port is
   already taken and names the owning PID — typically an instance started
   outside the supervisor.
-- **No tracker installs at start**: MLflow, Aim or ClearML with its package missing stops and names
+- **No tracker installs at start**: a tracker service (MLflow, Aim, ClearML) with its package missing stops and names
   the command that adds it to the workspace's `tracker` choice (`aisland workspace configure tracker set …`,
   see [selections](selections.md)). It never installs a tracker into the shared venv itself.
 - **Foreground semantics**: `aisland <service> start` without `--background`
@@ -246,7 +240,7 @@ aisland tests nightly --json --no-notify  # the same report as data, no banner
 ```
 
 ```text
-# Nightly runs — 2026-10-06
+# Nightly runs
 
 Jenkins http://localhost:9080/ · acme.local timer runs since 2026-10-05T11:50+02:00
 
@@ -258,12 +252,12 @@ code is held to a limit. Past it the stage fails, the build fails, and the orche
 the next project, so one hung test cannot hold the nightly run. Initialize and the quality gates run tools, not the project's code, and have
 none. Waiting for an executor is not counted: the node is held before the first stage.
 
-| stage | limit | longest healthy run (01:00 runs) |
-|---|---|---|
-| Unit Tests | 15 min | 6.0 min |
-| Slow Tests | 60 min | 29.6 min |
-| Verify Examples | 15 min | 0.5 min |
-| Verify Notebooks | 15 min | 1.4 min |
+| stage | limit |
+|---|---|
+| Unit Tests | 15 min |
+| Slow Tests | 60 min |
+| Verify Examples | 15 min |
+| Verify Notebooks | 15 min |
 
 A timed-out stage ends the build's console with the line the morning report quotes:
 
@@ -272,7 +266,7 @@ Cancelling nested steps due to timeout
 Sending interrupt signal to process
 After 20s process did not stop
 ...
-ERROR: Slow Tests timed out after 60 min - its limit in Jenkinsfile.local (STAGE_LIMITS in aisland/services/jenkins.py)
+ERROR: Slow Tests timed out after 60 min - its limit in Jenkinsfile.local
 Finished: FAILURE
 ```
 
@@ -282,25 +276,22 @@ and goes on without it. A pytest killed this way writes no report, and each pyte
 the previous build's report and coverage files before it runs, so Jenkins never records
 yesterday's tests for a build that ran out of time. The GitHub workflow `ci.yml` gives each of those jobs three
 times its stage's limit (unit tests 45, slow tests 180, examples and notebooks 45 minutes), since a GitHub runner is
-slower than the machine the table was measured on; past it GitHub fails the job. The push `Jenkinsfile` carries no
+slower than a local machine; past it GitHub fails the job. The push `Jenkinsfile` carries no
 limit.
 
-## The MLflow tracking server (`aisland mlflow`)
-
-`aisland mlflow` exists while a project of the workspace brings MLflow as a service class; aisland itself ships none.
-It serves the runs from a SQLite store and an artifact folder inside its data folder, `data/mlflow/`.
-
-```bash
-aisland workspace configure tracker set mlflow tensorboard   # install the backend (once; the whole list)
-aisland mlflow start --background    # serve http://localhost:5005
-aisland mlflow info                  # URL, backend store, artifacts folder
-aisland mlflow stop
-```
-
-A run config points its tracker at it with `tracking_uri: http://localhost:5005`.
-
 ## Manage Docker
-The `act` tool and other containerized services require a Docker engine. Aisland uses **Colima** for a lightweight, CLI-first Docker experience on macOS.
+The `act` tool and other containerized services require a Docker engine.
+
+- **macOS:** aisland runs Docker in **Colima**'s VM, and installs Colima and the Docker client the first time
+  `aisland docker start` needs them, after asking.
+- **Linux:** Docker runs on the host as a system service, installed and started by root. aisland only checks it:
+  `aisland docker start` says `Docker engine is running.`, or how to get it running
+  (`Install Docker Engine: https://docs.docker.com/engine/install/`, `Start it: sudo systemctl start docker`).
+  `stop` leaves the engine running, `reset` is refused, and `--mount` is not needed — a container binds any host
+  folder.
+
+`aisland services start` starts Jenkins and SwiftBar even when the Docker engine cannot start: the engine's error is
+printed and the command exits 1.
 
 ```bash
 # Start Docker engine
@@ -316,7 +307,7 @@ aisland docker status
 aisland docker reset
 ```
 
-**Sharing host directories with the VM (`--mount`).** A `docker run -v <host>:<target>` binds a
+**Sharing host directories with the VM (`--mount`, macOS).** A `docker run -v <host>:<target>` binds a
 path *inside the Colima VM*, and Colima shares **only `$HOME`** with it by default. A bind mount
 from anywhere else — an external volume such as `$DATA_ROOT=/Volumes/...` — silently mounts an
 empty directory that Docker creates inside the VM: no error, the container just lists nothing.
@@ -325,7 +316,7 @@ Share the directory first, in Colima's own `DIR[:w]` syntax (bare = read-only):
 ```bash
 aisland docker start --mount "$DATA_ROOT:r"          # repeatable; $HOME:w is always kept
 aisland docker restart --mount "$DATA_ROOT:r"        # on a running engine — mounts apply at VM boot
-aisland docker info                                  # "VM mounts : /Users/me:w, /Volumes/Store:r"
+aisland docker info                                  # "VM mounts : /Users/me:w, /Volumes/Data:r"
 ```
 
 Two things the flag handles for you: passing *any* `--mount` to
@@ -334,8 +325,8 @@ colima **replaces** its default `$HOME` share rather than adding to it, so aisla
 `~/.colima/default/colima.yaml`, so a later bare `aisland docker start` keeps them. A running
 engine that lacks a requested mount is *refused* with the restart command rather than restarted
 for you — a VM restart stops every container on it. A symlink under `$HOME` that points outside
-the shared set (`~/data -> /Volumes/Store`) is not enough on its own: the VM sees the symlink
-itself and resolves it against *its* tree (`colima ssh -- readlink ~/data` → `/Volumes/Store/`),
+the shared set (`~/data -> /Volumes/Data`) is not enough on its own: the VM sees the symlink
+itself and resolves it against *its* tree (`colima ssh -- readlink ~/data` → `/Volumes/Data/`),
 so the real target must be shared — `--mount` resolves symlinks for exactly that reason.
 
 ## The SwiftBar menu (`aisland swiftbar`, macOS)
@@ -353,152 +344,3 @@ aisland swiftbar stop
 aisland swiftbar remove    # stop it and clear its plugin folder setting when it points here
 aisland swiftbar reset     # the same as remove
 ```
-
-## Label Studio (`aisland labelstudio`)
-
-`aisland labelstudio` exists while a project of the workspace brings Label Studio as a service class; aisland itself
-ships none. Label Studio is that project's extra, installed only when named: without it, `start` prints the command
-that adds it to the `extras` selection, keeping the extras already chosen.
-
-```bash
-# Start Label Studio (foreground)
-aisland labelstudio start
-
-# Start Label Studio (background)
-aisland labelstudio start --background
-
-# Stop/Status
-aisland labelstudio stop
-aisland labelstudio status
-```
-Default: [http://localhost:9081](http://localhost:9081)
-
-**Credentials — the workspace `.env` is the single source of truth.** On every start, the service resolves each credential as *explicit CLI flag → existing `.env` value → derived default*, and writes the result back to the workspace `.env`:
-
-| `.env` key | Default | Purpose |
-|---|---|---|
-| `LABELSTUDIO_USERNAME` | git email | Login user (created on first start) |
-| `LABELSTUDIO_PASSWORD` | workspace folder name | Login password |
-| `LABELSTUDIO_TOKEN` | generated from workspace name | Legacy API token for programmatic clients (a viewer, a pipeline) |
-| `LABELSTUDIO_URL` | `http://localhost:<port>` | Base URL clients read |
-| `LABELSTUDIO_LOCAL_FILES_ROOT` | `.aisland/data/labelstudio/local-files` | Directory LS serves via `/data/local-files/?d=<rel>` |
-
-To change a credential, edit `.env` and restart (`aisland labelstudio stop && aisland labelstudio start --background`), or pass `--username/--password/--token` once — the flags update `.env` for subsequent starts. Credentials never appear on the server's command line (`ps`) or as literals in the generated `data/process-compose.yaml`: the supervisor document stores `${LABELSTUDIO_*}` references that aisland expands from `.env` on every apply, and the server process receives them through its environment only.
-
-## IQEngine SigMF viewer (`aisland iqengine`)
-
-`aisland iqengine` exists while a project of the workspace brings IQEngine as a service class; aisland itself ships
-none.
-
-[IQEngine](https://github.com/IQEngine/IQEngine) is a web viewer for SigMF recordings — the
-recording table with annotation counts, and a spectrogram with the annotation boxes drawn on it.
-It runs as **one container over a local directory**: the image is pinned by version *and*
-digest (Docker checks it; `:latest` on ghcr is a 2023 build and `:pre` moves), the directory is
-bind-mounted **read-only** at the path upstream documents, and there is no database — the index
-is rebuilt from the directory at every start.
-
-```bash
-aisland docker start                                            # a Docker daemon (Colima)
-aisland iqengine start --recordings "$DATA_ROOT/my-sigmf"        # remembered as IQENGINE_RECORDINGS in .env
-aisland iqengine start                                          # next time: same directory
-aisland iqengine status | info | stop                           # stop removes the container, keeps the files
-aisland iqengine reset                                          # drops the container and the pinned image, never the files
-```
-
-Then open http://localhost:3000 → **Local to Backend** → click a recording → **Spectrogram**;
-annotations are drawn with their `core:label` and listed under the plot (click one to jump to
-it). Edits made in the UI stay in the container's in-memory index — never written to your files,
-gone at the next start.
-
-Two things make an empty table, and `start` diagnoses both instead of leaving you to guess:
-
-- **Every `.sigmf-meta` needs its `<same name>.sigmf-data` beside it.** IQEngine's local sync
-  skips a sidecar without one (and ignores SigMF's `core:dataset`). An annotation-only export —
-  sidecars whose IQ lives elsewhere — lists nothing; `start` prints
-  `N of M sidecars have no .sigmf-data beside them`. Write the payload next to each sidecar (the
-  `core:datatype` the sidecar already declares, e.g. `cf32_le`).
-- **The Docker VM must share the directory.** Colima shares only `$HOME` by default, so a bind
-  mount from an external volume comes up *empty* inside the container with no error anywhere.
-  `start` compares what the host and the container see and, on a mismatch, tells you the fix:
-  `aisland docker restart --mount "<dir>:r"` (see *Sharing host directories with the VM* above).
-
-The image is `linux/amd64` only; on Apple silicon it runs under emulation and answers after
-~20 s.
-
-## The Aim UI (`aisland aim`)
-
-`aisland aim` exists while a project of the workspace brings Aim as a service class; aisland itself ships none.
-
-Aim needs no server infrastructure: runs live in an `.aim` repository directory and `aim up`
-serves the comparison UI from it.
-
-```bash
-aisland workspace configure tracker set mlflow tensorboard aim   # install the backend (once; the whole list)
-aisland aim start --background       # serve http://localhost:43800
-aisland aim info                     # URL + which repository it is serving
-aisland aim stop
-```
-
-**The repository path is the whole contract.** `aisland aim start` publishes it to the
-workspace `.env` as `AIM_REPO`, so a run config points its tracker at the same place:
-
-```yaml
-trackers:
-  - !class:AimTracker { save_dir: $AIM_REPO }
-```
-
-Without that, a run writes to one repository and the UI serves another — the failure looks
-like "my runs aren't showing up". `--repo <dir>` serves a different one and republishes the
-variable to match.
-
-If a freshly-finished run does not appear, it is Aim's index rather than a lost write: the UI
-indexes when it starts, so `aisland aim restart` shows it. Nothing is missing from disk.
-
-## The ClearML server (`aisland clearml`)
-
-`aisland clearml` exists while a project of the workspace brings ClearML as a service class; aisland itself ships none.
-
-Seven containers (apiserver, webserver, fileserver, elasticsearch, mongo, redis, agent-services).
-aisland does **not** reimplement that topology — it fetches upstream's compose file at a pinned
-release, checks it against a pinned SHA-256, and layers a generated override on top.
-
-```bash
-aisland workspace configure tracker set mlflow clearml   # install the backend (once; the whole list)
-aisland docker start            # the stack needs a Docker daemon
-aisland clearml start           # ~2 GB of images on first run
-aisland clearml status          # the containers
-aisland clearml stop            # keeps the data
-aisland clearml reset           # tears down AND deletes the state
-```
-
-**Why the override exists.** Upstream hardcodes `/opt/clearml/...` as the host side of every
-bind mount, which would put service state outside the workspace and need root to create.
-Compose merges a service's `volumes` **by container target**, so the generated override
-replaces each host path with one under `.aisland/data/clearml/state`. It is derived *from*
-upstream's file, so bumping the pinned version cannot leave a stale path behind.
-
-**Credentials are minted for you.** `aisland clearml start` enables a fixed user (generating a
-password on first use and recording it), waits for the API, logs in and creates SDK credentials
-— so the workspace `.env` ends up with everything a tracker needs and there is no browser
-sign-up step:
-
-```
-CLEARML_WEB_HOST / CLEARML_API_HOST / CLEARML_FILES_HOST   where the server is
-CLEARML_USERNAME / CLEARML_PASSWORD                        the web login
-CLEARML_API_ACCESS_KEY / CLEARML_API_SECRET_KEY            what the SDK uses
-```
-
-Source `.env` and a `ClearMLTracker` connects with no further setup. Minting is best-effort: if
-the API is not up yet it says so and the next `aisland clearml start` completes it — a stack
-that is otherwise running is never failed over a convenience.
-
-Two things worth knowing:
-
-- **You may not need the server at all.** `ClearMLTracker(offline=True)` records a full session
-  to local disk with no server and no credentials — worth trying first.
-- **ClearML rejects very short task names.** A `run_name` of one or two characters fails at task
-  creation with `Data validation error: name=String value is too short`. Generated
-  run names are well clear of it; a hand-written `run_name: r` is not.
-
-On Apple silicon the images are `linux/amd64` and run under emulation; expect the web UI to take
-~30 s on first boot while Elasticsearch comes up.

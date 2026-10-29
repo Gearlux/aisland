@@ -2,7 +2,7 @@
 
 Which tools are installed, and the command: `tests/test_workspace_provision.py`.
 
-Covers the deterministic early-return branches of `_maybe_offer_shell_switch`.
+Covers the deterministic early-return branches of `offer_shell_switch`.
 The interactive sudo / chsh paths are not exercised here — they require
 mocking subprocess + tty + interactive prompts and the behavior is shell-
 specific in a way unit tests can't usefully verify.
@@ -12,47 +12,56 @@ from __future__ import annotations
 
 import hashlib
 import os
+import platform
 import re
+import subprocess
 import tarfile
 from pathlib import Path
 from typing import Any
 
+import click
 import pytest
 
-from aisland import manager
+from aisland import installers, manager
 
 
 def _current_arch() -> str:
-    """The arch token the installer resolves to (matches _install_userspace_tool)."""
-    return manager._LINUX_ARCH_ALIASES.get(manager.platform.machine().lower(), "amd64")
+    """The arch token the installer resolves to (matches install_userspace_tool)."""
+    return installers._LINUX_ARCH_ALIASES[platform.machine().lower()]
+
+
+def _subdir(spec: Any) -> str:
+    """The folder the tool's archive unpacks into on this machine, in the tool's own name for the architecture."""
+    arch = spec.get("arch_names", {}).get(_current_arch(), _current_arch())
+    return str(spec["extract_subdir"].format(version=spec["version"], arch=arch))
 
 
 def test_shell_switch_skipped_on_non_darwin(monkeypatch: pytest.MonkeyPatch, capsys: Any) -> None:
     """On Linux / Windows the chsh flow is irrelevant — must early-return silently."""
-    monkeypatch.setattr(manager.platform, "system", lambda: "Linux", raising=False)
-    manager._maybe_offer_shell_switch({"bash"})
+    monkeypatch.setattr(platform, "system", lambda: "Linux", raising=False)
+    installers.offer_shell_switch({"bash"})
     assert capsys.readouterr().out == ""
 
 
 def test_shell_switch_skipped_when_bash_not_required(monkeypatch: pytest.MonkeyPatch, capsys: Any) -> None:
     """If `bash` is not in the project's sys-deps, the offer must not appear."""
-    monkeypatch.setattr(manager.platform, "system", lambda: "Darwin", raising=False)
-    manager._maybe_offer_shell_switch({"libomp", "openjdk"})
+    monkeypatch.setattr(platform, "system", lambda: "Darwin", raising=False)
+    installers.offer_shell_switch({"libomp", "openjdk"})
     assert capsys.readouterr().out == ""
 
 
 def test_shell_switch_skipped_when_brew_bash_missing(monkeypatch: pytest.MonkeyPatch, capsys: Any) -> None:
     """If neither /opt/homebrew/bin/bash nor /usr/local/bin/bash exists, warn + skip."""
-    monkeypatch.setattr(manager.platform, "system", lambda: "Darwin", raising=False)
+    monkeypatch.setattr(platform, "system", lambda: "Darwin", raising=False)
     monkeypatch.setattr(Path, "exists", lambda self: False)
-    manager._maybe_offer_shell_switch({"bash"})
+    installers.offer_shell_switch({"bash"})
     out = capsys.readouterr().out
     assert "Homebrew bash not found" in out
 
 
 def test_shell_switch_silent_when_already_current(monkeypatch: pytest.MonkeyPatch, capsys: Any) -> None:
     """If SHELL already points to brew bash, no offer should appear (idempotency)."""
-    monkeypatch.setattr(manager.platform, "system", lambda: "Darwin", raising=False)
+    monkeypatch.setattr(platform, "system", lambda: "Darwin", raising=False)
     # Pretend /opt/homebrew/bin/bash exists, /usr/local one doesn't.
     real_exists = Path.exists
 
@@ -63,13 +72,13 @@ def test_shell_switch_silent_when_already_current(monkeypatch: pytest.MonkeyPatc
 
     monkeypatch.setattr(Path, "exists", fake_exists)
     monkeypatch.setenv("SHELL", "/opt/homebrew/bin/bash")
-    manager._maybe_offer_shell_switch({"bash"})
+    installers.offer_shell_switch({"bash"})
     assert capsys.readouterr().out == ""
 
 
 def test_shell_switch_declined_exits_cleanly(monkeypatch: pytest.MonkeyPatch, capsys: Any) -> None:
     """User declines the prompt — function must return without touching the system."""
-    monkeypatch.setattr(manager.platform, "system", lambda: "Darwin", raising=False)
+    monkeypatch.setattr(platform, "system", lambda: "Darwin", raising=False)
     real_exists = Path.exists
 
     def fake_exists(self: Path) -> bool:
@@ -80,7 +89,7 @@ def test_shell_switch_declined_exits_cleanly(monkeypatch: pytest.MonkeyPatch, ca
     monkeypatch.setattr(Path, "exists", fake_exists)
     monkeypatch.setenv("SHELL", "/bin/bash")
     # click.confirm reads from stdin; mock it to "no".
-    monkeypatch.setattr(manager.click, "confirm", lambda *a, **kw: False)
+    monkeypatch.setattr(click, "confirm", lambda *a, **kw: False)
 
     # Spy subprocess.run/check_call so we can assert nothing was invoked.
     calls: list = []
@@ -89,10 +98,10 @@ def test_shell_switch_declined_exits_cleanly(monkeypatch: pytest.MonkeyPatch, ca
         calls.append(args)
         raise AssertionError("subprocess should NOT be invoked when user declines")
 
-    monkeypatch.setattr(manager.subprocess, "run", _record)
-    monkeypatch.setattr(manager.subprocess, "check_call", _record)
+    monkeypatch.setattr(subprocess, "run", _record)
+    monkeypatch.setattr(subprocess, "check_call", _record)
 
-    manager._maybe_offer_shell_switch({"bash"})
+    installers.offer_shell_switch({"bash"})
     out = capsys.readouterr().out
     assert "Modern bash is installed" in out
     assert calls == []
@@ -105,7 +114,7 @@ def test_shell_switch_declined_exits_cleanly(monkeypatch: pytest.MonkeyPatch, ca
 
 def test_userspace_install_unknown_tool_errors(monkeypatch: pytest.MonkeyPatch, capsys: Any) -> None:
     """A tool name not in the registry must be reported, not silently skipped."""
-    manager._install_userspace_tool("definitely-not-a-real-tool")
+    installers.install_userspace_tool("definitely-not-a-real-tool")
     assert "not a known userspace tool" in capsys.readouterr().err
 
 
@@ -119,15 +128,15 @@ def test_userspace_install_skips_when_already_installed(
     for name in ("node", "npm", "npx"):
         (bin_dir / name).write_text("stub")
 
-    monkeypatch.setattr(manager, "BIN_DIR", bin_dir)
-    monkeypatch.setattr(manager, "TOOLS_DIR", tmp_path / "tools")
+    monkeypatch.setattr(installers, "BIN_DIR", bin_dir)
+    monkeypatch.setattr(installers, "TOOLS_DIR", tmp_path / "tools")
 
     def _explode(*a: Any, **kw: Any) -> Any:
-        raise AssertionError("urlretrieve should not be called when already installed")
+        raise AssertionError("nothing is downloaded when already installed")
 
-    monkeypatch.setattr(manager.urllib.request, "urlretrieve", _explode)
+    monkeypatch.setattr(installers, "download", _explode)
 
-    manager._install_userspace_tool("node")
+    installers.install_userspace_tool("node")
     assert "already installed" in capsys.readouterr().out
 
 
@@ -149,12 +158,12 @@ def test_userspace_install_extracts_and_symlinks(monkeypatch: pytest.MonkeyPatch
     """End-to-end: a fake tarball is extracted and binaries are symlinked into BIN_DIR."""
     bin_dir = tmp_path / "bin"
     tools_dir = tmp_path / "tools"
-    monkeypatch.setattr(manager, "BIN_DIR", bin_dir)
-    monkeypatch.setattr(manager, "TOOLS_DIR", tools_dir)
+    monkeypatch.setattr(installers, "BIN_DIR", bin_dir)
+    monkeypatch.setattr(installers, "TOOLS_DIR", tools_dir)
 
     # Build a fake upstream tarball mirroring the real Node layout.
-    spec = manager.USERSPACE_TOOLS["node"]
-    extract_subdir = spec["extract_subdir"].format(version=spec["version"])
+    spec = installers.USERSPACE_TOOLS["node"]
+    extract_subdir = _subdir(spec)
     staging = tmp_path / "upstream"
     staging.mkdir()
     fake_tarball = _build_fake_node_tarball(staging, extract_subdir)
@@ -162,16 +171,15 @@ def test_userspace_install_extracts_and_symlinks(monkeypatch: pytest.MonkeyPatch
     # Pin the fake tarball's real digest so the integrity gate passes (and this
     # test also exercises the happy path of verification).
     digest = hashlib.sha256(fake_tarball.read_bytes()).hexdigest()
-    monkeypatch.setitem(manager.USERSPACE_TOOLS["node"], "sha256", {_current_arch(): digest})
+    monkeypatch.setitem(installers.USERSPACE_TOOLS["node"], "sha256", {_current_arch(): digest})
 
     # Patch urlretrieve to copy the local tarball instead of hitting the network.
-    def fake_urlretrieve(url: str, dst: str) -> tuple[str, Any]:
-        Path(dst).write_bytes(fake_tarball.read_bytes())
-        return (dst, None)
+    def fake_urlretrieve(url: str, dst: Path) -> None:
+        dst.write_bytes(fake_tarball.read_bytes())
 
-    monkeypatch.setattr(manager.urllib.request, "urlretrieve", fake_urlretrieve)
+    monkeypatch.setattr(installers, "download", fake_urlretrieve)
 
-    manager._install_userspace_tool("node")
+    installers.install_userspace_tool("node")
 
     assert "sha256 OK" in capsys.readouterr().out
     for binary in ("node", "npm", "npx"):
@@ -189,28 +197,27 @@ def test_userspace_install_refuses_to_clobber_real_file(
     bin_dir = tmp_path / "bin"
     tools_dir = tmp_path / "tools"
     bin_dir.mkdir()
-    monkeypatch.setattr(manager, "BIN_DIR", bin_dir)
-    monkeypatch.setattr(manager, "TOOLS_DIR", tools_dir)
+    monkeypatch.setattr(installers, "BIN_DIR", bin_dir)
+    monkeypatch.setattr(installers, "TOOLS_DIR", tools_dir)
 
     # One of the binaries is a real file the user wrote themselves — leave it alone.
     (bin_dir / "node").write_text("USER-OWNED CONTENT")
 
-    spec = manager.USERSPACE_TOOLS["node"]
-    extract_subdir = spec["extract_subdir"].format(version=spec["version"])
+    spec = installers.USERSPACE_TOOLS["node"]
+    extract_subdir = _subdir(spec)
     staging = tmp_path / "upstream"
     staging.mkdir()
     fake_tarball = _build_fake_node_tarball(staging, extract_subdir)
 
     digest = hashlib.sha256(fake_tarball.read_bytes()).hexdigest()
-    monkeypatch.setitem(manager.USERSPACE_TOOLS["node"], "sha256", {_current_arch(): digest})
+    monkeypatch.setitem(installers.USERSPACE_TOOLS["node"], "sha256", {_current_arch(): digest})
 
-    def fake_urlretrieve(url: str, dst: str) -> tuple[str, Any]:
-        Path(dst).write_bytes(fake_tarball.read_bytes())
-        return (dst, None)
+    def fake_urlretrieve(url: str, dst: Path) -> None:
+        dst.write_bytes(fake_tarball.read_bytes())
 
-    monkeypatch.setattr(manager.urllib.request, "urlretrieve", fake_urlretrieve)
+    monkeypatch.setattr(installers, "download", fake_urlretrieve)
 
-    manager._install_userspace_tool("node")
+    installers.install_userspace_tool("node")
 
     # node was untouched; npm/npx were symlinked.
     assert (bin_dir / "node").read_text() == "USER-OWNED CONTENT"
@@ -232,25 +239,24 @@ def test_userspace_install_rejects_checksum_mismatch(
     and the bad tarball is deleted so a re-run re-downloads."""
     bin_dir = tmp_path / "bin"
     tools_dir = tmp_path / "tools"
-    monkeypatch.setattr(manager, "BIN_DIR", bin_dir)
-    monkeypatch.setattr(manager, "TOOLS_DIR", tools_dir)
+    monkeypatch.setattr(installers, "BIN_DIR", bin_dir)
+    monkeypatch.setattr(installers, "TOOLS_DIR", tools_dir)
 
-    spec = manager.USERSPACE_TOOLS["node"]
-    extract_subdir = spec["extract_subdir"].format(version=spec["version"])
+    spec = installers.USERSPACE_TOOLS["node"]
+    extract_subdir = _subdir(spec)
     staging = tmp_path / "upstream"
     staging.mkdir()
     fake_tarball = _build_fake_node_tarball(staging, extract_subdir)
 
     # Pin a digest the fake tarball cannot match.
-    monkeypatch.setitem(manager.USERSPACE_TOOLS["node"], "sha256", {_current_arch(): "0" * 64})
+    monkeypatch.setitem(installers.USERSPACE_TOOLS["node"], "sha256", {_current_arch(): "0" * 64})
 
-    def fake_urlretrieve(url: str, dst: str) -> tuple[str, Any]:
-        Path(dst).write_bytes(fake_tarball.read_bytes())
-        return (dst, None)
+    def fake_urlretrieve(url: str, dst: Path) -> None:
+        dst.write_bytes(fake_tarball.read_bytes())
 
-    monkeypatch.setattr(manager.urllib.request, "urlretrieve", fake_urlretrieve)
+    monkeypatch.setattr(installers, "download", fake_urlretrieve)
 
-    manager._install_userspace_tool("node")
+    installers.install_userspace_tool("node")
 
     assert "checksum mismatch" in capsys.readouterr().err
     # Nothing was symlinked...
@@ -268,24 +274,24 @@ def test_userspace_install_rejects_tampered_cached_tarball(
     it is verified too, so a poisoned cache is rejected without re-downloading."""
     bin_dir = tmp_path / "bin"
     tools_dir = tmp_path / "tools"
-    monkeypatch.setattr(manager, "BIN_DIR", bin_dir)
-    monkeypatch.setattr(manager, "TOOLS_DIR", tools_dir)
+    monkeypatch.setattr(installers, "BIN_DIR", bin_dir)
+    monkeypatch.setattr(installers, "TOOLS_DIR", tools_dir)
 
-    spec = manager.USERSPACE_TOOLS["node"]
-    tarball_name = Path(spec["url"].format(version=spec["version"])).name
+    spec = installers.USERSPACE_TOOLS["node"]
+    tarball_name = f"{_subdir(spec)}.tar.xz"
     cache = tools_dir / "cache"
     cache.mkdir(parents=True)
     (cache / tarball_name).write_bytes(b"TAMPERED-NOT-A-REAL-TARBALL")
 
     # Pin a real-looking digest that the tampered bytes cannot match.
-    monkeypatch.setitem(manager.USERSPACE_TOOLS["node"], "sha256", {_current_arch(): "a" * 64})
+    monkeypatch.setitem(installers.USERSPACE_TOOLS["node"], "sha256", {_current_arch(): "a" * 64})
 
-    def fail_urlretrieve(url: str, dst: str) -> tuple[str, Any]:
+    def fail_urlretrieve(url: str, dst: Path) -> None:
         raise AssertionError("must not re-download a cached tarball before verifying it")
 
-    monkeypatch.setattr(manager.urllib.request, "urlretrieve", fail_urlretrieve)
+    monkeypatch.setattr(installers, "download", fail_urlretrieve)
 
-    manager._install_userspace_tool("node")
+    installers.install_userspace_tool("node")
 
     captured = capsys.readouterr()
     assert "Using cached tarball" in captured.out
@@ -299,25 +305,24 @@ def test_userspace_install_warns_when_no_digest_pinned(
     """An unpinned tool still installs (backward-compatible) but loudly warns."""
     bin_dir = tmp_path / "bin"
     tools_dir = tmp_path / "tools"
-    monkeypatch.setattr(manager, "BIN_DIR", bin_dir)
-    monkeypatch.setattr(manager, "TOOLS_DIR", tools_dir)
+    monkeypatch.setattr(installers, "BIN_DIR", bin_dir)
+    monkeypatch.setattr(installers, "TOOLS_DIR", tools_dir)
 
-    spec = manager.USERSPACE_TOOLS["node"]
-    extract_subdir = spec["extract_subdir"].format(version=spec["version"])
+    spec = installers.USERSPACE_TOOLS["node"]
+    extract_subdir = _subdir(spec)
     staging = tmp_path / "upstream"
     staging.mkdir()
     fake_tarball = _build_fake_node_tarball(staging, extract_subdir)
 
     # No digest for this arch → verification skipped with a warning.
-    monkeypatch.setitem(manager.USERSPACE_TOOLS["node"], "sha256", {})
+    monkeypatch.setitem(installers.USERSPACE_TOOLS["node"], "sha256", {})
 
-    def fake_urlretrieve(url: str, dst: str) -> tuple[str, Any]:
-        Path(dst).write_bytes(fake_tarball.read_bytes())
-        return (dst, None)
+    def fake_urlretrieve(url: str, dst: Path) -> None:
+        dst.write_bytes(fake_tarball.read_bytes())
 
-    monkeypatch.setattr(manager.urllib.request, "urlretrieve", fake_urlretrieve)
+    monkeypatch.setattr(installers, "download", fake_urlretrieve)
 
-    manager._install_userspace_tool("node")
+    installers.install_userspace_tool("node")
 
     assert "UNVERIFIED" in capsys.readouterr().out
     assert (bin_dir / "node").is_symlink()
@@ -326,7 +331,7 @@ def test_userspace_install_warns_when_no_digest_pinned(
 def test_registry_pins_wellformed_sha256_for_every_tool() -> None:
     """Every shipped USERSPACE_TOOLS entry pins at least one 64-hex-char digest,
     guarding against a bad paste or a version bump that forgot to refresh them."""
-    for name, spec in manager.USERSPACE_TOOLS.items():
+    for name, spec in installers.USERSPACE_TOOLS.items():
         digests = spec.get("sha256", {})
         assert digests, f"{name} has no pinned sha256 digests"
         for arch, digest in digests.items():
@@ -347,7 +352,7 @@ def test_link_project_bashrc_creates_symlink(monkeypatch: pytest.MonkeyPatch, tm
     target.write_text("# fake aisland bashrc\n")
 
     monkeypatch.setattr(manager, "BASE_DIR", aisland_dir)
-    manager._link_project_bashrc(workspace)
+    manager.link_project_bashrc(workspace)
 
     link = workspace / "project.bashrc"
     assert link.is_symlink()
@@ -365,7 +370,7 @@ def test_link_project_bashrc_idempotent(monkeypatch: pytest.MonkeyPatch, tmp_pat
     (workspace / "project.bashrc").symlink_to("aisland/project.bashrc")
 
     monkeypatch.setattr(manager, "BASE_DIR", aisland_dir)
-    manager._link_project_bashrc(workspace)
+    manager.link_project_bashrc(workspace)
 
     assert capsys.readouterr().out == ""
 
@@ -383,7 +388,7 @@ def test_link_project_bashrc_refuses_to_clobber_real_file(
     real_file.write_text("# USER's hand-edited bashrc\n")
 
     monkeypatch.setattr(manager, "BASE_DIR", aisland_dir)
-    manager._link_project_bashrc(workspace)
+    manager.link_project_bashrc(workspace)
 
     assert real_file.read_text() == "# USER's hand-edited bashrc\n"
     assert not real_file.is_symlink()
@@ -402,7 +407,64 @@ def test_link_project_bashrc_replaces_stale_symlink(monkeypatch: pytest.MonkeyPa
     (workspace / "project.bashrc").symlink_to("old-bashrc")
 
     monkeypatch.setattr(manager, "BASE_DIR", aisland_dir)
-    manager._link_project_bashrc(workspace)
+    manager.link_project_bashrc(workspace)
 
     link = workspace / "project.bashrc"
     assert link.resolve() == target.resolve()
+
+
+@pytest.mark.parametrize("machine, asset", [("x86_64", "linux-x64"), ("aarch64", "linux-arm64")])
+def test_node_downloads_the_build_of_this_machines_architecture_and_verifies_it(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, machine: str, asset: str
+) -> None:
+    """Node names its builds x64 and arm64; an ARM machine gets the arm64 build, checked against its own digest."""
+    monkeypatch.setattr(platform, "machine", lambda: machine)
+    monkeypatch.setattr(installers, "BIN_DIR", tmp_path / "bin")
+    monkeypatch.setattr(installers, "TOOLS_DIR", tmp_path / "tools")
+    fetched = []
+
+    def record(url: str, dst: Path) -> None:
+        fetched.append(url)
+        dst.write_bytes(b"not the real archive")
+
+    monkeypatch.setattr(installers, "download", record)
+    installers.install_userspace_tool("node")
+    assert fetched == [f"https://nodejs.org/dist/v22.11.0/node-v22.11.0-{asset}.tar.xz"]
+    assert set(installers.USERSPACE_TOOLS["node"]["sha256"]) == {"amd64", "arm64"}
+
+
+def test_an_architecture_aisland_has_no_build_for_is_refused_before_any_download(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, capsys: Any
+) -> None:
+    monkeypatch.setattr(platform, "machine", lambda: "riscv64")
+    monkeypatch.setattr(installers, "BIN_DIR", tmp_path / "bin")
+    monkeypatch.setattr(installers, "TOOLS_DIR", tmp_path / "tools")
+
+    def explode(url: str, dst: Path) -> None:
+        raise AssertionError("nothing is downloaded for an unknown architecture")
+
+    monkeypatch.setattr(installers, "download", explode)
+    installers.install_userspace_tool("node")
+    assert (
+        "Error: no node build for riscv64 (aisland has amd64, arm64); install node yourself." in capsys.readouterr().err
+    )
+
+
+def test_a_half_unpacked_folder_from_an_interrupted_run_is_replaced(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """An unpack killed half way left `tools/<tool>/` without its binaries; the next run unpacks again, whole."""
+    bin_dir, tools_dir = tmp_path / "bin", tmp_path / "tools"
+    monkeypatch.setattr(installers, "BIN_DIR", bin_dir)
+    monkeypatch.setattr(installers, "TOOLS_DIR", tools_dir)
+    spec = installers.USERSPACE_TOOLS["node"]
+    staging = tmp_path / "upstream"
+    staging.mkdir()
+    fake_tarball = _build_fake_node_tarball(staging, _subdir(spec))
+    monkeypatch.setitem(spec, "sha256", {_current_arch(): hashlib.sha256(fake_tarball.read_bytes()).hexdigest()})
+    monkeypatch.setattr(installers, "download", lambda url, dst: dst.write_bytes(fake_tarball.read_bytes()))
+    (tools_dir / _subdir(spec) / "bin").mkdir(parents=True)  # what the interrupted run left: no binaries
+    installers.install_userspace_tool("node")
+    assert all((bin_dir / binary).is_symlink() for binary in ("node", "npm", "npx"))
+    assert all((tools_dir / _subdir(spec) / "bin" / binary).is_file() for binary in ("node", "npm", "npx"))
+    assert sorted(path.name for path in tools_dir.iterdir()) == sorted(["cache", _subdir(spec)])

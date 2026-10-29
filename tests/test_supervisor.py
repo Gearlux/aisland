@@ -357,8 +357,8 @@ def test_ensure_binary_raises_when_uninstallable(monkeypatch: pytest.MonkeyPatch
     monkeypatch.setattr(provision, "agree", lambda question: True)
     with (
         patch("aisland.supervisor.find_binary", return_value=None),
-        patch("aisland.manager._install_brew_packages"),
-        patch("aisland.manager._install_userspace_tool"),
+        patch("aisland.installers.install_brew_packages"),
+        patch("aisland.installers.install_userspace_tool"),
     ):
         with pytest.raises(click.ClickException, match="process-compose is still not found after installing it"):
             supervisor.ensure_binary()

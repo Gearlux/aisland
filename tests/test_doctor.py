@@ -1,7 +1,7 @@
 """`aisland doctor` — preflight checks for known recurring venv skew.
 
 Each check encodes an invariant the workspace enforces elsewhere (the uv override policy in
-`manager._ROOT_UV_BASE`, the huggingface_hub floor in the root AGENTS.md). These tests drive
+`uv_config._ROOT_UV_BASE`, the huggingface_hub floor in the root AGENTS.md). These tests drive
 the checks through both the healthy state and the exact broken state that motivated them, so
 a future refactor cannot silently turn a check into a no-op.
 """
@@ -115,7 +115,7 @@ class TestMcpServerApiCheck:
     """The 2.x MCP SDK renamed the server class AND its module; the two never coexist.
 
     The real incident: `mcp` 2.0.0 resolved into the shared venv against an unbounded
-    `mcp>=1.9.0` floor, `mcp.server.fastmcp` vanished, and `vendorcli-mcp` died on import —
+    `mcp>=1.9.0` floor, `mcp.server.fastmcp` vanished, and `app-mcp` died on import —
     discovered only when someone tried to use it.
     """
 

@@ -2,7 +2,7 @@
 
 This document describes the end-to-end workflow for setting up and managing a local Jenkins CI/CD environment using the `aisland` tool.
 
-## Phase 1: Service Startup
+## Starting Jenkins
 
 ### 1. Start Jenkins
 To download the base Jenkins binary (if missing) and launch the server:
@@ -10,24 +10,21 @@ To download the base Jenkins binary (if missing) and launch the server:
 aisland jenkins start --background
 ```
 - **Default URL:** [http://localhost:9080](http://localhost:9080)
-- **Home Directory:** `aisland/data/jenkins/`
+- **Home Directory:** `.aisland/data/jenkins/` in the workspace (`aisland/data/jenkins/` when aisland runs from its own checkout)
 
-*Note: The `start` command intentionally does NOT aggressively install plugins. It simply brings the server up and checks if you have configured credentials.*
+*Note: `start` does not install plugins. It brings the server up and checks whether you have configured credentials.*
 
 ### 2. Initial Setup & Unlock
 If this is a clean installation, `aisland jenkins start` will detect that no credentials exist and print instructions to the console. 
-The `aisland` tool skips the Jenkins setup wizard automatically.
-
-- **Username:** `admin` (or your OS username)
-- **Password:** If prompted for a password, you can retrieve the initial one by running:
+The first start keeps Jenkins' setup wizard, so security is on from the start. Unlock it with the initial admin password; `aisland jenkins start` prints it, and `aisland jenkins status` prints it as `Initial Admin Password:` while Jenkins runs:
 ```bash
 aisland jenkins status
 ```
-Paste this into the Jenkins web interface to unlock it.
+Paste it into the Jenkins web interface to unlock it, then create your admin user.
 
 ---
 
-## Phase 2: Configuration & Plugins
+## Credentials, Plugins and Pipelines
 
 ### 1. Add Git Credentials (Manual Step)
 If your projects use private GitHub repositories, add your credentials to Jenkins *before* initializing pipelines:
@@ -78,4 +75,4 @@ aisland jenkins init models
 If Jenkins reports missing dependencies during startup, ensure you are using the latest version of the `aisland` tool and perform a `aisland jenkins reset` to force a clean re-download of the plugin suite.
 
 ### Credentials Matching
-The `init` command aggressively expects credentials for GitHub repositories to be named exactly `aisland-github`. If it warns you during `init` that it cannot find this ID, delete your current credentials in Jenkins and recreate them, ensuring the **ID** field explicitly says `aisland-github`.
+The `init` command expects credentials for GitHub repositories to be named exactly `aisland-github`. If it warns you during `init` that it cannot find this ID, delete your current credentials in Jenkins and recreate them, ensuring the **ID** field explicitly says `aisland-github`.

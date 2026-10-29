@@ -14,6 +14,7 @@ from click.testing import CliRunner
 
 from aisland import completion as comp
 from aisland.cli import main
+from aisland.projects import get_workspace_name
 
 LIQUIFAI_APPS = ["matrainer", "sonair"]
 
@@ -411,7 +412,9 @@ def test_the_file_names_no_workspace_project(rc: Path, all_present: None) -> Non
     comp.install_completions(target_rc=rc, shell="bash", apps=LIQUIFAI_APPS)
     text = rc.read_text()
     block = text[text.index(comp._NON_LIQUIFAI_START) : text.index(comp._NON_LIQUIFAI_END)]
-    assert "acme" not in block.lower()  # aisland's block; liquifai's helpers hold this machine's venv path
+    # aisland's block; liquifai's helpers hold this machine's venv path. A workspace named "aisland" is the block's own.
+    name = get_workspace_name().lower()
+    assert name == "aisland" or name not in block.lower()
     assert "# >>> aisland completion for non-liquifai CLIs >>>" in text
     assert "# <<< aisland completion for non-liquifai CLIs <<<" in text
     assert "# Source template: aisland.completion (_render_non_liquifai)" in text

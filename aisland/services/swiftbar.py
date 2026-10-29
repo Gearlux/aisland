@@ -6,8 +6,10 @@ from typing import Any, List, Optional
 
 import click
 
-from aisland import failures, provision
-from aisland.manager import DATA_DIR, BaseService, get_workspace_root
+from aisland import failures, provision, sources
+from aisland.paths import DATA_DIR
+from aisland.projects import get_workspace_root
+from aisland.services.base import BaseService
 from aisland.services.jenkins import JenkinsService
 
 
@@ -38,36 +40,17 @@ class SwiftBarService(BaseService):
         return True
 
     def _get_github_repo(self, path: Path) -> Optional[str]:
-        """Return nameWithOwner if the path is a GitHub repo."""
+        """``owner/name`` of the GitHub repository ``path``'s origin names; None for no repository or another host."""
+        if not (path / ".git").exists():  # a submodule's .git is a file, the root's a folder
+            return None
         try:
-            # Check if it's a git repo
-            # Submodules have .git as a file, root has it as a directory
-            if not (path / ".git").exists():
-                return None
-
             output = subprocess.check_output(
-                ["git", "remote", "get-url", "origin"],
-                cwd=path,
-                text=True,
-                stderr=subprocess.DEVNULL,
+                ["git", "remote", "get-url", "origin"], cwd=path, text=True, stderr=subprocess.DEVNULL
             ).strip()
-
-            if "github.com" in output:
-                # Remove .git suffix
-                if output.endswith(".git"):
-                    output = output[:-4]
-
-                if "@" in output and ":" in output:
-                    # SSH format: git@github.com:User/Repo
-                    return output.split(":")[-1]
-                elif "://" in output:
-                    # HTTPS format: https://github.com/User/Repo
-                    parts = output.rstrip("/").split("/")
-                    if len(parts) >= 2:
-                        return f"{parts[-2]}/{parts[-1]}"
-        except Exception:
-            pass
-        return None
+        except (OSError, subprocess.CalledProcessError):  # no origin, or no git
+            return None
+        repository = sources.github_repository(output)
+        return f"{repository.owner}/{repository.name}" if repository else None
 
     def _dependency_ordered_projects(self, workspace_root: Path) -> List[Path]:
         """Return project directories ordered so dependencies precede dependents.
@@ -78,7 +61,7 @@ class SwiftBarService(BaseService):
         """
         import graphlib
 
-        from aisland.manager import discover_projects, get_project_metadata
+        from aisland.projects import discover_projects, get_project_metadata
 
         projects = [get_project_metadata(p) for p in discover_projects(workspace_root)]
         project_names = {p["name"] for p in projects if p["name"]}
@@ -210,8 +193,8 @@ class SwiftBarService(BaseService):
                 subprocess.run(["open", "-g", url], check=False)
 
                 self.launch()
-            except Exception as e:
-                click.echo(click.style(f"  [ERROR] Failed to configure SwiftBar: {e}", fg="red"))
+            except (OSError, subprocess.CalledProcessError) as e:
+                failures.report(f"  - Error: failed to configure SwiftBar: {e}")
         else:
             click.echo(f"\nPlease manually point SwiftBar to: {self.plugins_dir}")
 
@@ -238,7 +221,7 @@ class SwiftBarService(BaseService):
         try:
             subprocess.run(["pkill", "SwiftBar"], check=False)
             click.echo("  - SwiftBar stopped.")
-        except Exception as e:
+        except OSError as e:
             failures.report(f"  - Error stopping SwiftBar: {e}")
 
     def restart(self, **kwargs: Any) -> None:
@@ -267,7 +250,7 @@ class SwiftBarService(BaseService):
             except subprocess.CalledProcessError:
                 # Key might not exist or app not installed
                 pass
-            except Exception as e:
+            except OSError as e:
                 failures.report(f"  - Error clearing SwiftBar {key} configuration: {e}")
 
     def reset(self) -> None:

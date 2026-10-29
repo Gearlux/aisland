@@ -19,9 +19,8 @@ import subprocess
 from pathlib import Path
 from typing import List, Optional, Sequence
 
-import click
-
-from aisland import pytest_stats, workspace_file
+from aisland import locations, pytest_stats, workspace_file
+from aisland.errors import AislandError
 
 KEY = pytest_stats.RECORD_KEY
 
@@ -35,7 +34,7 @@ def _named(root: Path, projects: Sequence[str]) -> List[str]:
     known = list(workspace_file.load(root).projects)
     unknown = [name for name in projects if name not in known]
     if unknown:
-        raise click.ClickException(
+        raise AislandError(
             f"'{unknown[0]}' is no project of the workspace (its projects: {', '.join(known) or 'none'})"
         )
     return list(projects)
@@ -102,7 +101,21 @@ def states(root: Path) -> List[str]:
 
 
 def command(root: Path, projects: Sequence[str], on: bool, machine_only: bool) -> List[str]:
-    """``aisland workspace test-stats on|off``: the change, then every project's state."""
+    """``aisland workspace test-stats on|off``: the change, then every project's state.
+
+    Refused, before anything is written, outside an aisland workspace — the plugin records nothing there, so there is
+    nothing to switch — and with ``--machine-only`` where the workspace is no git repository (this machine's switch
+    lives in its ``.git/config``)."""
+    if not locations.is_workspace(root):
+        raise AislandError(
+            f"{root} is no aisland workspace (it holds no workspace.toml or .gitmodules): no test run is recorded "
+            "there, so there is nothing to turn on or off"
+        )
+    if machine_only and not (root / ".git").exists():
+        raise AislandError(
+            f"{root} is no git repository: this machine's switch lives in its .git/config — leave out --machine-only "
+            "to write the choice into workspace.toml"
+        )
     _named(root, projects)
     word = "recorded" if on else "not recorded"
     which = ", ".join(projects) if projects else "every project, and every one added later"

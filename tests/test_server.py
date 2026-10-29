@@ -14,7 +14,7 @@ import re
 import subprocess
 import sys
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, cast
 
 import pytest
 from click.testing import CliRunner
@@ -23,10 +23,11 @@ from mcp.client.stdio import StdioServerParameters, stdio_client
 from mcp.server.lowlevel.server import NotificationOptions
 from mcp.server.mcpserver.exceptions import ToolError
 
-from aisland import cli, doctor, editor, manager, pytest_stats, server
+from aisland import cli, doctor, editor, editor_files, mcp_config, projects, pytest_stats, server
 from aisland import sources as sources_mod
 from aisland import supervisor
 from aisland import tunnel as tunnel_mod
+from aisland.services import registry
 from tests.test_editor import no_vscode, vscode  # noqa: F401  (fixtures)
 
 READ_ONLY = {
@@ -54,7 +55,7 @@ def repo(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     root = tmp_path / "acme"
     root.mkdir()
     subprocess.run(["git", "init", "-q", str(root)], check=True)
-    monkeypatch.setattr(manager, "_loggair_log_dir", lambda workspace_root: None)
+    monkeypatch.setattr(editor_files, "_loggair_log_dir", lambda workspace_root: None)
     monkeypatch.setattr(server, "get_workspace_root", lambda: root)
     return root
 
@@ -234,11 +235,11 @@ def test_services_status_without_a_supervisor_lists_nothing(monkeypatch: pytest.
 
 def test_the_reading_tools_change_nothing(vscode: Dict[str, Path], repo: Path) -> None:  # noqa: F811
     _call("editor_set_theme", {"name": "Solarized Dark"})
-    config, workspace_file = _local_config(repo), manager.code_workspace_path(repo).read_text()
+    config, workspace_file = _local_config(repo), editor_files.code_workspace_path(repo).read_text()
     for name in ("editor_themes", "editor_colors"):
         _call(name)
     assert _local_config(repo) == config
-    assert manager.code_workspace_path(repo).read_text() == workspace_file
+    assert editor_files.code_workspace_path(repo).read_text() == workspace_file
 
 
 # --- the editor's theme and colours -------------------------------------------------------
@@ -253,7 +254,7 @@ def test_editor_set_theme_writes_the_workspace_file_and_returns_the_choice(
         "foreground": None,
         "area": "frame",
     }
-    assert '"workbench.colorTheme": "Solarized Dark"' in manager.code_workspace_path(repo).read_text()
+    assert '"workbench.colorTheme": "Solarized Dark"' in editor_files.code_workspace_path(repo).read_text()
 
 
 def test_without_vs_code_editor_set_theme_keeps_the_name_and_says_it_is_unchecked(
@@ -267,7 +268,7 @@ def test_without_vs_code_editor_set_theme_keeps_the_name_and_says_it_is_unchecke
         "note": "not checked: VS Code is not on this machine, so the theme comes from the VS Code that opens this "
         "workspace remotely",
     }
-    assert '"workbench.colorTheme": "Monokai Pro"' in manager.code_workspace_path(repo).read_text()
+    assert '"workbench.colorTheme": "Monokai Pro"' in editor_files.code_workspace_path(repo).read_text()
 
 
 def test_an_unknown_theme_is_refused_with_the_commands_words(vscode: Dict[str, Path], repo: Path) -> None:  # noqa: F811
@@ -286,13 +287,13 @@ def test_editor_set_color_takes_a_name_or_hex_and_an_area(repo: Path) -> None:
     }
     choice = _call("editor_set_color", {"role": "foreground", "color": "#E0E0E0"})
     assert (choice["foreground"], choice["area"]) == ("#e0e0e0", "both")
-    assert '"editor.background": "#483d8b"' in manager.code_workspace_path(repo).read_text()
+    assert '"editor.background": "#483d8b"' in editor_files.code_workspace_path(repo).read_text()
 
 
 def test_editor_set_color_takes_the_sidebar_area(repo: Path) -> None:
     assert _call("editor_set_color", {"role": "background", "color": "navy", "area": "sidebar"})["area"] == "sidebar"
-    assert '"sideBarSectionHeader.background": "#000080"' in manager.code_workspace_path(repo).read_text()
-    assert '"editor.background"' not in manager.code_workspace_path(repo).read_text()
+    assert '"sideBarSectionHeader.background": "#000080"' in editor_files.code_workspace_path(repo).read_text()
+    assert '"editor.background"' not in editor_files.code_workspace_path(repo).read_text()
 
 
 def test_a_colour_that_is_no_colour_is_refused(repo: Path) -> None:
@@ -317,18 +318,21 @@ def test_editor_unset_forgets_what_it_names(
     assert _call("editor_unset", {"what": what}) == left
 
 
-# --- Jenkins and MLflow -------------------------------------------------------------------
+# --- the services --------------------------------------------------------------------------------------------
 
 
 @pytest.fixture
 def ran(monkeypatch: pytest.MonkeyPatch) -> List[List[str]]:
-    """Every `aisland` command line the service tools run, each answering exit 0 with one line."""
+    """Every `aisland` command line the service tools run, each answering exit 0 with one line; the workspace's
+    services are aisland's own and `notes`, one a project brings."""
     calls: List[List[str]] = []
 
     def run(args: List[str]) -> subprocess.CompletedProcess[str]:
         calls.append(args)
         return subprocess.CompletedProcess(args, 0, stdout=f"{args[0].capitalize()} started.\n", stderr="")
 
+    notes = registry.Entry("notes", cast(Any, lambda: None), by_default=False, takes_background=True, project="app")
+    monkeypatch.setattr(registry, "declared", lambda root, reserved=(): [notes])
     monkeypatch.setattr(server, "_run_aisland", run)
     monkeypatch.setattr(supervisor, "get_process", lambda name: {"name": name, "is_running": True, "pid": 7})
     monkeypatch.setattr(supervisor, "get_ports", lambda name: [5005])
@@ -338,28 +342,48 @@ def ran(monkeypatch: pytest.MonkeyPatch) -> List[List[str]]:
 @pytest.mark.parametrize(
     ("tool", "args"),
     [
-        ("service_start", ["mlflow", "start", "--background"]),
-        ("service_stop", ["mlflow", "stop"]),
-        ("service_restart", ["mlflow", "restart", "--background"]),
+        ("service_start", ["notes", "start", "--background"]),
+        ("service_stop", ["notes", "stop"]),
+        ("service_restart", ["notes", "restart", "--background"]),
     ],
 )
 def test_a_service_tool_runs_the_aisland_command_in_the_background(
     ran: List[List[str]], tool: str, args: List[str]
 ) -> None:
-    assert _call(tool, {"name": "mlflow"}) == {
-        "service": "mlflow",
+    assert _call(tool, {"name": "notes"}) == {
+        "service": "notes",
         "running": True,
         "pid": 7,
         "ports": [5005],
-        "output": "Mlflow started.",
+        "output": "Notes started.",
     }
     assert ran == [args]
 
 
-def test_only_jenkins_and_mlflow_are_services_a_tool_controls(ran: List[List[str]]) -> None:
+@pytest.mark.parametrize(
+    ("tool", "args"),
+    [("service_start", ["docker", "start"]), ("service_restart", ["swiftbar", "restart"])],
+)
+def test_a_service_that_detaches_by_itself_gets_no_background_flag(
+    ran: List[List[str]], tool: str, args: List[str]
+) -> None:
+    """`aisland docker start` takes no `--background`: Colima detaches by itself."""
+    _call(tool, {"name": args[0]})
+    assert ran == [args]
+
+
+def test_every_service_of_the_workspace_is_one_a_tool_controls_and_no_other(ran: List[List[str]]) -> None:
     text = _error("service_start", {"name": "clearml"})
-    assert "jenkins" in text and "mlflow" in text
+    assert "no service 'clearml' (the services: docker, jenkins, notes, swiftbar)" in text
     assert ran == []
+
+
+def test_the_schema_names_no_fixed_list_of_services() -> None:
+    """The workspace's services change with its projects: the schema takes a name, the tool checks it when it runs."""
+    for name in ("service_start", "service_stop", "service_restart"):
+        assert _tools()[name].input_schema["properties"]["name"]["type"] == "string"
+        assert "enum" not in _tools()[name].input_schema["properties"]["name"]
+    assert "mlflow" not in server.INSTRUCTIONS.lower()
 
 
 def test_a_command_that_fails_is_an_error_carrying_its_output(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -439,10 +463,10 @@ def test_over_stdio_a_print_goes_to_stderr_and_the_tools_still_answer(tmp_path: 
 
 def test_the_workspace_lists_the_server_in_mcp_json(tmp_path: Path) -> None:
     """`aisland setup` writes `.mcp.json` from discovery: a `<pkg>.server:main` script importing `mcp.server`."""
-    root = manager.get_workspace_root()
+    root = projects.get_workspace_root()
     if not (root / "aisland" / "pyproject.toml").is_file():
         pytest.skip("not run inside the workspace")
-    servers = manager._discover_mcp_servers(root, tmp_path / "bin")
+    servers = mcp_config.discover_mcp_servers(root, tmp_path / "bin")
     assert servers["aisland"] == {"command": str(tmp_path / "bin" / "aisland-mcp")}
 
 

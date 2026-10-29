@@ -30,6 +30,9 @@ FROM_CHECKOUT = (CHECKOUT_DIR / "pyproject.toml").is_file()
 WORKSPACE_ENV = "AISLAND_WORKSPACE"
 #: The workspace folder that holds the state when aisland runs from a wheel.
 STATE_FOLDER = ".aisland"
+#: The files that make a folder an aisland workspace (:func:`is_workspace`): the one aisland writes it down in, and
+#: git's list of its submodules.
+WORKSPACE_MARKERS = ("workspace.toml", ".gitmodules")
 
 
 def checkout_workspace_root(package_file: Optional[Path] = None) -> Path:
@@ -180,6 +183,23 @@ def state_dir() -> Path:
     if FROM_CHECKOUT:
         return CHECKOUT_DIR
     return workspace_root() / STATE_FOLDER
+
+
+def is_workspace(folder: Path, environ: Mapping[str, str] = os.environ) -> bool:
+    """Whether ``folder`` is an aisland workspace: from a checkout always; from a wheel, a folder holding one of
+    :data:`WORKSPACE_MARKERS` (what ``aisland workspace init`` and ``aisland setup`` write) or the one
+    ``AISLAND_WORKSPACE`` names.
+
+    :func:`find_workspace` also answers for a lone repository (a project's parent, a fresh ``git init``), so that
+    ``workspace init`` and ``setup`` can start there; what writes into a workspace uninvited — the pytest plugin's
+    record — asks this first, so a repository of its own stays untouched.
+    """
+    if FROM_CHECKOUT:
+        return True
+    named = environ.get(WORKSPACE_ENV, "")
+    if named and Path(named).expanduser().resolve() == folder.resolve():
+        return True
+    return any(_is(folder / marker, "file") for marker in WORKSPACE_MARKERS)
 
 
 def workspace_found() -> bool:

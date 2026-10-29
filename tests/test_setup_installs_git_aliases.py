@@ -21,9 +21,9 @@ def stubbed_setup(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> List[Path]
     """`setup_workspace` over an empty workspace with every step but the aliases' stubbed; the aliases' roots."""
     (tmp_path / ".venv" / "bin").mkdir(parents=True)
     installed: List[Path] = []
-    monkeypatch.setattr(manager, "get_workspace_root", lambda: tmp_path)
+    monkeypatch.setattr(locations, "workspace_root", lambda: tmp_path)
     monkeypatch.setattr(manager, "ensure_uv_in_venv", lambda venv_bin: "uv")
-    monkeypatch.setattr(manager, "_link_project_bashrc", lambda root: None)
+    monkeypatch.setattr(manager, "link_project_bashrc", lambda root: None)
     monkeypatch.setattr(manager, "install_harness", lambda root: [])
     monkeypatch.setattr("aisland.provision.install", lambda root, aislands_own=True: None)
     monkeypatch.setattr("aisland.activation.resolve", lambda root, non_interactive: None)
@@ -31,13 +31,13 @@ def stubbed_setup(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> List[Path]
     monkeypatch.setattr("aisland.sources.apply_all", lambda *a, **k: None)
     monkeypatch.setattr("aisland.mirrors.apply_all", lambda *a, **k: None)
     monkeypatch.setattr(manager, "get_install_order", lambda root: [])
-    monkeypatch.setattr(manager, "_write_pyrightconfig", lambda *a: None)
-    monkeypatch.setattr(manager, "_sync_mypy_path", lambda *a: None)
+    monkeypatch.setattr(manager, "write_pyrightconfig", lambda *a: None)
+    monkeypatch.setattr(manager, "sync_mypy_path", lambda *a: None)
     monkeypatch.setattr("aisland.selection.resolve_for_setup", lambda *a, **k: ([], False))
-    monkeypatch.setattr(manager, "_write_root_uv_toml", lambda *a: None)
+    monkeypatch.setattr(manager, "write_root_uv_toml", lambda *a: None)
     monkeypatch.setattr(manager, "_run_installs", lambda *a: ([], []))
-    monkeypatch.setattr(manager, "_write_gemini_settings", lambda *a: None)
-    monkeypatch.setattr(manager, "_write_mcp_json", lambda *a: None)
+    monkeypatch.setattr(manager, "write_gemini_settings", lambda *a: None)
+    monkeypatch.setattr(manager, "write_mcp_json", lambda *a: None)
     monkeypatch.setattr(manager, "write_code_workspace", lambda root: None)
 
     def install(root: Path) -> bool:

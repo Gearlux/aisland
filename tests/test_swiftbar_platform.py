@@ -10,6 +10,9 @@ while on Windows ``status()`` crashed with ``FileNotFoundError`` because
 
 from __future__ import annotations
 
+import subprocess
+from pathlib import Path
+from typing import Optional
 from unittest.mock import patch
 
 import pytest
@@ -77,3 +80,28 @@ def test_stop_runs_on_macos() -> None:
     ):
         svc.stop()
     run_mock.assert_called_once_with(["pkill", "SwiftBar"], check=False)
+
+
+@pytest.mark.parametrize(
+    "origin, repository",
+    [
+        ("git@github.com:acme/models.git", "acme/models"),
+        ("https://github.com/acme/models.git", "acme/models"),
+        ("https://user@github.com/acme/models.git", "acme/models"),
+        ("https://bitbucket.example.com/scm/acme/models.git", None),
+    ],
+)
+def test_the_menu_names_a_projects_github_repository_from_every_spelling_of_its_origin(
+    tmp_path: Path, origin: str, repository: Optional[str]
+) -> None:
+    """An https remote with a user before the host is no ssh remote: `https://user@github.com/acme/models` is
+    `acme/models`, never `//user@github.com/acme/models`."""
+    subprocess.run(["git", "init", "-q", str(tmp_path)], check=True)
+    subprocess.run(["git", "-C", str(tmp_path), "remote", "add", "origin", origin], check=True)
+    assert SwiftBarService()._get_github_repo(tmp_path) == repository
+
+
+def test_a_folder_without_a_repository_or_an_origin_names_none(tmp_path: Path) -> None:
+    assert SwiftBarService()._get_github_repo(tmp_path) is None
+    subprocess.run(["git", "init", "-q", str(tmp_path)], check=True)
+    assert SwiftBarService()._get_github_repo(tmp_path) is None

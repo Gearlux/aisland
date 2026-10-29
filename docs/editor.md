@@ -9,10 +9,10 @@ installed editable into the `.venv` — one at the workspace root
 **every project dir** (`venvPath: ".."` back to the shared `.venv`,
 sibling projects on `extraPaths`) for when you open a single project as
 its own editor window. All copies use relative paths only, so they are
-portable across machines — and they are gitignored + regenerated on
-every setup (setup appends the `/pyrightconfig.json` ignore entry to a
-project's `.gitignore` if missing), so they always track the live
-project list and never dirty a tree. Don't hand-edit them; add a
+portable across machines — and they are regenerated on
+every setup, so they always track the live project list. Setup keeps them
+out of git through the project's `.git/info/exclude` (never its `.gitignore`),
+so a project's `git status` stays as it was. Don't hand-edit them; add a
 project's `pyproject.toml` and re-run `aisland setup`. Don't commit
 editor `extraPaths` in `.vscode/settings.json` either — pyright ignores
 those whenever a `pyrightconfig.json` is present.

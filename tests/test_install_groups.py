@@ -13,6 +13,7 @@ import pytest
 
 from aisland import manager as m
 from aisland import selection
+from aisland.projects import install_groups
 
 
 def _project(name: str, *deps: str) -> dict:
@@ -25,13 +26,13 @@ def _names(groups: List[List[dict]]) -> List[List[str]]:
 
 class TestInstallGroups:
     def test_acyclic_projects_are_singletons_dependencies_first(self) -> None:
-        groups = m.install_groups([_project("app", "lib>=0.1"), _project("lib")])
+        groups = install_groups([_project("app", "lib>=0.1"), _project("lib")])
         assert _names(groups) == [["lib"], ["app"]]
 
     def test_a_cycle_is_one_group(self) -> None:
         projects = [_project("app", "plugin>=0.1"), _project("plugin", "app>=0.1")]
-        assert sorted(_names(m.install_groups(projects))[0]) == ["app", "plugin"]
-        assert len(m.install_groups(projects)) == 1
+        assert sorted(_names(install_groups(projects))[0]) == ["app", "plugin"]
+        assert len(install_groups(projects)) == 1
 
     def test_the_cycle_still_follows_its_own_dependencies_and_precedes_its_dependents(self) -> None:
         projects = [
@@ -40,13 +41,13 @@ class TestInstallGroups:
             _project("app", "plugin"),
             _project("base"),
         ]
-        names = _names(m.install_groups(projects))
+        names = _names(install_groups(projects))
         assert names[0] == ["base"]
         assert sorted(names[1]) == ["app", "plugin"]
         assert names[2] == ["tool"]
 
     def test_external_dependencies_and_self_references_are_ignored(self) -> None:
-        assert _names(m.install_groups([_project("a", "numpy>=1", "a[dev]")])) == [["a"]]
+        assert _names(install_groups([_project("a", "numpy>=1", "a[dev]")])) == [["a"]]
 
 
 class TestRunInstalls:
@@ -59,7 +60,7 @@ class TestRunInstalls:
             if any("bad" in part for part in cmd):
                 raise subprocess.CalledProcessError(1, cmd)
 
-        monkeypatch.setattr(m.subprocess, "check_call", fake)
+        monkeypatch.setattr(subprocess, "check_call", fake)
         monkeypatch.setattr(selection, "editable_target", lambda root, path, name: f"{path}[dev]")
         return seen
 

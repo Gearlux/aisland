@@ -4,7 +4,7 @@ A project declares the tools it needs outside Python in its own `pyproject.toml`
 
     [tool.aisland.sys-dependencies]
     brew = ["node"]          # macOS, through Homebrew
-    userspace = ["node"]     # Linux, from aisland's own download list (manager.USERSPACE_TOOLS)
+    userspace = ["node"]     # Linux, from aisland's own download list (installers.USERSPACE_TOOLS)
 
 Discovery reads the declaration before anything is installed and refuses one it cannot use, naming the file and the
 line. aisland's own tools (the service supervisor, Docker, …) live in the package, so a workspace whose aisland came
@@ -22,7 +22,7 @@ from typing import Dict, List
 import pytest
 from click.testing import CliRunner, Result
 
-from aisland import cli, discovery, manager, provision
+from aisland import cli, discovery, installers, locations, manager, provision
 
 
 def _workspace(tmp_path: Path, projects: Dict[str, str]) -> Path:
@@ -71,9 +71,9 @@ def macos(monkeypatch: pytest.MonkeyPatch) -> List[str]:
 @pytest.fixture
 def installs(monkeypatch: pytest.MonkeyPatch) -> Dict[str, List[object]]:
     calls: Dict[str, List[object]] = {"brew": [], "userspace": [], "java": [], "shell": []}
-    monkeypatch.setattr(manager, "_install_brew_packages", lambda packages: calls["brew"].append(sorted(packages)))
-    monkeypatch.setattr(manager, "_install_userspace_tool", lambda name: calls["userspace"].append(name))
-    monkeypatch.setattr(manager, "_maybe_offer_shell_switch", lambda packages: calls["shell"].append(sorted(packages)))
+    monkeypatch.setattr(installers, "install_brew_packages", lambda packages: calls["brew"].append(sorted(packages)))
+    monkeypatch.setattr(installers, "install_userspace_tool", lambda name: calls["userspace"].append(name))
+    monkeypatch.setattr(installers, "offer_shell_switch", lambda packages: calls["shell"].append(sorted(packages)))
     monkeypatch.setattr(
         "aisland.services.jenkins.JenkinsService.provision_java", lambda self: calls["java"].append("java")
     )
@@ -121,7 +121,7 @@ def test_a_userspace_tool_aisland_cannot_install_is_refused_naming_those_it_can(
     root = _workspace(tmp_path, {"editor": text})
     assert _refusal(root) == (
         f"{root / 'editor' / 'pyproject.toml'}:4: userspace tool 'nodejs' is none aisland can install "
-        f"(it can: {', '.join(sorted(manager.USERSPACE_TOOLS))})"
+        f"(it can: {', '.join(sorted(installers.USERSPACE_TOOLS))})"
     )
 
 
@@ -191,7 +191,7 @@ def test_on_linux_the_listing_is_the_userspace_tools(tmp_path: Path, monkeypatch
     monkeypatch.setattr(provision, "AISLAND_TOOLS", {"brew": ("act",), "userspace": ("process-compose",)})
     bin_dir = tmp_path / "bin"
     bin_dir.mkdir()
-    for binary in manager.USERSPACE_TOOLS["process-compose"]["binaries"]:
+    for binary in installers.USERSPACE_TOOLS["process-compose"]["binaries"]:
         (bin_dir / binary).write_text("")
     monkeypatch.setattr(provision, "BIN_DIR", bin_dir)
     rows = json.loads(_run(_workspace(tmp_path, {"editor": EDITOR}), monkeypatch, "--json").output)["rows"]
@@ -272,9 +272,9 @@ def test_setup_provisions_through_the_same_install(tmp_path: Path, monkeypatch: 
         seen.append(workspace)
         raise _Stop()
 
-    monkeypatch.setattr(manager, "get_workspace_root", lambda: root)
+    monkeypatch.setattr(locations, "workspace_root", lambda: root)
     monkeypatch.setattr(manager, "ensure_uv_in_venv", lambda venv_bin: "uv")
-    monkeypatch.setattr(manager, "_link_project_bashrc", lambda workspace: None)
+    monkeypatch.setattr(manager, "link_project_bashrc", lambda workspace: None)
     monkeypatch.setattr(manager, "install_harness", lambda workspace: [])
     monkeypatch.setattr(provision, "install", stop)
     with pytest.raises(_Stop):

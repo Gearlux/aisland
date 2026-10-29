@@ -14,14 +14,14 @@ from typing import Any, List
 
 import pytest
 
-from aisland import manager, nightly
-from aisland.services import jenkins
+from aisland import nightly
+from aisland.services import base, jenkins
 from aisland.services.jenkins import JenkinsService
 
 
 @pytest.fixture
 def on_9081(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
-    monkeypatch.setattr(manager, "DATA_DIR", tmp_path)
+    monkeypatch.setattr(base, "DATA_DIR", tmp_path)
     monkeypatch.setattr(JenkinsService, "get_ports", lambda self: [9081])
 
 
@@ -39,7 +39,7 @@ def requested(monkeypatch: pytest.MonkeyPatch) -> List[str]:
 
 
 def test_the_url_is_the_running_port_else_the_default(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
-    monkeypatch.setattr(manager, "DATA_DIR", tmp_path)
+    monkeypatch.setattr(base, "DATA_DIR", tmp_path)
     monkeypatch.setattr(JenkinsService, "get_ports", lambda self: [])
     assert JenkinsService().url() == "http://localhost:9080"
     assert JenkinsService.DEFAULT_PORT == 9080

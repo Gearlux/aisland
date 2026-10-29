@@ -13,7 +13,7 @@ from pathlib import Path
 
 import pytest
 
-from aisland import locations, manager
+from aisland import locations, projects
 from tests.workspace_layout import needs_workspace
 
 
@@ -65,7 +65,7 @@ def test_outermost_git_when_no_tasks_md(tmp_path: Path, monkeypatch: pytest.Monk
 @needs_workspace
 def test_live_workspace_root_is_the_superproject() -> None:
     """Unmonkeypatched: the real checkout resolves to the dir holding .gitmodules."""
-    root = manager.get_workspace_root()
+    root = projects.get_workspace_root()
     assert (root / ".gitmodules").is_file()
     assert (root / "TASKS.md").exists()
     assert root.name != "aisland"

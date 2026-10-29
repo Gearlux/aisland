@@ -32,10 +32,11 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Callable, Dict, List, Optional, Sequence, Set, Tuple
 
-import click
 from packaging.requirements import Requirement
 from packaging.specifiers import SpecifierSet
 from packaging.utils import canonicalize_name
+
+from aisland.errors import AislandError
 
 #: The folder inside ``<project>/wheels/`` that receives the bundle. A subfolder, so neither the zip (which packs
 #: the folder's files) nor the run's ``*.whl`` cleanup of the folder ever takes it for one of the separate wheels.
@@ -119,7 +120,7 @@ def _expand(
             out.append(_with_marker(requirement, marker))
             continue
         if not requirement.specifier.contains(versions[name], prereleases=True):
-            raise click.ClickException(
+            raise AislandError(
                 f"{project} requires {requirement}, but the bundle holds {requirement.name} {versions[name]}"
             )
         inner = str(requirement.marker) if requirement.marker else None
@@ -179,7 +180,7 @@ def _dist_info(archive: zipfile.ZipFile, wheel: Path) -> str:
     tops = {name.split("/", 1)[0] for name in archive.namelist() if "/" in name}
     found = sorted(top for top in tops if top.endswith(".dist-info"))
     if len(found) != 1:
-        raise click.ClickException(f"{wheel.name}: expected one .dist-info folder, found {found or 'none'}")
+        raise AislandError(f"{wheel.name}: expected one .dist-info folder, found {found or 'none'}")
     return found[0]
 
 
@@ -193,7 +194,7 @@ def _entry_points(text: str, part: BundlePart) -> Dict[str, Dict[str, str]]:
     try:
         parser.read_string(text)
     except configparser.Error as error:
-        raise click.ClickException(f"{part.wheel.name}: cannot read its entry_points.txt: {error}") from error
+        raise AislandError(f"{part.wheel.name}: cannot read its entry_points.txt: {error}") from error
     return {group: dict(parser.items(group)) for group in parser.sections()}
 
 
@@ -255,7 +256,7 @@ def merge_wheels(
             wheel_file = archive.read(f"{own_info}/WHEEL").decode("utf-8", errors="replace")
             impure = [tag for tag in _tags(wheel_file) if tag not in _PURE_TAGS]
             if impure or "Root-Is-Purelib: false" in wheel_file:
-                raise click.ClickException(
+                raise AislandError(
                     f"{part.project}'s wheel {part.wheel.name} is built for {', '.join(impure) or 'platlib'}; "
                     "a bundle holds pure-Python wheels only"
                 )
@@ -286,7 +287,7 @@ def merge_wheels(
                     continue
                 _add(item.filename, payload, item.external_attr, part.project)
     if clashes:
-        raise click.ClickException("the wheels cannot share one bundle:\n" + "\n".join(f"    {c}" for c in clashes))
+        raise AislandError("the wheels cannot share one bundle:\n" + "\n".join(f"    {c}" for c in clashes))
 
     regular = 0o644 << 16
     owner = distribution

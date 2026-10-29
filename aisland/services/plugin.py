@@ -23,8 +23,9 @@ from typing import Any, Dict, List, Mapping, Optional
 
 import click
 
-from aisland import manager, supervisor
-from aisland.manager import BaseService
+from aisland import projects, supervisor
+from aisland.errors import AislandError
+from aisland.services.base import BaseService
 
 
 class ServiceContext:
@@ -39,8 +40,8 @@ class ServiceContext:
     ) -> None:
         self._service = service
         self.name = service.name
-        self.workspace: Path = manager.get_workspace_root()
-        self.workspace_name = manager.get_workspace_name()
+        self.workspace: Path = projects.get_workspace_root()
+        self.workspace_name = projects.get_workspace_name()
         self.data_dir: Path = service.service_data_dir
         self.port = port
         self.background = background
@@ -83,7 +84,7 @@ class ServiceContext:
 
     def fail(self, message: str) -> None:
         """Stop the command with one ``Error: <message>`` line."""
-        raise click.ClickException(message)
+        raise AislandError(message)
 
 
 class PluginService(BaseService):

@@ -16,7 +16,7 @@ from typing import Iterator
 import click
 import pytest
 
-from aisland import locations, manager, pytest_stats, supervisor
+from aisland import locations, manager, paths, projects, pytest_stats, supervisor
 from aisland.services import jenkins
 from tests.workspace_layout import needs_workspace
 
@@ -39,17 +39,17 @@ def test_from_a_checkout_the_folder_you_run_in_and_the_variable_change_nothing(
     monkeypatch.chdir(tmp_path)
     monkeypatch.setenv("AISLAND_WORKSPACE", str(tmp_path))
     assert locations.workspace_root() == WORKSPACE
-    assert manager.get_workspace_root() == WORKSPACE
+    assert projects.get_workspace_root() == WORKSPACE
     assert locations.state_dir() == AISLAND_PROJECT
     assert locations.workspace_found() is True
 
 
 @needs_workspace
 def test_from_a_checkout_the_state_stays_in_aislands_own_folder() -> None:
-    assert manager.BASE_DIR == AISLAND_PROJECT
-    assert manager.DATA_DIR == AISLAND_PROJECT / "data"
-    assert manager.BIN_DIR == AISLAND_PROJECT / "bin"
-    assert manager.TOOLS_DIR == AISLAND_PROJECT / "tools"
+    assert paths.BASE_DIR == AISLAND_PROJECT
+    assert paths.DATA_DIR == AISLAND_PROJECT / "data"
+    assert paths.BIN_DIR == AISLAND_PROJECT / "bin"
+    assert paths.TOOLS_DIR == AISLAND_PROJECT / "tools"
     assert supervisor.DATA_DIR == AISLAND_PROJECT / "data"
     assert supervisor.BIN_DIR == AISLAND_PROJECT / "bin"
     assert pytest_stats.WORKSPACE_ROOT == WORKSPACE
@@ -88,6 +88,29 @@ def test_from_a_wheel_the_variable_names_the_workspace(acme: Path, tmp_path: Pat
     elsewhere = tmp_path / "elsewhere"
     elsewhere.mkdir()
     assert locations.wheel_workspace_root(elsewhere, {"AISLAND_WORKSPACE": str(acme)}) == acme
+
+
+def test_from_a_wheel_a_folder_is_an_aisland_workspace_by_its_file_or_the_variable(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A repository of its own (a project's parent, a fresh `git init`) is where `init` and `setup` may start, but no
+    aisland workspace yet: `workspace.toml` or `.gitmodules` makes one, or the variable naming it."""
+    monkeypatch.setattr(locations, "FROM_CHECKOUT", False)
+    code = tmp_path / "code"
+    (code / "app").mkdir(parents=True)
+    (code / "app" / "pyproject.toml").write_text("")
+    assert locations.find_workspace(code / "app") == code
+    assert not locations.is_workspace(code, {})
+    assert locations.is_workspace(code, {"AISLAND_WORKSPACE": str(code)})
+    for marker in locations.WORKSPACE_MARKERS:
+        (code / marker).write_text("")
+        assert locations.is_workspace(code, {})
+        (code / marker).unlink()
+
+
+def test_from_a_checkout_its_workspace_is_always_one(tmp_path: Path) -> None:
+    assert locations.FROM_CHECKOUT
+    assert locations.is_workspace(tmp_path, {})
 
 
 def test_from_a_wheel_outside_any_repository_there_is_no_workspace(tmp_path: Path) -> None:
@@ -220,7 +243,7 @@ def test_setup_from_a_wheel_without_a_venv_says_how_to_make_one(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
     monkeypatch.setattr(locations, "FROM_CHECKOUT", False)
-    monkeypatch.setattr(manager, "get_workspace_root", lambda: tmp_path)
+    monkeypatch.setattr(locations, "workspace_root", lambda: tmp_path)
     with pytest.raises(click.ClickException) as refused:
         manager.setup_workspace(non_interactive=True)
     assert refused.value.message == (

@@ -1,10 +1,14 @@
+import base64
 import functools
 import json
 import os
 import re
+import shutil
 import subprocess
 import time
 import tomllib
+import urllib.error
+import urllib.parse
 import urllib.request
 import xml.etree.ElementTree as ET
 from pathlib import Path
@@ -15,13 +19,18 @@ from packaging.requirements import InvalidRequirement, Requirement
 from packaging.utils import canonicalize_name
 
 from aisland import failures, provision, supervisor
-from aisland.manager import BIN_DIR, BaseService, _install_brew_packages, get_workspace_root
+from aisland.downloads import TIMEOUT, download
+from aisland.errors import AislandError
+from aisland.installers import install_brew_packages
+from aisland.paths import BIN_DIR
+from aisland.projects import get_workspace_root
 from aisland.selection import PLAYWRIGHT_BROWSER
 from aisland.selection import axes as sel_axes
 from aisland.selection import declared as sel_declared
 from aisland.selection import dev_extra_names
 from aisland.selection import extras_for as sel_extras_for
 from aisland.selection import read_committed as sel_committed
+from aisland.services.base import BaseService
 from aisland.services.jenkins_java import JenkinsJava, choose_java, find_runtimes, newest_versioned_formula
 from aisland.sources import DEFAULT_REF, GitHubRepository, project_repositories, released_on_pypi
 
@@ -172,7 +181,7 @@ def _unreleased_from_wheels(project_name: str, pyproject_path: Path, unreleased:
     names = ", ".join(missing)
     verb, them = ("is", "it") if len(missing) == 1 else ("are", "them")
     extra = found[0] if found is not None else "wheels"
-    raise click.ClickException(
+    raise AislandError(
         f"{project_name} does not live on GitHub, so its CI files never name a project that does, and {names} {verb} "
         f"not released on PyPI. Ship {them} as wheels with the project — aisland wheels build {project_name} --extra "
         f"{extra} --commit (the extra listed in [tool.aisland] manual-extras) — then scaffold again."
@@ -278,12 +287,12 @@ class JenkinsService(BaseService):
         headers = {"User-Agent": "aisland"}
         try:
             req = urllib.request.Request(api_url, headers=headers)
-            with urllib.request.urlopen(req) as response:
+            with urllib.request.urlopen(req, timeout=TIMEOUT) as response:
                 data = json.loads(response.read().decode())
                 if not isinstance(data, dict):
                     return {}
                 return cast(dict[Any, Any], data)
-        except Exception:
+        except (OSError, ValueError):  # no answer, or no JSON
             # Silence this error if we already have a jar file, as we can still proceed.
             if not self.manager_jar.exists():
                 click.echo(
@@ -299,8 +308,8 @@ class JenkinsService(BaseService):
             return True
         click.echo(f"Downloading Jenkins from {self.URL}...")
         try:
-            urllib.request.urlretrieve(self.URL, self.war_file)
-        except Exception as e:
+            download(self.URL, self.war_file)
+        except OSError as e:
             failures.report(f"Error downloading Jenkins: {e}")
             return False
         click.echo("  - Jenkins download complete.")
@@ -326,7 +335,7 @@ class JenkinsService(BaseService):
                 self.provision_java()
                 choice = self.resolve_java()
             if choice.runtime is None:
-                raise click.ClickException(choice.refusal().removeprefix("Error: "))
+                raise AislandError(choice.refusal().removeprefix("Error: "))
         click.echo(choice.describe())
         return choice.runtime.java
 
@@ -336,7 +345,7 @@ class JenkinsService(BaseService):
             return True
         missing = f"Jenkins needs its WAR ({self.URL}), which is not downloaded yet."
         if not provision.agree(f"{missing} Download it?"):
-            raise click.ClickException(
+            raise AislandError(
                 f"{missing} Run the command in a terminal and answer yes, or: aisland workspace provision install"
             )
         return self.ensure_war()
@@ -361,7 +370,7 @@ class JenkinsService(BaseService):
             if formula is None or formula in installed:
                 break
             click.echo(f"  - {choice.problem()}.")
-            _install_brew_packages({formula})
+            install_brew_packages({formula})
             installed.add(formula)
             choice = self.resolve_java()
         if choice.runtime is None:
@@ -372,7 +381,7 @@ class JenkinsService(BaseService):
     def setup(self) -> None:
         """Download Jenkins binary and the latest plugin manager."""
         if not self.ensure_war_asking():
-            raise SystemExit(1)  # the download's failure is already reported
+            return  # the download's failure is reported: the command exits 1 (aisland.failures)
 
         # Check for latest manager version
         info = self._get_latest_manager_info()
@@ -389,13 +398,13 @@ class JenkinsService(BaseService):
                 if not latest_jar_path.exists():
                     click.echo(f"Downloading Jenkins Plugin Manager {tag}...")
                     try:
-                        urllib.request.urlretrieve(download_url, latest_jar_path)
+                        download(download_url, latest_jar_path)
                         click.echo(f"  - Plugin Manager {tag} download complete.")
                         # Remove old versions
                         for old_jar in BIN_DIR.glob("jenkins-plugin-manager-*.jar"):
                             if old_jar != latest_jar_path:
                                 old_jar.unlink()
-                    except Exception as e:
+                    except OSError as e:
                         failures.report(f"Error downloading Plugin Manager: {e}")
 
                 self.manager_jar = latest_jar_path
@@ -446,8 +455,6 @@ class JenkinsService(BaseService):
         plugins_txt = self.service_data_dir / "plugins.txt"
         plugins_txt.write_text("\n".join(self.PLUGINS))
 
-        import subprocess
-
         cmd = [
             str(self.java_asking()),
             "-jar",
@@ -494,7 +501,7 @@ class JenkinsService(BaseService):
                         is_local = url.startswith("/") or (len(url) > 1 and url[1] == ":")
                         if not is_local:
                             return True
-                except Exception:
+                except (OSError, ET.ParseError):  # a job file Jenkins is still writing: no remote to read
                     pass
         return False
 
@@ -518,7 +525,7 @@ class JenkinsService(BaseService):
                     is not None
                 ):
                     has_creds = True
-            except Exception:
+            except (OSError, ET.ParseError):  # unreadable: treated as no credentials, so the instructions show
                 pass
 
         if not has_creds:
@@ -570,7 +577,7 @@ class JenkinsService(BaseService):
         workspace_root = get_workspace_root()
         venv_bin = workspace_root / ".venv" / "bin"
         # BIN_DIR (aisland/bin) hosts symlinks to userspace-installed tools like
-        # node/npm/npx (see manager._install_userspace_tool). Putting it on
+        # node/npm/npx (see installers.install_userspace_tool). Putting it on
         # Jenkins' PATH means every job inherits these without per-Jenkinsfile
         # plumbing. Order: venv first (its `python`/`uv` shadow any system ones),
         # then aisland-vendored tools, then whatever the parent shell exposed.
@@ -619,8 +626,6 @@ class JenkinsService(BaseService):
 
     def _get_git_remote(self, project_path: Path) -> Optional[str]:
         """Get the Git remote origin URL for a project."""
-        import subprocess
-
         try:
             result = subprocess.run(
                 ["git", "remote", "get-url", "origin"],
@@ -630,7 +635,7 @@ class JenkinsService(BaseService):
                 check=True,
             )
             return result.stdout.strip()
-        except Exception:
+        except (OSError, subprocess.CalledProcessError):  # no origin, or no git
             return None
 
     def _find_credentials(self, remote_url: str) -> str:
@@ -672,7 +677,7 @@ class JenkinsService(BaseService):
             if cred_ids:
                 return cred_ids[0]
 
-        except Exception as e:
+        except (OSError, ET.ParseError) as e:
             failures.report(f"  - Error parsing credentials.xml: {e}")
 
         return expected_id or ""
@@ -687,8 +692,6 @@ class JenkinsService(BaseService):
         if project_name:
             project_job_dir = jobs_dir / project_name
             if project_job_dir.exists():
-                import shutil
-
                 click.echo(f"Removing Jenkins pipeline for project '{project_name}'...")
                 shutil.rmtree(project_job_dir)
                 click.echo(f"  - Removed: {project_name}")
@@ -697,8 +700,6 @@ class JenkinsService(BaseService):
                     f"  - Error: Jenkins job for project '{project_name}' not found.",
                 )
         else:
-            import shutil
-
             click.echo("Removing ALL project pipelines from Jenkins...")
             for project_job_dir in jobs_dir.iterdir():
                 if project_job_dir.is_dir() and (project_job_dir / "config.xml").exists():
@@ -718,8 +719,6 @@ class JenkinsService(BaseService):
 
         if admin_pass_file.exists():
             password = admin_pass_file.read_text().strip()
-            import base64
-
             auth = base64.b64encode(f"admin:{password}".encode()).decode()
             auth_str = f"Basic {auth}"
 
@@ -730,11 +729,9 @@ class JenkinsService(BaseService):
                 req = urllib.request.Request(crumb_url)
                 req.add_header("Authorization", auth_str)
                 with urllib.request.urlopen(req, timeout=5) as response:
-                    import json
-
                     data = json.loads(response.read().decode())
                     crumb_headers[data["crumbRequestField"]] = data["crumb"]
-            except Exception:
+            except (OSError, ValueError, KeyError):  # no crumb issuer: the restart is tried without one
                 pass
 
             try:
@@ -746,7 +743,7 @@ class JenkinsService(BaseService):
                     pass
                 click.echo("  - Safe Restart initiated. Jenkins will reload soon.")
                 return
-            except Exception as e:
+            except (OSError, ValueError) as e:  # no answer, a refusal (HTTPError is an OSError), no JSON
                 click.echo(f"  - Safe Restart API failed: {e}. Falling back to process restart.")
         else:
             click.echo("  - Missing API credentials. Falling back to process restart.")
@@ -756,7 +753,7 @@ class JenkinsService(BaseService):
 
     def _create_orchestrator_job(self, local: bool, initialized_projects: List[str]) -> None:
         """Create an orchestrator job that builds all discovered projects in topological order."""
-        from aisland.manager import get_install_order, get_workspace_name, get_workspace_root
+        from aisland.projects import get_install_order, get_workspace_name, get_workspace_root
 
         workspace_root = get_workspace_root()
         install_order = get_install_order(workspace_root)
@@ -943,7 +940,7 @@ class JenkinsService(BaseService):
         """
         from xml.sax.saxutils import escape
 
-        from aisland.manager import get_workspace_name
+        from aisland.projects import get_workspace_name
 
         job_name = f"{get_workspace_name()}.nightly-check"
         pipeline_script = f"""// The morning report of the nightly runs (aisland/nightly.py): written to aisland/data/nightly/<date>.md,
@@ -998,7 +995,7 @@ pipeline {{
 
     def scaffold_pipelines(self, project_name: Optional[str] = None, force: bool = False) -> None:
         """Generate standard Jenkinsfile, Jenkinsfile.local, and GitHub Actions for a project or all projects."""
-        from aisland.manager import get_project_metadata, get_workspace_root
+        from aisland.projects import get_project_metadata, get_workspace_root
 
         workspace_root = get_workspace_root()
 
@@ -1014,11 +1011,11 @@ pipeline {{
         project_path = workspace_root / project_name
 
         if not project_path.exists() or not project_path.is_dir():
-            raise click.ClickException(f"Project directory '{project_name}' not found at {project_path}.")
+            raise AislandError(f"Project directory '{project_name}' not found at {project_path}.")
 
         pyproject_path = project_path / "pyproject.toml"
         if not pyproject_path.exists():
-            raise click.ClickException(f"pyproject.toml not found in {project_name}. Cannot scaffold.")
+            raise AislandError(f"pyproject.toml not found in {project_name}. Cannot scaffold.")
 
         metadata = get_project_metadata(pyproject_path)
         pkg_name = metadata["name"]
@@ -1210,7 +1207,7 @@ pipeline {{
             try:
                 with open(pyproject, "rb") as f:
                     data = tomllib.load(f)
-            except Exception:
+            except (OSError, tomllib.TOMLDecodeError):
                 return {}
             table = data.get("project", {})
             return table if isinstance(table, dict) else {}
@@ -1335,7 +1332,7 @@ pipeline {{
             {github_projects[dep].owner for dep in from_github if is_private_repo(github_projects[dep])}
         )
         if len(private_owners) > 1:
-            raise click.ClickException(
+            raise AislandError(
                 f"{project_name}'s CI would clone private repositories of {len(private_owners)} GitHub owners "
                 f"({', '.join(private_owners)}); one app token reaches one owner's repositories. Release the "
                 "dependencies of all but one owner, or make their repositories public."
@@ -1460,10 +1457,6 @@ PY"""'''
             """POST the content to Jenkins' declarative linter. Returns True if the file
             validates (or if Jenkins isn't running — we can't check then). Returns False
             only when Jenkins actively rejects the file."""
-            import urllib.error
-            import urllib.parse
-            import urllib.request
-
             try:
                 # Fetch CSRF crumb — required for all POSTs even with security disabled.
                 crumb_req = urllib.request.Request(f"{jenkins_url}/crumbIssuer/api/json")
@@ -1510,7 +1503,7 @@ PY"""'''
                             fg="red",
                         )
                     )
-                    raise click.ClickException(f"Template produced invalid {desc}")
+                    raise AislandError(f"Template produced invalid {desc}")
             path.parent.mkdir(parents=True, exist_ok=True)
             path.write_text(content)
             click.echo(f"  [OK] Created {desc}")
@@ -2316,11 +2309,11 @@ jobs:
         if project_name:
             project_path = workspace_root / project_name
             if not project_path.exists() or not project_path.is_dir():
-                raise click.ClickException(f"Project directory '{project_name}' not found at {project_path}.")
+                raise AislandError(f"Project directory '{project_name}' not found at {project_path}.")
             if not local and not (project_path / "Jenkinsfile").exists():
-                raise click.ClickException(f"Project '{project_name}' does not have a Jenkinsfile at its root.")
+                raise AislandError(f"Project '{project_name}' does not have a Jenkinsfile at its root.")
             if local and not (project_path / "Jenkinsfile.local").exists():
-                raise click.ClickException(f"Project '{project_name}' does not have a Jenkinsfile.local at its root.")
+                raise AislandError(f"Project '{project_name}' does not have a Jenkinsfile.local at its root.")
             projects = [project_path]
         else:
             if local:
@@ -2461,7 +2454,7 @@ jobs:
 
     def setup_dashboard_view(self, name: Optional[str] = None) -> None:
         """Create a Build Monitor View for the Ecosystem branching workflow."""
-        from aisland.manager import get_workspace_name
+        from aisland.projects import get_workspace_name
 
         base_name = get_workspace_name()
         if name is None:
@@ -2472,12 +2465,10 @@ jobs:
             click.echo("  - Jenkins config.xml not found. Skipping view setup until first run.")
             return
 
-        import xml.etree.ElementTree as ET
-
         try:
             tree = ET.parse(config_file)
             root = tree.getroot()
-        except Exception as e:
+        except (OSError, ET.ParseError) as e:
             failures.report(f"  - Error parsing config.xml: {e}")
             return
 
@@ -2580,14 +2571,12 @@ jobs:
         if not config_file.exists():
             return
 
-        import xml.etree.ElementTree as ET
-
-        from aisland.manager import get_workspace_root
+        from aisland.projects import get_workspace_root
 
         try:
             tree = ET.parse(config_file)
             root = tree.getroot()
-        except Exception as e:
+        except (OSError, ET.ParseError) as e:
             failures.report(f"  - Error parsing config.xml for global properties: {e}")
             return
 
@@ -2656,12 +2645,10 @@ jobs:
         if not config_file.exists():
             return
 
-        import xml.etree.ElementTree as ET
-
         try:
             tree = ET.parse(config_file)
             root = tree.getroot()
-        except Exception as e:
+        except (OSError, ET.ParseError) as e:
             failures.report(f"  - Error parsing config.xml for security reduction: {e}")
             return
 

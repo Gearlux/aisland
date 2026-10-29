@@ -1,8 +1,10 @@
+import shutil
+
 """The workspace's MCP servers are DISCOVERED and registered with every MCP client we use.
 
 Discovery is a `<pkg>.server:main` console script whose module imports the MCP SDK's server
 package (`mcp.server`) — a class-name check (`FastMCP`) went stale with the SDK-2.x rename and
-silently dropped vendorcli and never saw annotaide (measured 2026-09-05: a regeneration listed
+silently dropped app and never saw annotaide (measured 2026-09-05: a regeneration listed
 navigaitor alone). One server map feeds two client files, both gitignored because their
 commands are absolute venv paths: `.gemini/settings.json` (Gemini CLI) and `.mcp.json`
 (Claude Code's project-scoped servers).
@@ -17,8 +19,9 @@ from typing import List
 
 import pytest
 
-from aisland import manager
-from aisland.manager import _discover_mcp_servers, _write_gemini_settings, _write_mcp_json, get_workspace_root
+from aisland import manager, mcp_config
+from aisland.mcp_config import discover_mcp_servers, write_gemini_settings, write_mcp_json
+from aisland.projects import get_workspace_root
 from tests.test_setup_installs_git_aliases import stubbed_setup
 from tests.workspace_layout import needs_workspace
 
@@ -47,7 +50,7 @@ def fake_workspace(tmp_path: Path) -> Path:
 class TestDiscovery:
     def test_a_server_is_a_script_whose_module_imports_the_sdks_server_package(self, fake_workspace: Path) -> None:
         venv_bin = fake_workspace / ".venv" / "bin"
-        servers = _discover_mcp_servers(fake_workspace, venv_bin)
+        servers = discover_mcp_servers(fake_workspace, venv_bin)
         assert set(servers) == {"modern", "legacy"}, "both SDK spellings are servers; the Flask module is not"
         assert servers["modern"] == {"command": str(venv_bin / "modern-mcp")}
         assert servers["legacy"] == {"command": str(venv_bin / "legacy")}
@@ -55,10 +58,8 @@ class TestDiscovery:
     @needs_workspace
     def test_the_real_workspace_lists_every_mcp_server_it_ships(self) -> None:
         root = get_workspace_root()
-        servers = _discover_mcp_servers(root, root / ".venv" / "bin")
-        expected = {"annotaide", "navigaitor"} | (
-            {"vendorcli"} if (root / "vendorcli" / "pyproject.toml").is_file() else set()
-        )
+        servers = discover_mcp_servers(root, root / ".venv" / "bin")
+        expected = {"annotaide", "navigaitor"}
         assert expected <= set(servers), sorted(servers)
         for name, entry in servers.items():
             assert Path(entry["command"]).is_absolute(), name
@@ -67,8 +68,8 @@ class TestDiscovery:
 class TestTheTwoClientFiles:
     def test_both_files_carry_the_same_server_map(self, fake_workspace: Path) -> None:
         venv_bin = fake_workspace / ".venv" / "bin"
-        _write_gemini_settings(fake_workspace, venv_bin)
-        _write_mcp_json(fake_workspace, venv_bin)
+        write_gemini_settings(fake_workspace, venv_bin)
+        write_mcp_json(fake_workspace, venv_bin)
         gemini = json.loads((fake_workspace / ".gemini" / "settings.json").read_text())
         claude = json.loads((fake_workspace / ".mcp.json").read_text())
         assert gemini == claude
@@ -76,7 +77,7 @@ class TestTheTwoClientFiles:
         assert claude["mcpServers"]["modern"]["command"] == str(venv_bin / "modern-mcp")
 
     def test_the_claude_file_is_the_project_scoped_shape(self, fake_workspace: Path) -> None:
-        _write_mcp_json(fake_workspace, fake_workspace / ".venv" / "bin")
+        write_mcp_json(fake_workspace, fake_workspace / ".venv" / "bin")
         text = (fake_workspace / ".mcp.json").read_text()
         assert text.endswith("\n") and list(json.loads(text)) == ["mcpServers"]
 
@@ -89,7 +90,7 @@ class TestTheTwoClientFiles:
         venv_bin = fake_workspace / ".venv" / "bin"
         venv_bin.mkdir(parents=True)
         (venv_bin / "modern-mcp").write_text("#!/bin/sh\n")
-        _write_mcp_json(fake_workspace, venv_bin)
+        write_mcp_json(fake_workspace, venv_bin)
         out = capsys.readouterr().out
         assert "legacy's MCP command" in out and "uv pip install -e ./legacy" in out
         assert "modern's MCP command" not in out
@@ -100,8 +101,8 @@ class TestTheTwoClientFiles:
     ) -> None:
         """`aisland setup` itself, its machine steps stubbed (the fixture) but the two writers real, over a
         workspace of the servers above: both client files appear, carrying both servers."""
-        monkeypatch.setattr(manager, "_write_gemini_settings", _write_gemini_settings)
-        monkeypatch.setattr(manager, "_write_mcp_json", _write_mcp_json)
+        monkeypatch.setattr(manager, "write_gemini_settings", write_gemini_settings)
+        monkeypatch.setattr(manager, "write_mcp_json", write_mcp_json)
         _project(tmp_path, "modern", "modern-mcp", "from mcp.server.mcpserver import MCPServer\n")
         _project(tmp_path, "legacy", "legacy", "from mcp.server.fastmcp import FastMCP\n")
 
@@ -116,7 +117,7 @@ class TestTheTwoClientFiles:
 
 class TestTheServersGetTheWorkspaceEnvironment:
     """A client starts a server with ITS OWN environment, never the workspace's ``.env``
-    (measured 2026-10-21: the desktop app's vendorcli-mcp ran with ``DATA_ROOT`` unset), so with a
+    (measured 2026-10-21: the desktop app's app-mcp ran with ``DATA_ROOT`` unset), so with a
     ``project.bashrc`` at the root each server is started through bash, which sources it — output
     discarded, stdout being the server's JSON-RPC stream — and then ``exec``s the server."""
 
@@ -129,7 +130,7 @@ class TestTheServersGetTheWorkspaceEnvironment:
 
     def test_each_server_is_started_through_bash_sourcing_the_workspace_shell_init(self, with_bashrc: Path) -> None:
         venv_bin = with_bashrc / ".venv" / "bin"
-        _write_mcp_json(with_bashrc, venv_bin)
+        write_mcp_json(with_bashrc, venv_bin)
         entry = json.loads((with_bashrc / ".mcp.json").read_text())["mcpServers"]["modern"]
         assert Path(entry["command"]).is_absolute() and Path(entry["command"]).name == "bash"
         assert entry["args"][-2:] == [str(with_bashrc / "project.bashrc"), str(venv_bin / "modern-mcp")]
@@ -142,7 +143,7 @@ class TestTheServersGetTheWorkspaceEnvironment:
         server = venv_bin / "modern-mcp"
         server.write_text('#!/bin/sh\necho "server: $DATA_ROOT: $*"\n')
         server.chmod(0o755)
-        _write_mcp_json(with_bashrc, venv_bin)
+        write_mcp_json(with_bashrc, venv_bin)
         entry = json.loads((with_bashrc / ".mcp.json").read_text())["mcpServers"]["modern"]
         env = {k: v for k, v in os.environ.items() if k != "DATA_ROOT"}
         result = subprocess.run(
@@ -153,8 +154,8 @@ class TestTheServersGetTheWorkspaceEnvironment:
 
     def test_both_files_carry_the_same_started_through_bash_map(self, with_bashrc: Path) -> None:
         venv_bin = with_bashrc / ".venv" / "bin"
-        _write_gemini_settings(with_bashrc, venv_bin)
-        _write_mcp_json(with_bashrc, venv_bin)
+        write_gemini_settings(with_bashrc, venv_bin)
+        write_mcp_json(with_bashrc, venv_bin)
         gemini = json.loads((with_bashrc / ".gemini" / "settings.json").read_text())
         assert gemini == json.loads((with_bashrc / ".mcp.json").read_text())
         assert "args" in gemini["mcpServers"]["legacy"]
@@ -162,7 +163,7 @@ class TestTheServersGetTheWorkspaceEnvironment:
     def test_a_missing_console_script_is_still_named(
         self, with_bashrc: Path, capsys: pytest.CaptureFixture[str]
     ) -> None:
-        _write_mcp_json(with_bashrc, with_bashrc / ".venv" / "bin")
+        write_mcp_json(with_bashrc, with_bashrc / ".venv" / "bin")
         assert "modern's MCP command" in capsys.readouterr().out
 
     @needs_workspace
@@ -170,7 +171,7 @@ class TestTheServersGetTheWorkspaceEnvironment:
         root = get_workspace_root()
         if not (root / "project.bashrc").exists():
             pytest.skip("this checkout has no project.bashrc yet (`aisland setup` links it)")
-        servers = manager._with_workspace_env(root, {"probe": {"command": "/usr/bin/printenv"}})
+        servers = mcp_config._with_workspace_env(root, {"probe": {"command": "/usr/bin/printenv"}})
         entry = servers["probe"]
         result = subprocess.run(
             [entry["command"], *entry["args"], "PROJECT_ROOT"],
@@ -185,16 +186,16 @@ class TestTheServersGetTheWorkspaceEnvironment:
 
     def test_without_a_shell_init_the_server_is_started_directly(self, fake_workspace: Path) -> None:
         venv_bin = fake_workspace / ".venv" / "bin"
-        _write_mcp_json(fake_workspace, venv_bin)
+        write_mcp_json(fake_workspace, venv_bin)
         entry = json.loads((fake_workspace / ".mcp.json").read_text())["mcpServers"]["modern"]
         assert entry == {"command": str(venv_bin / "modern-mcp")}
 
     def test_without_bash_the_server_is_started_directly(
         self, with_bashrc: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        monkeypatch.setattr(manager.shutil, "which", lambda name: None)
+        monkeypatch.setattr(shutil, "which", lambda name: None)
         venv_bin = with_bashrc / ".venv" / "bin"
-        _write_mcp_json(with_bashrc, venv_bin)
+        write_mcp_json(with_bashrc, venv_bin)
         entry = json.loads((with_bashrc / ".mcp.json").read_text())["mcpServers"]["modern"]
         assert entry == {"command": str(venv_bin / "modern-mcp")}
 

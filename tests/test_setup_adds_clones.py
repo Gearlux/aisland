@@ -17,7 +17,7 @@ from typing import List, Optional
 
 import pytest
 
-from aisland import clones, local_workspace, manager, tracking, workspace_file
+from aisland import clones, local_workspace, projects, tracking, workspace_file
 
 _AUTHOR = {"GIT_AUTHOR_NAME": "t", "GIT_AUTHOR_EMAIL": "t@t", "GIT_COMMITTER_NAME": "t", "GIT_COMMITTER_EMAIL": "t@t"}
 
@@ -224,6 +224,6 @@ def test_an_untracked_local_root_needs_only_setup_for_a_new_clone(tmp_path: Path
     assert "waves" in workspace_file.load(root).projects
     assert local_workspace.settle(root).lines() == ["committed .gitmodules, waves"]
     assert _status(root) == []
-    assert [pyproject.parent.name for pyproject in manager.discover_projects(root)] == [
+    assert [pyproject.parent.name for pyproject in projects.discover_projects(root)] == [
         "waves"
     ]  # the editor's workspace file lists it

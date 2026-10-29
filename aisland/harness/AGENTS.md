@@ -30,7 +30,7 @@ in that project's `AGENTS.md`. The commands in `.agents/workflows/` cite these r
   operation that would raise on it (`if path.exists()` before a `FileExistsError`). Keep `try/except` for what cannot
   be checked beforehand or is truly exceptional (`PermissionError`, `OSError`).
 - **No Hardcoded Paths:** never write an absolute path (`/Users/<name>/…`) into code, tests, generated files or
-  committed configs. Resolve paths from the workspace root (`aisland.manager.get_workspace_root()`), from environment
+  committed configs. Resolve paths from the workspace root (`aisland.projects.get_workspace_root()`), from environment
   variables (`$PROJECT_ROOT`, `$DATA_ROOT`) or by standard discovery. Exception: a personal, machine-local file
   (gitignored, never shipped) keeps the absolute path its owner wrote — do not invent an environment variable for it.
 - **No Quick Fixes:** never make a symptom go away by hardcoding a version, a path or a credential. A fix discovers

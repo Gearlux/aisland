@@ -46,9 +46,8 @@ from pathlib import Path
 from types import ModuleType
 from typing import Any, Callable, Dict, Iterator, List, Optional, Tuple
 
-import click
-
 from aisland import tunnel_shell
+from aisland.errors import AislandError
 from aisland.tunnel import state_dir
 
 #: The VS Code tunnel's control port (the CLI's ``CONTROL_PORT``); ``devtunnel connect`` forwards it
@@ -106,7 +105,7 @@ def devtunnel() -> str:
     """The ``devtunnel`` program, or a refusal saying how to install it."""
     found = shutil.which("devtunnel")
     if found is None:
-        raise click.ClickException(f"No 'devtunnel' command found. Install it with:\n    {install_hint()}")
+        raise AislandError(f"No 'devtunnel' command found. Install it with:\n    {install_hint()}")
     return found
 
 
@@ -115,10 +114,10 @@ def _run(*args: str) -> str:
     try:
         completed = subprocess.run([devtunnel(), *args], capture_output=True, text=True, timeout=_RUN_TIMEOUT_S)
     except subprocess.TimeoutExpired as exc:
-        raise click.ClickException(f"`devtunnel {' '.join(args)}` gave no answer within {_RUN_TIMEOUT_S:g} s") from exc
+        raise AislandError(f"`devtunnel {' '.join(args)}` gave no answer within {_RUN_TIMEOUT_S:g} s") from exc
     if completed.returncode != 0:
         said = (completed.stderr or completed.stdout or "").strip().splitlines()
-        raise click.ClickException(f"`devtunnel {' '.join(args)}` failed: {said[-1] if said else completed.returncode}")
+        raise AislandError(f"`devtunnel {' '.join(args)}` failed: {said[-1] if said else completed.returncode}")
     return completed.stdout
 
 
@@ -132,7 +131,7 @@ def account() -> Optional[str]:
 
 def _require_account() -> None:
     if account() is None:
-        raise click.ClickException(
+        raise AislandError(
             "devtunnel is not signed in. Sign in with the account the remote tunnel runs under:\n"
             "    devtunnel user login        (Microsoft)\n"
             "    devtunnel user login -g     (GitHub)"
@@ -153,7 +152,7 @@ def list_tunnels() -> List[Tunnel]:
     try:
         payload = json.loads(text[text.index("{") :])
     except ValueError as exc:
-        raise click.ClickException(f"`devtunnel list -j` printed no tunnel list: {text.strip()[:200]}") from exc
+        raise AislandError(f"`devtunnel list -j` printed no tunnel list: {text.strip()[:200]}") from exc
     tunnels = [
         Tunnel(
             tunnel_id=str(entry["tunnelId"]),
@@ -194,17 +193,15 @@ def resolve(target: str, tunnels: List[Tunnel]) -> Tunnel:
     matches = [t for t in tunnels if target in (t.name, t.tunnel_id)]
     if not matches:
         known = ", ".join(sorted({t.name for t in tunnels})) or "none"
-        raise click.ClickException(
+        raise AislandError(
             f"No tunnel '{target}' on this account. Its tunnels: {known} (`aisland tunnel connect` lists them)."
         )
     running = [t for t in matches if t.online]
     if not running:
-        raise click.ClickException(
-            f"Tunnel '{target}' is not running on its machine. Start it there: aisland tunnel start"
-        )
+        raise AislandError(f"Tunnel '{target}' is not running on its machine. Start it there: aisland tunnel start")
     if len(running) > 1:
         ids = ", ".join(t.tunnel_id for t in running)
-        raise click.ClickException(f"Several running tunnels are named '{target}'; name one by its id: {ids}")
+        raise AislandError(f"Several running tunnels are named '{target}'; name one by its id: {ids}")
     return running[0]
 
 
@@ -300,7 +297,7 @@ def forward(target: Tunnel, timeout: float = FORWARD_TIMEOUT_S) -> Iterator[None
     port = CONTROL_PORT
     holder = port_holder(port)
     if holder is not None:
-        raise click.ClickException(
+        raise AislandError(
             f"Port {port} on this machine is already taken by {holder} — a `devtunnel connect` started "
             "by hand forwards that same port, to a machine aisland cannot tell. Stop it and run this again."
         )
@@ -318,11 +315,11 @@ def forward(target: Tunnel, timeout: float = FORWARD_TIMEOUT_S) -> Iterator[None
         deadline = time.monotonic() + timeout
         while not _port_answers(port):
             if process.poll() is not None:
-                raise click.ClickException(
+                raise AislandError(
                     f"`devtunnel connect {target.tunnel_id}` stopped (exit {process.returncode}):\n{_tail(log)}"
                 )
             if time.monotonic() >= deadline:
-                raise click.ClickException(
+                raise AislandError(
                     f"`devtunnel connect {target.tunnel_id}` opened no port {port} within {timeout:g} s:\n{_tail(log)}"
                 )
             time.sleep(_POLL_INTERVAL_S)
@@ -347,7 +344,7 @@ def _msgpack() -> ModuleType:
     try:
         return importlib.import_module("msgpack")  # untyped; import_module gives it a module's type
     except ImportError as exc:
-        raise click.ClickException("`aisland tunnel connect` needs msgpack: pip install 'aisland[connect]'") from exc
+        raise AislandError("`aisland tunnel connect` needs msgpack: pip install 'aisland[connect]'") from exc
 
 
 def remote_command(rows: int, cols: int, folder: Optional[str]) -> Tuple[str, List[str]]:
@@ -420,7 +417,7 @@ def run_shell(
         watched = [sock] + ([stdin] if input_open else []) + ([wake] if wake is not None else [])
         ready, _, _ = select.select(watched, [], [], idle_timeout)
         if not ready:
-            raise click.ClickException(f"The remote machine sent nothing for {idle_timeout:g} s.")
+            raise AislandError(f"The remote machine sent nothing for {idle_timeout:g} s.")
         if wake is not None and wake in ready:
             os.read(wake, 4096)
             if size is not None:
@@ -428,7 +425,7 @@ def run_shell(
         if sock in ready:
             data = sock.recv(65536)
             if not data:
-                raise click.ClickException("The tunnel closed the connection before the shell ended.")
+                raise AislandError("The tunnel closed the connection before the shell ended.")
             unpacker.feed(data)
             for message in unpacker:
                 method = message.get("method")
@@ -446,7 +443,7 @@ def run_shell(
                 elif method is None and message.get("id") == _SPAWN_ID:
                     if message.get("error"):
                         reason = message["error"].get("message", message["error"])
-                        raise click.ClickException(f"The remote machine refused to start the shell: {reason}")
+                        raise AislandError(f"The remote machine refused to start the shell: {reason}")
                     return int(message["result"]["exit_code"])
         if input_open and stdin in ready:
             typed = os.read(stdin, 65536)

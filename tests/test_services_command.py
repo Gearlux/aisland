@@ -11,6 +11,7 @@ from __future__ import annotations
 from pathlib import Path
 from typing import List, Tuple
 
+import click
 import pytest
 from click.testing import CliRunner, Result
 
@@ -121,6 +122,35 @@ def test_an_unknown_name_is_refused_before_anything_happens(calls: List[Tuple[st
 
 
 # --- the real list ------------------------------------------------------------------------------------------------
+
+
+def test_a_service_that_fails_among_several_is_reported_and_the_others_still_start(
+    calls: List[Tuple[str, ...]], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A machine without the container engine still gets Jenkins: the engine's error is printed, the run exits 1."""
+
+    def refuse(**kwargs: bool) -> None:
+        raise click.ClickException("the Docker engine is not running")
+
+    monkeypatch.setattr(
+        _Fake,
+        "launch",
+        lambda self, **kwargs: refuse() if self.name == "engine" else calls.append(("start", self.name)),
+    )
+    result = _run("start")
+    assert result.exit_code == 1
+    assert "Error: engine: the Docker engine is not running" in result.output
+    assert calls == [("start", "server")]
+
+
+def test_a_service_named_alone_fails_as_itself(calls: List[Tuple[str, ...]], monkeypatch: pytest.MonkeyPatch) -> None:
+    def refuse(self: _Fake, **kwargs: bool) -> None:
+        raise click.ClickException("the Docker engine is not running")
+
+    monkeypatch.setattr(_Fake, "launch", refuse)
+    result = _run("start", "engine")
+    assert result.exit_code == 1
+    assert result.output.strip().splitlines()[-1] == "Error: the Docker engine is not running"
 
 
 def test_the_list_holds_every_service_aisland_ships_once() -> None:

@@ -34,9 +34,9 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Dict, List, Literal, Mapping, Optional, Sequence, Tuple, cast, get_args
 
-import click
-
-from aisland.manager import USERSPACE_TOOLS, workspace_folders
+from aisland.errors import AislandError
+from aisland.installers import USERSPACE_TOOLS
+from aisland.projects import workspace_folders
 
 #: The entry-point group a project's code plugins are declared in.
 ENTRY_POINT_GROUP = "aisland.plugins"
@@ -64,7 +64,7 @@ TOOL_KINDS: Tuple[str, ...] = get_args(ToolKind)
 PluginState = Literal["installed", "not installed"]
 
 
-class DeclarationError(click.ClickException, ValueError):
+class DeclarationError(AislandError, ValueError):
     """A declaration aisland cannot use; the message names the file and the line."""
 
 
@@ -450,28 +450,35 @@ def _check_options(what: str, options: object) -> None:
             raise DeclarationError(f"{what}: option {name!r} is aisland's own")
 
 
+def installed(found: Discovery) -> Dict[str, Optional[importlib.metadata.EntryPoint]]:
+    """Each declared plugin's installed entry point, or None while its project is not installed — read from the
+    installed distributions' metadata only, nothing imported. One scan for every plugin: each scan reads every
+    distribution's metadata."""
+    entries = list(importlib.metadata.entry_points(group=ENTRY_POINT_GROUP)) if found.plugins else []
+    return {name: _entry_point(plugin, entries) for name, plugin in found.plugins.items()}
+
+
+def load_one(plugin: Plugin, entry: Optional[importlib.metadata.EntryPoint]) -> Loaded:
+    """Stage 2 for one plugin: its code imported and checked (``entry`` from :func:`installed`). A class is
+    instantiated with no arguments. Raises :class:`DeclarationError`."""
+    if entry is None:
+        return Loaded(plugin, "not installed")
+    try:
+        target = entry.load()
+        obj = target() if isinstance(target, type) else target
+    except Exception as exc:  # the project's own code: any failure of it is reported, never aisland's crash
+        raise DeclarationError(
+            f"{plugin.where}: plugin {plugin.name!r} ({plugin.target}) cannot be loaded: {exc}"
+        ) from exc
+    return Loaded(plugin, "installed", _check(plugin, obj), obj)
+
+
 def load(found: Discovery) -> Dict[str, Loaded]:
     """Stage 2: each declared plugin, loaded when its project is installed. Raises :class:`DeclarationError`.
 
     Only what a workspace project declares is loaded — an installed package of the same group that no project of
-    this workspace declares is not a plugin of this workspace. A class is instantiated with no arguments."""
-    loaded: Dict[str, Loaded] = {}
-    # One scan of the installed distributions for every plugin: each scan reads every distribution's metadata.
-    installed = list(importlib.metadata.entry_points(group=ENTRY_POINT_GROUP)) if found.plugins else []
-    for name, plugin in found.plugins.items():
-        entry = _entry_point(plugin, installed)
-        if entry is None:
-            loaded[name] = Loaded(plugin, "not installed")
-            continue
-        try:
-            target = entry.load()
-            obj = target() if isinstance(target, type) else target
-        except Exception as exc:  # the project's own code: any failure of it is reported, never aisland's crash
-            raise DeclarationError(
-                f"{plugin.where}: plugin {name!r} ({plugin.target}) cannot be loaded: {exc}"
-            ) from exc
-        loaded[name] = Loaded(plugin, "installed", _check(plugin, obj), obj)
-    return loaded
+    this workspace declares is not a plugin of this workspace."""
+    return {name: load_one(found.plugins[name], entry) for name, entry in installed(found).items()}
 
 
 # --- reporting ------------------------------------------------------------------------------------------------------

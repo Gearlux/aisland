@@ -19,9 +19,8 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Dict, List, Literal, Optional, Tuple, get_args
 
-import click
-
-from aisland import manager
+from aisland.errors import AislandError
+from aisland.projects import dependency_order, discover_projects, get_project_metadata, workspace_folders
 
 #: The two lists: every variable (``complete``), and the ones a person normally sets (``example``).
 Kind = Literal["complete", "example"]
@@ -129,17 +128,17 @@ def read_project(path: Path, project: str) -> ProjectEnv:
         if not line.startswith("#"):
             sets = _SETS.match(line)
             if sets:
-                raise click.ClickException(
+                raise AislandError(
                     f"{where}: sets {sets.group(1)} outside a comment — every line of {path.name} is commented out"
                 )
-            raise click.ClickException(f"{where}: is not a comment — every line of {path.name} is a comment or blank")
+            raise AislandError(f"{where}: is not a comment — every line of {path.name} is a comment or blank")
         entry = _ENTRY.match(line)
         if entry:
             env.entries.append(Entry(entry.group(1), entry.group(2), entry.group(3) or "", heading))
             continue
         started = _ENTRY_START.match(line)
         if started:
-            raise click.ClickException(f"{where}: two spaces part the value of {started.group(1)} from its description")
+            raise AislandError(f"{where}: two spaces part the value of {started.group(1)} from its description")
         plumbing = _NOT_FOR_ENV.match(line)
         if plumbing:
             for name in plumbing.group(1).replace(",", " ").split():
@@ -162,13 +161,11 @@ def checked_out(folder: Path) -> bool:
 
 def project_order(root: Path) -> List[Tuple[str, Path]]:
     """``(name, folder)`` of every checked-out project, each library before the projects that depend on it — the
-    order of the editor's workspace file (``manager._dependency_order`` over folder names) — so the first project
+    order of the editor's workspace file (``dependency_order`` over folder names) — so the first project
     reading a variable is the one that defines it."""
-    checkouts = {(root / path).resolve(): name for name, path, _active in manager.workspace_folders(root)}
-    projects = sorted(
-        (manager.get_project_metadata(p) for p in manager.discover_projects(root)), key=lambda p: p["path"].name
-    )
-    ordered = [Path(p["path"]).resolve() for p in manager._dependency_order(projects)]
+    checkouts = {(root / path).resolve(): name for name, path, _active in workspace_folders(root)}
+    projects = sorted((get_project_metadata(p) for p in discover_projects(root)), key=lambda p: p["path"].name)
+    ordered = [Path(p["path"]).resolve() for p in dependency_order(projects)]
     out = [(checkouts[folder], folder) for folder in ordered if folder in checkouts and checked_out(folder)]
     named = {name for name, _folder in out}
     out += [  # a checkout discovery does not know (no installable pyproject.toml): after the others, as listed
@@ -188,9 +185,7 @@ def collect(root: Path, kind: Kind) -> Collected:
         else:
             without.append((name, f"no {FILE_NAMES[kind]}"))
     present = {name for name, _folder in order}
-    without += [
-        (name, "no checkout") for name, _path, _active in manager.workspace_folders(root) if name not in present
-    ]
+    without += [(name, "no checkout") for name, _path, _active in workspace_folders(root) if name not in present]
     return Collected(kind, projects, without)
 
 

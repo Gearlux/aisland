@@ -20,8 +20,8 @@ from typing import Any, Dict, List, Optional
 import pytest
 from click.testing import CliRunner, Result
 
-from aisland import cli, manager, selection
-from aisland.services import registry
+from aisland import cli, locations, selection
+from aisland.services import base, registry
 
 NOTES = """\
     [project]
@@ -40,7 +40,7 @@ def _workspace(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, pyproject: str =
     (root / "notes" / "pyproject.toml").write_text(textwrap.dedent(pyproject))
     subprocess.run(["git", "init", "-q"], cwd=root, check=True)
     monkeypatch.setattr(cli, "get_workspace_root", lambda: root)
-    monkeypatch.setattr(manager, "get_workspace_root", lambda: root)
+    monkeypatch.setattr(locations, "workspace_root", lambda: root)
     monkeypatch.setattr(registry, "ENTRIES", ())  # aisland's own services stay out of these tests
     return root
 
@@ -51,7 +51,7 @@ def supervised(monkeypatch: pytest.MonkeyPatch) -> List[Dict[str, Any]]:
     calls: List[Dict[str, Any]] = []
 
     def start(
-        self: manager.BaseService,
+        self: base.BaseService,
         cmd: List[str],
         env: Optional[dict] = None,
         background: bool = False,
@@ -59,10 +59,10 @@ def supervised(monkeypatch: pytest.MonkeyPatch) -> List[Dict[str, Any]]:
     ) -> None:
         calls.append({"start": self.name, "cmd": cmd, "background": background, "readiness": readiness})
 
-    monkeypatch.setattr(manager.BaseService, "start", start)
-    monkeypatch.setattr(manager.BaseService, "stop", lambda self: calls.append({"stop": self.name}))
-    monkeypatch.setattr(manager.BaseService, "status", lambda self: calls.append({"status": self.name}))
-    monkeypatch.setattr(manager.BaseService, "is_running", lambda self: False)
+    monkeypatch.setattr(base.BaseService, "start", start)
+    monkeypatch.setattr(base.BaseService, "stop", lambda self: calls.append({"stop": self.name}))
+    monkeypatch.setattr(base.BaseService, "status", lambda self: calls.append({"status": self.name}))
+    monkeypatch.setattr(base.BaseService, "is_running", lambda self: False)
     monkeypatch.setattr("aisland.supervisor.print_status", lambda: None)
     return calls
 

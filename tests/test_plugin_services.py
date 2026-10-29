@@ -26,8 +26,8 @@ from typing import Any, Dict, List, Optional
 import pytest
 from click.testing import CliRunner, Result
 
-from aisland import cli, manager
-from aisland.services import registry
+from aisland import cli, locations, paths
+from aisland.services import base, registry
 
 PROJECT = """\
     [project]
@@ -75,7 +75,7 @@ def workspace(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     monkeypatch.syspath_prepend(str(site))
     monkeypatch.delitem(sys.modules, "acme_plugin", raising=False)
     monkeypatch.setattr(cli, "get_workspace_root", lambda: root)
-    monkeypatch.setattr(manager, "get_workspace_root", lambda: root)
+    monkeypatch.setattr(locations, "workspace_root", lambda: root)
     monkeypatch.setattr("aisland.supervisor._workspace_root", lambda: root)
     monkeypatch.setattr(registry, "ENTRIES", ())
     monkeypatch.setattr("aisland.supervisor.print_status", lambda: None)
@@ -87,7 +87,7 @@ def supervised(monkeypatch: pytest.MonkeyPatch) -> List[Dict[str, Any]]:
     calls: List[Dict[str, Any]] = []
 
     def start(
-        self: manager.BaseService,
+        self: base.BaseService,
         cmd: List[str],
         env: Optional[dict] = None,
         background: bool = False,
@@ -95,12 +95,12 @@ def supervised(monkeypatch: pytest.MonkeyPatch) -> List[Dict[str, Any]]:
     ) -> None:
         calls.append({"start": self.name, "cmd": cmd, "env": env, "background": background, "readiness": readiness})
 
-    monkeypatch.setattr(manager.BaseService, "start", start)
-    monkeypatch.setattr(manager.BaseService, "stop", lambda self: calls.append({"stop": self.name}))
-    monkeypatch.setattr(manager.BaseService, "status", lambda self: calls.append({"status": self.name}))
-    monkeypatch.setattr(manager.BaseService, "reset", lambda self: calls.append({"reset": self.name}))
-    monkeypatch.setattr(manager.BaseService, "info", lambda self: calls.append({"info": self.name}))
-    monkeypatch.setattr(manager.BaseService, "get_ports", lambda self: [7000])
+    monkeypatch.setattr(base.BaseService, "start", start)
+    monkeypatch.setattr(base.BaseService, "stop", lambda self: calls.append({"stop": self.name}))
+    monkeypatch.setattr(base.BaseService, "status", lambda self: calls.append({"status": self.name}))
+    monkeypatch.setattr(base.BaseService, "reset", lambda self: calls.append({"reset": self.name}))
+    monkeypatch.setattr(base.BaseService, "info", lambda self: calls.append({"info": self.name}))
+    monkeypatch.setattr(base.BaseService, "get_ports", lambda self: [7000])
     return calls
 
 
@@ -134,7 +134,7 @@ def test_start_hands_the_class_its_context_and_runs_what_it_asks(
 ) -> None:
     result = _run("acme-db", "start", "-b", "--port", "7100")
     assert result.exit_code == 0, result.output
-    assert _seen() == [("start", "acme-db", 7100, True, workspace, manager.DATA_DIR / "acme-db")]
+    assert _seen() == [("start", "acme-db", 7100, True, workspace, paths.DATA_DIR / "acme-db")]
     assert supervised == [
         {
             "start": "acme-db",
@@ -374,6 +374,26 @@ def test_one_help_finds_the_projects_services_once(workspace: Path, monkeypatch:
     assert result.exit_code == 0, result.output
     assert "Manage acme-db, a service acme brings." in " ".join(result.output.split())
     assert len(calls) == 1
+
+
+def test_help_lists_a_projects_service_without_importing_its_code(workspace: Path) -> None:
+    """Listing the services reads the projects' declarations and the installed metadata only: importing every
+    project's code made `aisland --help` take 0.65 s, 0.6 s of it the imports."""
+    result = _run("--help")
+    assert result.exit_code == 0, result.output
+    assert "Manage acme-db, a service acme brings." in " ".join(result.output.split())
+    assert "acme_plugin" not in sys.modules
+    assert "--port" in _run("acme-db", "start", "--help").output
+    assert "acme_plugin" in sys.modules
+
+
+def test_a_plugin_that_cannot_be_imported_is_listed_and_fails_when_used(workspace: Path) -> None:
+    """A project's broken code never hides the other services from `--help`; using it says what is wrong."""
+    (Path(sys.path[0]) / "acme_plugin.py").write_text("raise ImportError('no acme here')\n")
+    assert "acme-db" in _run("--help").output
+    result = _run("acme-db", "start")
+    assert result.exit_code == 1
+    assert "plugin 'acme-db' (acme_plugin:Database) cannot be loaded: no acme here" in result.output
 
 
 def test_loading_reads_the_installed_entry_points_once(workspace: Path, monkeypatch: pytest.MonkeyPatch) -> None:

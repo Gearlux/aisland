@@ -38,7 +38,7 @@ from aisland.services.jenkins_java import JenkinsJava
 
 #: The OpenCV variant the workspace keeps. Both distributions install the SAME files
 #: (`cv2/cv2.abi3.so` + `cv2/.dylibs/*` appear in BOTH RECORDs) with different bundled native
-#: libraries, so only one may be present. `manager._ROOT_UV_BASE` enforces that by dropping
+#: libraries, so only one may be present. `uv_config._ROOT_UV_BASE` enforces that by dropping
 #: the GUI wheel workspace-wide (`opencv-python ; sys_platform == 'never'`).
 _OPENCV_KEPT = "opencv-python-headless"
 
@@ -148,7 +148,7 @@ def check_opencv_single_variant() -> CheckResult:
     bundled native libraries, and both claim `cv2/cv2.abi3.so` + `cv2/.dylibs/*` in their
     RECORD. Several projects pull each one (ultralytics / torchsig / supervision want the GUI
     wheel; albumentations / fiftyone / label-studio-sdk want headless), so
-    `manager._ROOT_UV_BASE` resolves the conflict workspace-wide by dropping the GUI wheel
+    `uv_config._ROOT_UV_BASE` resolves the conflict workspace-wide by dropping the GUI wheel
     (`opencv-python ; sys_platform == 'never'`) and keeping `opencv-python-headless>=4.12,<5`.
 
     The GUI wheel coming back means something installed outside that override — plain `pip`

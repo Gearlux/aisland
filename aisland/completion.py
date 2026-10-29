@@ -38,7 +38,7 @@ import sys
 from pathlib import Path
 from typing import List, Literal, NamedTuple, Optional, Sequence, Tuple
 
-from aisland.manager import get_workspace_root
+from aisland.projects import get_workspace_root
 
 #: The rc fragment `project.bashrc` sources. Gitignored, so writing it leaves no diff.
 DEFAULT_RC_NAME = ".project.bashrc.completion"

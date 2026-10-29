@@ -16,6 +16,7 @@ from typing import Any, List
 
 import pytest
 
+from aisland import locations
 from aisland.services.jenkins import STAGE_LIMITS, TIMED_OUT_MESSAGE, JenkinsService
 
 
@@ -39,9 +40,7 @@ def test_scaffold_all_projects_includes_aisland(monkeypatch: pytest.MonkeyPatch,
     for name in ("aisland", "matrainer", "traidwind"):
         _make_pyproject(tmp_path / name, name)
 
-    from aisland import manager
-
-    monkeypatch.setattr(manager, "get_workspace_root", lambda: tmp_path)
+    monkeypatch.setattr(locations, "workspace_root", lambda: tmp_path)
 
     # Capture the project names the scaffolder recurses into instead of
     # actually generating files (the file-writing path is exercised
@@ -72,9 +71,7 @@ def test_scaffold_emits_directory_example_runner(monkeypatch: pytest.MonkeyPatch
     """
     _make_pyproject(tmp_path / "proj", "proj")
 
-    from aisland import manager
-
-    monkeypatch.setattr(manager, "get_workspace_root", lambda: tmp_path)
+    monkeypatch.setattr(locations, "workspace_root", lambda: tmp_path)
 
     svc = JenkinsService()
     # The Jenkins linter is unreachable in tests -> warn-and-skip, files still written.
@@ -102,10 +99,9 @@ def test_the_regenerate_header_is_a_command_the_cli_accepts(monkeypatch: pytest.
     """
     _make_pyproject(tmp_path / "proj", "proj")
 
-    from aisland import manager
     from aisland.cli import jenkins_scaffold
 
-    monkeypatch.setattr(manager, "get_workspace_root", lambda: tmp_path)
+    monkeypatch.setattr(locations, "workspace_root", lambda: tmp_path)
     JenkinsService().scaffold_pipelines(project_name="proj", force=True)
 
     generated = [
@@ -149,11 +145,10 @@ def _make_pyproject_with_playwright(dir_: Path, name: str, slow_marker: bool = F
 
 
 def _scaffolded(monkeypatch: pytest.MonkeyPatch, tmp_path: Path, make: Any) -> dict[str, str]:
-    from aisland import manager
 
     make(tmp_path / "proj", "proj")
     (tmp_path / ".gitmodules").write_text("", encoding="utf-8")
-    monkeypatch.setattr(manager, "get_workspace_root", lambda: tmp_path)
+    monkeypatch.setattr(locations, "workspace_root", lambda: tmp_path)
     JenkinsService().scaffold_pipelines(project_name="proj", force=True)
     return {
         "Jenkinsfile": (tmp_path / "proj" / "Jenkinsfile").read_text(encoding="utf-8"),
@@ -281,10 +276,9 @@ def _scaffold_app(monkeypatch: pytest.MonkeyPatch, tmp_path: Path, projects: dic
     ``Jenkinsfile.local`` is left out on purpose: it installs nothing, so it has no closure —
     ``TestTheLocalPipelineInstallsNothing`` pins that.
     """
-    from aisland import manager
 
     _make_gearlux_workspace(tmp_path, projects)
-    monkeypatch.setattr(manager, "get_workspace_root", lambda: tmp_path)
+    monkeypatch.setattr(locations, "workspace_root", lambda: tmp_path)
     monkeypatch.setattr("aisland.services.jenkins.is_private_repo", lambda repository: False)
     JenkinsService().scaffold_pipelines(project_name="app", force=True)
     return {
@@ -567,7 +561,6 @@ class TestTheWorkflowActionsRunOnNode24:
     @staticmethod
     def _every_job(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> str:
         """A ci.yml carrying every optional job and step: the slow leg AND the app-token step."""
-        from aisland import manager
 
         marker = "\n[tool.pytest.ini_options]\nmarkers = [\"slow: heavy tests; deselect with -m 'not slow'.\"]\n"
         _make_gearlux_workspace(
@@ -577,7 +570,7 @@ class TestTheWorkflowActionsRunOnNode24:
                 "app": '[project]\nname = "app"\nversion = "0.0.0"\ndependencies = ["lib>=0.0.0"]\n' + marker,
             },
         )
-        monkeypatch.setattr(manager, "get_workspace_root", lambda: tmp_path)
+        monkeypatch.setattr(locations, "workspace_root", lambda: tmp_path)
         monkeypatch.setattr("aisland.services.jenkins.is_private_repo", lambda repository: True)
         JenkinsService().scaffold_pipelines(project_name="app", force=True)
         return (tmp_path / "app" / ".github" / "workflows" / "ci.yml").read_text(encoding="utf-8")

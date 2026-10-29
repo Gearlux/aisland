@@ -13,7 +13,8 @@ from pathlib import Path
 import click
 import pytest
 
-from aisland import locations, manager, pytest_stats, sources, wheels
+from aisland import locations, projects, pytest_stats, sources, wheels
+from aisland.errors import AislandError
 
 
 def _project(folder: Path, name: str, deps: str = "") -> Path:
@@ -76,7 +77,7 @@ def test_a_folder_beside_a_project_is_no_workspace(acme: Path) -> None:
 
 
 def test_without_gitmodules_every_subfolder_with_a_pyproject_is_an_active_project(acme: Path) -> None:
-    assert manager.workspace_folders(acme) == [("alpha", "alpha", True), ("beta", "beta", True)]
+    assert projects.workspace_folders(acme) == [("alpha", "alpha", True), ("beta", "beta", True)]
 
 
 def test_with_gitmodules_the_submodules_are_the_projects(tmp_path: Path) -> None:
@@ -84,7 +85,7 @@ def test_with_gitmodules_the_submodules_are_the_projects(tmp_path: Path) -> None
     _project(root / "confluid", "confluid")
     _project(root / "stray", "stray")  # a folder .gitmodules does not declare
     (root / ".gitmodules").write_text('[submodule "confluid"]\n\tpath = confluid\n\tactive = false\n')
-    assert manager.workspace_folders(root) == [("confluid", "confluid", False)]
+    assert projects.workspace_folders(root) == [("confluid", "confluid", False)]
 
 
 def test_wheels_sees_the_folder_projects(acme: Path) -> None:
@@ -109,12 +110,11 @@ def test_a_test_run_of_a_folder_project_is_recorded(acme: Path, monkeypatch: pyt
 
 
 @pytest.mark.parametrize("kind", ["pypi", "github"])
-def test_a_source_that_would_empty_a_folder_project_is_refused(
-    acme: Path, kind: str, capsys: pytest.CaptureFixture[str]
-) -> None:
-    assert sources.set_project_source("alpha", kind, workspace_root=acme) == 1
-    assert capsys.readouterr().err == (
-        f"Error: 'alpha' is a folder of the workspace, not a submodule: a {kind} source empties its folder, "
-        "and nothing could check it out again. Keep it local.\n"
+def test_a_source_that_would_empty_a_folder_project_is_refused(acme: Path, kind: str) -> None:
+    with pytest.raises(AislandError) as refusal:
+        sources.set_project_source("alpha", kind, workspace_root=acme)
+    assert refusal.value.format_message() == (
+        f"'alpha' is a folder of the workspace, not a submodule: a {kind} source empties its folder, "
+        "and nothing could check it out again. Keep it local."
     )
     assert (acme / "alpha" / "pyproject.toml").is_file()

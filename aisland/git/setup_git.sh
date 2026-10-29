@@ -71,7 +71,7 @@ git config submodule.recurse true
 # `submodule.<name>.active` from this machine's choice, so this script leaves those keys alone.
 
 echo "==> Configuring Git Aliases..."
-# The aliases below assume the acme mono-repo layout and Python toolchain
+# The aliases below assume a mono-repo layout and Python toolchain
 # (submodule fan-out, .venv, isort/black/flake8/mypy/pytest), so they are
 # written to LOCAL config only — a global alias would leak workspace-specific
 # behavior into every unrelated repo on this machine. Because each submodule

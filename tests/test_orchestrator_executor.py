@@ -3,7 +3,7 @@
 It only triggers the project jobs (`build job:`), which needs no node. Declaring
 `agent { node { label 'built-in' } }` made it hold one of the built-in node's two
 executors for its whole run, so each "parallel" phase ran its projects one at a
-time: on 2026-09-13 vendorcli waited 875 s for recordstream to finish, and annotaide
+time: on 2026-09-13 app waited 875 s for recordstream to finish, and annotaide
 and purifai sat at "Waiting for next available executor" behind torpaido.
 """
 
@@ -14,23 +14,22 @@ from typing import Sequence
 
 import pytest
 
+from aisland import locations, projects
 from aisland.services.jenkins import NIGHTLY_CRON, JenkinsService
 
 
 def _orchestrator_script(monkeypatch: pytest.MonkeyPatch, tmp_path: Path, local: bool, slow: Sequence[str] = ()) -> str:
     """The orchestrator's config.xml for three projects; those named in `slow` register the `slow` marker."""
-    from aisland import manager
-
     for name in slow:
         (tmp_path / name).mkdir()
         (tmp_path / name / "pyproject.toml").write_text(
             f'[project]\nname = "{name}"\n\n[tool.pytest.ini_options]\nmarkers = ["slow: the slow run"]\n'
         )
 
-    monkeypatch.setattr(manager, "get_workspace_root", lambda: tmp_path)
-    monkeypatch.setattr(manager, "get_workspace_name", lambda: "ws")
+    monkeypatch.setattr(locations, "workspace_root", lambda: tmp_path)
+    monkeypatch.setattr(projects, "get_workspace_name", lambda: "ws")
     monkeypatch.setattr(
-        manager,
+        projects,
         "get_install_order",
         lambda root: [
             {"name": "libcore", "dependencies": []},

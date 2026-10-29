@@ -27,6 +27,8 @@ uv venv --seed .venv && .venv/bin/pip install aisland
     vscode-init-bash.sh       written
     workspace.toml            the projects, how to start another machine from them
     git aliases               pull-all, push-all, … in the local git config
+    .agents/                  aisland's commands and agent rules (`.claude/commands` links to them)
+    AGENTS.md                 written (imports the rules; CLAUDE.md and GEMINI.md link to it)
 Next:
     cd /Users/you/work/acme
     uv venv --seed .venv && .venv/bin/pip install aisland
@@ -465,7 +467,7 @@ Error: 'alpha' is a folder of the workspace, not a submodule: a pypi source empt
 
 A wheel is built from a project's last commit, so a project folder in no git repository is
 refused (`alpha is in no git repository; …`); a mirror needs a submodule's `.gitmodules`
-remote and is refused as before.
+remote and is refused.
 
 ## Optional projects & the generated `uv.toml`
 

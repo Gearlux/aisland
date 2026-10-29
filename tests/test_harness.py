@@ -20,7 +20,7 @@ import pytest
 import yaml
 
 from aisland import harness, locations, manager
-from tests.test_no_private_names import FORBIDDEN
+from tests.test_no_private_names import FORBIDDEN, PRIVATE_NAMES
 
 
 @pytest.fixture
@@ -342,7 +342,7 @@ def test_the_ignore_lines_are_added_once(root: Path, shipped: Path) -> None:
 #: Names that mean something only in the workspace aisland was written in: the harness runs in any workspace. The two
 #: names no aisland file may carry at all are `test_no_private_names.FORBIDDEN`'s, checked beside these.
 PRIVATE = re.compile(
-    r"acme|company|gearlux|vendorcli|platform|annotaide|navigaitor|confluid|recordstream|matrainer"
+    "|".join(PRIVATE_NAMES) + r"|gearlux|annotaide|navigaitor|confluid|recordstream|matrainer"
     r"|liquifai|loggair|streamstudio|sonair|raidar|deltaid|curaitor|torpaido|distilaide|torchsig",
     re.IGNORECASE,
 )
@@ -467,9 +467,9 @@ def test_setup_installs_the_harness_before_provisioning(
     tmp_path: Path, shipped: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     (tmp_path / ".venv" / "bin").mkdir(parents=True)
-    monkeypatch.setattr(manager, "get_workspace_root", lambda: tmp_path)
+    monkeypatch.setattr(locations, "workspace_root", lambda: tmp_path)
     monkeypatch.setattr(manager, "ensure_uv_in_venv", lambda venv_bin: "uv")
-    monkeypatch.setattr(manager, "_link_project_bashrc", lambda root: None)
+    monkeypatch.setattr(manager, "link_project_bashrc", lambda root: None)
 
     def provision(root: Path, aislands_own: bool = True) -> None:
         raise _Stop
@@ -486,9 +486,9 @@ def test_setup_prints_what_the_harness_reports(
 ) -> None:
     (tmp_path / ".venv" / "bin").mkdir(parents=True)
     _write(tmp_path / "AGENTS.md", "# ours\n")
-    monkeypatch.setattr(manager, "get_workspace_root", lambda: tmp_path)
+    monkeypatch.setattr(locations, "workspace_root", lambda: tmp_path)
     monkeypatch.setattr(manager, "ensure_uv_in_venv", lambda venv_bin: "uv")
-    monkeypatch.setattr(manager, "_link_project_bashrc", lambda root: None)
+    monkeypatch.setattr(manager, "link_project_bashrc", lambda root: None)
     monkeypatch.setattr("aisland.provision.install", lambda root, aislands_own=True: (_ for _ in ()).throw(_Stop()))
     with pytest.raises(_Stop):
         manager.setup_workspace(non_interactive=True)

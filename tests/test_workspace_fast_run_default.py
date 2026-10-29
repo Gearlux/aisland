@@ -17,7 +17,7 @@ from typing import List, Optional, Sequence, Union
 
 import pytest
 
-from aisland.manager import discover_projects, get_workspace_root
+from aisland.projects import discover_projects, get_workspace_root
 
 
 def _default_markexpr(addopts: Union[str, Sequence[str], None]) -> Optional[str]:

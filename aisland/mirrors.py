@@ -59,7 +59,7 @@ from urllib.parse import urlparse
 import click
 
 from aisland import workspace_file
-from aisland.manager import get_workspace_root, submodule_active_map
+from aisland.projects import get_workspace_root, submodule_active_map
 
 #: The project's setting this module owns in its ``[project."<name>"]`` table of ``workspace.toml``, and the last part
 #: of this machine's ``aisland.mirror.<project>.mirror``.

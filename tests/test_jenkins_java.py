@@ -446,7 +446,7 @@ def provisioning(monkeypatch: pytest.MonkeyPatch) -> Dict[str, Any]:
     service = JenkinsService()
     monkeypatch.setattr(service, "ensure_war", lambda: True)
     installs: List[set] = []
-    monkeypatch.setattr(jenkins_module, "_install_brew_packages", lambda packages: installs.append(set(packages)))
+    monkeypatch.setattr(jenkins_module, "install_brew_packages", lambda packages: installs.append(set(packages)))
     monkeypatch.setattr(jenkins_module, "newest_versioned_formula", lambda: "openjdk@27")
     return {"service": service, "installs": installs}
 

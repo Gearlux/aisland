@@ -18,8 +18,10 @@ from typing import Any, Dict, Iterator, Optional, Set
 import click
 import pytest
 
+from aisland import locations, projects
 from aisland import sources as s
 from aisland import wheels as w
+from aisland.errors import AislandError
 from aisland.services.jenkins import JenkinsService, discover_github_projects, is_private_repo
 from aisland.sources import GitHubRepository, github_repository, project_repositories
 
@@ -53,9 +55,8 @@ def acme(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
             "tools": "https://bitbucket.example.com/scm/team/tools.git",
         },
     )
-    from aisland import manager
 
-    monkeypatch.setattr(manager, "get_workspace_root", lambda: tmp_path)
+    monkeypatch.setattr(locations, "workspace_root", lambda: tmp_path)
     monkeypatch.setattr("aisland.services.jenkins.is_private_repo", lambda repository: False)
     return tmp_path
 
@@ -109,6 +110,8 @@ def _ci(root: Path, project: str) -> Dict[str, str]:
         "https://github.com/acme/lib.git",
         "https://github.com/acme/lib",
         "ssh://git@github.com/acme/lib.git",
+        "https://user@github.com/acme/lib.git",
+        "https://x-access-token@github.com/acme/lib",
     ],
 )
 def test_every_spelling_of_a_github_remote_names_its_owner_and_repository(url: str) -> None:
@@ -256,7 +259,6 @@ def test_a_project_off_github_without_wheels_for_an_unreleased_dependency_is_ref
 
 def test_a_wheels_extra_missing_an_unreleased_dependency_is_refused_naming_it(acme: Path, pypi: Dict[str, Any]) -> None:
     _project(acme, "util", [])
-    from aisland import manager
 
     (acme / ".gitmodules").write_text(
         (acme / ".gitmodules").read_text() + '[submodule "util"]\n\tpath = util\n\turl = git@github.com:acme/util.git\n'
@@ -264,7 +266,7 @@ def test_a_wheels_extra_missing_an_unreleased_dependency_is_refused_naming_it(ac
     _wheels_extra(acme, "tools", ["lib>=0.0.0", "util>=0.0.0"], ["lib"])
     with pytest.raises(click.ClickException, match="and util is not released on PyPI"):
         JenkinsService().scaffold_pipelines(project_name="tools", force=True)
-    assert manager.get_workspace_root() == acme
+    assert projects.get_workspace_root() == acme
 
 
 def test_a_project_off_github_needing_only_released_dependencies_needs_no_wheels(
@@ -300,7 +302,7 @@ def _set_pypi(root: Path, project: str, monkeypatch: pytest.MonkeyPatch) -> int:
     monkeypatch.setattr(s, "local_override", lambda root, name: None)
     monkeypatch.setattr(s, "set_local_override", lambda *a, **k: None)
     monkeypatch.setattr(s, "apply_source", lambda *a, **k: True)
-    monkeypatch.setattr("aisland.manager.write_code_workspace", lambda *a, **k: None)
+    monkeypatch.setattr("aisland.editor_files.write_code_workspace", lambda *a, **k: None)
     return s.set_project_source(project, "pypi", workspace_root=root)
 
 
@@ -316,16 +318,16 @@ def test_a_strangers_release_may_not(
     acme: Path, pypi: Dict[str, Any], monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
     pypi["lib"] = _release("https://github.com/someone-else/lib")
-    assert _set_pypi(acme, "lib", monkeypatch) == 1
-    assert "does not point at github.com/acme/" in capsys.readouterr().err
+    with pytest.raises(AislandError, match="does not point at github.com/acme/"):
+        _set_pypi(acme, "lib", monkeypatch)
 
 
 def test_a_project_off_github_cannot_be_matched_to_a_release(
     acme: Path, pypi: Dict[str, Any], monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
     pypi["tools"] = _release("https://bitbucket.example.com/scm/team/tools")
-    assert _set_pypi(acme, "tools", monkeypatch) == 1
-    assert "its remote is not on GitHub" in capsys.readouterr().err
+    with pytest.raises(AislandError, match="its remote is not on GitHub"):
+        _set_pypi(acme, "tools", monkeypatch)
 
 
 # --- wheels ----------------------------------------------------------------------------------------------------------

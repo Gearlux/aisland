@@ -9,8 +9,8 @@ The tools are a chosen set, never the whole CLI (user choice 2026-10-21):
 * reading — ``doctor``, ``tests_report``, ``editor_themes``, ``editor_colors``, ``sources``, ``services_status``,
   ``tunnel_list``: each the data its command prints with ``--json`` (or would), from the same function;
 * changing this machine, never destroying — ``editor_set_theme``, ``editor_set_color``, ``editor_unset`` (the
-  workspace window's theme and colours, :mod:`aisland.editor`) and ``service_start``/``stop``/``restart`` for
-  Jenkins and MLflow, each run as the ``aisland`` command itself so it behaves exactly as typed.
+  workspace window's theme and colours, :mod:`aisland.editor`) and ``service_start``/``stop``/``restart`` for any
+  service of the workspace, each run as the ``aisland`` command itself so it behaves exactly as typed.
 
 What prompts (``setup``), runs for minutes or deletes (``clean``, ``backups prune``, ``* reset``, ``jenkins init``,
 ``source set``) stays a command. Every tool answers with one JSON object; a refusal is the tool's error, in the
@@ -28,15 +28,17 @@ import functools
 import subprocess
 import sys
 from dataclasses import asdict
-from typing import Any, Callable, Dict, List, Literal, Optional, Tuple, TypeVar, get_args
+from typing import Any, Callable, Dict, List, Literal, Optional, TypeVar
 
 import click
 
-from aisland import doctor, editor, manager, pytest_stats
+from aisland import cli, doctor, editor, editor_files, pytest_stats
 from aisland import sources as sources_mod
 from aisland import supervisor
 from aisland import tunnel as tunnel_mod
-from aisland.manager import get_workspace_root
+from aisland.errors import AislandError
+from aisland.projects import get_workspace_root
+from aisland.services import registry as service_registry
 
 try:
     import mcp.types as mcp_types
@@ -48,9 +50,6 @@ except ImportError:  # the [mcp] extra is not installed: main() says so
 
 MISSING_EXTRA = "Error: aisland-mcp needs the mcp extra: pip install 'aisland[mcp]'"
 
-#: The services a tool starts and stops (user choice 2026-10-21); the others stay commands.
-Service = Literal["jenkins", "mlflow"]
-SERVICES: Tuple[Service, ...] = get_args(Service)
 #: What ``editor_unset`` forgets: the theme, one colour, or both colours and the area.
 EditorPart = Literal["theme", "background", "foreground", "colors"]
 #: How long a service command may take: Jenkins' start waits for its readiness probe.
@@ -58,12 +57,13 @@ SERVICE_TIMEOUT = 300
 
 INSTRUCTIONS = """\
 aisland manages this machine's development workspace: its environment checks, test statistics, project sources,
-the supervised services (Jenkins, MLflow) and the VS Code window's theme and colours.
+the services (Jenkins, the Docker engine, SwiftBar and the ones its projects bring) and the VS Code window's theme
+and colours.
 
 Read first: `doctor` (what is broken and the command that fixes it), `services_status`, `sources`,
 `tests_report(project)`. The editor tools change only this machine's workspace window: `editor_themes` and
 `editor_colors` list the choices, `editor_set_theme` / `editor_set_color` / `editor_unset` apply them.
-`service_start` / `service_stop` / `service_restart` take `jenkins` or `mlflow`. Setup, cleaning and resets are
+`service_start` / `service_stop` / `service_restart` take any service of the workspace by name. Setup, cleaning and resets are
 commands the person runs themselves (`aisland setup`, `aisland clean <project>`).
 """
 
@@ -71,7 +71,7 @@ commands the person runs themselves (`aisland setup`, `aisland clean <project>`)
 _Result = TypeVar("_Result")
 
 
-class ToolRefusal(Exception):
+class ToolRefusal(AislandError):
     """A refusal a tool anticipated (no such project, a command that failed): its words reach the client."""
 
 
@@ -127,8 +127,19 @@ def _service_state(name: str, process: Optional[Dict[str, Any]] = None) -> Dict[
     }
 
 
-def _service_command(name: Service, args: List[str]) -> Dict[str, Any]:
-    """Run ``aisland NAME ARGS`` (a name outside :data:`SERVICES` never gets here: the tool's schema refuses it)."""
+def _service_entry(name: str) -> service_registry.Entry:
+    """The workspace's service called ``name``: aisland's, or one a project brings. A name no service has is refused
+    in the command's own words (``no service 'x' (the services: …)``)."""
+    return service_registry.chosen(service_registry.entries(get_workspace_root(), reserved=cli.main.commands), [name])[
+        0
+    ]
+
+
+def _service_command(name: str, action: str) -> Dict[str, Any]:
+    """Run ``aisland NAME ACTION`` — ``start`` and ``restart`` in the background where the service runs under the
+    supervisor (the container engine and the menu detach by themselves and take no ``--background``)."""
+    entry = _service_entry(name)
+    args = [action, "--background"] if action != "stop" and entry.takes_background else [action]
     result = _run_aisland([name, *args])
     output = "\n".join(part.strip() for part in (result.stdout, result.stderr) if part.strip())
     if result.returncode != 0:
@@ -177,7 +188,7 @@ def tool_editor_set_theme(name: str) -> Dict[str, Any]:
     one: its window's themes are the local VS Code's) `name` is kept as typed and a `note` says it is unchecked."""
     root = get_workspace_root()
     theme = editor.set_theme(root, name)
-    manager.write_code_workspace(root)
+    editor_files.write_code_workspace(root)
     choice = _choice(editor.read_choice(root))
     if theme is not None and not theme.checked:
         choice["note"] = editor.UNCHECKED_THEME
@@ -193,7 +204,7 @@ def tool_editor_set_color(
     """
     root = get_workspace_root()
     editor.set_color(root, role, color, area)
-    manager.write_code_workspace(root)
+    editor_files.write_code_workspace(root)
     return _choice(editor.read_choice(root))
 
 
@@ -207,7 +218,7 @@ def tool_editor_unset(what: EditorPart) -> Dict[str, Any]:
         editor.clear_colors(root)
     else:
         editor.set_color(root, what, None)
-    manager.write_code_workspace(root)
+    editor_files.write_code_workspace(root)
     return _choice(editor.read_choice(root))
 
 
@@ -234,21 +245,22 @@ def tool_tunnel_list() -> Dict[str, Any]:
     return {"workspaces": tunnel_mod.store_payload(tunnel_mod.load_store())}
 
 
-def tool_service_start(name: Service) -> Dict[str, Any]:
-    """Start Jenkins or MLflow under the supervisor (`aisland <name> start --background`): its state after, and
-    what the command printed."""
-    return _service_command(name, ["start", "--background"])
+def tool_service_start(name: str) -> Dict[str, Any]:
+    """Start a service of the workspace by name — aisland's (docker, jenkins, swiftbar) or one a project brings, as
+    `services_status` and `aisland services status` name them (`aisland <name> start`, in the background): its state
+    after, and what the command printed. A name no service has is refused, listing the services."""
+    return _service_command(name, "start")
 
 
-def tool_service_stop(name: Service) -> Dict[str, Any]:
-    """Stop Jenkins or MLflow (`aisland <name> stop`): its state after, and what the command printed."""
-    return _service_command(name, ["stop"])
+def tool_service_stop(name: str) -> Dict[str, Any]:
+    """Stop a service of the workspace (`aisland <name> stop`): its state after, and what the command printed."""
+    return _service_command(name, "stop")
 
 
-def tool_service_restart(name: Service) -> Dict[str, Any]:
-    """Restart Jenkins or MLflow (`aisland <name> restart --background`): its state after, and what the command
-    printed."""
-    return _service_command(name, ["restart", "--background"])
+def tool_service_restart(name: str) -> Dict[str, Any]:
+    """Restart a service of the workspace (`aisland <name> restart`, in the background): its state after, and what
+    the command printed."""
+    return _service_command(name, "restart")
 
 
 _READING = (

@@ -21,8 +21,8 @@ from .test_wheels import _complete, _project, _workspace
 
 @pytest.fixture
 def root(tmp_path: Path) -> Path:
-    root = _workspace(tmp_path, "vendorcli")
-    _project(root, "vendorcli")
+    root = _workspace(tmp_path, "app")
+    _project(root, "app")
     return root
 
 
@@ -57,17 +57,17 @@ BUILD_OPTIONS = [
 
 
 def test_after_the_project_an_empty_word_offers_builds_options(root: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    assert _complete(monkeypatch, root, "aisland wheels build vendorcli ") == BUILD_OPTIONS
-    assert _complete(monkeypatch, root, "aisland wheels vendorcli ") == BUILD_OPTIONS, "the short form too"
+    assert _complete(monkeypatch, root, "aisland wheels build app ") == BUILD_OPTIONS
+    assert _complete(monkeypatch, root, "aisland wheels app ") == BUILD_OPTIONS, "the short form too"
 
 
 def test_an_option_already_typed_is_not_offered_again(root: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    offered = _complete(monkeypatch, root, "aisland wheels build vendorcli --zip --force ")
+    offered = _complete(monkeypatch, root, "aisland wheels build app --zip --force ")
     assert offered == [option for option in BUILD_OPTIONS if option not in ("--zip", "--force")]
 
 
 def test_an_argument_still_to_fill_is_offered_before_any_option(root: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    assert _complete(monkeypatch, root, "aisland wheels build ") == ["vendorcli"]
+    assert _complete(monkeypatch, root, "aisland wheels build ") == ["app"]
 
 
 def test_a_group_still_offers_its_commands_only(root: Path, monkeypatch: pytest.MonkeyPatch) -> None:

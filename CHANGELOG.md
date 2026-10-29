@@ -23,34 +23,57 @@ The first release on PyPI: `pip install aisland`.
   the projects offer.
 - **`aisland services`** runs the local services under process-compose or Docker — Jenkins, the container engine,
   SwiftBar — and a service a project declares in its own `pyproject.toml` or implements in its own
-  code (its class may name the question `reset` asks first); `aisland --help` names the project that brings each.
-- **`aisland jenkins scaffold`** writes a project's `Jenkinsfile`, `Jenkinsfile.local` and GitHub `ci.yml`.
-- **`aisland --version`** says which aisland runs, inside a workspace or not.
+  code; `aisland --help` names the project that brings each without importing its code. One service that cannot
+  start never keeps the others down: its error is printed and the command exits 1. On Linux the container engine is
+  the system's own Docker Engine, which aisland checks and never manages. `aisland supervisor status|attach|down` shows, attaches
+  to and stops the process-compose supervisor behind them, and `aisland swiftbar` puts the workspace's Jenkins
+  builds and GitHub Actions runs in the macOS menu bar.
+- **`aisland jenkins scaffold`** writes a project's `Jenkinsfile`, `Jenkinsfile.local` and GitHub `ci.yml`;
+  `aisland jenkins init [--local]` seeds the Jenkins jobs for them, and `aisland tests nightly` reports the local
+  Jenkins' nightly runs.
+- **`aisland check`** runs the quality gates (`isort`, `black`, `flake8`, `mypy`, `pytest`, `act`) on every project
+  or on the ones named.
+- **`aisland --version`** says which aisland runs, inside a workspace or not. Every error is one `Error:` line and
+  exit 1; **`aisland --debug <command>`** shows its traceback too.
 - **`aisland doctor`** checks the environment and prints the command that fixes what it finds.
-- **The workspace's `.env`** is read the way `project.bashrc` sources it — quotes, `export`, `$VAR` — by the services
-  and Jenkins alike.
+- **The workspace's `.env`** is read the way the shell reads it, by the services and Jenkins alike.
 - **`aisland workspace env-example`** writes the workspace's `env.complete` (every environment variable the
   projects read) and `env.example` (the ones a person normally sets) from each project's own two files, every line
   commented out, a variable several projects read listed once under the project that defines it; a new machine
   copies `env.example` to `.env`, and `--missing` prints the variables an existing `.env` does not mention.
   `aisland setup` writes both, `workspace init` starts `.env` from them. `aisland workspace env-test` writes each
   project's test that fails when its code reads a variable its `env.complete` does not list.
-- **`aisland wheels build`** refuses, before it builds anything, a project whose setuptools discovery would take the
-  `wheels/` folder it writes for a package, and names the `[tool.setuptools.packages.find]` table that fixes it.
 - **`aisland wheels build <project>`** builds the wheels a project needs that are not on PyPI, for a machine
-  without the workspace. With `--extra NAME` it also writes the extra NAME into the project's
-  `pyproject.toml`, so `uv pip install -e ./<project>[NAME]` installs the project with every wheel.
+  without the workspace. `--bundle` merges the project and those wheels into one wheel plain `pip` installs,
+  `--include-project` builds the project's own wheel too, and `--extra NAME` writes the extra NAME into the project's
+  `pyproject.toml`, so `uv pip install -e ./<project>[NAME]` installs the project with every wheel. It refuses,
+  before it builds anything, a project whose setuptools discovery would take the `wheels/` folder it writes for a
+  package, and names the `[tool.setuptools.packages.find]` table that fixes it.
+- **`aisland wheels zip <project>`** packs a project's wheels into a zip that installs with plain `python`, and
+  **`aisland wheels install`** unpacks one into a project's `wheels/` and installs it into the environment you name.
 - **`aisland wheels prune <project>`** strips from a project's history the committed wheel versions no branch or tag
   holds and force-pushes origin; **`aisland wheels reset <project>`** brings every other clone onto the pruned
   history (the `prune` extra).
 - **A pytest plugin, `aisland_test_stats`,** loaded by every `pytest` in the environment aisland is installed in,
-  records each run of a project — its seconds and each test's outcome — in `.aisland/data/test-stats/` in the
-  folder above the project; `aisland workspace test-stats off [PROJECT…] [--machine-only]` turns it off for a
+  records each run of a project of an aisland workspace — its seconds and each test's outcome — in the workspace's
+  `.aisland/data/test-stats/`, and writes nothing beside a repository of its own; `aisland workspace test-stats off [PROJECT…] [--machine-only]` turns it off for a
   workspace, a project or this machine, and `pytest -p no:aisland_test_stats` leaves one run out.
+- **`aisland workspace show`** lists what the projects declare to aisland — selections, services and code plugins.
+  **`aisland workspace provision`** lists the system tools this machine needs, who needs each and whether it is
+  installed; `provision install` installs them.
+- **`aisland workspace track|untrack [PROJECT…]`** chooses whether the root repository records a project's commits;
+  **`aisland workspace code-workspace`** and **`aisland workspace bashrc`** run alone the two setup steps that write
+  the VS Code workspace file and link `project.bashrc`.
+- **`aisland workspace theme|color`** sets this machine's VS Code theme and colours for the workspace window, kept
+  in `.git/config` and never committed.
 - **`aisland tests report <project>`** reads every recorded test run, and **`aisland clean <project>`** moves a
   project's ignored files into a backup **`aisland backups`** can restore.
 - **`aisland completion install`** writes shell completion for every command-line tool in the workspace; a project
   names its click scripts in `[tool.aisland] click-commands`.
 - **`aisland tunnel`** opens a VS Code Remote Tunnel to a remote machine, and `aisland tunnel connect` (the
   `[connect]` extra) a terminal on it over that tunnel.
-- **`aisland-mcp`** (the `[mcp]` extra) offers a chosen set of these commands to an AI client.
+- **`aisland mcp claude|gemini`** writes the client file (`.mcp.json`, `.gemini/settings.json`) that lists the
+  workspace's MCP servers, and **`aisland notebooks clean`** is a git filter that clears notebook outputs before they
+  are committed.
+- **`aisland-mcp`** (the `[mcp]` extra) offers a chosen set of these commands to an AI client; its service tools
+  start, stop and restart any service of the workspace.

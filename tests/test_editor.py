@@ -18,7 +18,7 @@ import click
 import pytest
 from click.testing import CliRunner
 
-from aisland import cli, editor, manager
+from aisland import cli, editor, editor_files
 from aisland.css_colors import NAMED_COLORS
 
 # --- fixtures -----------------------------------------------------------------------------
@@ -91,13 +91,13 @@ def repo(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     root = tmp_path / "acme"
     root.mkdir()
     subprocess.run(["git", "init", "-q", str(root)], check=True)
-    monkeypatch.setattr(manager, "_loggair_log_dir", lambda workspace_root: None)
+    monkeypatch.setattr(editor_files, "_loggair_log_dir", lambda workspace_root: None)
     monkeypatch.setattr(cli, "get_workspace_root", lambda: root)
     return root
 
 
 def _settings(root: Path) -> Dict[str, Any]:
-    text = manager.code_workspace_path(root).read_text()
+    text = editor_files.code_workspace_path(root).read_text()
     document: Dict[str, Any] = json.loads("\n".join(line for line in text.splitlines() if not line.startswith("//")))
     settings: Dict[str, Any] = document["settings"]
     return settings
@@ -258,8 +258,8 @@ def test_every_later_rewrite_keeps_the_choice(vscode: Dict[str, Path], repo: Pat
     """What `aisland setup` and `aisland workspace configure source …` do: write the file again from the template."""
     assert _run("theme", "set", "Solarized Dark").exit_code == 0
     assert _run("color", "set", "background", "navy").exit_code == 0
-    manager.code_workspace_path(repo).unlink()
-    manager.write_code_workspace(repo)
+    editor_files.code_workspace_path(repo).unlink()
+    editor_files.write_code_workspace(repo)
     settings = _settings(repo)
     assert settings["workbench.colorTheme"] == "Solarized Dark"
     assert settings["workbench.colorCustomizations"]["titleBar.activeBackground"] == "#000080"
@@ -282,7 +282,7 @@ def test_an_unknown_theme_is_refused_naming_the_closest_and_nothing_is_kept(
         "List them: aisland workspace theme list\n"
     )
     assert _local_config(repo) == ""
-    assert not manager.code_workspace_path(repo).exists()
+    assert not editor_files.code_workspace_path(repo).exists()
 
 
 def test_without_vs_code_a_theme_is_kept_as_typed_and_unchecked(no_vscode: None, repo: Path) -> None:
@@ -322,7 +322,7 @@ def test_theme_unset_gives_the_window_back_to_the_users_own_theme(vscode: Dict[s
 
 
 def test_nothing_chosen_writes_the_file_exactly_as_before(repo: Path) -> None:
-    manager.write_code_workspace(repo)
+    editor_files.write_code_workspace(repo)
     settings = _settings(repo)
     assert "workbench.colorTheme" not in settings
     assert "workbench.colorCustomizations" not in settings
@@ -334,7 +334,7 @@ def test_a_workspace_that_is_no_git_repository_cannot_keep_a_choice(
     root = tmp_path / "plain"
     root.mkdir()
     monkeypatch.setattr(cli, "get_workspace_root", lambda: root)
-    monkeypatch.setattr(manager, "_loggair_log_dir", lambda workspace_root: None)
+    monkeypatch.setattr(editor_files, "_loggair_log_dir", lambda workspace_root: None)
     monkeypatch.setenv("GIT_CEILING_DIRECTORIES", str(tmp_path))
     result = _run("theme", "set", "Solarized Dark")
     assert result.exit_code == 1
@@ -489,7 +489,7 @@ def test_a_hand_edited_value_that_cannot_be_read_is_ignored_with_a_warning(
 ) -> None:
     """`aisland setup` must still write the file: the value is skipped, never the run."""
     subprocess.run(["git", "config", "--local", f"aisland.editor.{key}", value], cwd=repo, check=True)
-    manager.write_code_workspace(repo)
+    editor_files.write_code_workspace(repo)
     assert warning in capsys.readouterr().out
     assert "workbench.colorCustomizations" not in _settings(repo)
 

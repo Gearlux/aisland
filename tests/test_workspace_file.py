@@ -18,7 +18,7 @@ from typing import List, Optional
 
 import pytest
 
-from aisland import __version__, manager, workspace_file
+from aisland import __version__, editor_files, locations, manager, projects, workspace_file
 
 _AUTHOR = {"GIT_AUTHOR_NAME": "t", "GIT_AUTHOR_EMAIL": "t@t", "GIT_COMMITTER_NAME": "t", "GIT_COMMITTER_EMAIL": "t@t"}
 
@@ -317,9 +317,9 @@ def test_setup_keeps_the_file_current(tmp_path: Path, monkeypatch: pytest.Monkey
     class _Stop(Exception):
         pass
 
-    monkeypatch.setattr(manager, "get_workspace_root", lambda: tmp_path)
+    monkeypatch.setattr(locations, "workspace_root", lambda: tmp_path)
     monkeypatch.setattr(manager, "ensure_uv_in_venv", lambda venv_bin: "uv")
-    monkeypatch.setattr(manager, "_link_project_bashrc", lambda root: None)
+    monkeypatch.setattr(manager, "link_project_bashrc", lambda root: None)
     monkeypatch.setattr(manager, "install_harness", lambda root: [])
 
     def refresh(root: Path) -> List[str]:
@@ -417,15 +417,31 @@ def _repository(root: Path, origin: Optional[str] = None) -> Path:
 def test_the_files_name_names_the_workspace_before_its_origin_and_its_folder(tmp_path: Path) -> None:
     root = _repository(tmp_path / "workspace", "git@example.com:acme/models-root.git")
     _file(root, '[workspace]\nname = "studio"\n')
-    assert manager.get_workspace_name(root) == "studio"
-    assert manager.code_workspace_path(root) == root / "studio.code-workspace"
+    assert projects.get_workspace_name(root) == "studio"
+    assert editor_files.code_workspace_path(root) == root / "studio.code-workspace"
 
 
 def test_without_a_name_the_origin_then_the_folder_names_the_workspace(tmp_path: Path) -> None:
     with_origin = _repository(tmp_path / "workspace", "git@example.com:acme/models-root.git")
     _file(with_origin, '[workspace]\nframework = ["torch"]\n')
-    assert manager.get_workspace_name(with_origin) == "models-root"
-    assert manager.get_workspace_name(_repository(tmp_path / "plain")) == "plain"
+    assert projects.get_workspace_name(with_origin) == "models-root"
+    assert projects.get_workspace_name(_repository(tmp_path / "plain")) == "plain"
+
+
+@pytest.mark.parametrize(
+    "origin, name",
+    [
+        ("https://github.com/acme/models.git", "models"),
+        ("git@github.com:acme/my.github-tools.git", "my.github-tools"),
+        ("git@example.com:models.git", "models"),
+        ("https://example.com/acme/models/", "models"),
+        ("ssh://git@example.com/acme/data.git.backup", "data.git.backup"),
+    ],
+)
+def test_the_origins_name_drops_git_from_its_end_only(tmp_path: Path, origin: str, name: str) -> None:
+    """`.git` inside a repository's name is part of it: `my.github-tools.git` is `my.github-tools`, never
+    `myhub-tools`."""
+    assert projects.get_workspace_name(_repository(tmp_path / "workspace", origin)) == name
 
 
 def test_the_how_to_uses_the_files_name(tmp_path: Path) -> None:
@@ -451,4 +467,4 @@ def test_a_broken_file_leaves_the_name_to_the_origin_and_the_folder(tmp_path: Pa
     """Setup's upkeep reports the file; everything that only wants a name goes on with the next answer."""
     root = _repository(tmp_path / "plain")
     _file(root, "[workspace]\nname = 3\n")
-    assert manager.get_workspace_name(root) == "plain"
+    assert projects.get_workspace_name(root) == "plain"

@@ -28,7 +28,7 @@ from aisland import cli, configure
 from aisland import selection as s
 from aisland import workspace_file
 from aisland.discovery import DeclarationError
-from aisland.manager import get_workspace_root
+from aisland.projects import get_workspace_root
 from tests.workspace_layout import needs_workspace
 
 QUESTION = "Which ML frameworks should this machine install?"
@@ -69,7 +69,7 @@ def workspace(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     _project(tmp_path, "models", ["dev", "keras", "torch"], {"framework": ["keras", "torch"]})
     _project(tmp_path, "plain", ["dev"])
     monkeypatch.setattr(cli, "get_workspace_root", lambda: tmp_path)
-    monkeypatch.setattr("aisland.manager.get_workspace_root", lambda: tmp_path)
+    monkeypatch.setattr("aisland.projects.get_workspace_root", lambda: tmp_path)
     return tmp_path
 
 
@@ -89,7 +89,7 @@ def _run(*args: str) -> Result:
 def installs(monkeypatch: pytest.MonkeyPatch) -> List[List[str]]:
     """Every `uv pip install` a selection change runs, recorded instead of run."""
     calls: List[List[str]] = []
-    monkeypatch.setattr("aisland.manager.ensure_uv_in_venv", lambda venv_bin: "uv")
+    monkeypatch.setattr("aisland.selection.ensure_uv_in_venv", lambda venv_bin: "uv")
 
     def record(cmd: List[str], **kw: object) -> int:
         calls.append(list(cmd))
@@ -482,7 +482,7 @@ def test_a_failed_install_is_the_exit_code(workspace: Path, monkeypatch: pytest.
     def fail(cmd: List[str], **kw: object) -> int:
         raise subprocess.CalledProcessError(1, cmd)
 
-    monkeypatch.setattr("aisland.manager.ensure_uv_in_venv", lambda venv_bin: "uv")
+    monkeypatch.setattr("aisland.selection.ensure_uv_in_venv", lambda venv_bin: "uv")
     monkeypatch.setattr(s.subprocess, "check_call", fail)
     assert _run("framework", "set", "torch").exit_code == 2  # two projects offer torch, both failed
 

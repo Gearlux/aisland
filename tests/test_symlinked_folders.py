@@ -16,7 +16,7 @@ from typing import Any, Dict, List
 
 import pytest
 
-from aisland import harness, locations, manager, selection, sources, workspace_file
+from aisland import editor_files, harness, locations, projects, selection, sources, workspace_file
 
 
 def _project(folder: Path, name: str, extras: str = "dev") -> Path:
@@ -48,7 +48,7 @@ def acme(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     os.symlink("object_detection/", root / "od")
     os.symlink("../outside/extproj", root / "ext")
     os.symlink("../outside/logs", root / "logs")
-    monkeypatch.setattr(manager, "_loggair_log_dir", lambda workspace_root: None)
+    monkeypatch.setattr(editor_files, "_loggair_log_dir", lambda workspace_root: None)
     return root
 
 
@@ -61,7 +61,7 @@ def _relative(root: Path, paths: List[Path]) -> List[str]:
 
 def test_aisland_setup_discovers_each_project_once_and_the_one_a_link_brings_in(acme: Path) -> None:
     """`discover_projects` feeds setup's extras prompt, the install order, pyright and `mypy_path`."""
-    assert _relative(acme, manager.discover_projects(acme)) == [
+    assert _relative(acme, projects.discover_projects(acme)) == [
         "ext/pyproject.toml",
         "machine_learning/pyproject.toml",
         "object_detection/pyproject.toml",
@@ -79,7 +79,7 @@ def test_the_extras_prompt_names_each_project_once(acme: Path) -> None:
 
 
 def test_a_workspace_without_gitmodules_lists_each_folder_once(acme: Path) -> None:
-    assert manager.workspace_folders(acme) == [
+    assert projects.workspace_folders(acme) == [
         ("ext", "ext", True),
         ("machine_learning", "machine_learning", True),
         ("object_detection", "object_detection", True),
@@ -103,19 +103,19 @@ def test_the_workspace_file_lists_each_clone_once(acme: Path) -> None:
 
 def test_a_link_into_a_project_from_inside_another_is_no_project_either(acme: Path) -> None:
     os.symlink("../object_detection/torchsig", acme / "machine_learning" / "torchsig")
-    assert "machine_learning/torchsig/pyproject.toml" not in _relative(acme, manager.discover_projects(acme))
+    assert "machine_learning/torchsig/pyproject.toml" not in _relative(acme, projects.discover_projects(acme))
 
 
 def test_a_link_that_points_nowhere_is_skipped(acme: Path) -> None:
     os.symlink("gone", acme / "broken")
-    assert "broken" not in [name for name, _path, _active in manager.workspace_folders(acme)]
+    assert "broken" not in [name for name, _path, _active in projects.workspace_folders(acme)]
 
 
 def test_a_workspace_reached_through_a_link_still_tells_its_aliases(acme: Path, tmp_path: Path) -> None:
     """`~/acme -> /build/acme`: the root's own link does not make every folder an outside one."""
     os.symlink(acme, tmp_path / "home_acme")
     entered = tmp_path / "home_acme"
-    assert _relative(entered, manager.discover_projects(entered)) == [
+    assert _relative(entered, projects.discover_projects(entered)) == [
         "ext/pyproject.toml",
         "machine_learning/pyproject.toml",
         "object_detection/pyproject.toml",
@@ -145,14 +145,14 @@ def test_a_hidden_link_gives_no_short_name(acme: Path) -> None:
 
 
 def _folders(root: Path) -> List[Dict[str, Any]]:
-    text = manager.code_workspace_path(root).read_text()
+    text = editor_files.code_workspace_path(root).read_text()
     document: Dict[str, Any] = json.loads("\n".join(line for line in text.splitlines() if not line.startswith("//")))
     folders: List[Dict[str, Any]] = document["folders"]
     return folders
 
 
 def test_the_vscode_workspace_shows_each_project_under_its_short_name(acme: Path) -> None:
-    manager.write_code_workspace(acme)
+    editor_files.write_code_workspace(acme)
     assert _folders(acme) == [
         {"name": "acme", "path": "."},
         {"name": "ext", "path": "ext"},
@@ -164,5 +164,5 @@ def test_the_vscode_workspace_shows_each_project_under_its_short_name(acme: Path
 
 def test_without_a_link_a_project_keeps_its_folders_name(acme: Path) -> None:
     (acme / "ml").unlink()
-    manager.write_code_workspace(acme)
+    editor_files.write_code_workspace(acme)
     assert {"name": "machine_learning", "path": "machine_learning"} in _folders(acme)

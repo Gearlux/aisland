@@ -36,8 +36,10 @@ from typing import Dict, List, Literal, Optional, Sequence, Tuple, get_args
 import click
 
 from aisland import env_example, local_workspace, locations, tracking, workspace_file
+from aisland.errors import AislandError
 from aisland.harness import install_harness
-from aisland.manager import get_workspace_name, install_git_aliases
+from aisland.manager import install_git_aliases
+from aisland.projects import get_workspace_name
 
 #: The files ``init`` starts a workspace with, in the order it writes them; ``--rewrite`` takes only these.
 StartingFile = Literal[".gitignore", ".env", "mypy.ini", "vscode-init-bash.sh"]
@@ -176,7 +178,7 @@ def _add_submodule(
         click.echo(_REDRAW, err=True, nl=False)
     if process.wait() != 0:
         message = "\n".join(line for line in said if not _GIT_PROGRESS.match(line)) or "\n".join(said)
-        raise click.ClickException(f"{step}: could not add {url} as a submodule: {message}")
+        raise AislandError(f"{step}: could not add {url} as a submodule: {message}")
 
 
 def runs_from_venv_of(root: Path) -> bool:
@@ -205,7 +207,7 @@ def _refuse_a_bak_in_the_way(root: Path, rewrite: Sequence[StartingFile]) -> Non
     for name in rewrite:
         bak = root / f"{name}.bak"
         if (root / name).exists() and bak.exists():
-            raise click.ClickException(
+            raise AislandError(
                 f"{bak} exists: move it away first, then rewrite {name} (its current copy is kept there)."
             )
 
@@ -277,17 +279,15 @@ def init_workspace(
             plan.append((project.name, None))
             continue
         if project.url is None:  # the file reads one without (a source set before setup wrote it), init cannot clone it
-            raise click.ClickException(f"{project.where}: project {project.name!r} has no url")
+            raise AislandError(f"{project.where}: project {project.name!r} has no url")
         plan.append((project.name, (project.url, project.path, project.branch)))
     plan += [(workspace_file.repository_name(url) or url, (url, None, None)) for url in add]
     root = folder.absolute()
     if root.exists() and not root.is_dir():
-        raise click.ClickException(f"{root} is a file, not a folder.")
+        raise AislandError(f"{root} is a file, not a folder.")
     existing = (root / ".git").exists()
     if existing and rewrite and (add or from_file is not None or local or untracked):
-        raise click.ClickException(
-            "in an existing repository --rewrite writes its files and nothing else: run it on its own."
-        )
+        raise AislandError("in an existing repository --rewrite writes its files and nothing else: run it on its own.")
     _refuse_a_bak_in_the_way(root, rewrite)
     if existing and rewrite:
         click.echo(f"==> Rewrote in {root}")
@@ -295,11 +295,9 @@ def init_workspace(
             click.echo(row)
         return
     if existing and local:
-        raise click.ClickException(
-            f"{root} is already a git repository: --local makes a new one that only this machine has."
-        )
+        raise AislandError(f"{root} is already a git repository: --local makes a new one that only this machine has.")
     if existing and from_file is not None:
-        raise click.ClickException(
+        raise AislandError(
             f"{root} is already a git repository, with a workspace.toml of its own: add projects with --add."
         )
     _say(f"==> {'Setting up' if existing else 'Creating'} workspace in {root}")
@@ -315,10 +313,10 @@ def init_workspace(
         message = exc.message if isinstance(exc, click.ClickException) else f"init stopped: {exc or type(exc).__name__}"
         if made_here:
             shutil.rmtree(root, ignore_errors=True)
-            raise click.ClickException(
+            raise AislandError(
                 f"{message}\n{root} is removed again: this init made it. Run the same command once the cause is fixed."
             ) from exc
-        raise click.ClickException(
+        raise AislandError(
             f"{message}\n{root} held files before this init, so it is left as it stopped: remove {root / '.git'} and "
             ".gitmodules, then run the same command again."
         ) from exc

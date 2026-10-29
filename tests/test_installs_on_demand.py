@@ -20,16 +20,17 @@ from typing import Dict, List, Optional
 import click
 import pytest
 
-from aisland import manager, provision, supervisor
+from aisland import installers, locations, manager, provision, supervisor
+from aisland.services import base
 
 
 @pytest.fixture
 def installs(monkeypatch: pytest.MonkeyPatch) -> Dict[str, List[object]]:
     """Every install recorded instead of run."""
     calls: Dict[str, List[object]] = {"brew": [], "userspace": [], "java": [], "download": []}
-    monkeypatch.setattr(manager, "_install_brew_packages", lambda packages: calls["brew"].append(sorted(packages)))
-    monkeypatch.setattr(manager, "_install_userspace_tool", lambda name: calls["userspace"].append(name))
-    monkeypatch.setattr(manager, "_maybe_offer_shell_switch", lambda packages: None)
+    monkeypatch.setattr(installers, "install_brew_packages", lambda packages: calls["brew"].append(sorted(packages)))
+    monkeypatch.setattr(installers, "install_userspace_tool", lambda name: calls["userspace"].append(name))
+    monkeypatch.setattr(installers, "offer_shell_switch", lambda packages: None)
     monkeypatch.setattr(
         "aisland.services.jenkins.JenkinsService.provision_java", lambda self: calls["java"].append("java")
     )
@@ -94,9 +95,9 @@ def test_setup_calls_the_install_without_aislands_own(tmp_path: Path, monkeypatc
         seen.append(aislands_own)
         raise _Stop()
 
-    monkeypatch.setattr(manager, "get_workspace_root", lambda: tmp_path)
+    monkeypatch.setattr(locations, "workspace_root", lambda: tmp_path)
     monkeypatch.setattr(manager, "ensure_uv_in_venv", lambda venv_bin: "uv")
-    monkeypatch.setattr(manager, "_link_project_bashrc", lambda workspace: None)
+    monkeypatch.setattr(manager, "link_project_bashrc", lambda workspace: None)
     monkeypatch.setattr(manager, "install_harness", lambda workspace: [])
     monkeypatch.setattr(provision, "install", stop)
     with pytest.raises(_Stop):
@@ -167,7 +168,7 @@ def test_docker_without_colima_is_refused_and_installs_nothing(
 ) -> None:
     from aisland.services import docker
 
-    monkeypatch.setattr(manager, "DATA_DIR", tmp_path)
+    monkeypatch.setattr(base, "DATA_DIR", tmp_path)
     monkeypatch.setattr(docker.shutil, "which", lambda name: None)
     engine = docker.DockerService()
     monkeypatch.setattr(engine, "is_running", lambda: False)
@@ -182,7 +183,7 @@ def test_swiftbar_without_the_app_is_refused(
 ) -> None:
     from aisland.services import swiftbar
 
-    monkeypatch.setattr(manager, "DATA_DIR", tmp_path)
+    monkeypatch.setattr(base, "DATA_DIR", tmp_path)
     monkeypatch.setattr(swiftbar, "swiftbar_installed", lambda: False)
     _terminal(monkeypatch, None)
     with pytest.raises(click.ClickException, match="Install it: brew install swiftbar"):
@@ -194,10 +195,10 @@ def test_jenkins_asks_before_it_downloads_its_war(
 ) -> None:
     from aisland.services import jenkins
 
-    monkeypatch.setattr(manager, "DATA_DIR", tmp_path)
+    monkeypatch.setattr(base, "DATA_DIR", tmp_path)
     service = jenkins.JenkinsService()
     service.war_file = tmp_path / "bin" / "jenkins.war"
-    monkeypatch.setattr(jenkins.urllib.request, "urlretrieve", lambda url, path: installs["download"].append(url))
+    monkeypatch.setattr(jenkins, "download", lambda url, path: installs["download"].append(url))
     _terminal(monkeypatch, None)
     with pytest.raises(click.ClickException, match="Jenkins needs its WAR"):
         service.setup()
@@ -213,7 +214,7 @@ def test_jenkins_asks_before_it_installs_java(
 ) -> None:
     from aisland.services import jenkins
 
-    monkeypatch.setattr(manager, "DATA_DIR", tmp_path)
+    monkeypatch.setattr(base, "DATA_DIR", tmp_path)
 
     class _NoJava:
         runtime = None
@@ -255,7 +256,7 @@ def test_check_without_act_fails_that_gate_naming_the_command(
 
     from aisland.cli import main
 
-    monkeypatch.setattr(manager, "get_workspace_root", lambda: tmp_path)
+    monkeypatch.setattr(locations, "workspace_root", lambda: tmp_path)
     (tmp_path / ".venv" / "bin").mkdir(parents=True)
     project = tmp_path / "app"
     (project / ".github" / "workflows").mkdir(parents=True)

@@ -125,11 +125,12 @@ committed layer only.
 **Unset is not empty.** No key and no machine choice means *nobody has chosen*, and setup asks; a recorded empty list
 means *none, deliberately*, and is honoured silently.
 
-**A service will not install its own backend.** In a workspace with a `tracker` selection, `aisland mlflow start`,
-`aisland aim start` and `aisland clearml start` stop with the command that adds the backend to the choices already made, for example:
+**A service will not install its own backend.** A service a project brings whose backend is one of a selection's
+choices — a tracking server whose package is a `tracker` choice, say — does not install it when it is missing: it
+stops with the command that adds the backend to the choices already made, so the choice is recorded and survives the
+next setup, for example:
 
 ```text
-MLflow is not installed in this environment.
   Add it to the tracker selection, so the choice is recorded and survives the next setup:
       aisland workspace configure tracker set tensorboard mlflow
   Or, for this machine only:

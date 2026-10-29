@@ -27,10 +27,9 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Set, Tuple
 
-import click
-
 from aisland import __version__, locations
 from aisland.discovery import Where, key_line, table_line
+from aisland.errors import AislandError
 
 #: The file, at the workspace root.
 FILE_NAME = "workspace.toml"
@@ -39,7 +38,7 @@ FILE_NAME = "workspace.toml"
 _SECTIONS = ("workspace", "project")
 
 #: The ``[workspace]`` key naming the workspace (else its origin's repository, else its folder:
-#: :func:`aisland.manager.get_workspace_name`); no selection may take it.
+#: :func:`aisland.projects.get_workspace_name`); no selection may take it.
 NAME_KEY = "name"
 
 #: A project's own keys, in the order they are written; any other key of its table follows, as written.
@@ -49,7 +48,7 @@ _PROJECT_KEYS = ("path", "url", "branch")
 _FOLDER_NAME = re.compile(r"[A-Za-z0-9_][A-Za-z0-9_.-]*")
 
 
-class FileError(click.ClickException, ValueError):
+class FileError(AislandError, ValueError):
     """A ``workspace.toml`` aisland cannot use; the message names the file and the line."""
 
 

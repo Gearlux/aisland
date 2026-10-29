@@ -52,6 +52,8 @@ from urllib.parse import parse_qs, urlparse
 
 import click
 
+from aisland.errors import AislandError
+
 #: The relay the tunnel dials out to; also what the doctor check probes.
 RELAY_HOST = "global.rel.tunnels.api.visualstudio.com"
 
@@ -171,7 +173,7 @@ def cli_asset(machine: Optional[str] = None) -> str:
     key = (machine or platform.machine()).lower()
     asset = CLI_ASSETS.get(key)
     if asset is None:
-        raise click.ClickException(
+        raise AislandError(
             f"No VS Code CLI build for this architecture ({key}). Supported: " f"{', '.join(sorted(set(CLI_ASSETS)))}."
         )
     return asset
@@ -194,7 +196,7 @@ def _extract_cli(tarball: Path, destination: Path) -> None:
         except KeyError:  # pragma: no cover - a truncated or wrong archive
             member = None
         if member is None:
-            raise click.ClickException(f"{tarball} holds no 'code' binary — is it the VS Code CLI archive?")
+            raise AislandError(f"{tarball} holds no 'code' binary — is it the VS Code CLI archive?")
         destination.parent.mkdir(parents=True, exist_ok=True)
         with member, open(destination, "wb") as out:
             shutil.copyfileobj(member, out)
@@ -217,7 +219,7 @@ def install_cli(tarball: Optional[Path] = None, force: bool = False) -> Path:
     if tarball is not None:
         source = Path(tarball).expanduser()
         if not source.is_file():
-            raise click.ClickException(f"No such file: {source}")
+            raise AislandError(f"No such file: {source}")
         _extract_cli(source, target)
         return target
 
@@ -230,7 +232,7 @@ def install_cli(tarball: Optional[Path] = None, force: bool = False) -> Path:
             with urllib.request.urlopen(url, timeout=180) as response, open(downloaded, "wb") as out:
                 shutil.copyfileobj(response, out)
         except (urllib.error.URLError, OSError) as exc:
-            raise click.ClickException(
+            raise AislandError(
                 f"Could not download the VS Code CLI from {url}: {exc}\n"
                 "  Fetch it on a machine that can, upload it here, and install it with:\n"
                 "      aisland tunnel start --cli <the downloaded .tar.gz>"
@@ -369,7 +371,7 @@ def start(
                 "command": f"aisland tunnel login{flag}",
             }
         if login(chosen_provider) != 0:
-            raise click.ClickException("Sign-in did not complete, so no tunnel was started.")
+            raise AislandError("Sign-in did not complete, so no tunnel was started.")
 
     command = [str(binary), "tunnel", "--accept-server-license-terms", "--name", tunnel_name]
 
@@ -392,7 +394,7 @@ def stop() -> Dict[str, Any]:
     try:
         os.kill(pid, signal.SIGTERM)
     except OSError as exc:  # pragma: no cover - the process died between the check and the signal
-        raise click.ClickException(f"Could not stop the tunnel (pid {pid}): {exc}") from exc
+        raise AislandError(f"Could not stop the tunnel (pid {pid}): {exc}") from exc
     pid_path().unlink(missing_ok=True)
     return {"running": False, "stopped": True, "pid": pid}
 
@@ -626,10 +628,10 @@ def parse_workspace_url(text: str) -> Workspace:
     """
     parsed = urlparse(text)
     if parsed.scheme not in {"http", "https"} or not parsed.netloc:
-        raise click.ClickException(f"Not a workspace address: {text}")
+        raise AislandError(f"Not a workspace address: {text}")
     segments = [segment for segment in parsed.path.split("/") if segment]
     if not segments:
-        raise click.ClickException(f"{text} names no workspace: its path is empty, so there is nothing to tunnel to.")
+        raise AislandError(f"{text} names no workspace: its path is empty, so there is nothing to tunnel to.")
     query = parse_qs(parsed.query)
     folder = (query.get("workspace") or query.get("folder") or [""])[0]
     return Workspace(name=sanitize_name(segments[-1]), url=text, folder=folder)
@@ -668,7 +670,7 @@ def resolve_target(target: Optional[str] = None, name: Optional[str] = None, ask
                     return entry
             return Workspace(name=chosen)
         if not remembered:
-            raise click.ClickException(
+            raise AislandError(
                 "No workspace remembered yet. Open one by its address:\n"
                 "      aisland tunnel open 'https://<host>/<workspace>/?folder=/mnt/workspace'"
             )
@@ -734,7 +736,7 @@ def open_editor(
     chosen_folder = folder or workspace.folder
     editor = shutil.which("code")
     if editor is None:
-        raise click.ClickException(
+        raise AislandError(
             "No 'code' command found. Install VS Code's shell command (Command Palette → "
             "'Shell Command: Install code command in PATH'), then run this again."
         )

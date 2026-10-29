@@ -63,7 +63,7 @@ def test_from_a_wheel_the_root_and_the_workspace_s_aisland_bin_folder(tmp_path: 
 def test_a_project_root_inherited_from_another_workspace_is_replaced_by_this_ones(tmp_path: Path) -> None:
     # A terminal opened from a shell that sourced another workspace inherits its PROJECT_ROOT; this workspace's
     # file still activates this workspace's venv.
-    other = (tmp_path / "acme").resolve()
+    other = (tmp_path / "other").resolve()
     _layout(other, "aisland")
     _fake_venv(other)
     root = (tmp_path / "acme").resolve()
@@ -260,10 +260,10 @@ def test_setup_from_a_wheel_copies_the_packaged_file_and_links_the_root_to_the_c
     monkeypatch.setattr(locations, "FROM_CHECKOUT", False)
     monkeypatch.setattr(locations, "PACKAGE_DIR", package)
     monkeypatch.setattr(manager, "BASE_DIR", root / ".aisland")
-    manager._link_project_bashrc(root)
+    manager.link_project_bashrc(root)
     assert (root / ".aisland" / "project.bashrc").read_text() == BASHRC.read_text()
     assert os.readlink(root / "project.bashrc") == ".aisland/project.bashrc"
     # A newer packaged file replaces the copy on the next setup: the copy is aisland's, never the user's.
     (package / "project.bashrc").write_text(BASHRC.read_text() + "# newer\n")
-    manager._link_project_bashrc(root)
+    manager.link_project_bashrc(root)
     assert (root / ".aisland" / "project.bashrc").read_text().endswith("# newer\n")

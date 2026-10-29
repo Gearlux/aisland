@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import json
 import os
+import shutil
 import subprocess
 import textwrap
 from datetime import date
@@ -18,7 +19,7 @@ from typing import List, Optional
 import pytest
 from click.testing import CliRunner, Result
 
-from aisland import cli, pytest_stats, workspace_file
+from aisland import cli, locations, pytest_stats, workspace_file
 
 pytest_plugins = ["pytester"]
 
@@ -194,6 +195,36 @@ def test_an_unreadable_workspace_file_never_costs_a_run(ws: Path) -> None:
 def test_a_workspace_without_a_file_or_a_repository_records(tmp_path: Path) -> None:
     (tmp_path / "app").mkdir()
     assert pytest_stats.records(tmp_path, "app")
+
+
+# --- outside an aisland workspace --------------------------------------------------------------------------------------
+
+
+def test_outside_an_aisland_workspace_the_switch_is_refused_and_writes_nothing(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """aisland from a wheel in `~/code/app`, a repository of its own: the plugin records nothing there, so `off` has
+    nothing to switch — it says so instead of writing a `workspace.toml` into `~/code`."""
+    code = tmp_path / "code"
+    (code / "app").mkdir(parents=True)
+    _git(code / "app", "init", "-q")
+    monkeypatch.setattr(locations, "FROM_CHECKOUT", False)
+    for args in (["off"], ["off", "--machine-only"]):
+        result = _run(code, monkeypatch, *args)
+        assert result.exit_code == 1
+        assert f"Error: {code} is no aisland workspace (it holds no workspace.toml or .gitmodules)" in result.output
+    assert sorted(path.name for path in code.iterdir()) == ["app"]
+
+
+def test_machine_only_in_a_workspace_that_is_no_repository_is_refused(
+    ws: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """This machine's switch lives in `.git/config`; without one it would be written nowhere and still be reported."""
+    shutil.rmtree(ws / ".git")
+    result = _run(ws, monkeypatch, "off", "--machine-only")
+    assert result.exit_code == 1
+    assert f"Error: {ws} is no git repository: this machine's switch lives in its .git/config" in result.output
+    assert _recorded(ws) == ["app", "library"]
 
 
 # --- end to end: a pytest run, and the report -----------------------------------------------------------------------------

@@ -26,7 +26,9 @@ from datetime import date, datetime, timedelta
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Protocol, Tuple
 
-from aisland.manager import DATA_DIR, get_workspace_name
+from aisland.errors import AislandError
+from aisland.paths import DATA_DIR
+from aisland.projects import get_workspace_name
 from aisland.services.jenkins import NIGHTLY_CRON, JenkinsService
 
 #: One report per check, `<date>.md`; git-ignored like all of `aisland/data/`.
@@ -45,7 +47,7 @@ _GATE_LINE = re.compile(r"^(would reformat |ERROR: .*(sorted|formatted)|\S+:\d+:
 _TIMED_OUT = re.compile(r"^ERROR: (?P<stage>.+?) timed out after (?P<minutes>\d+) min\b")
 
 
-class JenkinsUnreachable(Exception):
+class JenkinsUnreachable(AislandError, ConnectionError):
     """Jenkins did not answer: not running, or the address is wrong."""
 
 

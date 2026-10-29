@@ -1,7 +1,7 @@
 """This machine's editor theme and colours, laid over the generated ``<workspace>.code-workspace``.
 
 ``aisland workspace theme|color`` record a choice per machine, in ``git config --local aisland.editor.*`` — never
-in a committed file — and :func:`aisland.manager.write_code_workspace` adds it to the file on every rewrite, so
+in a committed file — and :func:`aisland.editor_files.write_code_workspace` adds it to the file on every rewrite, so
 ``aisland setup`` keeps it. VS Code reads the file's ``workbench.colorTheme`` for this window only (the user setting
 stays every other window's theme) and lays ``workbench.colorCustomizations`` written without a ``[Theme]`` scope over
 whichever theme is active, so the colours hold whatever the theme.
@@ -24,6 +24,7 @@ from typing import Any, Dict, List, Literal, Optional, Sequence, Tuple, get_args
 import click
 
 from aisland.css_colors import NAMED_COLORS
+from aisland.errors import AislandError
 
 ColorRole = Literal["background", "foreground"]
 COLOR_ROLES: Tuple[ColorRole, ...] = get_args(ColorRole)
@@ -95,7 +96,7 @@ _KEY_PREFIX = "aisland.editor."
 _HEX = re.compile(r"#(?:[0-9a-fA-F]{3,4}|[0-9a-fA-F]{6}|[0-9a-fA-F]{8})")
 
 
-class EditorChoiceError(click.ClickException, ValueError):
+class EditorChoiceError(AislandError, ValueError):
     """A theme or colour that cannot be chosen; the CLI prints it as one ``Error:`` line."""
 
 

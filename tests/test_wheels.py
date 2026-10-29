@@ -200,16 +200,16 @@ class TestDependencyClosure:
 
     def test_an_empty_folder_is_a_project_without_a_checkout(self, tmp_path: Path) -> None:
         """A detached project keeps its distribution name in workspace.toml; an inactive one, its folder name."""
-        root = _workspace(tmp_path, "app", "acme", "vendorcli")
+        root = _workspace(tmp_path, "app", "acme", "viewer")
         (root / "workspace.toml").write_text('[project."acme"]\nsource = "pypi"\ndistribution = "acme-tools"\n')
-        _project(root, "app", deps=["acme-tools", "vendorcli"])
+        _project(root, "app", deps=["acme-tools", "viewer"])
 
         projects = w.workspace_projects(root)
         closure = w.dependency_closure(projects, projects["app"])
 
         assert [(p.name, p.distribution, p.checked_out) for p in closure] == [
             ("acme", "acme-tools", False),
-            ("vendorcli", "vendorcli", False),
+            ("viewer", "viewer", False),
         ]
 
     def test_a_folder_whose_pyproject_names_no_project_is_not_one(self, tmp_path: Path) -> None:
@@ -870,8 +870,8 @@ class TestShellCompletion:
 
     @staticmethod
     def _root(tmp_path: Path) -> Path:
-        root = _workspace(tmp_path, "app", "libx", "absent", "vendorcli")
-        for name in ("app", "libx", "vendorcli"):
+        root = _workspace(tmp_path, "app", "libx", "absent", "viewer")
+        for name in ("app", "libx", "viewer"):
             _project(root, name)
         (root / "libx" / "wheels").mkdir()
         (root / "libx" / "wheels" / "wheels.yaml").write_text('project: "libx"\nwheels: []\n')
@@ -879,15 +879,15 @@ class TestShellCompletion:
 
     def test_build_offers_every_project_checked_out_here(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
         root = self._root(tmp_path)
-        assert _complete(monkeypatch, root, "aisland wheels build ") == ["app", "libx", "vendorcli"]
-        assert _complete(monkeypatch, root, "aisland wheels build sai") == ["vendorcli"]
+        assert _complete(monkeypatch, root, "aisland wheels build ") == ["app", "libx", "viewer"]
+        assert _complete(monkeypatch, root, "aisland wheels build vie") == ["viewer"]
 
     def test_prune_and_reset_offer_every_project_checked_out_here(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         root = self._root(tmp_path)
-        assert _complete(monkeypatch, root, "aisland wheels prune ") == ["app", "libx", "vendorcli"]
-        assert _complete(monkeypatch, root, "aisland wheels reset sai") == ["vendorcli"]
+        assert _complete(monkeypatch, root, "aisland wheels prune ") == ["app", "libx", "viewer"]
+        assert _complete(monkeypatch, root, "aisland wheels reset vie") == ["viewer"]
 
     def test_zip_offers_only_the_projects_with_a_wheels_folder(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
@@ -906,10 +906,10 @@ class TestShellCompletion:
             "zip",
             "app",
             "libx",
-            "vendorcli",
+            "viewer",
         ]
-        assert _complete(monkeypatch, root, "aisland wheels sai") == ["vendorcli"]
-        assert "--include-project" in _complete(monkeypatch, root, "aisland wheels vendorcli --inc")
+        assert _complete(monkeypatch, root, "aisland wheels vie") == ["viewer"]
+        assert "--include-project" in _complete(monkeypatch, root, "aisland wheels viewer --inc")
         options = _complete(monkeypatch, root, "aisland wheels --")
         assert options and all(option.startswith("--") for option in options)
 

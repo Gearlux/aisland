@@ -17,7 +17,7 @@ from pathlib import Path
 
 import pytest
 
-from aisland import manager
+from aisland import locations
 from aisland.services.jenkins import JenkinsService
 
 _MINIMAL_CONFIG_XML = """<?xml version='1.1' encoding='UTF-8'?>
@@ -52,7 +52,7 @@ def _make_service(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> tuple[Jenk
     workspace.mkdir()
     # get_workspace_root walks up looking for TASKS.md; give it one to find.
     (workspace / "TASKS.md").write_text("# tasks\n", encoding="utf-8")
-    monkeypatch.setattr(manager, "get_workspace_root", lambda: workspace)
+    monkeypatch.setattr(locations, "workspace_root", lambda: workspace)
 
     svc = JenkinsService()
     jenkins_dir = tmp_path / "jenkins"

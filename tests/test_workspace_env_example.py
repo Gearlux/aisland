@@ -252,7 +252,7 @@ def test_an_optional_project_checked_out_by_hand_is_read_and_an_empty_folder_is_
 ) -> None:
     (root / "tools").mkdir()  # an empty folder: a project without a checkout
     folders = [("app", "app", False), ("lib", "lib", True), ("tools", "tools", True)]
-    monkeypatch.setattr(manager, "workspace_folders", lambda r: folders)
+    monkeypatch.setattr(env_example, "workspace_folders", lambda r: folders)
     result = _run("env-example")
     assert result.output.startswith("==> Wrote env.complete (3 variables from 2 projects)\n    no checkout: tools\n")
     assert "APP_LEVEL" in (root / env_example.COMPLETE).read_text()

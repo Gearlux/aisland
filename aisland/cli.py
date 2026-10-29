@@ -1,5 +1,7 @@
 import json
 import os
+import subprocess
+import traceback
 from pathlib import Path
 from typing import Callable, Dict, List, Optional, Tuple, cast
 
@@ -10,6 +12,7 @@ from aisland import (
     configure,
     discovery,
     editor,
+    editor_files,
     env_example,
     failures,
     locations,
@@ -27,16 +30,14 @@ from aisland import wheels, wheels_prune
 from aisland import workspace as workspace_mod
 from aisland import workspace_file
 from aisland.clean import DEFAULT_KEEP_DAYS
-from aisland.manager import (
-    generate_gemini_settings,
-    generate_mcp_json,
-    get_workspace_root,
-    run_quality_gates,
-    setup_workspace,
-)
+from aisland.errors import AislandError
+from aisland.manager import setup_workspace
+from aisland.mcp_config import generate_gemini_settings, generate_mcp_json
+from aisland.projects import get_workspace_root, workspace_folders
 from aisland.pytest_stats import DEFAULT_WINDOW_DAYS
+from aisland.quality import run_quality_gates
 from aisland.services import registry as service_registry
-from aisland.services.docker import DockerService
+from aisland.services.docker import docker_service
 from aisland.services.jenkins import JenkinsService
 from aisland.services.swiftbar import SwiftBarService
 
@@ -81,7 +82,7 @@ class _WorkspaceGroup(_Group):
         if ctx.resilient_parsing or "--help" in args or (args and args[0] in _WORKSPACE_FREE):
             return rest
         if not locations.workspace_found():
-            raise click.ClickException(locations.missing_workspace_message())
+            raise AislandError(locations.missing_workspace_message())
         return rest
 
     def invoke(self, ctx: click.Context) -> object:
@@ -90,6 +91,16 @@ class _WorkspaceGroup(_Group):
         failures.reset()
         try:
             result = super().invoke(ctx)
+        except click.ClickException:
+            if ctx.meta.get(_DEBUG):
+                traceback.print_exc()
+            raise
+        except (OSError, subprocess.CalledProcessError) as error:
+            # What the machine refused (a file, a permission, a program that failed): one Error line, like aisland's
+            # own refusals; --debug keeps the traceback. Anything else is a bug in aisland and keeps its traceback.
+            if ctx.meta.get(_DEBUG):
+                raise
+            raise AislandError(f"{error} (run `aisland --debug …` for the traceback)") from error
         except SystemExit as stop:
             if stop.code in (0, None) and failures.reported():
                 raise SystemExit(1) from None
@@ -136,13 +147,38 @@ def _service_entries() -> List["service_registry.Entry"]:
     return service_registry.entries(get_workspace_root(), reserved=main.commands)
 
 
+class _ServiceGroup(_Group):
+    """`aisland <name> start|stop|restart|status|info|reset` for a service a project brings.
+
+    Its commands are built the first time they are asked for: they carry the class's own options, and reading those
+    imports the project's code — which listing the services (`aisland --help`) must not do."""
+
+    def __init__(self, entry: "service_registry.Entry") -> None:
+        super().__init__(name=entry.name, help=f"Manage {entry.name}, a service {entry.project} brings.")
+        self._entry = entry
+        self._built = False
+
+    def _build(self) -> None:
+        if not self._built:
+            self._built = True
+            _add_service_commands(self, self._entry)
+
+    def list_commands(self, ctx: click.Context) -> List[str]:
+        self._build()
+        return super().list_commands(ctx)
+
+    def get_command(self, ctx: click.Context, cmd_name: str) -> Optional[click.Command]:
+        self._build()
+        return super().get_command(ctx, cmd_name)
+
+
 def _declared_service_group(entry: "service_registry.Entry") -> click.Group:
-    """`aisland <name> start|stop|restart|status|info|reset` for a service a project declares."""
+    """The group of a service a project brings (:class:`_ServiceGroup`)."""
+    return _ServiceGroup(entry)
 
-    @click.group(name=entry.name, cls=_Group, help=f"Manage {entry.name}, a service {entry.project} brings.")
-    def group() -> None:
-        pass
 
+def _add_service_commands(group: click.Group, entry: "service_registry.Entry") -> None:
+    """The commands of a project's service, with its class's own options."""
     port = click.option("--port", type=int, default=None, help="The port to serve on (default: the service's own).")
 
     def with_port(command: Callable[..., None]) -> Callable[..., None]:
@@ -190,15 +226,21 @@ def _declared_service_group(entry: "service_registry.Entry") -> click.Group:
     def reset() -> None:
         entry.make().reset()
 
-    return group
+
+#: `ctx.meta` key: `aisland --debug` was given.
+_DEBUG = "aisland.debug"
 
 
 @click.group(cls=_WorkspaceGroup)
 # The installed distribution's version (aisland.__version__ reads the same metadata); eager, so it answers before the
 # workspace check, outside a workspace too.
 @click.version_option(package_name="aisland", prog_name="aisland")
-def main() -> None:
-    """Aisland Manager: Multi-service development infrastructure."""
+@click.option("--debug", is_flag=True, help="Show an error's traceback, not only its Error line.")
+@click.pass_context
+def main(ctx: click.Context, debug: bool) -> None:
+    """One workspace of many Python projects, set up the same way on every machine: a shared venv, local services,
+    generated CI and git aliases."""
+    ctx.meta[_DEBUG] = debug
 
 
 # --- Workspace Commands ---
@@ -390,7 +432,7 @@ def workspace_show(as_json: bool) -> None:
     project is. A declaration aisland cannot use is refused, naming its file and line.
     """
     if not locations.workspace_found():
-        raise click.ClickException(locations.missing_workspace_message())
+        raise AislandError(locations.missing_workspace_message())
     found = discovery.discover(get_workspace_root())
     loaded = discovery.load(found)
     if as_json:
@@ -403,7 +445,7 @@ def workspace_show(as_json: bool) -> None:
 def _configure_root() -> Path:
     """The workspace a `configure` command reads or changes (`workspace` is workspace-free)."""
     if not locations.workspace_found():
-        raise click.ClickException(locations.missing_workspace_message())
+        raise AislandError(locations.missing_workspace_message())
     return get_workspace_root()
 
 
@@ -535,8 +577,8 @@ def workspace_configure(ctx: click.Context) -> None:
     aisland workspace configure source set models pypi
     aisland workspace configure source set models local --branch dev/main --machine-only
     aisland workspace configure source unset models
-    aisland workspace configure framework set torch keras
-    aisland workspace configure tracker set mlflow --machine-only
+    aisland workspace configure extras set dev docs              the extras every project installs
+    aisland workspace configure extras set dev --machine-only
     """
     if ctx.invoked_subcommand is None:
         for line in configure.overview(get_workspace_root() if locations.workspace_found() else None):
@@ -591,14 +633,14 @@ def workspace_mirror_sync(project: Optional[str]) -> None:
     from aisland.mirrors import run_sync
 
     if not locations.workspace_found():
-        raise click.ClickException(locations.missing_workspace_message())
+        raise AislandError(locations.missing_workspace_message())
     raise SystemExit(run_sync(project))
 
 
 def _editor_root() -> Path:
     """The workspace whose editor choice a `theme`/`color` command changes (`workspace` is workspace-free)."""
     if not locations.workspace_found():
-        raise click.ClickException(locations.missing_workspace_message())
+        raise AislandError(locations.missing_workspace_message())
     return get_workspace_root()
 
 
@@ -648,7 +690,7 @@ def theme_set(name: str) -> None:
     typed, unchecked."""
     root = _editor_root()
     theme = editor.set_theme(root, name)
-    manager.write_code_workspace(root)
+    editor_files.write_code_workspace(root)
     if theme is None or theme.checked:
         click.echo(f"==> Theme: {theme.name if theme else name} (this machine only)")
     else:
@@ -660,7 +702,7 @@ def theme_unset() -> None:
     """Forget the workspace's theme: the window shows your VS Code user setting again."""
     root = _editor_root()
     editor.set_theme(root, None)
-    manager.write_code_workspace(root)
+    editor_files.write_code_workspace(root)
     click.echo("==> Theme: your VS Code user setting")
 
 
@@ -710,7 +752,7 @@ def color_set(role: editor.ColorRole, color: str, area: Optional[editor.ColorAre
     """
     root = _editor_root()
     editor.set_color(root, role, color, area)
-    manager.write_code_workspace(root)
+    editor_files.write_code_workspace(root)
     choice = editor.read_choice(root)
     where = {
         "frame": "the window frame",
@@ -729,7 +771,7 @@ def color_unset(role: Optional[editor.ColorRole]) -> None:
         editor.clear_colors(root)
     else:
         editor.set_color(root, role, None)
-    manager.write_code_workspace(root)
+    editor_files.write_code_workspace(root)
     click.echo(f"==> {role.capitalize() if role else 'Background and foreground'}: the theme's")
 
 
@@ -743,12 +785,12 @@ def workspace_bashrc() -> None:
     root = _editor_root()
     link = root / "project.bashrc"
     if link.exists() and not link.is_symlink():
-        raise click.ClickException(
+        raise AislandError(
             f"{link} is a regular file, not a link — move your lines to {root / 'user.bashrc'}, delete it, "
             "and run `aisland workspace bashrc` again"
         )
     before = os.readlink(link) if link.is_symlink() else None
-    manager._link_project_bashrc(root)
+    manager.link_project_bashrc(root)
     if before is not None and os.readlink(link) == before:
         click.echo(f"==> {link.name} already links to {before}")
 
@@ -761,8 +803,8 @@ def workspace_code_workspace() -> None:
     choice (`aisland workspace theme|color`). An unchanged file is left as it is, so VS Code does not reload.
     """
     root = _editor_root()
-    if manager.write_code_workspace(root) is None:
-        click.echo(f"==> {manager.code_workspace_path(root).name} is up to date")
+    if editor_files.write_code_workspace(root) is None:
+        click.echo(f"==> {editor_files.code_workspace_path(root).name} is up to date")
 
 
 @workspace_group.command("env-example")
@@ -816,10 +858,10 @@ def workspace_env_test(projects: Tuple[str, ...]) -> None:
     left as it is.
     """
     root = _editor_root()
-    folders = {name: path for name, path, _active in manager.workspace_folders(root)}
+    folders = {name: path for name, path, _active in workspace_folders(root)}
     for name in projects:
         if name not in folders:
-            raise click.ClickException(f"{name} is no project of this workspace")
+            raise AislandError(f"{name} is no project of this workspace")
     for name in projects or tuple(folders):
         folder = root / folders[name]
         if not env_example.checked_out(folder):
@@ -1055,9 +1097,9 @@ def tests_nightly(as_json: bool, no_notify: bool) -> None:
     """Report the local Jenkins' nightly runs since the previous report; exit 1 when one failed or none ran.
 
     Reads every 01:00 run of the orchestrator (`<workspace>.local`) started since the previous
-    report, writes `aisland/data/nightly/<date>.md` — each project's result, a failed one's stage,
-    tests and error lines — and shows a desktop notification when a night failed, had no run, or
-    is still building. The `<workspace>.nightly-check` Jenkins job runs it each weekday at 09:30.
+    report, writes `.aisland/data/nightly/<date>.md` (`aisland/data/` from a checkout) — each
+    project's result, a failed one's stage, tests and error lines — and shows a desktop
+    notification when a night failed, had no run, or is still building. The `<workspace>.nightly-check` Jenkins job runs it each weekday at 09:30.
 
     \b
     aisland tests nightly
@@ -1352,12 +1394,12 @@ def wheels_reset_command(project: str, as_json: bool) -> None:
 
 @main.group()
 def docker() -> None:
-    """Manage local Docker container engine (via Colima)."""
+    """Manage the Docker engine: in Colima's VM on macOS, the system's own engine on Linux."""
     pass
 
 
 _MOUNT_HELP = (
-    "Share a host directory with the Colima VM so containers can bind-mount it: DIR (read-only) "
+    "macOS: share a host directory with the Colima VM so containers can bind-mount it: DIR (read-only) "
     "or DIR:w (writable); repeatable. $HOME is always kept. Colima shares ONLY $HOME by default, "
     'so an external volume needs this — e.g. --mount "$DATA_ROOT:r". Applies at VM boot.'
 )
@@ -1367,39 +1409,39 @@ _MOUNT_HELP = (
 @click.option("--mount", "mounts", multiple=True, metavar="DIR[:w]", help=_MOUNT_HELP)
 def docker_start(mounts: Tuple[str, ...]) -> None:
     """Start Docker (optionally sharing extra host directories with the VM)."""
-    DockerService().launch(mounts=mounts)
+    docker_service().launch(mounts=mounts)
 
 
 @docker.command(name="stop")
 def docker_stop() -> None:
     """Stop Docker."""
-    DockerService().stop()
+    docker_service().stop()
 
 
 @docker.command(name="status")
 def docker_status() -> None:
     """Show Docker status."""
-    DockerService().status()
+    docker_service().status()
 
 
 @docker.command(name="info")
 def docker_info() -> None:
     """Show detailed Docker configuration (socket paths, colima status)."""
-    DockerService().info()
+    docker_service().info()
 
 
 @docker.command(name="restart")
 @click.option("--mount", "mounts", multiple=True, metavar="DIR[:w]", help=_MOUNT_HELP)
 def docker_restart(mounts: Tuple[str, ...]) -> None:
     """Restart Docker (the way to change VM mounts on a running engine)."""
-    DockerService().restart(mounts=mounts)
+    docker_service().restart(mounts=mounts)
 
 
 @docker.command(name="reset")
 @click.confirmation_option(prompt="Are you sure you want to wipe all Docker data?")
 def docker_reset() -> None:
     """Stop Docker and wipe all its data."""
-    DockerService().reset()
+    docker_service().reset()
 
 
 # --- Jenkins Commands ---
@@ -1570,7 +1612,7 @@ def services(ctx: click.Context) -> None:
 
     \b
     aisland services start -b
-    aisland services start jenkins mlflow
+    aisland services start jenkins docker
     aisland services stop
     """
     if ctx.invoked_subcommand is None:
@@ -1883,7 +1925,7 @@ def tunnel_clear(names_or_urls: Tuple[str, ...], clear_all: bool, yes: bool) -> 
     for name in cleared:
         click.echo(f"Cleared '{name}'.")
     if unknown:
-        raise click.ClickException(
+        raise AislandError(
             "Not remembered: " + ", ".join(f"'{name}'" for name in unknown) + " (`aisland tunnel list` shows what is)."
         )
     click.echo(f"{len(tunnel_mod.load_store())} workspace(s) remembered.")
@@ -1981,7 +2023,7 @@ def tunnel_login(provider: Optional[str]) -> None:
     """
     code = tunnel_mod.login(provider=provider)
     if code != 0:
-        raise click.ClickException(f"Sign-in failed (exit {code}).")
+        raise AislandError(f"Sign-in failed (exit {code}).")
     click.echo("Signed in.")
 
 
@@ -2004,12 +2046,13 @@ def tunnel_stop(as_json: bool) -> None:
 @click.argument("arg1", required=False)
 @click.argument("arg2", required=False)
 def check(arg1: Optional[str], arg2: Optional[str]) -> None:
-    """
-    Run quality gates.
-    aisland check                 -> All projects, all tools
-    aisland check models          -> All tools for models
-    aisland check pytest          -> pytest for all projects
-    aisland check pytest models   -> pytest for models
+    """Run the quality gates (isort, black, flake8, mypy, pytest, act): every one, or one tool, of every project or one.
+
+    \b
+    aisland check                 every project, every tool
+    aisland check models          every tool for models
+    aisland check pytest          pytest for every project
+    aisland check pytest models   pytest for models
     """
     run_quality_gates(arg1=arg1, arg2=arg2)
 

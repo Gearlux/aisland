@@ -73,6 +73,8 @@ must never reach one:
 
 - **neither layer reaches CI** → `Jenkinsfile` and `ci.yml` read no source setting: they ask PyPI
   whether a dependency is released (see [What CI does with all this](ci.md#what-ci-does-with-all-this)).
+  The one thing that reads the committed layer when it scaffolds is finding a project whose folder is empty (a
+  `github` or `pypi` source): it looks the project up by the `distribution` its table names.
 - **effective source** (override, else committed) → submodule init/deinit + branch switch, the
   editable/git/PyPI install into the shared `.venv` (the editable one with the same `[dev,…]` extras
   `aisland setup` installs), and — through the checkout — the folder list of the generated
@@ -118,7 +120,7 @@ This machine's own choice goes to `.git/config`, one key each: `aisland.source.l
 ## Project Mirrors (`aisland workspace configure mirror`)
 
 A submodule can be kept on a second host — a GitHub repository and a Bitbucket one, say. The
-remote `.gitmodules` names stays the **primary**: you clone, pull and push it exactly as before.
+remote `.gitmodules` names stays the **primary**: you clone, pull and push it as usual.
 The **mirror** only receives a copy.
 
 ```bash

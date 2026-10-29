@@ -6,7 +6,7 @@
     ready = "/health"                              # … and asked until it answers
 
 The project writes no aisland code: :class:`DeclaredService` is the generic service the declaration fills —
-:class:`aisland.manager.BaseService` does the stopping, the status and the reset, as it does for every service.
+:class:`aisland.services.base.BaseService` does the stopping, the status and the reset, as it does for every service.
 """
 
 from __future__ import annotations
@@ -16,7 +16,7 @@ from typing import Any
 import click
 
 from aisland.discovery import Service
-from aisland.manager import BaseService
+from aisland.services.base import BaseService
 
 
 class DeclaredService(BaseService):

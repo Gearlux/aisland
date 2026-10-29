@@ -14,8 +14,7 @@ error inside a *pytest collection* step, an `ImportError` three libraries deep i
 unrelated chain). The Docker layer (Colima) has its own equivalents: a client config left
 behind by an uninstalled tool, a VM whose trust store does not match the network the host is
 on. Homebrew drifts too: its newest Java can be one Jenkins refuses. `aisland doctor` checks for
-the skews that have actually recurred and prints the
-exact command that fixes each one:
+these known skews and prints the exact command that fixes each one:
 
 ```bash
 aisland doctor
@@ -27,8 +26,8 @@ aisland doctor
 #   ✓ colima-tls       the VM verifies TLS to https://ghcr.io/v2/ — pulls can download
 #   ✓ jenkins-java     Jenkins 2.555.2 runs on Java 25.0.3 (/opt/homebrew/opt/openjdk@25/bin/java)
 #   ✓ torch-ext-lock   torch 2.14.1 holds an OS lock while it builds — a killed build leaves no lock that blocks
-#   ✓ tunnel-relay     no tunnel configured here (nothing in /path/to/aisland/data/tunnel)
-#   ✓ tunnel-connect   `aisland tunnel connect` not used here (nothing in /path/to/aisland/data/tunnel)
+#   ✓ tunnel-relay     no tunnel configured here (nothing in ~/.aisland/tunnel)
+#   ✓ tunnel-connect   `aisland tunnel connect` not used here (nothing in ~/.aisland/tunnel)
 #
 # All 9 checks passed.
 ```
@@ -43,10 +42,22 @@ It exits non-zero when a check fails, so it works as a CI preflight step. Curren
 | `docker-creds` | `~/.docker/config.json` names no credential helper that is missing from PATH (Docker Desktop's `credsStore: "desktop"` outlives its uninstall) | `exec: "docker-credential-desktop": executable file not found in $PATH` on **every** `docker pull`, even of public images |
 | `colima-tls` | The Colima VM verifies TLS on the host's network (a TLS-intercepting proxy's CA must be in the VM's trust store, not just the macOS keychain) | `tls: failed to verify certificate: x509: certificate signed by unknown authority` during `docker pull`, while the same URL works on the host |
 | `jenkins-java` | An installed JDK is one the downloaded Jenkins WAR accepts ([Which Java runs Jenkins](services.md#which-java-runs-jenkins)); passes with a note before Jenkins is downloaded | `aisland jenkins start` stops with `Jenkins 2.555.2 runs on Java 21 or 25, and none is installed (found 26.0.2.1)` |
-| `torch-ext-lock` | With torch 2.14.1 or newer it passes: torch builds under an OS lock that a killed process releases, and the `lock` file it leaves after every build blocks nothing. With an older torch: no JIT-extension build lock in this Python's folder (`<torch extensions root>/py<this python>_<accelerator>/<ext>/lock`, the root `$TORCH_EXTENSIONS_DIR` or torch's per-user cache) is older than two minutes — a build takes seconds, and torch waits on an existing lock without a timeout, deleting it only when the compiling process lives through the build; a younger lock is a build in progress and passes | An import that compiles the extension sleeps forever with no error (about 8 s of CPU, then nothing) — a server's first request that loads such a graph, a catalogue helper that never answers; the fix line is the `rm` of the file |
+| `torch-ext-lock` | With torch 2.14.1 or newer it passes: torch builds under an OS lock that a killed process releases, and the `lock` file it leaves after every build blocks nothing. With an older torch: no JIT-extension build lock in this Python's folder (`<torch extensions root>/py<this python>_<accelerator>/<ext>/lock`, the root `$TORCH_EXTENSIONS_DIR` or torch's per-user cache) is older than two minutes — a build takes seconds, and torch waits on an existing lock without a timeout, deleting it only when the compiling process lives through the build; a younger lock is a build in progress and passes | An import that compiles the extension sleeps forever with no error (about 8 s of CPU, then nothing) — an import that hangs instead of failing; the fix line is the `rm` of the file |
 | `tunnel-relay` | A machine that has used `aisland tunnel` reaches the relay the tunnel dials out to (probed only there) | The tunnel starts, logs nothing useful and never appears in the editor; the fix line is the `curl` that confirms it |
 | `tunnel-connect` | A machine that has used `aisland tunnel connect` has `devtunnel` on PATH, `msgpack` (the `[connect]` extra) and a signed-in `devtunnel` (checked only there; offline, it passes with a note) | `connect` stops with `No 'devtunnel' command found`, `needs msgpack` or `devtunnel is not signed in`; the fix line installs or signs in |
 
-Add a check by writing a `check_*` function in `aisland/doctor.py` and listing it in
-`CHECKS`. A check must be cheap, read-only, and specific: it reports a known-recurring skew
-with the command that fixes it, never a vague "something looks off".
+Every check is cheap and read-only, and reports one specific skew with the command that fixes it.
+
+## When a command fails
+
+Every command that fails prints one `Error:` line on stderr and exits 1 — a refusal in aisland's own words, or what
+the machine refused (a file it may not read, a program that failed). A command that goes on past a failure (`aisland
+setup` installing the other projects, `aisland services start` starting the other services) prints that line and
+still exits 1 at the end. To see where an error came from, run the command again with `--debug`:
+
+```bash
+aisland --debug docker start
+# Traceback (most recent call last):
+#   ...
+# Error: the Docker engine is not running. Start it: sudo systemctl start docker
+```

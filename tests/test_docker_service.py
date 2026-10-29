@@ -232,3 +232,88 @@ def test_the_cli_passes_repeated_mount_flags_to_start_and_restart(tmp_path: Path
             assert result.exit_code == 0, result.output
     assert seen[0]["mounts"] == ("/a:r", "/b:w")
     assert seen[1]["mounts"] == ("/c",)
+
+
+# --------------------------------------------------------------------------- #
+# Linux: the system's own Docker Engine, checked, never managed
+# --------------------------------------------------------------------------- #
+
+
+@pytest.mark.parametrize("system, kind", [("Linux", docker_mod.LinuxDockerService), ("Darwin", DockerService)])
+def test_each_platform_gets_its_engine(monkeypatch: pytest.MonkeyPatch, system: str, kind: type) -> None:
+    monkeypatch.setattr(docker_mod.platform, "system", lambda: system)
+    service = docker_mod.docker_service()
+    assert type(service) is kind and service.name == "docker"
+
+
+def _linux(monkeypatch: pytest.MonkeyPatch, installed: bool, running: bool) -> List[List[str]]:
+    """A Linux machine whose `docker` is (not) on PATH and whose engine does (not) answer `docker info`."""
+    ran: List[List[str]] = []
+    monkeypatch.setattr(docker_mod.platform, "system", lambda: "Linux")
+    monkeypatch.setattr(docker_mod.shutil, "which", lambda tool: f"/usr/bin/{tool}" if installed else None)
+
+    def run(argv: List[str], **kwargs: object) -> MagicMock:
+        ran.append(argv)
+        if not installed:
+            raise FileNotFoundError(argv[0])
+        return MagicMock(returncode=0 if running else 1)
+
+    monkeypatch.setattr(docker_mod.subprocess, "run", run)
+    return ran
+
+
+@pytest.mark.parametrize(
+    "installed, running, message",
+    [
+        (
+            False,
+            False,
+            "Error: Docker is not installed. Install Docker Engine: https://docs.docker.com/engine/install/",
+        ),
+        (True, False, "Error: the Docker engine is not running. Start it: sudo systemctl start docker"),
+    ],
+)
+def test_on_linux_start_says_how_to_get_the_engine_and_installs_nothing(
+    monkeypatch: pytest.MonkeyPatch, installed: bool, running: bool, message: str
+) -> None:
+    from aisland.cli import main
+
+    ran = _linux(monkeypatch, installed, running)
+    result = CliRunner().invoke(main, ["docker", "start"])
+    assert result.exit_code == 1
+    assert message in result.output
+    assert all(argv[:2] == ["docker", "info"] for argv in ran)  # never colima, never an install
+
+
+def test_on_linux_a_running_engine_is_reported_and_left_alone(monkeypatch: pytest.MonkeyPatch) -> None:
+    from aisland.cli import main
+
+    ran = _linux(monkeypatch, installed=True, running=True)
+    runner = CliRunner()
+    result = runner.invoke(main, ["docker", "start"])
+    assert result.exit_code == 0 and "Docker engine is running." in result.output
+    result = runner.invoke(main, ["docker", "stop"])
+    assert result.exit_code == 0 and "Docker engine left running" in result.output
+    assert ran == [["docker", "info"]]
+
+
+def test_on_linux_mount_and_reset_are_refused(monkeypatch: pytest.MonkeyPatch) -> None:
+    from aisland.cli import main
+
+    _linux(monkeypatch, installed=True, running=True)
+    result = CliRunner().invoke(main, ["docker", "start", "--mount", "/data"])
+    assert result.exit_code == 1 and "--mount shares a folder with Colima's VM on macOS" in result.output
+    with pytest.raises(click.ClickException, match="aisland does not wipe the system's Docker engine"):
+        docker_mod.LinuxDockerService().reset()
+
+
+@pytest.mark.parametrize("installed, running, word", [(False, False, "Not Installed"), (True, False, "Stopped")])
+def test_on_linux_status_and_info_read_the_engine(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture, installed: bool, running: bool, word: str
+) -> None:
+    _linux(monkeypatch, installed, running)
+    service = docker_mod.LinuxDockerService()
+    service.status()
+    service.info()
+    out = capsys.readouterr().out
+    assert f"Docker (engine)  : {word}" in out and f"Status        : {word}" in out

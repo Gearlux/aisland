@@ -12,15 +12,14 @@ into. It does not change a run: no test is added, skipped or reordered, and the 
 ### What it writes, and where
 
 A run is recorded when the folder pytest runs the project from (the one holding its `pyproject.toml`) sits directly
-in a workspace. Installed from PyPI, the workspace is the folder `AISLAND_WORKSPACE` names; without it, a project's
-workspace is the folder above the project. So every run of a project is recorded, into
-`<the folder above the project>/.aisland/data/test-stats/<project>/<date>.jsonl`:
+in an aisland workspace: a folder holding `workspace.toml` or `.gitmodules` (what `aisland workspace init` and
+`aisland setup` write), or the folder `AISLAND_WORKSPACE` names. The record goes into
+`<workspace>/.aisland/data/test-stats/<project>/<date>.jsonl`:
 
 | The project | Its runs are recorded in |
 |---|---|
 | `~/ws/app`, in a workspace `aisland workspace init` made | `~/ws/.aisland/data/test-stats/app/` — the workspace's `.gitignore` ignores `.aisland/` |
-| `~/code/app`, a repository of its own | `~/code/.aisland/data/test-stats/app/` — outside the repository |
-| `~/mono/pkg`, a folder of a repository `~/mono` | `~/mono/.aisland/data/test-stats/pkg/` — an untracked folder in `~/mono` until its `.gitignore` names `.aisland/` |
+| `~/code/app`, a repository of its own | nowhere — `~/code` is no aisland workspace, and nothing is written there |
 
 Run from an aisland checkout (developing aisland itself), the folder is `aisland/data/test-stats/` beside the
 package instead.

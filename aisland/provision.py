@@ -5,7 +5,7 @@ A project declares the tools it needs from outside Python in its own ``pyproject
 
     [tool.aisland.sys-dependencies]
     brew = ["node"]          # macOS, installed through Homebrew
-    userspace = ["node"]     # Linux, from aisland's own download list (manager.USERSPACE_TOOLS)
+    userspace = ["node"]     # Linux, from aisland's own download list (installers.USERSPACE_TOOLS)
 
 aisland's own tools are :data:`AISLAND_TOOLS`, in the package rather than in aisland's ``pyproject.toml``: a workspace
 whose aisland came from a wheel has no such file to read, and would get no service supervisor.
@@ -30,14 +30,16 @@ from typing import Dict, List, Optional, Set, Tuple
 
 import click
 
-from aisland import discovery, manager
+from aisland import discovery, installers
 from aisland.discovery import ToolKind
-from aisland.manager import BIN_DIR, USERSPACE_TOOLS
+from aisland.errors import AislandError
+from aisland.installers import USERSPACE_TOOLS
+from aisland.paths import BIN_DIR
 
 #: aisland's own tools, by how they are installed:
 #:
 #: - ``f1bonacc1/tap/process-compose``: the service supervisor (``aisland/supervisor.py``), tap-qualified because
-#:   homebrew-core has no process-compose formula; Linux gets it from :data:`aisland.manager.USERSPACE_TOOLS`.
+#:   homebrew-core has no process-compose formula; Linux gets it from :data:`aisland.installers.USERSPACE_TOOLS`.
 #: - ``docker`` and ``colima``: the container engine the Docker-run services use; ``act``: running GitHub's CI locally;
 #:   ``swiftbar``: the menu-bar status of the services.
 #: - No ``openjdk``: that formula follows the newest Java, which Jenkins refuses — the Java the Jenkins WAR names is
@@ -145,19 +147,19 @@ def install(root: Path, aislands_own: bool = True) -> None:
         return
     if kind == "brew":
         click.echo(f"  - Homebrew: {', '.join(sorted(names))}")
-        manager._install_brew_packages(names)
-        manager._maybe_offer_shell_switch(names)
+        installers.install_brew_packages(names)
+        installers.offer_shell_switch(names)
         if not aislands_own:
             return
         # Jenkins' Java is no declared formula: the WAR names the Java it runs on (services/jenkins_java.py).
-        # Imported here because services.jenkins imports aisland.manager, which imports this module lazily.
+        # Imported here: services.jenkins imports this module.
         from aisland.services.jenkins import JenkinsService
 
         JenkinsService().provision_java()
         return
     click.echo(f"  - aisland's downloads: {', '.join(sorted(names))}")
     for name in sorted(names):
-        manager._install_userspace_tool(name)
+        installers.install_userspace_tool(name)
 
 
 def _can_ask() -> bool:
@@ -200,8 +202,8 @@ def ask_to_install(name: str) -> None:
     else:
         how = None
     if how is None or not agree(f"{missing} Install it ({how})?"):
-        raise click.ClickException(f"{missing} Install it: {install_command(name)}")
+        raise AislandError(f"{missing} Install it: {install_command(name)}")
     if kind == "brew":
-        manager._install_brew_packages({_formula(name)})
+        installers.install_brew_packages({_formula(name)})
     else:
-        manager._install_userspace_tool(name)
+        installers.install_userspace_tool(name)

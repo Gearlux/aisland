@@ -16,8 +16,12 @@ import click
 import pytest
 from click.testing import CliRunner
 
-from aisland import failures, manager, supervisor
+import aisland
+from aisland import failures, locations, manager, supervisor
 from aisland.cli import main
+from aisland.errors import AislandError
+from aisland.projects import get_project_metadata
+from aisland.services import base
 
 
 @pytest.fixture(autouse=True)
@@ -79,25 +83,103 @@ def test_the_next_command_starts_with_no_failure(monkeypatch: pytest.MonkeyPatch
     assert _invoke("fine").exit_code == 0
 
 
+# --- one root, and --debug -----------------------------------------------------------------------------------------
+
+
+def test_every_exception_aisland_defines_is_an_aisland_error_and_the_builtin_it_stands_for() -> None:
+    from aisland import discovery, editor, nightly, server, sources, wheels_prune, workspace_file
+
+    assert issubclass(discovery.DeclarationError, (AislandError, ValueError))
+    for error, builtin in (
+        (discovery.DeclarationError, ValueError),
+        (workspace_file.FileError, ValueError),
+        (editor.EditorChoiceError, ValueError),
+        (sources.ReleaseProbeError, ConnectionError),
+        (nightly.JenkinsUnreachable, ConnectionError),
+        (wheels_prune.PruneError, RuntimeError),
+        (server.ToolRefusal, Exception),
+    ):
+        assert issubclass(error, AislandError) and issubclass(error, builtin)
+
+
+def test_no_library_module_raises_clicks_own_exception_or_exits() -> None:
+    """A refusal is an AislandError; only the CLI's group turns it into the Error line and the exit status."""
+    package = Path(aisland.__file__).parent
+    hits = [
+        f"{path.relative_to(package)}:{number}"
+        for path in package.rglob("*.py")
+        # main() of the MCP server is its own entry point; harness/ holds scripts a workspace runs, not aisland's code
+        if path.name != "server.py" and "harness" not in path.relative_to(package).parts
+        for number, line in enumerate(path.read_text().splitlines(), start=1)
+        if "raise click.ClickException(" in line or "raise SystemExit(" in line and path.name != "cli.py"
+    ]
+    assert hits == []
+
+
+@pytest.mark.parametrize(
+    "error, line",
+    [
+        (
+            PermissionError(13, "Permission denied", "/ws/.git/config"),
+            "Error: [Errno 13] Permission denied: '/ws/.git/config'",
+        ),
+        (
+            subprocess.CalledProcessError(128, ["git", "fetch"]),
+            "Error: Command '['git', 'fetch']' returned non-zero exit status 128.",
+        ),
+    ],
+)
+def test_what_the_machine_refuses_is_one_error_line_and_debug_shows_the_traceback(
+    monkeypatch: pytest.MonkeyPatch, error: Exception, line: str
+) -> None:
+    def body() -> None:
+        raise error
+
+    _with_command(monkeypatch, "machine", body)
+    result = _invoke("machine")
+    assert result.exit_code == 1
+    assert result.stderr == f"{line} (run `aisland --debug …` for the traceback)\n"
+    debug = _invoke("--debug", "machine")
+    assert debug.exception is error
+
+
+def test_debug_shows_the_traceback_of_aislands_own_refusal_too(monkeypatch: pytest.MonkeyPatch) -> None:
+    def body() -> None:
+        raise AislandError("no such project")
+
+    _with_command(monkeypatch, "refuse", body)
+    plain = _invoke("refuse")
+    assert plain.exit_code == 1 and plain.stderr == "Error: no such project\n"
+    debug = _invoke("--debug", "refuse")
+    assert debug.exit_code == 1
+    assert "Traceback (most recent call last)" in debug.stderr and debug.stderr.endswith("Error: no such project\n")
+
+
+def test_a_bug_in_aisland_keeps_its_traceback(monkeypatch: pytest.MonkeyPatch) -> None:
+    def body() -> None:
+        raise KeyError("x")
+
+    _with_command(monkeypatch, "bug", body)
+    assert isinstance(_invoke("bug").exception, KeyError)
+
+
 # --- a service that does not start or stop -------------------------------------------------------------------------
 
 
 @pytest.fixture
-def service(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> manager.BaseService:
-    monkeypatch.setattr(manager, "DATA_DIR", tmp_path)
+def service(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> base.BaseService:
+    monkeypatch.setattr(base, "DATA_DIR", tmp_path)
     monkeypatch.setattr(supervisor, "get_process", lambda name: None)
-    return manager.BaseService("demo")
+    return base.BaseService("demo")
 
 
-def test_a_taken_port_is_reported(service: manager.BaseService, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_a_taken_port_is_reported(service: base.BaseService, monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(supervisor, "port_in_use", lambda port: 4242)
     service.start(["demo"], readiness={"port": 9999, "path": "/"})
     assert failures.reported() == 1
 
 
-def test_a_service_that_fails_to_start_is_reported(
-    service: manager.BaseService, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_a_service_that_fails_to_start_is_reported(service: base.BaseService, monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(supervisor, "port_in_use", lambda port: None)
     for name in ("register_process", "apply", "start_process"):
         monkeypatch.setattr(supervisor, name, lambda *a, **k: None)
@@ -107,7 +189,7 @@ def test_a_service_that_fails_to_start_is_reported(
 
 
 def test_a_service_that_does_not_stop_in_time_is_reported(
-    service: manager.BaseService, monkeypatch: pytest.MonkeyPatch
+    service: base.BaseService, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     monkeypatch.setattr(supervisor, "get_process", lambda name: {"is_running": True, "pid": 7})
     for name in ("set_enabled", "apply"):
@@ -120,7 +202,7 @@ def test_a_service_that_does_not_stop_in_time_is_reported(
 def test_docker_that_fails_to_start_is_reported(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     from aisland.services import docker
 
-    monkeypatch.setattr(manager, "DATA_DIR", tmp_path)
+    monkeypatch.setattr(base, "DATA_DIR", tmp_path)
     engine = docker.DockerService()
     monkeypatch.setattr(engine, "is_running", lambda: False)
     monkeypatch.setattr(docker.shutil, "which", lambda name: f"/usr/local/bin/{name}")  # colima and docker are there
@@ -136,7 +218,7 @@ def test_docker_that_fails_to_start_is_reported(monkeypatch: pytest.MonkeyPatch,
 def test_swiftbar_that_fails_to_launch_is_reported(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     from aisland.services import swiftbar
 
-    monkeypatch.setattr(manager, "DATA_DIR", tmp_path)
+    monkeypatch.setattr(base, "DATA_DIR", tmp_path)
     bar = swiftbar.SwiftBarService()
     monkeypatch.setattr(bar, "_require_macos", lambda: True)
     monkeypatch.setattr(swiftbar, "swiftbar_installed", lambda: True)
@@ -159,15 +241,15 @@ def _project(root: Path, name: str) -> Path:
 
 
 def test_setup_without_a_venv_exits_1(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr(manager, "get_workspace_root", lambda: tmp_path)
+    monkeypatch.setattr(locations, "workspace_root", lambda: tmp_path)
     result = _invoke("setup", "-y")
     assert result.exit_code == 1
     assert "Error: Virtual environment not found" in result.stderr
 
 
 def test_a_project_that_fails_to_install_is_reported_and_the_others_are_still_installed(tmp_path: Path) -> None:
-    projects = [manager.get_project_metadata(_project(tmp_path, name)) for name in ("app", "lib")]
-    failed, skipped = manager._run_installs(tmp_path, "false", projects)
+    metadata = [get_project_metadata(_project(tmp_path, name)) for name in ("app", "lib")]
+    failed, skipped = manager._run_installs(tmp_path, "false", metadata)
     assert sorted(failed) == ["app", "lib"]
     assert failures.reported() == 2
 
@@ -177,14 +259,14 @@ def test_a_project_that_fails_to_install_is_reported_and_the_others_are_still_in
 
 @pytest.fixture
 def workspace(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
-    monkeypatch.setattr(manager, "get_workspace_root", lambda: tmp_path)
+    monkeypatch.setattr(locations, "workspace_root", lambda: tmp_path)
     (tmp_path / ".venv" / "bin").mkdir(parents=True)
     _project(tmp_path, "app")
     return tmp_path
 
 
 def test_check_without_a_venv_exits_1(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr(manager, "get_workspace_root", lambda: tmp_path)
+    monkeypatch.setattr(locations, "workspace_root", lambda: tmp_path)
     result = _invoke("check")
     assert result.exit_code == 1
     assert "Error: Virtual environment not found" in result.stderr
@@ -218,14 +300,14 @@ def test_check_with_a_tool_not_installed_fails_that_gate_without_a_traceback(
 
 
 def test_scaffolding_a_project_that_does_not_exist_exits_1(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr(manager, "get_workspace_root", lambda: tmp_path)
+    monkeypatch.setattr(locations, "workspace_root", lambda: tmp_path)
     result = _invoke("jenkins", "scaffold", "nosuch")
     assert result.exit_code == 1
     assert "Error: Project directory 'nosuch' not found" in result.stderr
 
 
 def test_scaffolding_a_folder_without_pyproject_exits_1(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr(manager, "get_workspace_root", lambda: tmp_path)
+    monkeypatch.setattr(locations, "workspace_root", lambda: tmp_path)
     (tmp_path / "notes").mkdir()
     result = _invoke("jenkins", "scaffold", "notes")
     assert result.exit_code == 1
@@ -235,14 +317,14 @@ def test_scaffolding_a_folder_without_pyproject_exits_1(tmp_path: Path, monkeypa
 def test_a_jenkins_download_that_fails_is_reported(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     from aisland.services import jenkins
 
-    monkeypatch.setattr(manager, "DATA_DIR", tmp_path)
+    monkeypatch.setattr(base, "DATA_DIR", tmp_path)
     service = jenkins.JenkinsService()
     service.war_file = tmp_path / "bin" / "jenkins.war"
 
     def _offline(url: str, path: object) -> None:
         raise OSError("offline")
 
-    monkeypatch.setattr(jenkins.urllib.request, "urlretrieve", _offline)
+    monkeypatch.setattr(jenkins, "download", _offline)
     assert service.ensure_war() is False
     assert failures.reported() == 1
 

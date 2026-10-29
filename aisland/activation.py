@@ -105,7 +105,7 @@ def _submodule_names(root: Path) -> Dict[str, str]:
 
 
 def _gitmodules(root: Path) -> List[tuple[str, str, bool]]:
-    from aisland.manager import submodule_active_map
+    from aisland.projects import submodule_active_map
 
     return submodule_active_map(root)
 

@@ -13,21 +13,22 @@ pip install aisland
 aisland --version          # which aisland runs: aisland, version <its version>
 ```
 
-aisland runs on macOS and Linux with Python 3.12 or newer, git and bash (the git aliases and the shell start-up
+aisland runs on macOS and Linux with Python 3.12 or newer, git, [uv](https://docs.astral.sh/uv/) and bash (the git aliases and the shell start-up
 file `project.bashrc` are bash). `aisland setup` installs the system tools your projects
 declare. aisland's own — process-compose for the services, Docker, Java for Jenkins — are installed the first time a
-command needs one, after asking you; without a terminal the command stops and prints the install line instead. Two
+command needs one, after asking you; without a terminal the command stops and prints the install line instead. Three
 extras add optional parts:
 
 | Extra | Adds |
 |---|---|
 | `aisland[mcp]` | `aisland-mcp`, an MCP server that offers a chosen set of aisland's commands to an AI client |
 | `aisland[connect]` | `aisland tunnel connect`, a terminal on a remote machine over its VS Code tunnel |
+| `aisland[prune]` | `aisland wheels prune` and `aisland wheels reset`, which rewrite a project's history with git-filter-repo |
 
 Installing aisland also registers a pytest plugin, `aisland_test_stats`, which every `pytest` in that environment
 loads. It records each run of a project — its seconds and each test's outcome — in `.aisland/data/test-stats/` in
-the folder **above** the project: the workspace, or for a project elsewhere its parent folder (`~/code/app` records
-into `~/code/.aisland/`). `aisland tests report` reads the record. Turn it off with `aisland workspace test-stats off [PROJECT…]
+the workspace, when the project is one of an aisland workspace's; a project elsewhere (`~/code/app`) records nothing.
+`aisland tests report` reads the record. Turn it off with `aisland workspace test-stats off [PROJECT…]
 [--machine-only]`, or for one run with `pytest -p no:aisland_test_stats`; what it writes, and every way to switch it
 off:
 [tests](https://github.com/Gearlux/aisland/blob/main/docs/tests.md#the-pytest-plugin).
@@ -120,6 +121,7 @@ needs — in its own `pyproject.toml`, under `[tool.aisland]`. It never imports 
 | pull, push or tag every project | `git pull-all`, `git push-all`, `git tag-all <tag>` | [git](https://github.com/Gearlux/aisland/blob/main/docs/git.md) |
 | run the local services | `aisland services start [NAME…]` | [services](https://github.com/Gearlux/aisland/blob/main/docs/services.md) |
 | check the environment | `aisland doctor` | [doctor](https://github.com/Gearlux/aisland/blob/main/docs/doctor.md) |
+| see where a command failed | `aisland --debug <command>` (every error is one `Error:` line, exit 1; this adds its traceback) | [doctor](https://github.com/Gearlux/aisland/blob/main/docs/doctor.md) |
 | write a project's CI files | `aisland jenkins scaffold <project>` | [ci](https://github.com/Gearlux/aisland/blob/main/docs/ci.md) |
 | see a project's test runs and slowest tests | `aisland tests report <project>` | [tests](https://github.com/Gearlux/aisland/blob/main/docs/tests.md) |
 | carry a project to a machine without the workspace | `aisland wheels build <project>` | [wheels](https://github.com/Gearlux/aisland/blob/main/docs/wheels.md) |
@@ -156,6 +158,8 @@ None is needed; each changes one default. `env.complete` lists them with every v
 | `AISLAND_WORKSPACE` | aisland installed from a wheel: the workspace it works on (default: the one the current folder belongs to) |
 | `AISLAND_TUNNEL_HOME` | where `aisland tunnel` keeps its state (default: `~/.aisland/tunnel`) |
 | `AISLAND_SUPERVISOR_PORT` | Windows: the supervisor's TCP port (default: 9089; Unix uses a socket) |
+| `WORKSPACE` | the name `aisland tunnel start` gives the tunnel when none is given (default: the machine's hostname) |
+| `DATA_ROOT`, `MODEL_ROOT`, `RUN_DIR` | the folders the `cdd`, `cdm` and `cdr` helpers of `project.bashrc` jump to (`cdd models` goes to `$DATA_ROOT/models`); set them in the workspace's `.env` |
 | `TORCH_EXTENSIONS_DIR` | the folder `aisland doctor` checks for a stale torch build lock (default: torch's own cache) |
 
 ## Documentation
@@ -168,7 +172,7 @@ None is needed; each changes one default. `env.complete` lists them with every v
   workspace chooses
 - [Git across the workspace](https://github.com/Gearlux/aisland/blob/main/docs/git.md) — `pull-all`, `push-all` and
   the other aliases
-- [Services](https://github.com/Gearlux/aisland/blob/main/docs/services.md) — the supervisor, Jenkins, MLflow, Docker
+- [Services](https://github.com/Gearlux/aisland/blob/main/docs/services.md) — the supervisor, Jenkins, Docker
   and the others, and a service a project declares
 - [Jenkins](https://github.com/Gearlux/aisland/blob/main/docs/jenkins.md) — starting it, its GitHub credential and
   the pipelines `aisland jenkins init` seeds

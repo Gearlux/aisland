@@ -43,8 +43,7 @@ from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Dict, List, Optional, Sequence, Set, Tuple
 
-import click
-
+from aisland.errors import AislandError
 from aisland.wheels import WHEELS_DIR, _find_target, _size, workspace_projects
 
 #: Where origin keeps the record of every prune: a chain of commits, one per prune, never a branch or a tag.
@@ -74,7 +73,7 @@ _HEAD_REF = "refs/wheels-prune/head"
 _NETWORK_ENV = {"GIT_TERMINAL_PROMPT": "0"}
 
 
-class PruneError(click.ClickException, RuntimeError):
+class PruneError(AislandError, RuntimeError):
     """A prune or a reset that cannot go on: the message says why and what to do."""
 
 

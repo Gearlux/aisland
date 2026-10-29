@@ -41,6 +41,7 @@ import click
 import yaml
 
 from aisland import locations
+from aisland.errors import AislandError
 
 # Mirrors manager.py's path constants. Kept local (not imported) because
 # manager imports this module for BaseService — importing manager back at
@@ -117,7 +118,7 @@ def ensure_binary() -> str:
     provision.ask_to_install("process-compose")
     binary = find_binary()
     if binary is None:
-        raise click.ClickException(
+        raise AislandError(
             "process-compose is still not found after installing it. Install it by hand: "
             f"{provision.install_command('process-compose')}"
         )
@@ -394,7 +395,7 @@ def apply() -> None:
             env={**os.environ, **read_workspace_env()},
         )
         if result.returncode != 0:
-            raise click.ClickException(
+            raise AislandError(
                 f"process-compose config update failed: {result.stderr.strip() or result.stdout.strip()}"
             )
         return
@@ -491,7 +492,7 @@ def _start_server() -> None:
         timeout=_CLIENT_TIMEOUT,
     )
     if result.returncode != 0:
-        raise click.ClickException(
+        raise AislandError(
             f"failed to start the process-compose server: {result.stderr.strip() or result.stdout.strip()}"
         )
 
@@ -599,7 +600,7 @@ def shutdown_server() -> None:
     if result.returncode == 0:
         click.echo("Supervisor (process-compose) stopped.")
     else:
-        raise click.ClickException(f"stopping the supervisor failed: {result.stderr.strip()}")
+        raise AislandError(f"stopping the supervisor failed: {result.stderr.strip()}")
 
 
 def attach() -> None:
@@ -714,6 +715,6 @@ def port_in_use(port: int) -> Optional[int]:
 
 def _workspace_root() -> Path:
     """Workspace root via manager's marker search (lazy import — see above)."""
-    from aisland.manager import get_workspace_root
+    from aisland.projects import get_workspace_root
 
     return get_workspace_root()

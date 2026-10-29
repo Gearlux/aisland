@@ -29,9 +29,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Dict, List, Optional, Sequence
 
-import click
-
 from aisland import local_workspace, workspace_file
+from aisland.errors import AislandError
 
 TRACK_KEY = "track"
 
@@ -160,7 +159,7 @@ def _named(root: Path, projects: Sequence[str]) -> List[str]:
     unknown = [name for name in projects if name not in submodules]
     if unknown:
         listed = ", ".join(submodules) or "none"
-        raise click.ClickException(f"'{unknown[0]}' is no submodule of the workspace (the submodules: {listed})")
+        raise AislandError(f"'{unknown[0]}' is no submodule of the workspace (the submodules: {listed})")
     return list(projects)
 
 

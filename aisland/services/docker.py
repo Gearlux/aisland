@@ -1,4 +1,5 @@
-"""Docker engine (Colima) — lifecycle plus the VM mounts a container can bind.
+"""Docker engine — on macOS in Colima's VM (lifecycle plus the VM mounts a container can bind), on Linux the
+system's own engine (:class:`LinuxDockerService`, checked, never managed); :func:`docker_service` picks one.
 
 A ``docker run -v <host>:<target>`` on macOS binds a path INSIDE the Colima VM, and the VM
 sees only what Colima shares with it. Two facts, both measured on colima 0.10.3 (2026-08-17)
@@ -22,17 +23,19 @@ the VM currently shares, which is what :meth:`DockerService.configured_mounts` r
 """
 
 import os
+import platform
 import shutil
 import subprocess
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, List, Sequence
+from typing import Any, List, Sequence, Union
 
 import click
 import yaml
 
 from aisland import failures, provision
-from aisland.manager import BaseService
+from aisland.errors import AislandError
+from aisland.services.base import BaseService
 
 #: The Colima profile aisland drives (its default profile). ``colima start --save-config``
 #: (default true) writes the effective flags — mounts included — into ``colima.yaml`` here.
@@ -63,7 +66,7 @@ def parse_mount(spec: str) -> Mount:
         location, writable = spec[:-2], spec.endswith(":w")
     path = Path(location).expanduser().resolve()
     if not path.is_dir():
-        raise click.ClickException(f"--mount {spec}: {path} is not a directory.")
+        raise AislandError(f"--mount {spec}: {path} is not a directory.")
     return Mount(path, writable)
 
 
@@ -154,7 +157,7 @@ class DockerService(BaseService):
             missing = [mount for mount in wanted if not covers(configured, mount)]
             if missing:
                 flags = " ".join(f"--mount {mount.spec}" for mount in wanted)
-                raise click.ClickException(
+                raise AislandError(
                     "Docker (Colima) is running WITHOUT these VM mounts: "
                     + ", ".join(str(mount.location) for mount in missing)
                     + "\n  Mounts take effect when the VM boots. Restart it (this stops every running container):\n"
@@ -293,3 +296,76 @@ class DockerService(BaseService):
                 click.echo("Docker (Colima) reset complete.")
             except subprocess.CalledProcessError as e:
                 failures.report(f"Error resetting Docker (Colima): {e}")
+
+
+#: Where a Linux machine's Docker Engine comes from: the distribution's packages, installed by root, never by aisland.
+DOCKER_ENGINE_INSTALL = "https://docs.docker.com/engine/install/"
+
+
+class LinuxDockerService(BaseService):
+    """The Docker Engine a Linux machine runs natively, as a system service.
+
+    No VM sits between it and the host, so there is no Colima and no ``--mount``: a container binds any host folder.
+    The engine is the system's — installed, started and stopped by root (``systemctl``) — so aisland only checks that
+    it runs and says how to start it; it never installs, starts, stops or wipes it.
+    """
+
+    def __init__(self) -> None:
+        super().__init__("docker")
+
+    def is_running(self) -> bool:
+        """Whether the engine answers — ``docker info``'s exit code (a client without a running daemon fails)."""
+        try:
+            result = subprocess.run(["docker", "info"], capture_output=True, text=True, timeout=30)
+        except (OSError, subprocess.TimeoutExpired):
+            return False
+        return result.returncode == 0
+
+    def launch(self, background: bool = True, mounts: Sequence[str] = (), **kwargs: Any) -> None:
+        """Check that the engine runs; refuse, naming how to fix it, when it is missing or stopped."""
+        if mounts:
+            raise AislandError(
+                "--mount shares a folder with Colima's VM on macOS; Docker on Linux runs on the host and a container "
+                "binds any host folder already"
+            )
+        if shutil.which("docker") is None:
+            raise AislandError(f"Docker is not installed. Install Docker Engine: {DOCKER_ENGINE_INSTALL}")
+        if not self.is_running():
+            raise AislandError("the Docker engine is not running. Start it: sudo systemctl start docker")
+        click.echo("Docker engine is running.")
+
+    def stop(self) -> None:
+        click.echo(
+            "Docker engine left running: it is the system's, not aisland's (sudo systemctl stop docker stops it)."
+        )
+
+    def status(self) -> None:
+        if shutil.which("docker") is None:
+            state = click.style("Not Installed", fg="yellow")
+        else:
+            state = click.style("Running", fg="green") if self.is_running() else click.style("Stopped", fg="red")
+        click.echo(f"  Docker (engine)  : {state}")
+
+    def info(self) -> None:
+        click.echo(click.style("Docker (engine):", bold=True))
+        if shutil.which("docker") is None:
+            click.echo(f"  Status        : {click.style('Not Installed', fg='yellow')}")
+            click.echo(f"  Install with  : {DOCKER_ENGINE_INSTALL}")
+            return
+        running = self.is_running()
+        click.echo(
+            f"  Status        : {click.style('Running', fg='green') if running else click.style('Stopped', fg='red')}"
+        )
+        if not running:
+            click.echo("  Start with    : sudo systemctl start docker")
+
+    def reset(self) -> None:
+        raise AislandError(
+            "aisland does not wipe the system's Docker engine; `docker system prune --all --volumes` deletes its "
+            "containers, images and volumes"
+        )
+
+
+def docker_service() -> Union[DockerService, LinuxDockerService]:
+    """This machine's container engine: the system's Docker Engine on Linux, Docker in Colima's VM elsewhere (macOS)."""
+    return LinuxDockerService() if platform.system() == "Linux" else DockerService()

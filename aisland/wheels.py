@@ -89,7 +89,9 @@ from packaging.utils import canonicalize_name
 from packaging.version import InvalidVersion, Version
 
 from aisland import wheels_bundle, wheels_extra, wheels_install, wheels_unzip
-from aisland.manager import ensure_uv_in_venv, workspace_folders
+from aisland.errors import AislandError
+from aisland.installers import ensure_uv_in_venv
+from aisland.projects import workspace_folders
 from aisland.sources import _pypi_json, points_at_owner, project_repositories, read_committed_sources
 from aisland.wheels_install import WheelsFileError, read_wheels
 
@@ -400,7 +402,7 @@ def _requirements(project: WorkspaceProject, extra: Optional[str]) -> List[Requi
         try:
             requirements.append(Requirement(spec))
         except InvalidRequirement as error:
-            raise click.ClickException(f"{project.name}/pyproject.toml: cannot read the requirement {spec!r}: {error}")
+            raise AislandError(f"{project.name}/pyproject.toml: cannot read the requirement {spec!r}: {error}")
     return requirements
 
 
@@ -442,7 +444,7 @@ def pypi_state(distribution: str, owner: Optional[str]) -> Tuple[PypiState, Opti
     if status == "missing":
         return "absent", None
     if status == "unreachable":
-        raise click.ClickException(f"cannot tell whether {distribution} is on PyPI: {payload}. Retry when it answers.")
+        raise AislandError(f"cannot tell whether {distribution} is on PyPI: {payload}. Retry when it answers.")
     if not points_at_owner(payload.get("info") or {}, owner):
         return "foreign", payload
     for files in (payload.get("releases") or {}).values():
@@ -466,7 +468,7 @@ def export_head(project_dir: Path, dest: Path) -> int:
     archive = subprocess.run(["git", "-C", str(project_dir), "archive", "--format=tar", "HEAD"], capture_output=True)
     if archive.returncode != 0:
         reason = archive.stderr.decode(errors="replace").strip()
-        raise click.ClickException(f"{project_dir.name}: cannot export its last commit: {reason}")
+        raise AislandError(f"{project_dir.name}: cannot export its last commit: {reason}")
     dest.mkdir(parents=True, exist_ok=True)
     with tarfile.open(fileobj=io.BytesIO(archive.stdout)) as tar:
         tar.extractall(dest, filter="data")
@@ -482,7 +484,7 @@ def export_worktree(project_dir: Path, dest: Path) -> int:
     """
     listed = _git(project_dir, "ls-files", "-z", "--cached", "--others", "--exclude-standard")
     if listed.returncode != 0:
-        raise click.ClickException(f"{project_dir.name}: cannot list its files: {listed.stderr.strip()}")
+        raise AislandError(f"{project_dir.name}: cannot list its files: {listed.stderr.strip()}")
     for relative in sorted(set(filter(None, listed.stdout.split("\0")))):
         source = project_dir / relative
         # A deleted file is still listed (it is in the index), and a nested repository is a folder: neither is
@@ -509,7 +511,7 @@ def build_wheel(uv: str, source_dir: Path, out_dir: Path, timestamp: Optional[in
         proc = subprocess.run([*command, "--out-dir", tmp, str(source_dir)], capture_output=True, text=True, env=env)
         built = sorted(Path(tmp).glob("*.whl"))
         if proc.returncode != 0 or len(built) != 1:
-            raise click.ClickException(f"building the wheel of {source_dir.name} failed:\n{proc.stderr.strip()}")
+            raise AislandError(f"building the wheel of {source_dir.name} failed:\n{proc.stderr.strip()}")
         wheel = out_dir / built[0].name
         os.replace(built[0], wheel)
     return wheel
@@ -782,10 +784,10 @@ def _find_target(projects: Dict[str, WorkspaceProject], workspace_root: Path, na
     else:
         found = projects.get(canonicalize_name(name))
         if found is None:
-            raise click.ClickException(f"no project {name!r} in the workspace {workspace_root}")
+            raise AislandError(f"no project {name!r} in the workspace {workspace_root}")
         project = found
     if not project.checked_out:
-        raise click.ClickException(
+        raise AislandError(
             f"{project.name} is not checked out on this machine (its folder is empty). "
             f"Activate it with: aisland workspace configure active set {project.name} true --machine-only"
         )
@@ -848,7 +850,7 @@ def wheels_folder_problem(project: WorkspaceProject) -> Optional[str]:
 def _uncommitted(project: WorkspaceProject) -> List[str]:
     """``git status --porcelain`` of the project: its changes no commit holds."""
     if _git(project.path, "rev-parse", "--is-inside-work-tree").returncode != 0:
-        raise click.ClickException(
+        raise AislandError(
             f"{project.name} is in no git repository; a wheel is built from a project's last commit. "
             "Put it under git (git init, then commit) and run this again."
         )
@@ -882,7 +884,7 @@ def _refuse_uncommitted(
             problems.append(f"{name} has changes no commit holds; its wheel would not contain them:")
             problems.extend(f"    {line}" for line in lines)
         problems.append("Commit or stash them, then run this again — or pass --force to build them with these changes.")
-        raise click.ClickException("\n".join(problems))
+        raise AislandError("\n".join(problems))
     return dirty
 
 
@@ -914,7 +916,7 @@ def read_install_choices(path: Path) -> Dict[str, bool]:
     try:
         _project, entries = read_wheels(path)
     except WheelsFileError as error:
-        raise click.ClickException(str(error)) from error
+        raise AislandError(str(error)) from error
     return {entry.project: entry.install for entry in entries}
 
 
@@ -943,12 +945,12 @@ def vendor_wheels(
     NAME, which installs every wheel built, into the target's ``pyproject.toml`` (:mod:`aisland.wheels_extra`). See
     the module docstring."""
     if force and commit:
-        raise click.ClickException(
+        raise AislandError(
             "--force cannot be combined with --commit: a wheel built with uncommitted changes is one no commit "
             "reproduces. Commit the changes and run with --commit, or drop --commit."
         )
     if not check and commit:
-        raise click.ClickException(
+        raise AislandError(
             "--no-check cannot be combined with --commit: the folder is committed only once the install check "
             "passed. Drop one of them."
         )
@@ -956,7 +958,7 @@ def vendor_wheels(
     target = _find_target(projects, workspace_root, project_name)
     problem = wheels_folder_problem(target)
     if problem:
-        raise click.ClickException(problem)
+        raise AislandError(problem)
     needed = dependency_closure(projects, target)
     needed_names = {p.name for p in needed}
     if scope == "all":
@@ -977,7 +979,7 @@ def vendor_wheels(
 
     missing = [p for p in needed if not _published(p) and not p.checked_out]
     if missing:
-        raise click.ClickException(
+        raise AislandError(
             "\n".join(
                 f"{p.name} is not on PyPI and not checked out here, so its wheel cannot be built. "
                 f"Check it out with: aisland workspace configure source set {p.name} local"
@@ -1007,7 +1009,7 @@ def vendor_wheels(
     pyproject = target.path / "pyproject.toml"
     remembered = wheels_extra.remembered_extra(pyproject) if pyproject.is_file() else None
     if remembered is not None and extra is not None and extra != remembered[0]:
-        raise click.ClickException(
+        raise AislandError(
             f"{pyproject}:{remembered[1]}: this file's generated block writes the extra {remembered[0]!r}; --extra "
             f"{extra} would write a second one — remove the block to rename it, or drop --extra"
         )
@@ -1023,7 +1025,7 @@ def vendor_wheels(
     if extra is not None:
         wheels_extra.check_extra(pyproject, extra, [p.distribution for p in to_build])
         if commit and (lines := _uncommitted_file(target, pyproject.name)):
-            raise click.ClickException(
+            raise AislandError(
                 f"{target.name}/{pyproject.name} has changes no commit holds; --commit would commit them with the "
                 f"extra {extra}:\n" + "\n".join(f"    {line}" for line in lines) + "\nCommit or stash them first."
             )
@@ -1250,7 +1252,7 @@ def _write_bundle(
     ]
     for project, _, _ in members:
         if "dependencies" in ((project.pyproject or {}).get("project") or {}).get("dynamic", []):
-            raise click.ClickException(
+            raise AislandError(
                 f"{project.name}/pyproject.toml declares its dependencies dynamic; a bundle reads them from "
                 "[project] dependencies"
             )
@@ -1312,13 +1314,13 @@ def _commit_wheels(target: WorkspaceProject, command: str, also: Sequence[str] =
     paths = [WHEELS_DIR, *also]
     added = _git(target.path, "add", "-A", "--", *paths)
     if added.returncode != 0:
-        raise click.ClickException(f"{target.name}: git add {' '.join(paths)} failed: {added.stderr.strip()}")
+        raise AislandError(f"{target.name}: git add {' '.join(paths)} failed: {added.stderr.strip()}")
     if _git(target.path, "diff", "--cached", "--quiet", "--", *paths).returncode == 0:
         return None
     message = f"chore: wheels built with {command}"
     done = _git(target.path, "commit", "-q", "-m", message, "--", *paths)
     if done.returncode != 0:
-        raise click.ClickException(f"{target.name}: committing {WHEELS_DIR} failed: {done.stderr.strip()}")
+        raise AislandError(f"{target.name}: committing {WHEELS_DIR} failed: {done.stderr.strip()}")
     return _git(target.path, "rev-parse", "--short", "HEAD").stdout.strip()
 
 
@@ -1342,7 +1344,7 @@ def _write_zip(target_name: str, folder: Path) -> Path:
     try:
         standalone = installs_own_wheel(folder)
     except WheelsFileError as error:
-        raise click.ClickException(str(error)) from error
+        raise AislandError(str(error)) from error
     members = [("__main__.py", render_unzip_script(target_name, standalone).encode("utf-8"))]
     members += [
         (f"{WHEELS_DIR}/{path.name}", path.read_bytes())
@@ -1365,7 +1367,7 @@ def zip_wheels(workspace_root: Path, project_name: str) -> Path:
     target = _find_target(workspace_projects(workspace_root), workspace_root, project_name)
     folder = target.path / WHEELS_DIR
     if not (folder / WHEELS_YAML).is_file():
-        raise click.ClickException(
+        raise AislandError(
             f"{target.name}/{WHEELS_DIR} has no {WHEELS_YAML}; build it first: aisland wheels build {target.name}"
         )
     return _write_zip(target.name, folder)
@@ -1381,11 +1383,11 @@ def install_zip(
     ``uv.toml`` overrides, and the workspace installs its projects editable through ``aisland setup``.
     """
     if not zip_path.is_file():
-        raise click.ClickException(f"no zip at {zip_path}")
+        raise AislandError(f"no zip at {zip_path}")
     if workspace_root is not None:
         venv = (workspace_root / ".venv").absolute()
         if venv in python.absolute().parents:
-            raise click.ClickException(
+            raise AislandError(
                 f"{python} is the workspace's .venv; install the zip into another environment (--python <its python>)"
             )
     return subprocess.run([str(python), str(zip_path), "--into", str(into), *args]).returncode

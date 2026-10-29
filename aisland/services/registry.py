@@ -15,14 +15,20 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from functools import partial
 from pathlib import Path
-from typing import Any, Callable, Collection, List, Mapping, Optional, Protocol, Sequence, Tuple
+from typing import TYPE_CHECKING, Any, Callable, Collection, List, Mapping, Optional, Protocol, Sequence, Tuple
 
 import click
 
-from aisland import supervisor
-from aisland.services.docker import DockerService
+from aisland import discovery, failures, selection, supervisor
+from aisland.errors import AislandError
+from aisland.services.declared import DeclaredService
+from aisland.services.docker import docker_service
 from aisland.services.jenkins import JenkinsService
+from aisland.services.plugin import PluginService
 from aisland.services.swiftbar import SwiftBarService
+
+if TYPE_CHECKING:
+    import importlib.metadata
 
 
 class Service(Protocol):
@@ -60,16 +66,58 @@ class Entry:
     by_default: bool
     takes_background: bool
     takes_port: bool = False
-    #: A project's class's own options, by name, with their help (offered on its start and restart).
-    options: Mapping[str, str] = field(default_factory=dict)
-    #: What `aisland <name> reset` asks first, when a project's class says (its reset wipes no data); else aisland's.
-    reset_question: Optional[str] = None
     #: The project that brings it (its help names it); empty for aisland's own.
     project: str = ""
+    #: What a project's class says of itself, read when first asked — its code is imported only then, so listing the
+    #: services (`aisland --help`) imports no project's code.
+    details: Callable[[], "Details"] = lambda: Details()
+
+    @property
+    def options(self) -> Mapping[str, str]:
+        """A project's class's own options, by name, with their help (offered on its start and restart)."""
+        return self.details().options
+
+    @property
+    def reset_question(self) -> Optional[str]:
+        """What `aisland <name> reset` asks first, when a project's class says (its reset wipes no data)."""
+        return self.details().reset_question
+
+
+@dataclass(frozen=True)
+class Details:
+    """What a project's service class says of itself (none for aisland's own and the declared ones)."""
+
+    options: Mapping[str, str] = field(default_factory=dict)
+    reset_question: Optional[str] = None
+
+
+class _Plugin:
+    """A project's service class, imported and checked the first time it is needed, then kept."""
+
+    def __init__(self, plugin: discovery.Plugin, entry: importlib.metadata.EntryPoint) -> None:
+        self._plugin, self._entry = plugin, entry
+        self._obj: Optional[Any] = None
+
+    @property
+    def obj(self) -> Any:
+        if self._obj is None:
+            loaded = discovery.load_one(self._plugin, self._entry)
+            if loaded.kind != "service":
+                raise discovery.DeclarationError(
+                    f"{self._plugin.where}: plugin {self._plugin.name!r} is a {loaded.kind}, not a service"
+                )
+            self._obj = loaded.obj
+        return self._obj
+
+    def details(self) -> Details:
+        return Details(dict(getattr(self.obj, "options", {})), getattr(self.obj, "reset_question", None))
+
+    def make(self) -> Service:
+        return PluginService(self._plugin.name, self.obj)
 
 
 ENTRIES: Tuple[Entry, ...] = (
-    Entry("docker", DockerService, by_default=True, takes_background=False),
+    Entry("docker", docker_service, by_default=True, takes_background=False),
     Entry("jenkins", JenkinsService, by_default=True, takes_background=True),
     Entry("swiftbar", SwiftBarService, by_default=True, takes_background=False),
 )
@@ -81,10 +129,6 @@ def declared(root: Path, reserved: Collection[str] = ()) -> List[Entry]:
 
     A name of one of aisland's services, or of an aisland command (``reserved``), is refused naming the line: the
     project's service would hide it."""
-    from aisland import discovery, selection
-    from aisland.services.declared import DeclaredService
-    from aisland.services.plugin import PluginService
-
     own = {entry.name for entry in ENTRIES}
 
     def free(name: str, where: object) -> None:
@@ -112,28 +156,34 @@ def declared(root: Path, reserved: Collection[str] = ()) -> List[Entry]:
                 project=service.project,
             )
         )
-    for name, loaded in discovery.load(found).items():
-        if loaded.state != "installed" or loaded.kind != "service":
+    for name, entry in discovery.installed(found).items():
+        if entry is None:  # its project is not installed yet
             continue
-        free(name, loaded.plugin.where)
+        plugin = found.plugins[name]
+        free(name, plugin.where)
+        lazy = _Plugin(plugin, entry)
         entries.append(
             Entry(
                 name,
-                partial(PluginService, name, loaded.obj),
+                lazy.make,
                 by_default=False,
                 takes_background=True,
                 takes_port=True,
-                options=dict(getattr(loaded.obj, "options", {})),
-                reset_question=getattr(loaded.obj, "reset_question", None),
-                project=loaded.plugin.project,
+                project=plugin.project,
+                details=lazy.details,
             )
         )
     return entries
 
 
 def entries(root: Path, reserved: Collection[str] = ()) -> List[Entry]:
-    """aisland's services, then the projects' (:func:`declared`)."""
-    return list(ENTRIES) + declared(root, reserved)
+    """aisland's services, then the projects' (:func:`declared`) — every project's class imported and checked, so a
+    command acting on the services (`aisland services …`) refuses a broken one before it does anything. Only the
+    listing (`aisland --help`) leaves the classes unimported."""
+    every = list(ENTRIES) + declared(root, reserved)
+    for entry in every:
+        entry.details()
+    return every
 
 
 def chosen(entries: Sequence[Entry], names: Sequence[str], every: bool = False) -> List[Entry]:
@@ -143,33 +193,51 @@ def chosen(entries: Sequence[Entry], names: Sequence[str], every: bool = False) 
     by_name = {entry.name: entry for entry in entries}
     for name in names:
         if name not in by_name:
-            raise click.ClickException(f"no service {name!r} (the services: {', '.join(sorted(by_name))})")
+            raise AislandError(f"no service {name!r} (the services: {', '.join(sorted(by_name))})")
     if names:
         return [by_name[name] for name in names]
     return [entry for entry in entries if every or entry.by_default]
 
 
+def _each(picked: Sequence[Entry], action: Callable[[Entry], None]) -> None:
+    """``action`` on every service in turn. Of several, one that fails is reported (an ``Error:`` line, the run exits
+    1) and the others still get their turn — a missing container engine never keeps Jenkins down; a service run alone
+    fails as itself."""
+    for entry in picked:
+        try:
+            action(entry)
+        except click.ClickException as error:
+            if len(picked) == 1:
+                raise
+            failures.report(f"Error: {entry.name}: {error.format_message()}")
+
+
+def _launch(entry: Entry, background: bool) -> None:
+    service = entry.make()
+    if entry.takes_background:
+        service.launch(background=background)
+    else:
+        service.launch()
+
+
+def _restart(entry: Entry, background: bool) -> None:
+    service = entry.make()
+    if entry.takes_background:
+        service.restart(background=background)
+    else:
+        service.restart()
+
+
 def start(entries: Sequence[Entry], names: Sequence[str], background: bool) -> None:
-    for entry in chosen(entries, names):
-        service = entry.make()
-        if entry.takes_background:
-            service.launch(background=background)
-        else:
-            service.launch()
+    _each(chosen(entries, names), lambda entry: _launch(entry, background))
 
 
 def restart(entries: Sequence[Entry], names: Sequence[str], background: bool) -> None:
-    for entry in chosen(entries, names):
-        service = entry.make()
-        if entry.takes_background:
-            service.restart(background=background)
-        else:
-            service.restart()
+    _each(chosen(entries, names), lambda entry: _restart(entry, background))
 
 
 def stop(entries: Sequence[Entry], names: Sequence[str]) -> None:
-    for entry in _last_first(entries, names):
-        entry.make().stop()
+    _each(_last_first(entries, names), lambda entry: entry.make().stop())
 
 
 def reset(entries: Sequence[Entry], names: Sequence[str]) -> None:

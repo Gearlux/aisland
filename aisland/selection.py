@@ -39,7 +39,8 @@ import click
 from packaging.requirements import InvalidRequirement, Requirement
 
 from aisland import workspace_file
-from aisland.manager import get_project_metadata
+from aisland.installers import ensure_uv_in_venv
+from aisland.projects import get_project_metadata
 
 
 @dataclass(frozen=True)
@@ -106,9 +107,9 @@ def declared(pyproject_path: Path, axis: Axis) -> List[str]:
 def declarations(root: Path, axis: Axis) -> Dict[str, List[str]]:
     """``{project: its choices}`` for every project offering any for ``axis``.
 
-    Through :func:`aisland.manager.discover_projects`, so a project with an empty folder (a ``pypi`` source) drops
+    Through :func:`aisland.projects.discover_projects`, so a project with an empty folder (a ``pypi`` source) drops
     out on its own."""
-    from aisland.manager import discover_projects
+    from aisland.projects import discover_projects
 
     out: Dict[str, List[str]] = {}
     for pyproject in discover_projects(root):
@@ -132,7 +133,7 @@ def manual(root: Path, axis: Axis) -> Set[str]:
     :data:`EXTRAS` has them."""
     if not axis.from_defined_extras:
         return set()
-    from aisland.manager import discover_projects
+    from aisland.projects import discover_projects
 
     out: Set[str] = set()
     for pyproject in discover_projects(root):
@@ -372,11 +373,11 @@ def apply_selection(root: Path, axis: Axis, uv_cmd: Optional[str] = None) -> int
     many failed.
 
     Only the OFFERING projects are touched: reinstalling the workspace to change one extra would take minutes. The
-    order is setup's (:func:`aisland.manager.get_install_order`): a consumer's extra can name a sibling's
+    order is setup's (:func:`aisland.projects.get_install_order`): a consumer's extra can name a sibling's
     (``models[keras]`` requiring ``trainer[keras]``), and installed first it resolves against the sibling's OLD
     metadata. uv never uninstalls an extra no longer chosen — which packages "belonged" to it is unknowable, and a
     stale wheel costs disk, not correctness."""
-    from aisland.manager import ensure_uv_in_venv, get_install_order
+    from aisland.projects import get_install_order
 
     uv = uv_cmd or ensure_uv_in_venv(root / ".venv" / "bin")
     failures = 0

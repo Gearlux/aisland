@@ -44,7 +44,9 @@ from typing import Any, Dict, Iterator, List, Optional, Sequence, Set, Tuple
 
 import click
 
-from aisland.manager import DATA_DIR, get_workspace_root
+from aisland.errors import AislandError
+from aisland.paths import DATA_DIR
+from aisland.projects import get_workspace_root
 from aisland.sources import known_projects, project_path
 
 #: Backup store, under aisland's own data directory (git-ignored via `data/`, and NOT touched
@@ -318,7 +320,7 @@ def _resolve_project_dir(project: str, workspace_root: Path, *, action: str = "c
     # for a plain name, so `aisland clean acme` would otherwise fall through to the generic
     # "unknown project" list and leave the operator guessing whether it was a typo.
     if project == workspace_root.name or project_path(workspace_root, project).resolve() == workspace_root.resolve():
-        raise click.ClickException(
+        raise AislandError(
             f"Refusing to {action} the workspace root ({workspace_root}).\n"
             "Its ignored set is the shared .venv, the .env every config reads $DATA_ROOT from, "
             "and the generated uv.toml / pyrightconfig.json.\n"
@@ -327,11 +329,11 @@ def _resolve_project_dir(project: str, workspace_root: Path, *, action: str = "c
 
     known = known_projects(workspace_root)
     if project not in known:
-        raise click.ClickException(f"Unknown project '{project}'. Known projects: {', '.join(known)}")
+        raise AislandError(f"Unknown project '{project}'. Known projects: {', '.join(known)}")
 
     project_dir = project_path(workspace_root, project)
     if not (project_dir / ".git").exists():
-        raise click.ClickException(
+        raise AislandError(
             f"{project_dir} is not a git repository — nothing to {action}.\n"
             "A project on a `github` or `pypi` source has no checkout; see: aisland workspace configure source"
         )
@@ -344,7 +346,7 @@ def _resolve_project_dir(project: str, workspace_root: Path, *, action: str = "c
     )
     toplevel = Path(result.stdout.strip()) if result.returncode == 0 else None
     if toplevel is None or toplevel.resolve() != project_dir.resolve():
-        raise click.ClickException(
+        raise AislandError(
             f"{project_dir} is not the root of its git repository"
             + (f" (that is {toplevel})" if toplevel else "")
             + f" — refusing to {action}, since git would report the enclosing repository's ignored files."
@@ -490,14 +492,14 @@ def select_backup(store: Path, project: str, stamp: Optional[str] = None) -> Bac
     """The backup to restore from: ``stamp`` if named, else ``project``'s most recent one."""
     candidates = [backup for backup in read_backups(store) if backup.project == project]
     if not candidates:
-        raise click.ClickException(f"No backups for '{project}' under {store}.\nTake one with: aisland clean {project}")
+        raise AislandError(f"No backups for '{project}' under {store}.\nTake one with: aisland clean {project}")
     if stamp is None:
         return candidates[-1]  # read_backups is oldest-first
     for backup in candidates:
         if backup.path.name == stamp:
             return backup
     available = ", ".join(backup.path.name for backup in candidates)
-    raise click.ClickException(f"No backup '{stamp}' for '{project}'. Available: {available}")
+    raise AislandError(f"No backup '{stamp}' for '{project}'. Available: {available}")
 
 
 def restorable_entries(backup: Backup) -> List[str]:
@@ -527,7 +529,7 @@ def _safe_rel(rel: str) -> Path:
     """
     candidate = Path(rel)
     if candidate.is_absolute() or ".." in candidate.parts:
-        raise click.ClickException(f"Refusing to restore '{rel}': it escapes the project directory.")
+        raise AislandError(f"Refusing to restore '{rel}': it escapes the project directory.")
     return candidate
 
 
@@ -649,7 +651,7 @@ def restore_backup(
     if only:
         unknown = [rel for rel in only if rel not in available]
         if unknown:
-            raise click.ClickException(
+            raise AislandError(
                 f"{backup.path.name} holds no entry {', '.join(repr(rel) for rel in unknown)}.\n"
                 f"It holds: {', '.join(available) or '(nothing)'}"
             )

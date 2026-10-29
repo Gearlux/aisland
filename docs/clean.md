@@ -26,17 +26,17 @@ Git-ignored content in models (/home/you/acme/models)
   ...                                                  1892 files     1.4 GiB  in 48 entries
 
 Deleted 2 backup(s) older than 7 days (1.9 GiB):
-  .../aisland/data/backups/models/20260726-101500
+  .../.aisland/data/backups/models/20260726-101500
 
-Moved 48 entries (1.4 GiB) into .../aisland/data/backups/models/20260804-164945
+Moved 48 entries (1.4 GiB) into .../.aisland/data/backups/models/20260804-164945
 Restore with:  aisland backups restore models
 ```
 
-**Backup layout.** Everything lives under `aisland/data/backups/` (`.aisland/data/backups/` in the workspace when aisland is installed from PyPI; git-ignored, and *not*
+**Backup layout.** Everything lives under `.aisland/data/backups/` in the workspace (a checkout of aisland uses `aisland/data/backups/`; git-ignored, and *not*
 touched by `aisland services reset`, which wipes each **service's** own directory):
 
 ```text
-aisland/data/backups/<project>/<YYYYMMDD-HHMMSS>/
+<workspace>/.aisland/data/backups/<project>/<YYYYMMDD-HHMMSS>/
 ├── manifest.json   # project, timestamp, every entry with its size and file count
 └── files/          # the project tree, mirrored — restore with `cp -R files/. <project>/`
 ```
@@ -58,7 +58,7 @@ aisland backups prune                # apply the retention window without cleani
   tools                  20260804-171924      0d    2.1 MiB       18  in 7d
   models                 20260804-171409      0d    1.4 GiB       47  in 7d
 
-  2 backup(s), 1.4 GiB under /home/you/acme/aisland/data/backups
+  2 backup(s), 1.4 GiB under /home/you/acme/.aisland/data/backups
   Restore the newest:  aisland backups restore tools
 ```
 

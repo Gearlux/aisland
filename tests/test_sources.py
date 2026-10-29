@@ -21,8 +21,10 @@ from typing import Any, Callable, Dict, List, Set
 import click
 import pytest
 
+from aisland import locations
 from aisland import sources as s
 from aisland import workspace_file
+from aisland.errors import AislandError
 from aisland.services.jenkins import JenkinsService
 
 # --- the model ----------------------------------------------------------------------------
@@ -89,8 +91,8 @@ class TestPipVcsUrl:
 
     def test_non_github_remote_is_supported(self) -> None:
         """The URL comes from .gitmodules, so a Bitbucket-hosted submodule works too."""
-        url = s.pip_vcs_url("https://bitbucket.example.com/scm/~u/vendorcli.git", "main")
-        assert url == "git+https://bitbucket.example.com/scm/~u/vendorcli.git@main"
+        url = s.pip_vcs_url("https://bitbucket.example.com/scm/~u/app.git", "main")
+        assert url == "git+https://bitbucket.example.com/scm/~u/app.git@main"
 
 
 # --- committed layer ----------------------------------------------------------------------
@@ -303,7 +305,7 @@ def _fake_capture(*, status: str, head: str, recorded: str) -> Callable[[List[st
 def recorder(monkeypatch: pytest.MonkeyPatch) -> _Recorder:
     rec = _Recorder()
     monkeypatch.setattr(s.subprocess, "check_call", rec.check_call)
-    monkeypatch.setattr(s, "_set_local_submodule_active", lambda *a, **k: None)
+    monkeypatch.setattr(s, "set_submodule_active", lambda *a, **k: None)
     monkeypatch.setattr(s, "submodule_active_map", lambda root: [("loggair", "loggair", True)])
     monkeypatch.setattr(s, "remote_url", lambda root, project: "https://github.com/Gearlux/loggair.git")
     return rec
@@ -526,9 +528,8 @@ def ci_workspace(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
         '[submodule "loggair"]\n\tpath = loggair\n\turl = git@github.com:Gearlux/loggair.git\n'
         '[submodule "confluid"]\n\tpath = confluid\n\turl = git@github.com:Gearlux/confluid.git\n'
     )
-    from aisland import manager
 
-    monkeypatch.setattr(manager, "get_workspace_root", lambda: tmp_path)
+    monkeypatch.setattr(locations, "workspace_root", lambda: tmp_path)
     # Keep the scaffolder off the network: `gh api` would otherwise decide the token step.
     monkeypatch.setattr("aisland.services.jenkins.is_private_repo", lambda repository: False)
     return tmp_path
@@ -770,6 +771,22 @@ class TestRemoteRefExists:
         monkeypatch.setattr(s, "remote_url", lambda root, project: None)
         assert s._remote_ref_exists(tmp_path, "loggair", "dev/main") is True
 
+    def test_the_check_never_prompts_and_a_remote_that_never_answers_is_inconclusive(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """A credential prompt would hold a script or the MCP server forever; a silent remote ends at the limit."""
+        monkeypatch.setattr(s, "remote_url", lambda root, project: "https://example.com/x.git")
+        seen: dict = {}
+
+        def hang(cmd: list, **kw: object) -> subprocess.CompletedProcess:
+            seen.update(kw)
+            raise subprocess.TimeoutExpired(cmd, s.REMOTE_TIMEOUT)
+
+        monkeypatch.setattr(s.subprocess, "run", hang)
+        assert s._remote_ref_exists(tmp_path, "loggair", "dev/main") is True
+        assert seen["timeout"] == s.REMOTE_TIMEOUT
+        assert seen["env"]["GIT_TERMINAL_PROMPT"] == "0"
+
 
 class TestPypiProvenance:
     @staticmethod
@@ -839,7 +856,8 @@ class TestSetProjectSourceRollback:
         monkeypatch.setattr(s, "apply_source", lambda *a, **k: False)
         monkeypatch.setattr(s, "_pypi_provenance", lambda dist, owner: (True, "0.1.0"))
 
-        assert s.set_project_source("loggair", "pypi", workspace_root=ci_workspace) == 1
+        with pytest.raises(AislandError):
+            s.set_project_source("loggair", "pypi", workspace_root=ci_workspace)
         assert s.read_committed_sources(ci_workspace) == {}, "a registry created by the failed run must be removed"
         assert not (ci_workspace / workspace_file.FILE_NAME).exists(), "nothing else was configured: no file is left"
 
@@ -855,16 +873,19 @@ class TestSetProjectSourceRollback:
         before = {"loggair": s.ProjectSource(kind="local", ref="dev/main")}
         s.write_committed_sources(ci_workspace, before)
 
-        assert s.set_project_source("loggair", "pypi", workspace_root=ci_workspace) == 1
+        with pytest.raises(AislandError):
+            s.set_project_source("loggair", "pypi", workspace_root=ci_workspace)
         assert s.read_committed_sources(ci_workspace) == before
 
     def test_rejected_pypi_name_writes_nothing(self, ci_workspace: Path, monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.setattr(s, "_pypi_provenance", lambda dist, owner: (False, "is not published on PyPI"))
-        assert s.set_project_source("loggair", "pypi", workspace_root=ci_workspace) == 1
+        with pytest.raises(AislandError):
+            s.set_project_source("loggair", "pypi", workspace_root=ci_workspace)
         assert not (ci_workspace / workspace_file.FILE_NAME).exists()
 
     def test_unknown_project_writes_nothing(self, ci_workspace: Path) -> None:
-        assert s.set_project_source("nosuchproj", "pypi", workspace_root=ci_workspace) == 1
+        with pytest.raises(AislandError):
+            s.set_project_source("nosuchproj", "pypi", workspace_root=ci_workspace)
         assert not (ci_workspace / workspace_file.FILE_NAME).exists()
 
 
@@ -878,7 +899,7 @@ class TestSetALocalSource:
         (ci_workspace / ".venv" / "bin" / "uv").touch(mode=0o755)
         monkeypatch.setattr(s, "local_override", lambda root, name: None)
         monkeypatch.setattr(s, "set_local_override", lambda *a, **k: None)
-        monkeypatch.setattr("aisland.manager.write_code_workspace", lambda root: None)
+        monkeypatch.setattr("aisland.editor_files.write_code_workspace", lambda root: None)
         (ci_workspace / "workspace.toml").write_text('[project."loggair"]\nurl = "u"\nbranch = "dev/main"\n')
         return ci_workspace
 
@@ -899,14 +920,16 @@ class TestSetALocalSource:
     ) -> None:
         before = (stubbed / "workspace.toml").read_text()
         monkeypatch.setattr(s, "apply_source", lambda *a, **k: False)
-        assert s.set_project_source("loggair", "local", ref="feature", workspace_root=stubbed) == 1
+        with pytest.raises(AislandError):
+            s.set_project_source("loggair", "local", ref="feature", workspace_root=stubbed)
         assert (stubbed / "workspace.toml").read_text() == before
 
     def test_a_github_branch_missing_on_the_remote_is_refused(
         self, stubbed: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         monkeypatch.setattr(s, "_remote_ref_exists", lambda root, project, ref: False)
-        assert s.set_project_source("loggair", "github", workspace_root=stubbed) == 1
+        with pytest.raises(AislandError):
+            s.set_project_source("loggair", "github", workspace_root=stubbed)
         assert "source" not in workspace_file.load(stubbed).projects["loggair"].others
 
 

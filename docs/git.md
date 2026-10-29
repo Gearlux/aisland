@@ -6,36 +6,6 @@ The Git aliases `aisland setup` installs for a workspace whose projects are Git 
 
 A workspace can keep its projects as Git submodules of the root repository. The aliases below work on the root and every active submodule at once.
 
-## Working with Submodules
-
-To execute commands across all submodules, use `git submodule foreach`.
-
-```bash
-# Run tests in all submodules
-git submodule foreach 'pytest'
-
-# Check the status of all submodules
-git submodule foreach 'git status'
-```
-
-### Initializing Submodules
-
-If you've just cloned the workspace or pulled new changes, ensure all submodules are up to date:
-
-```bash
-git submodule update --init --recursive
-```
-
-### Recommended Workspace Configuration
-
-To ensure that your local submodules automatically stay in sync with the **parent repository's recorded hashes**, enable recursive submodule operations:
-
-```bash
-git config submodule.recurse true
-```
-
-*With this on, if a team member commits a new submodule hash to the parent repository, your next `git pull` will automatically download their updated submodule code.*
-
 ### Workspace Git Aliases
 
 The aliases below (`pull-all`, `push-all`, `switch-all`, `merge-all`, `tag-all`, `status-all`, `safe`) are installed by `aisland setup` into the **local** config of the root repository *and* every active submodule. They assume the workspace layout and toolchain, so they are deliberately not written to the global config — that would leak workspace-specific behavior into unrelated repositories. The definitions live in the aisland package's [`setup_git.sh`](../aisland/git/setup_git.sh) (`pull-all` calls [`git_pull_all.sh`](../aisland/git/git_pull_all.sh) beside it); `aisland setup` installs them again, which is also how to pick up a newly activated submodule.

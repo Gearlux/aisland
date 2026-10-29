@@ -14,8 +14,8 @@ Two real drifts motivated this file (2026-08-25):
   five projects became unsatisfiable. The BASE dependencies had been migrated to
   ``>=0.1.0a1``; the ones inside ``optional-dependencies`` were missed — which is
   why the check below walks extras, not just ``project.dependencies``.
-* ``vendorcli`` capped ``liquifai>=0.1.0,<0.2`` while ``liquifai`` moved to
-  ``0.2.0``, so installing vendorcli evicted the local editable checkout and
+* ``app`` capped ``liquifai>=0.1.0,<0.2`` while ``liquifai`` moved to
+  ``0.2.0``, so installing app evicted the local editable checkout and
   replaced it with the last PyPI build that fit the cap.
 
 Deliberately NOT flagged: a dependency written with no specifier at all (a bare
@@ -38,7 +38,7 @@ from typing import Dict, List, NamedTuple
 from packaging.requirements import Requirement
 from packaging.version import Version
 
-from aisland.manager import discover_projects, get_project_metadata, get_workspace_root
+from aisland.projects import discover_projects, get_project_metadata, get_workspace_root
 
 
 class Violation(NamedTuple):
@@ -155,13 +155,13 @@ def test_specs_inside_an_extra_are_checked_too(tmp_path: Path) -> None:
 
 
 def test_an_upper_cap_below_the_sibling_is_a_violation(tmp_path: Path) -> None:
-    """CON case: vendorcli's `liquifai<0.2` against a liquifai that moved to 0.2.0."""
+    """CON case: app's `liquifai<0.2` against a liquifai that moved to 0.2.0."""
     root = _workspace(
         tmp_path,
         ("liquifai", "0.2.0", [], []),
-        ("vendorcli", "0.1.0", ["liquifai>=0.1.0,<0.2"], []),
+        ("app", "0.1.0", ["liquifai>=0.1.0,<0.2"], []),
     )
-    assert find_unsatisfiable_specs(root) == [Violation("vendorcli", "liquifai>=0.1.0,<0.2", "liquifai", "0.2.0")]
+    assert find_unsatisfiable_specs(root) == [Violation("app", "liquifai>=0.1.0,<0.2", "liquifai", "0.2.0")]
 
 
 def test_a_cap_that_still_covers_the_sibling_is_fine(tmp_path: Path) -> None:
@@ -169,7 +169,7 @@ def test_a_cap_that_still_covers_the_sibling_is_fine(tmp_path: Path) -> None:
     root = _workspace(
         tmp_path,
         ("liquifai", "0.2.0", [], []),
-        ("vendorcli", "0.1.0", ["liquifai>=0.2.0,<0.3"], []),
+        ("app", "0.1.0", ["liquifai>=0.2.0,<0.3"], []),
     )
     assert find_unsatisfiable_specs(root) == []
 

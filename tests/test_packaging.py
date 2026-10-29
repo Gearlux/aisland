@@ -24,7 +24,7 @@ from typing import Any, Dict, List, Optional, Tuple
 import pytest
 import yaml
 
-from aisland import manager
+from aisland import editor_files
 
 PROJECT = Path(__file__).resolve().parents[1]
 PACKAGE = PROJECT / "aisland"
@@ -63,7 +63,7 @@ def wheel_members(wheel: Path) -> List[str]:
 
 
 def test_the_package_holds_the_templates_and_the_git_scripts() -> None:
-    assert manager.CODE_WORKSPACE_TEMPLATE.parent == PACKAGE
+    assert editor_files.CODE_WORKSPACE_TEMPLATE.parent == PACKAGE
     assert _package_files_that_are_not_modules() == [
         "aisland/code-workspace.json",
         "aisland/git/git_folder_all.sh",
@@ -245,16 +245,16 @@ def acme(tmp_path: Path) -> Path:
 
 _REPORT = """
 import json
-from aisland import locations, manager, pytest_stats, supervisor
+from aisland import editor_files, locations, paths, projects, pytest_stats, supervisor
 print(json.dumps({
     "package": locations.PACKAGE_DIR.as_posix(),
     "from_checkout": locations.FROM_CHECKOUT,
-    "root": manager.get_workspace_root().as_posix(),
-    "data": manager.DATA_DIR.as_posix(),
-    "bin": manager.BIN_DIR.as_posix(),
+    "root": projects.get_workspace_root().as_posix(),
+    "data": paths.DATA_DIR.as_posix(),
+    "bin": paths.BIN_DIR.as_posix(),
     "supervisor": supervisor.DATA_DIR.as_posix(),
     "stats": pytest_stats.STATS_DIR.as_posix(),
-    "template": manager.CODE_WORKSPACE_TEMPLATE.is_file(),
+    "template": editor_files.CODE_WORKSPACE_TEMPLATE.is_file(),
 }))
 """
 

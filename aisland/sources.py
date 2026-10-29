@@ -44,13 +44,14 @@ tracked file:
 * *effective source* (override, else committed) -> submodule init/deinit + branch switch and the
   editable/PyPI install into the shared ``.venv`` (via :func:`apply_source`) — and, through the
   checkout, the folder list of the generated, gitignored ``*.code-workspace`` file
-  (:func:`aisland.manager.write_code_workspace`, rewritten after every source change).
+  (:func:`aisland.editor_files.write_code_workspace`, rewritten after every source change).
 """
 
 from __future__ import annotations
 
 import functools
 import json
+import os
 import re
 import subprocess
 import tomllib
@@ -62,7 +63,9 @@ import click
 from packaging.version import InvalidVersion, Version
 
 from aisland import failures, locations, workspace_file
-from aisland.manager import _set_local_submodule_active, get_workspace_root, submodule_active_map
+from aisland.errors import AislandError
+from aisland.installers import ensure_uv_in_venv
+from aisland.projects import get_workspace_root, set_submodule_active, submodule_active_map
 from aisland.selection import editable_target
 
 # The closed set of source kinds. Everything that needs to enumerate them (click's
@@ -415,7 +418,7 @@ def apply_source(workspace_root: Path, project: str, source: ProjectSource, uv_c
 
     if source.kind == "local":
         click.echo(f"==> {project}: local checkout @ {source.ref}")
-        _set_local_submodule_active(workspace_root, project, True)
+        set_submodule_active(workspace_root, project, True)
         if not (path / ".git").exists():
             if not _run(["git", "submodule", "update", "--init", rel], workspace_root):
                 return False
@@ -455,7 +458,7 @@ def apply_source(workspace_root: Path, project: str, source: ProjectSource, uv_c
                 err=True,
             )
             return False
-    _set_local_submodule_active(workspace_root, project, False)
+    set_submodule_active(workspace_root, project, False)
     # Uninstall first, unconditionally: an editable install would otherwise keep its .pth entry,
     # and re-pinning github:main -> github:dev/main reports the SAME version, which uv would
     # treat as already satisfied and skip.
@@ -526,9 +529,10 @@ def known_projects(workspace_root: Path) -> List[str]:
 
 
 #: A GitHub remote in each spelling git accepts: ``git@github.com:owner/repo``, ``ssh://git@github.com/owner/repo``
-#: and ``https://github.com/owner/repo``, ``.git`` optional. A deeper path is no repository.
+#: and ``https://github.com/owner/repo`` (a user before the host too: ``https://user@github.com/owner/repo``),
+#: ``.git`` optional. A deeper path is no repository.
 _GITHUB_URL_RE = re.compile(
-    r"^(?:git@github\.com:|ssh://git@github\.com/|https://github\.com/)([^/]+)/([^/]+?)(?:\.git)?/?$"
+    r"^(?:git@github\.com:|ssh://git@github\.com/|https://(?:[^@/]+@)?github\.com/)([^/]+)/([^/]+?)(?:\.git)?/?$"
 )
 
 
@@ -567,7 +571,7 @@ def project_repositories(workspace_root: Path) -> Dict[str, GitHubRepository]:
     return repositories
 
 
-class ReleaseProbeError(click.ClickException):
+class ReleaseProbeError(AislandError, ConnectionError):
     """PyPI could not answer whether ``distribution`` is released — the scaffold must stop, not guess."""
 
     def __init__(self, distribution: str, reason: str) -> None:
@@ -680,6 +684,10 @@ def _pypi_provenance(distribution: str, owner: Optional[str]) -> Tuple[Optional[
     return True, str(info.get("version") or "unknown")
 
 
+#: Seconds `git ls-remote` may take to answer whether a ref exists.
+REMOTE_TIMEOUT = 60
+
+
 def _remote_ref_exists(workspace_root: Path, project: str, ref: str) -> bool:
     """Whether ``ref`` resolves on ``project``'s remote. Unreachable remote => ``True``.
 
@@ -693,12 +701,18 @@ def _remote_ref_exists(workspace_root: Path, project: str, ref: str) -> bool:
         return True
     # One call answers both questions: a non-zero exit means the remote could not be reached,
     # while exit 0 with empty output means it answered and has no such ref.
-    probe = subprocess.run(
-        ["git", "ls-remote", "--heads", "--tags", url, ref],
-        cwd=str(workspace_root),
-        capture_output=True,
-        text=True,
-    )
+    # Never a password prompt (a script or the MCP server would wait on it), never longer than a minute.
+    try:
+        probe = subprocess.run(
+            ["git", "ls-remote", "--heads", "--tags", url, ref],
+            cwd=str(workspace_root),
+            capture_output=True,
+            text=True,
+            env={**os.environ, "GIT_TERMINAL_PROMPT": "0"},
+            timeout=REMOTE_TIMEOUT,
+        )
+    except subprocess.TimeoutExpired:
+        probe = subprocess.CompletedProcess([], 1)
     if probe.returncode != 0:
         click.echo(f"  - Warning: could not reach {project}'s remote to verify '{ref}'; continuing.")
         return True
@@ -722,28 +736,23 @@ def set_project_source(
     A failed apply ROLLS THE CONFIGURATION BACK — a registry claiming a state the working tree
     does not have is worse than no change at all (and `aisland setup` would keep retrying it).
     """
-    from aisland.manager import ensure_uv_in_venv, write_code_workspace
+    from aisland.editor_files import write_code_workspace
 
     root = workspace_root or get_workspace_root()
     if project not in known_projects(root):
-        click.echo(f"Error: '{project}' is not a workspace project. Known: {', '.join(known_projects(root))}", err=True)
-        return 1
+        raise AislandError(f"'{project}' is not a workspace project. Known: {', '.join(known_projects(root))}")
     if kind not in SOURCE_KINDS:
-        click.echo(f"Error: unknown source kind '{kind}'; expected one of {', '.join(SOURCE_KINDS)}", err=True)
-        return 1
+        raise AislandError(f"unknown source kind '{kind}'; expected one of {', '.join(SOURCE_KINDS)}")
     if kind in DETACHED_KINDS and project not in {name for name, _path, _active in submodule_active_map(root)}:
         # A folder project (no .gitmodules entry) has no submodule to deinit and none to check out again.
-        click.echo(
-            f"Error: '{project}' is a folder of the workspace, not a submodule: a {kind} source empties its folder, "
-            "and nothing could check it out again. Keep it local.",
-            err=True,
+        raise AislandError(
+            f"'{project}' is a folder of the workspace, not a submodule: a {kind} source empties its folder, "
+            "and nothing could check it out again. Keep it local."
         )
-        return 1
 
     venv_bin = root / ".venv" / "bin"
     if not venv_bin.exists():
-        click.echo(f"Error: no virtual environment at {root / '.venv'}. Run aisland/setup.sh first.", err=True)
-        return 1
+        raise AislandError(f"no virtual environment at {root / '.venv'}. Run aisland/setup.sh first.")
 
     original = read_committed_sources(root)
     previous_override = local_override(root, project)
@@ -757,12 +766,10 @@ def set_project_source(
         owner = repository.owner if repository else None
         published, detail = _pypi_provenance(distribution, owner)
         if published is False:
-            click.echo(
-                f"Error: '{distribution}' {detail}. Publish it first, or use: "
-                f"aisland workspace configure source set {project} github",
-                err=True,
+            raise AislandError(
+                f"'{distribution}' {detail}. Publish it first, or use: "
+                f"aisland workspace configure source set {project} github"
             )
-            return 1
         if published is None:
             click.echo(f"  - Warning: {detail}; continuing without verifying '{distribution}'.")
         else:
@@ -775,12 +782,10 @@ def set_project_source(
         # A github source DETACHES, so a bad ref would only surface after the directory was
         # already emptied — the same asymmetry the PyPI provenance check guards against.
         if kind == "github" and not _remote_ref_exists(root, project, source.ref):
-            click.echo(
-                f"Error: '{source.ref}' does not exist on {project}'s remote, so a github source "
-                f"could never install. Push the branch first, or pick an existing ref.",
-                err=True,
+            raise AislandError(
+                f"'{source.ref}' does not exist on {project}'s remote, so a github source "
+                f"could never install. Push the branch first, or pick an existing ref."
             )
-            return 1
 
     committed = dict(original)
     file = root / workspace_file.FILE_NAME
@@ -805,8 +810,7 @@ def set_project_source(
                 file.unlink(missing_ok=True)
             else:
                 file.write_text(before)
-        click.echo(f"  - {project}: source change reverted; configuration is unchanged.", err=True)
-        return 1
+        raise AislandError(f"{project}: source change reverted; configuration is unchanged")
 
     # The workspace file is per machine and gitignored, so a --machine-only change rewrites it too.
     write_code_workspace(root)
@@ -826,7 +830,7 @@ def unset_project_source(
     :func:`aisland.activation.reconcile` re-inits it) — set an explicit ``git`` source
     instead if you want the checkout back now.
     """
-    from aisland.manager import write_code_workspace
+    from aisland.editor_files import write_code_workspace
 
     root = workspace_root or get_workspace_root()
     committed = read_committed_sources(root)
@@ -854,13 +858,12 @@ def unset_project_source(
 
 def apply_configured(project: Optional[str] = None, workspace_root: Optional[Path] = None) -> int:
     """Re-apply configured source(s) without changing configuration. Returns an exit code."""
-    from aisland.manager import ensure_uv_in_venv, write_code_workspace
+    from aisland.editor_files import write_code_workspace
 
     root = workspace_root or get_workspace_root()
     venv_bin = root / ".venv" / "bin"
     if not venv_bin.exists():
-        click.echo(f"Error: no virtual environment at {root / '.venv'}. Run aisland/setup.sh first.", err=True)
-        return 1
+        raise AislandError(f"no virtual environment at {root / '.venv'}. Run aisland/setup.sh first.")
     uv_cmd = ensure_uv_in_venv(venv_bin)
 
     if project is None:
