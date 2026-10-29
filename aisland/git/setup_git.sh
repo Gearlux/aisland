@@ -89,7 +89,10 @@ while IFS= read -r sm_path; do
 done < <(git submodule --quiet foreach 'echo "$sm_path"' 2>/dev/null)
 
 set_alias() {
-    local name="$1" value="$2"
+    # Stored on one line: a tool reading `git config --list` line by line (git-filter-repo, which
+    # `aisland wheels prune` runs) takes every line for `key=value`. Every body ends its statements with `;`,
+    # so a newline and a space run the same.
+    local name="$1" value="${2//$'\n'/ }"
     git config --local "alias.$name" "$value"
     local sm
     for sm in "${ACTIVE_SUBMODULE_PATHS[@]}"; do

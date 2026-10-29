@@ -123,3 +123,35 @@ def test_safe_alias_resolves_root_and_project(sandbox: tuple[Path, dict]) -> Non
     at_root = subprocess.check_output(["sh", "-c", snippet], cwd=root, env=env, text=True).strip()
     ws_root, project = at_root.split("|")
     assert Path(ws_root).resolve() == root.resolve() and project == "."
+
+
+def test_every_alias_is_one_line_so_git_config_list_reads_as_key_value_pairs(sandbox: tuple[Path, dict]) -> None:
+    """A tool reading ``git config --list`` line by line (git-filter-repo, which ``aisland wheels prune`` runs)
+    takes every line for ``key=value``: an alias body holding a newline breaks it."""
+    root, env = sandbox
+    _run_script(root, env)
+    for repo in (root, root / "subproject"):
+        for alias in ALIASES:
+            value = _git("config", "--local", "--get", f"alias.{alias}", cwd=repo, env=env)
+            assert "\n" not in value, f"alias.{alias} spans lines in {repo}"
+        listing = _git("config", "--list", cwd=repo, env=env).splitlines()
+        assert all("=" in line for line in listing), [line for line in listing if "=" not in line]
+
+
+def test_a_multi_line_alias_an_earlier_run_wrote_is_replaced_by_one_line(sandbox: tuple[Path, dict]) -> None:
+    root, env = sandbox
+    subprocess.check_call(["git", "config", "--local", "alias.tag-all", "!f() {\n  echo old;\n}; f"], cwd=root, env=env)
+    _run_script(root, env)
+    assert "\n" not in _git("config", "--local", "--get", "alias.tag-all", cwd=root, env=env)
+
+
+def test_the_one_line_aliases_still_run(sandbox: tuple[Path, dict]) -> None:
+    root, env = sandbox
+    _run_script(root, env)
+    usage = subprocess.run(["git", "tag-all"], cwd=root, env=env, capture_output=True, text=True)
+    assert usage.returncode == 1 and "Usage: git tag-all <tag> [message]" in usage.stdout
+    no_message = subprocess.run(["git", "safe"], cwd=root / "subproject", env=env, capture_output=True, text=True)
+    assert no_message.returncode == 1 and "Error: Please provide a commit message." in no_message.stdout
+    status = subprocess.run(["git", "status-all"], cwd=root, env=env, capture_output=True, text=True)
+    assert status.returncode == 0, status.stderr
+    assert status.stdout.startswith("ROOT") and "\nsubproject" in status.stdout

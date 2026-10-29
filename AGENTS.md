@@ -1079,6 +1079,11 @@ User choice 2026-10-08: an aisland command, only the named project's closure, bo
 
 - Aliases live in LOCAL config (root + every active submodule), never global.
   (`tests/test_setup_git_aliases.py`)
+- **Every alias is stored on ONE line (2026-10-29).** `set_alias` turns a body's newlines into spaces: git-filter-repo
+  (which `aisland wheels prune` runs) reads `git config --list` line by line as `key=value` and crashed with
+  `ValueError: dictionary update sequence element #30 has length 1` on the multi-line `tag-all`, `status-all` and
+  `safe`. A body may be written over several lines in the script; each statement ends with `;`
+  (`::test_every_alias_is_one_line_so_git_config_list_reads_as_key_value_pairs`, `::test_the_one_line_aliases_still_run`).
 - **A workspace without `.gitmodules` is read as if each project folder were a submodule (user
   request 2026-10-19).** [folders-as-submodules] `projects.workspace_folders` is the project list: `.gitmodules`' submodules
   when it exists, else every direct, non-hidden subfolder holding a `pyproject.toml`, active. A new
