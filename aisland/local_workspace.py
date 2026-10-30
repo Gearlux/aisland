@@ -18,6 +18,8 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Dict, List, Optional
 
+from aisland import gitcmd, gitmodules
+
 #: This machine's mark of a local workspace, in the root's ``.git/config``.
 MARKER = "aisland.workspace.local"
 
@@ -25,15 +27,11 @@ MARKER = "aisland.workspace.local"
 COMMIT_MESSAGE = "chore: the workspace's projects"
 
 
-def _git(root: Path, *args: str) -> subprocess.CompletedProcess[str]:
-    return subprocess.run(["git", *args], cwd=root, capture_output=True, text=True)
-
-
 def is_local(root: Path) -> bool:
     """Whether ``root`` is a repository marked local on this machine."""
     if not (root / ".git").is_dir():
         return False
-    return _git(root, "config", "--local", "--type=bool", "--get", MARKER).stdout.strip() == "true"
+    return gitcmd.git(root, "config", "--local", "--type=bool", "--get", MARKER).stdout.strip() == "true"
 
 
 def mark(root: Path) -> None:
@@ -43,14 +41,7 @@ def mark(root: Path) -> None:
 
 def submodule_names(root: Path) -> Dict[str, str]:
     """``{path: name}`` of every submodule ``.gitmodules`` declares, in its order."""
-    if not (root / ".gitmodules").is_file():
-        return {}
-    listing = _git(root, "config", "-f", ".gitmodules", "--get-regexp", r"^submodule\..*\.path$").stdout
-    found = {}
-    for line in listing.splitlines():
-        key, _, path = line.partition(" ")
-        found[path] = key[len("submodule.") : -len(".path")]
-    return found
+    return {submodule.path: submodule.name for submodule in gitmodules.read(root)}
 
 
 @dataclass
@@ -78,17 +69,19 @@ def settle(root: Path) -> Settled:
     submodules = submodule_names(root)
     if not submodules:
         return done
-    _git(root, "add", "--", ".gitmodules")
+    gitcmd.git(root, "add", "--", ".gitmodules")
     # Staged against HEAD (or, before the first commit, against nothing): `.gitmodules` and new or moved projects —
     # `--ignore-submodules=none`, or an untracked project (`ignore = all`) is hidden from the diff too.
     staged = set(
-        _git(root, "diff", "--cached", "--name-only", "--no-renames", "--ignore-submodules=none").stdout.splitlines()
+        gitcmd.git(
+            root, "diff", "--cached", "--name-only", "--no-renames", "--ignore-submodules=none"
+        ).stdout.splitlines()
     )
     done.committed = [path for path in [".gitmodules", *submodules] if path in staged]
     if not done.committed:
         return done
     message = f"{COMMIT_MESSAGE} ({', '.join(p for p in done.committed if p != '.gitmodules') or '.gitmodules'})"
-    result = _git(root, "commit", "-q", "-m", message, "--", *done.committed)
+    result = gitcmd.git(root, "commit", "-q", "-m", message, "--", *done.committed)
     if result.returncode != 0:
         done.error = (result.stderr.strip().splitlines() or ["git commit failed"])[-1]
     return done

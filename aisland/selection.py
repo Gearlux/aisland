@@ -29,19 +29,22 @@ An UNSET selection is not an EMPTY one: empty means "none, deliberately"; unset 
 from __future__ import annotations
 
 import dataclasses
+import logging
 import re
 import subprocess
-import tomllib
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Dict, List, Mapping, Optional, Sequence, Set, Tuple
+from typing import Dict, List, Optional, Sequence, Set, Tuple
 
 import click
 from packaging.requirements import InvalidRequirement, Requirement
 
+from aisland import pyproject as pyproject_toml
 from aisland import workspace_file
 from aisland.installers import ensure_uv_in_venv
 from aisland.projects import get_project_metadata
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True)
@@ -87,20 +90,15 @@ def axis_named(root: Path, name: str) -> Optional[Axis]:
 # --- what each project offers -------------------------------------------------------------------------------------
 
 
-def _read(pyproject_path: Path) -> Dict[str, Any]:
-    try:
-        return tomllib.loads(pyproject_path.read_text())
-    except (OSError, tomllib.TOMLDecodeError):
-        return {}
-
-
 def declared(pyproject_path: Path, axis: Axis) -> List[str]:
     """The choices one project offers for ``axis``, in its order; ``[]`` for a project offering none.
 
     For :data:`EXTRAS` that is every extra the project defines but a self-referential one."""
     if axis.from_defined_extras:
         return _selectable_extras(pyproject_path)
-    table = _read(pyproject_path).get("tool", {}).get("aisland", {}).get("selection", {}).get(axis.name, {})
+    table = (
+        pyproject_toml.read(pyproject_path).get("tool", {}).get("aisland", {}).get("selection", {}).get(axis.name, {})
+    )
     choices = table.get("choices", []) if isinstance(table, dict) else []
     return [str(name) for name in choices] if isinstance(choices, list) else []
 
@@ -138,7 +136,7 @@ def manual(root: Path, axis: Axis) -> Set[str]:
 
     out: Set[str] = set()
     for pyproject in discover_projects(root):
-        names = _read(pyproject).get("tool", {}).get("aisland", {}).get("manual-extras", [])
+        names = pyproject_toml.read(pyproject).get("tool", {}).get("aisland", {}).get("manual-extras", [])
         out.update(str(name) for name in names if isinstance(names, list))
     return out
 
@@ -158,7 +156,7 @@ def _selectable_extras(pyproject_path: Path) -> List[str]:
     STRUCTURAL, not a name match: an extra is dropped when one of its requirements is the project's own
     distribution, whatever either is called.
     """
-    project = _read(pyproject_path).get("project", {})
+    project = pyproject_toml.read(pyproject_path).get("project", {})
     me = _canonical(str(project.get("name", "")))
     out: List[str] = []
     for extra, requirements in sorted(project.get("optional-dependencies", {}).items()):
@@ -388,6 +386,7 @@ def apply_selection(root: Path, axis: Axis, uv_cmd: Optional[str] = None) -> int
         target = editable_target(root, project["path"], project["name"])
         click.echo(f"==> Installing {project['name']} ({target})...")
         try:
+            logger.debug("running %s pip install -e %s (in %s)", uv, target, root)
             subprocess.check_call([uv, "pip", "install", "-e", target], cwd=root)
         except subprocess.CalledProcessError as exc:
             click.echo(f"  - Error: Failed to install {project['name']}: {exc}")
@@ -453,7 +452,7 @@ def add_command(root: Path, name: str, value: str) -> str:
 PLAYWRIGHT_BROWSER = "chromium"
 
 
-def dev_extra_names(pyproject_data: Mapping[str, Any]) -> Set[str]:
+def dev_extra_names(pyproject_data: pyproject_toml.Table) -> Set[str]:
     """The distribution names a parsed ``pyproject.toml`` lists under its ``dev`` extra, lower-cased.
 
     Each spec is read with ``packaging.Requirement``, so ``playwright>=1.40``, ``foo[bar]; python_version
@@ -480,8 +479,7 @@ def browser_install_command(pyproject: Path, venv_bin: Path) -> Optional[List[st
     """
     if not pyproject.exists():
         return None
-    with open(pyproject, "rb") as fh:
-        data = tomllib.load(fh)
+    data = pyproject_toml.load(pyproject)
     if "playwright" not in dev_extra_names(data):
         return None
     return [str(venv_bin / "playwright"), "install", PLAYWRIGHT_BROWSER]

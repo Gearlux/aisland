@@ -51,22 +51,26 @@ from __future__ import annotations
 
 import functools
 import json
+import logging
 import os
 import re
 import subprocess
-import tomllib
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Dict, List, Literal, NamedTuple, Optional, Tuple, cast, get_args
+from typing import Any, Dict, List, Literal, NamedTuple, Optional, Tuple, TypedDict, cast, get_args
 
 import click
 from packaging.version import InvalidVersion, Version
 
-from aisland import failures, locations, workspace_file
+from aisland import failures, locations
+from aisland import pyproject as pyproject_toml
+from aisland import workspace_file
 from aisland.errors import AislandError
 from aisland.installers import ensure_uv_in_venv
 from aisland.projects import get_workspace_root, set_submodule_active, submodule_active_map
 from aisland.selection import editable_target
+
+logger = logging.getLogger(__name__)
 
 # The closed set of source kinds. Everything that needs to enumerate them (click's
 # ``Choice``, docs, future MCP/JSON schemas) derives from THIS annotation via
@@ -183,9 +187,9 @@ def write_committed_sources(workspace_root: Path, sources: Dict[str, ProjectSour
     ``pypi``; a git source's ref is the project's ``branch``. A project left with nothing but what a source gave it is
     dropped (:func:`aisland.workspace_file.set_settings`).
     """
-    values: Dict[str, Dict[str, Any]] = {}
+    values: Dict[str, Dict[str, Optional[str]]] = {}
     for name, src in sources.items():
-        given: Dict[str, Any] = {"source": src.kind}
+        given: Dict[str, Optional[str]] = {"source": src.kind}
         if src.kind in REF_KINDS:
             given["branch"] = src.ref
         elif src.version:
@@ -300,16 +304,7 @@ def discover_distribution(project_dir: Path) -> Optional[str]:
     ``pyproject.toml`` left to ask, which is exactly why the answer is persisted into the
     committed registry.
     """
-    pyproject = project_dir / "pyproject.toml"
-    if not pyproject.exists():
-        return None
-    try:
-        with open(pyproject, "rb") as fh:
-            data = tomllib.load(fh)
-    except (OSError, tomllib.TOMLDecodeError):
-        return None
-    name = (data.get("project") or {}).get("name")
-    return name if isinstance(name, str) and name else None
+    return pyproject_toml.name(project_dir / "pyproject.toml")
 
 
 def remote_url(workspace_root: Path, project: str) -> Optional[str]:
@@ -351,6 +346,7 @@ def _run(cmd: List[str], cwd: Path, *, quiet: bool = False) -> bool:
     ``aisland setup`` sweep — the same non-fatal contract as
     :func:`aisland.activation.reconcile`.
     """
+    logger.debug("running %s (in %s)", " ".join(cmd), cwd)
     try:
         subprocess.check_call(cmd, cwd=str(cwd))
         return True
@@ -587,9 +583,35 @@ class ReleaseProbeError(AislandError, ConnectionError):
         self.distribution = distribution
 
 
-def _pypi_json(distribution: str) -> Tuple[Literal["ok", "missing", "unreachable"], Any]:
+class PypiFile(TypedDict, total=False):
+    """One file of a release in PyPI's JSON document (``urls``, ``releases``): the keys aisland reads."""
+
+    filename: str
+    url: str
+    packagetype: str
+    yanked: bool
+
+
+class PypiInfo(TypedDict, total=False):
+    """The ``info`` of PyPI's JSON document: the keys aisland reads."""
+
+    version: str
+    home_page: Optional[str]
+    project_urls: Optional[Dict[str, str]]
+
+
+class PypiProject(TypedDict, total=False):
+    """PyPI's JSON document for a distribution (``https://pypi.org/pypi/<name>/json``): the keys aisland reads."""
+
+    info: PypiInfo
+    releases: Dict[str, List[PypiFile]]
+    urls: List[PypiFile]
+
+
+def pypi_json(distribution: str) -> Tuple[Literal["ok", "missing", "unreachable"], Any]:  # Any: see the docstring
     """PyPI's JSON document for ``distribution``: ``("ok", data)``, ``("missing", None)`` on a 404,
-    or ``("unreachable", reason)`` — shared by the provenance probe and the release probe."""
+    or ``("unreachable", reason)`` — shared by the provenance probe and the release probe. The second item is
+    ``Any``: a :class:`PypiProject`, ``None`` or a reason, told apart by the first, which a union cannot say."""
     import urllib.error
     import urllib.request
 
@@ -604,7 +626,7 @@ def _pypi_json(distribution: str) -> Tuple[Literal["ok", "missing", "unreachable
         return "unreachable", f"could not reach PyPI ({e})"
 
 
-def points_at_owner(info: Dict[str, Any], owner: Optional[str]) -> bool:
+def points_at_owner(info: PypiInfo, owner: Optional[str]) -> bool:
     """The provenance marker: the published metadata names a ``github.com/<owner>/…`` URL (GitHub owners are
     case-insensitive). No owner — a project whose remote is not on GitHub — matches nothing."""
     if owner is None:
@@ -633,14 +655,16 @@ def released_on_pypi(distribution: str, owner: str) -> bool:
     "assume unreleased" flips every released dependency to a GitHub line. Cached per process —
     a workspace scaffold asks about the same few distributions for every project.
     """
-    status, payload = _pypi_json(distribution)
+    status, payload = pypi_json(distribution)
     if status == "missing":
         return False
     if status == "unreachable":
         raise ReleaseProbeError(distribution, str(payload))
-    if not points_at_owner(payload.get("info") or {}, owner):
+    project: PypiProject = payload
+    info: PypiInfo = project.get("info") or {}
+    if not points_at_owner(info, owner):
         return False
-    for version, files in (payload.get("releases") or {}).items():
+    for version, files in (project.get("releases") or {}).items():
         try:
             final = not Version(version).is_prerelease
         except InvalidVersion:
@@ -668,13 +692,14 @@ def _pypi_provenance(distribution: str, owner: Optional[str]) -> Tuple[Optional[
     An unreachable index yields ``None`` (warn and continue) — never a false negative that would
     block an offline machine.
     """
-    status, data = _pypi_json(distribution)
+    status, data = pypi_json(distribution)
     if status == "missing":
         return False, "is not published on PyPI"
     if status == "unreachable":
         return None, str(data)
 
-    info = data.get("info") or {}
+    project: PypiProject = data
+    info: PypiInfo = project.get("info") or {}
     if owner is None:
         return False, (
             f"is published on PyPI (version {info.get('version')}), but its remote is not on GitHub, so aisland "

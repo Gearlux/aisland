@@ -2,11 +2,11 @@
 
 import re
 import subprocess
-import tomllib
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple
 
-from aisland import locations
+from aisland import gitmodules, locations
+from aisland import pyproject as pyproject_toml
 
 
 def get_workspace_root() -> Path:
@@ -61,22 +61,21 @@ def discover_projects(root: Path, workspace_root: Optional[Path] = None) -> List
 
 def get_project_metadata(pyproject_path: Path) -> dict:
     """Extract name and dependencies from pyproject.toml."""
-    with open(pyproject_path, "rb") as f:
-        data = tomllib.load(f)
-        project_info = data.get("project", {})
-        name = project_info.get("name")
-        deps = project_info.get("dependencies", [])
-        # Also include optional-dependencies if they are internal
-        optional_deps = project_info.get("optional-dependencies", {})
-        for extra_deps in optional_deps.values():
-            deps.extend(extra_deps)
+    data = pyproject_toml.load(pyproject_path)
+    project_info = data.get("project", {})
+    name = project_info.get("name")
+    deps = project_info.get("dependencies", [])
+    # Also include optional-dependencies if they are internal
+    optional_deps = project_info.get("optional-dependencies", {})
+    for extra_deps in optional_deps.values():
+        deps.extend(extra_deps)
 
-        return {
-            "name": name,
-            "path": pyproject_path.parent,
-            "dependencies": deps,
-            "has_dev": "dev" in optional_deps,
-        }
+    return {
+        "name": name,
+        "path": pyproject_path.parent,
+        "dependencies": deps,
+        "has_dev": "dev" in optional_deps,
+    }
 
 
 def internal_dependencies(projects: List[dict]) -> Dict[str, List[str]]:
@@ -179,27 +178,7 @@ def submodule_active_map(workspace_root: Path) -> List[Tuple[str, str, bool]]:
     checkout should carry; an ``active = false`` marks one this workspace deliberately skips
     (e.g. an optional or access-gated remote).
     """
-    gitmodules = workspace_root / ".gitmodules"
-    if not gitmodules.exists():
-        return []
-    # ONE git process for every submodule's path and `active` key: every aisland command reads this map, and a
-    # process per submodule cost 36 of them (13.9 s on a loaded machine) in a workspace of 35.
-    listing = subprocess.run(
-        ["git", "config", "-f", str(gitmodules), "--get-regexp", r"^submodule\..*\.(path|active)$"],
-        cwd=workspace_root,
-        text=True,
-        capture_output=True,
-    ).stdout
-    paths: Dict[str, str] = {}
-    active: Dict[str, str] = {}
-    for line in listing.splitlines():
-        key, _, value = line.partition(" ")
-        name, _, variable = key[len("submodule.") :].rpartition(".")
-        if variable == "path":
-            paths.setdefault(name, value)
-        else:
-            active[name] = value.strip()  # git's `--get` answers the last value written; so does this
-    return [(name, path, active.get(name, "").lower() != "false") for name, path in paths.items()]
+    return [(submodule.name, submodule.path, submodule.active) for submodule in gitmodules.read(workspace_root)]
 
 
 def workspace_folders(workspace_root: Path) -> List[Tuple[str, str, bool]]:

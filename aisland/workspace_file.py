@@ -27,7 +27,7 @@ from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Set, Tuple
 
-from aisland import __version__, locations
+from aisland import __version__, gitmodules, locations
 from aisland.discovery import Where, key_line, table_line
 from aisland.errors import AislandError
 
@@ -67,7 +67,7 @@ class Project:
     path: str
     url: Optional[str] = None
     branch: Optional[str] = None
-    others: Dict[str, Any] = field(default_factory=dict)
+    others: Dict[str, Any] = field(default_factory=dict)  # Any: TOML values, each plugin's to check
     where: Optional[Where] = field(default=None, compare=False)
 
 
@@ -76,9 +76,9 @@ class WorkspaceFile:
     """The file's sections: ``[workspace]`` (``settings``), ``[ci]`` (the CI template set, ``ci``) and the projects,
     in the file's order."""
 
-    settings: Dict[str, Any] = field(default_factory=dict)
+    settings: Dict[str, Any] = field(default_factory=dict)  # Any: TOML values, each reader's to check
     projects: Dict[str, Project] = field(default_factory=dict)
-    ci: Dict[str, Any] = field(default_factory=dict)
+    ci: Dict[str, Any] = field(default_factory=dict)  # Any: TOML values, ci_templates' to check
 
 
 # --- reading -------------------------------------------------------------------------------------------------------
@@ -146,7 +146,7 @@ def read(path: Path) -> WorkspaceFile:
     return WorkspaceFile(settings, projects, dict(ci))
 
 
-def _check_format(path: Path, text: str, value: Any) -> None:
+def _check_format(path: Path, text: str, value: object) -> None:
     """Refuse a format this aisland cannot read: a newer one (written by a newer aisland) or a value that is none."""
     if isinstance(value, int) and not isinstance(value, bool) and 1 <= value <= FORMAT:
         return
@@ -234,7 +234,7 @@ def _header(name: str) -> str:
 """
 
 
-def _value(value: Any) -> str:
+def _value(value: object) -> str:
     """One TOML value: text, a number, true/false, a list, or an inline table of them."""
     if isinstance(value, bool):
         return "true" if value else "false"
@@ -290,7 +290,7 @@ def write(root: Path, workspace: WorkspaceFile) -> Optional[Path]:
     return path
 
 
-def set_settings(root: Path, keys: Tuple[str, ...], values: Dict[str, Dict[str, Any]]) -> Path:
+def set_settings(root: Path, keys: Tuple[str, ...], values: Dict[str, Dict[str, Any]]) -> Path:  # Any: TOML values
     """Set one plugin's ``keys`` on the projects of ``<root>/workspace.toml``, leaving every other setting alone.
 
     ``values[project]`` holds the project's values of ``keys`` — a key it leaves out is removed, and a project not in
@@ -326,20 +326,7 @@ class Found:
 
 def submodules(root: Path) -> List[Tuple[str, str, Optional[str]]]:
     """``(path, url, branch)`` of every submodule ``.gitmodules`` declares, in its order; no ``branch`` line is None."""
-    if not (root / ".gitmodules").is_file():
-        return []
-    listing = subprocess.run(
-        ["git", "config", "-f", ".gitmodules", "--get-regexp", r"^submodule\..*\.(path|url|branch)$"],
-        cwd=root,
-        capture_output=True,
-        text=True,
-    ).stdout
-    fields: Dict[str, Dict[str, str]] = {"path": {}, "url": {}, "branch": {}}
-    for line in listing.splitlines():
-        key, _, value = line.partition(" ")
-        name, setting = key[len("submodule.") :].rsplit(".", 1)
-        fields[setting][name] = value
-    return [(path, fields["url"].get(name, ""), fields["branch"].get(name)) for name, path in fields["path"].items()]
+    return [(submodule.path, submodule.url or "", submodule.branch) for submodule in gitmodules.read(root)]
 
 
 def _git_out(folder: Path, *args: str) -> Optional[str]:

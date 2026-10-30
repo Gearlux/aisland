@@ -29,11 +29,11 @@ from __future__ import annotations
 
 import importlib.metadata
 import re
-import tomllib
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Dict, List, Literal, Mapping, Optional, Sequence, Tuple, cast, get_args
 
+from aisland import pyproject as pyproject_toml
 from aisland.errors import AislandError
 from aisland.installers import USERSPACE_TOOLS
 from aisland.projects import workspace_folders
@@ -141,7 +141,7 @@ class Loaded:
     state: PluginState
     kind: Optional[str] = None
     # The plugin object is whatever the project's code defines — aisland only checks its kind's methods.
-    obj: Any = None
+    obj: Any = None  # Any: the project's object, called by its kind's methods (_KIND_METHODS)
 
 
 @dataclass
@@ -187,12 +187,12 @@ def key_line(text: str, header: int, key: str) -> Optional[int]:
 # --- stage 1 --------------------------------------------------------------------------------------------------------
 
 
-def _read(path: Path) -> Tuple[str, Dict[str, Any]]:
+def _read(path: Path) -> Tuple[str, pyproject_toml.Table]:
     text = path.read_text()
     try:
-        return text, tomllib.loads(text)
-    except tomllib.TOMLDecodeError as exc:
-        raise DeclarationError(f"{path}: {exc}") from exc
+        return text, pyproject_toml.parse(text, path)
+    except pyproject_toml.PyprojectError as exc:  # the same words, as the refusal discovery's callers catch
+        raise DeclarationError(exc.message) from exc.__cause__
 
 
 def _strings(value: object) -> Optional[List[str]]:
@@ -202,7 +202,11 @@ def _strings(value: object) -> Optional[List[str]]:
     return None
 
 
-def _project_tables(root: Path) -> List[Tuple[str, Path, str, Dict[str, Any]]]:
+#: ``(project, pyproject path, text, data)`` of one project.
+_ProjectTable = Tuple[str, Path, str, pyproject_toml.Table]
+
+
+def _project_tables(root: Path) -> List[_ProjectTable]:
     """``(project, pyproject path, text, data)`` for every project of the workspace with a ``pyproject.toml``."""
     found = []
     for name, path, _active in workspace_folders(root):
@@ -213,7 +217,7 @@ def _project_tables(root: Path) -> List[Tuple[str, Path, str, Dict[str, Any]]]:
     return found
 
 
-def _selections(projects: List[Tuple[str, Path, str, Dict[str, Any]]], found: Discovery) -> None:
+def _selections(projects: List[_ProjectTable], found: Discovery) -> None:
     defined: Dict[str, Tuple[str, Declared]] = {}
     offered: Dict[str, Dict[str, List[str]]] = {}
     for project, path, text, data in projects:
@@ -262,7 +266,7 @@ def _selections(projects: List[Tuple[str, Path, str, Dict[str, Any]]], found: Di
             found.undefined[name] = list(offers)
 
 
-def _manual_extras(projects: List[Tuple[str, Path, str, Dict[str, Any]]]) -> None:
+def _manual_extras(projects: List[_ProjectTable]) -> None:
     """Check each ``[tool.aisland] manual-extras``: a list of the project's own extras, which setup installs only when
     they are named (:func:`aisland.selection.manual`)."""
     for project, path, text, data in projects:
@@ -282,7 +286,7 @@ def _manual_extras(projects: List[Tuple[str, Path, str, Dict[str, Any]]]) -> Non
                 )
 
 
-def _click_commands(projects: List[Tuple[str, Path, str, Dict[str, Any]]], found: Discovery) -> None:
+def _click_commands(projects: List[_ProjectTable], found: Discovery) -> None:
     """Each ``[tool.aisland] click-commands``: scripts of the project's own ``[project.scripts]`` whose program is a
     click command, which ``aisland completion install`` gives click's completion. Declared, never guessed: whether a
     script is click cannot be read without importing its module, and click's protocol runs the program."""
@@ -303,7 +307,7 @@ def _click_commands(projects: List[Tuple[str, Path, str, Dict[str, Any]]], found
                 found.click_commands.append(name)
 
 
-def _system_tools(projects: List[Tuple[str, Path, str, Dict[str, Any]]], found: Discovery) -> None:
+def _system_tools(projects: List[_ProjectTable], found: Discovery) -> None:
     """Each project's ``[tool.aisland.sys-dependencies]``: ``brew`` and ``userspace`` lists of tool names, a userspace
     tool one aisland can download. Refused here, before anything is installed — the installer would otherwise skip a
     wrong key silently, or name an unknown tool only on Linux, in the middle of setup."""
@@ -334,7 +338,7 @@ def _system_tools(projects: List[Tuple[str, Path, str, Dict[str, Any]]], found: 
                 found.system_tools.append(SystemTool(project, cast(ToolKind, kind), name, where))
 
 
-def _services(projects: List[Tuple[str, Path, str, Dict[str, Any]]], found: Discovery) -> None:
+def _services(projects: List[_ProjectTable], found: Discovery) -> None:
     for project, path, text, data in projects:
         for name, table in data.get("tool", {}).get("aisland", {}).get("service", {}).items():
             where = Where(path, table_line(text, "tool", "aisland", "service", name))
@@ -371,7 +375,7 @@ def _services(projects: List[Tuple[str, Path, str, Dict[str, Any]]], found: Disc
             found.services[name] = Service(name, project, where, tuple(command), port, ready, dict(needs))
 
 
-def _plugins(projects: List[Tuple[str, Path, str, Dict[str, Any]]], found: Discovery) -> None:
+def _plugins(projects: List[_ProjectTable], found: Discovery) -> None:
     for project, path, text, data in projects:
         declared = data.get("project", {}).get("entry-points", {}).get(ENTRY_POINT_GROUP, {})
         distribution = str(data.get("project", {}).get("name") or project)
@@ -484,11 +488,11 @@ def load(found: Discovery) -> Dict[str, Loaded]:
 # --- reporting ------------------------------------------------------------------------------------------------------
 
 
-def _place(declared_project: str, where: Where) -> Dict[str, Any]:
+def _place(declared_project: str, where: Where) -> Dict[str, object]:
     return {"project": declared_project, "file": str(where.file), "line": where.line}
 
 
-def as_json(found: Discovery, loaded: Mapping[str, Loaded]) -> Dict[str, Any]:
+def as_json(found: Discovery, loaded: Mapping[str, Loaded]) -> Dict[str, object]:
     """Everything found, as one JSON-shaped object (what ``aisland workspace show --json`` prints)."""
     return {
         "selections": {

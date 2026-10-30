@@ -5,10 +5,12 @@ import os
 import re
 import tomllib
 from pathlib import Path
-from typing import Any, Dict, List
+from typing import Dict, List
 
 import click
 from packaging.requirements import InvalidRequirement, Requirement
+
+from aisland import pyproject as pyproject_toml
 
 # Workspace-wide uv settings that are no single project's concern. Merged into the generated
 # root uv.toml beneath every activated project's own uv.toml. The never-true marker
@@ -28,7 +30,7 @@ from packaging.requirements import InvalidRequirement, Requirement
 #   ``roboflow`` pins ``==4.10.0.84`` while ``label-studio-sdk`` needs ``>=4.12,<5``: the two are
 #   mutually unsatisfiable, so the choice is made explicitly here rather than left to install
 #   order (verified: roboflow + rfdetr import fine on 4.13).
-_ROOT_UV_BASE: Dict[str, Any] = {
+_ROOT_UV_BASE: pyproject_toml.Table = {
     "override-dependencies": [
         "opencv-python ; sys_platform == 'never'",
         "opencv-python-headless>=4.12,<5",
@@ -54,11 +56,7 @@ _CONDITIONAL_OVERRIDES: Dict[str, List[str]] = {
 
 def _mentions_distribution(pyproject_path: Path, distribution: str) -> bool:
     """True when ``distribution`` is required by a pyproject, in its dependencies or ANY extra."""
-    try:
-        data = tomllib.loads(pyproject_path.read_text())
-    except (OSError, tomllib.TOMLDecodeError):
-        return False
-    project = data.get("project", {})
+    project = pyproject_toml.read(pyproject_path).get("project", {})
     requirements = list(project.get("dependencies", []) or [])
     for extra in (project.get("optional-dependencies", {}) or {}).values():
         requirements += list(extra or [])
@@ -72,7 +70,7 @@ def _mentions_distribution(pyproject_path: Path, distribution: str) -> bool:
     return False
 
 
-def _merge_uv(into: Dict[str, Any], other: Dict[str, Any]) -> None:
+def _merge_uv(into: pyproject_toml.Table, other: pyproject_toml.Table) -> None:
     """Merge ``other`` uv-config into ``into``: list values are unioned (dedup, order-preserving);
     scalars are last-wins."""
     for key, value in other.items():
@@ -84,7 +82,7 @@ def _merge_uv(into: Dict[str, Any], other: Dict[str, Any]) -> None:
             into[key] = value
 
 
-def _emit_uv_toml(data: Dict[str, Any]) -> str:
+def _emit_uv_toml(data: pyproject_toml.Table) -> str:
     """Hand-emit the flat key set uv.toml uses (string scalars + string/scalar lists + bools).
 
     No `tomli-w` dependency for the realistic case; an unsupported (table/array-of-table) key is
@@ -124,7 +122,7 @@ def write_root_uv_toml(workspace_root: Path, activated: List[dict]) -> None:
     so a private index (a company's artifact repository) is present ONLY when that project
     is activated — never committed, so a machine that doesn't activate it never stalls on the index.
     """
-    merged: Dict[str, Any] = {k: (list(v) if isinstance(v, list) else v) for k, v in _ROOT_UV_BASE.items()}
+    merged: pyproject_toml.Table = {k: (list(v) if isinstance(v, list) else v) for k, v in _ROOT_UV_BASE.items()}
     # Conditional overrides: added only where some activated project actually names the
     # conflicting distribution (see _CONDITIONAL_OVERRIDES for why a blanket one is unsafe).
     for distribution, overrides in _CONDITIONAL_OVERRIDES.items():

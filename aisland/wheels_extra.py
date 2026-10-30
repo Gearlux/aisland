@@ -18,11 +18,11 @@ markers may hold the extra or one of the sources.
 from __future__ import annotations
 
 import re
-import tomllib
 from dataclasses import dataclass
 from pathlib import Path
-from typing import AbstractSet, Any, Dict, List, Optional, Sequence, Set, Tuple
+from typing import AbstractSet, List, Optional, Sequence, Set, Tuple
 
+from aisland import pyproject as pyproject_toml
 from aisland.errors import AislandError
 
 #: The first and last line of each generated piece.
@@ -108,8 +108,8 @@ def _key_line(lines: Sequence[str], table: str, key: str, skip: AbstractSet[int]
     return 1
 
 
-def _table(data: Dict[str, Any], dotted: str) -> Dict[str, Any]:
-    node: Any = data
+def _table(data: pyproject_toml.Table, dotted: str) -> pyproject_toml.Table:
+    node: object = data
     for part in dotted.split("."):
         node = node.get(part, {}) if isinstance(node, dict) else {}
     return node if isinstance(node, dict) else {}
@@ -140,10 +140,7 @@ def check_extra(pyproject: Path, extra: str, distributions: Sequence[str]) -> No
     lines = text.splitlines()
     inside = _inside(pyproject, lines)
     rest = [line for index, line in enumerate(lines) if index not in inside]
-    try:
-        data = tomllib.loads("\n".join(rest) + "\n")
-    except tomllib.TOMLDecodeError as error:
-        raise AislandError(f"{pyproject}: {error}") from error
+    data = pyproject_toml.parse("\n".join(rest) + "\n", pyproject)
     manual = _table(data, "tool.aisland").get("manual-extras", [])
     if extra not in manual:
         line = _key_line(lines, "tool.aisland", "manual-extras")
@@ -227,7 +224,7 @@ def write_extra(pyproject: Path, extra: str, wheels: Sequence[ExtraWheel], comma
     lines = _insert(lines, _OPTIONAL, extra_block)
     lines = _insert(lines, _SOURCES, source_block)
     new = "\n".join(lines) + "\n"
-    data = tomllib.loads(new)
+    data = pyproject_toml.parse(new, pyproject)  # check_extra parsed the rest: the generated blocks read back
     expected = sorted(w.distribution for w in wheels)
     if _table(data, _OPTIONAL).get(extra) != expected:  # pragma: no cover - the rendering above guarantees it
         raise AislandError(f"{pyproject}: the written extra {extra!r} does not read back as generated")

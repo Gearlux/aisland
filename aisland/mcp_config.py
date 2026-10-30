@@ -3,13 +3,13 @@ the workspace's projects ship, each started with the workspace's environment."""
 
 import json
 import shutil
-import tomllib
 from pathlib import Path
 from typing import Dict, Optional
 
 import click
 
 from aisland import locations
+from aisland import pyproject as pyproject_toml
 from aisland.errors import AislandError
 from aisland.projects import discover_projects, get_workspace_root
 
@@ -35,11 +35,7 @@ def discover_mcp_servers(workspace_root: Path, venv_bin: Path) -> dict[str, dict
     """
     servers: dict[str, dict] = {}
     for pyproject in discover_projects(workspace_root):
-        try:
-            with open(pyproject, "rb") as f:
-                data = tomllib.load(f)
-        except (OSError, tomllib.TOMLDecodeError):  # discovery reports a broken file; here it lists no server
-            continue
+        data = pyproject_toml.read(pyproject)  # discovery reports a broken file; here it lists no server
         project = data.get("project", {})
         name = project.get("name")
         scripts = project.get("scripts", {})

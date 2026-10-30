@@ -76,23 +76,31 @@ import subprocess
 import sys
 import tarfile
 import tempfile
-import tomllib
 import urllib.request
 import zipfile
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
-from typing import Any, Callable, Dict, List, Literal, Optional, Sequence, Set, Tuple
+from typing import Any, Callable, Dict, List, Literal, Optional, Sequence, Set, Tuple, TypedDict
 
 import click
 from packaging.requirements import InvalidRequirement, Requirement
 from packaging.utils import canonicalize_name
 from packaging.version import InvalidVersion, Version
 
+from aisland import pyproject as pyproject_toml
 from aisland import wheels_bundle, wheels_extra, wheels_install, wheels_unzip
 from aisland.errors import AislandError
 from aisland.installers import ensure_uv_in_venv
 from aisland.projects import workspace_folders
-from aisland.sources import _pypi_json, points_at_owner, project_repositories, read_committed_sources
+from aisland.sources import (
+    PypiFile,
+    PypiInfo,
+    PypiProject,
+    points_at_owner,
+    project_repositories,
+    pypi_json,
+    read_committed_sources,
+)
 from aisland.wheels_install import WheelsFileError, read_wheels
 
 #: The folder inside the project that receives the wheels; the install line names it.
@@ -178,6 +186,27 @@ with open(sys.argv[1], "w") as handle:
 PypiState = Literal["published", "absent", "foreign"]
 
 
+class ModuleFailure(TypedDict, total=False):
+    """One module the import run (:data:`_IMPORT_SCRIPT`) could not import, as it writes it: the error, the module an
+    ``ImportError`` names (``None`` for another error) and the traceback's files, outermost first."""
+
+    error: str
+    missing: Optional[str]
+    frames: List[str]
+
+
+class ImportRun(TypedDict):
+    """The file the import run writes: every module that failed, by name, and every module that imported."""
+
+    failures: Dict[str, ModuleFailure]
+    imported: List[str]
+
+
+#: What an empty venv's check returns: the install's error (``None`` when it installed), the modules that failed to
+#: import, the modules that imported.
+CheckResult = Tuple[Optional[str], Dict[str, ModuleFailure], List[str]]
+
+
 @dataclass(frozen=True)
 class WorkspaceProject:
     """One submodule of the workspace that is a Python project.
@@ -194,7 +223,7 @@ class WorkspaceProject:
     name: str
     distribution: str
     path: Path
-    pyproject: Optional[Dict[str, Any]]
+    pyproject: Optional[pyproject_toml.Table]
 
     @property
     def checked_out(self) -> bool:
@@ -354,7 +383,7 @@ class WheelsReport:
         first = set(self.release_first)
         return [p for p in self.behind if p not in first]
 
-    def to_dict(self) -> Dict[str, Any]:
+    def to_dict(self) -> Dict[str, Any]:  # Any: asdict's JSON-ready nesting, which a reader indexes into
         """The report as JSON-ready data, verdicts included."""
         data = asdict(self)
         data.update(ok=self.ok, release_first=self.release_first, behind=self.behind)
@@ -377,8 +406,7 @@ def workspace_projects(workspace_root: Path) -> Dict[str, WorkspaceProject]:
         path = workspace_root / relative
         pyproject_file = path / "pyproject.toml"
         if pyproject_file.is_file():
-            with open(pyproject_file, "rb") as handle:
-                data = tomllib.load(handle)
+            data = pyproject_toml.load(pyproject_file)
             distribution = (data.get("project") or {}).get("name")
             if not distribution:
                 continue
@@ -430,7 +458,7 @@ def dependency_closure(projects: Dict[str, WorkspaceProject], target: WorkspaceP
     return sorted((projects[key] for key in needed), key=lambda p: p.name)
 
 
-def pypi_state(distribution: str, owner: Optional[str]) -> Tuple[PypiState, Optional[Dict[str, Any]]]:
+def pypi_state(distribution: str, owner: Optional[str]) -> Tuple[PypiState, Optional[PypiProject]]:
     """Whether PyPI has ``distribution`` as THIS workspace's project, with PyPI's JSON when it answered.
 
     The workspace's project is the release whose metadata names ``github.com/<owner>/``, the owner of the project's
@@ -440,16 +468,18 @@ def pypi_state(distribution: str, owner: Optional[str]) -> Tuple[PypiState, Opti
     Raises ``click.ClickException`` when PyPI cannot be reached: a guess would either ship a
     wheel PyPI already serves or leave out one it does not.
     """
-    status, payload = _pypi_json(distribution)
+    status, payload = pypi_json(distribution)
     if status == "missing":
         return "absent", None
     if status == "unreachable":
         raise AislandError(f"cannot tell whether {distribution} is on PyPI: {payload}. Retry when it answers.")
-    if not points_at_owner(payload.get("info") or {}, owner):
-        return "foreign", payload
-    for files in (payload.get("releases") or {}).values():
+    project: PypiProject = payload
+    info: PypiInfo = project.get("info") or {}
+    if not points_at_owner(info, owner):
+        return "foreign", project
+    for files in (project.get("releases") or {}).values():
         if any(not f.get("yanked", False) for f in files or []):
-            return "published", payload
+            return "published", project
     return "absent", None
 
 
@@ -603,9 +633,9 @@ def _download(url: str, dest: Path) -> Path:
     return dest
 
 
-def _pure_wheel(payload: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+def _pure_wheel(payload: PypiProject) -> Optional[PypiFile]:
     """The pure-Python wheel among PyPI's files of its latest version."""
-    entries: List[Dict[str, Any]] = payload.get("urls") or []
+    entries: List[PypiFile] = payload.get("urls") or []
     for entry in entries:
         if entry.get("packagetype") == "bdist_wheel" and str(entry.get("filename", "")).endswith("-none-any.whl"):
             return entry
@@ -615,9 +645,7 @@ def _pure_wheel(payload: Dict[str, Any]) -> Optional[Dict[str, Any]]:
 # --- the empty venv --------------------------------------------------------------------------
 
 
-def install_and_import(
-    uv: str, target_dir: Path, wheels_dir: Path, packages: List[str], scratch: Path
-) -> Tuple[Optional[str], Dict[str, Dict[str, Any]], List[str]]:
+def install_and_import(uv: str, target_dir: Path, wheels_dir: Path, packages: List[str], scratch: Path) -> CheckResult:
     """Install ``target_dir`` in an empty venv with the shipped ``install.py`` (the wheels it needs, through
     uv), and import every module of ``packages``.
 
@@ -635,7 +663,7 @@ def install_and_import(
 
 def install_bundle_and_import(
     uv: str, target_dir: Path, bundle: Path, packages: List[str], scratch: Path
-) -> Tuple[Optional[str], Dict[str, Dict[str, Any]], List[str]]:
+) -> CheckResult:
     """Install ``bundle`` ALONE in an empty venv (``uv pip install <bundle>``: the rest from PyPI) and import every
     module of ``packages``; the venv, the configuration and the result as :func:`install_and_import`'s."""
 
@@ -651,7 +679,7 @@ def _install_and_import(
     packages: List[str],
     scratch: Path,
     install: Callable[[Path, List[str]], List[str]],
-) -> Tuple[Optional[str], Dict[str, Dict[str, Any]], List[str]]:
+) -> CheckResult:
     """Make an empty venv in ``scratch``, run ``install(python, configuration)`` there, import every module of
     ``packages``; ``configuration`` is the target's ``uv.toml`` (when it has one) and the index arguments."""
     scratch.mkdir(parents=True, exist_ok=True)
@@ -680,9 +708,8 @@ def _install_and_import(
     )
     if not result.is_file():
         return f"the import run ended without a result (exit {imported.returncode}):\n{imported.stderr.strip()}", {}, []
-    outcome = json.loads(result.read_text())
-    failures: Dict[str, Dict[str, Any]] = outcome["failures"]
-    return None, failures, list(outcome["imported"])
+    outcome: ImportRun = json.loads(result.read_text())
+    return None, outcome["failures"], list(outcome["imported"])
 
 
 def _owner(module: Optional[str], owners: Dict[str, str]) -> Optional[str]:
@@ -740,7 +767,7 @@ def _frame_owner(filename: str, owners: Dict[str, str]) -> Optional[str]:
 
 
 def attribute_failure(
-    failure: Dict[str, Any],
+    failure: ModuleFailure,
     owners: Dict[str, str],
     behind: List[PublishedDependency],
     new_names: Dict[str, Set[str]],
@@ -777,7 +804,7 @@ def _uv(workspace_root: Path) -> str:
     return ensure_uv_in_venv(workspace_root / ".venv" / "bin")
 
 
-def _find_target(projects: Dict[str, WorkspaceProject], workspace_root: Path, name: str) -> WorkspaceProject:
+def find_target(projects: Dict[str, WorkspaceProject], workspace_root: Path, name: str) -> WorkspaceProject:
     for project in projects.values():
         if project.name == name:
             break
@@ -920,8 +947,9 @@ def read_install_choices(path: Path) -> Dict[str, bool]:
     return {entry.project: entry.install for entry in entries}
 
 
-def _pypi_version(payload: Optional[Dict[str, Any]]) -> str:
-    return str(((payload or {}).get("info") or {}).get("version") or "")
+def _pypi_version(payload: Optional[PypiProject]) -> str:
+    info: PypiInfo = (payload or {}).get("info") or {}
+    return str(info.get("version") or "")
 
 
 def vendor_wheels(
@@ -955,7 +983,7 @@ def vendor_wheels(
             "passed. Drop one of them."
         )
     projects = workspace_projects(workspace_root)
-    target = _find_target(projects, workspace_root, project_name)
+    target = find_target(projects, workspace_root, project_name)
     problem = wheels_folder_problem(target)
     if problem:
         raise AislandError(problem)
@@ -1100,10 +1128,10 @@ def vendor_wheels(
 
         new_names: Dict[str, Set[str]] = {}
         install_error: Optional[str] = None
-        failures: Dict[str, Dict[str, Any]] = {}
+        failures: Dict[str, ModuleFailure] = {}
         imported: List[str] = []
         bundle_install_error: Optional[str] = None
-        bundle_failures: Dict[str, Dict[str, Any]] = {}
+        bundle_failures: Dict[str, ModuleFailure] = {}
         bundle_imported: List[str] = []
         packages: List[str] = []
         if not check:
@@ -1204,7 +1232,7 @@ def vendor_wheels(
 
 
 def _classify(
-    failures: Dict[str, Dict[str, Any]],
+    failures: Dict[str, ModuleFailure],
     owners: Dict[str, str],
     behind: List[PublishedDependency],
     new_names: Dict[str, Set[str]],
@@ -1364,7 +1392,7 @@ def _write_zip(target_name: str, folder: Path) -> Path:
 
 def zip_wheels(workspace_root: Path, project_name: str) -> Path:
     """``aisland wheels zip <project_name>``: the folder as it is, packed into ``<project>-wheels.zip``."""
-    target = _find_target(workspace_projects(workspace_root), workspace_root, project_name)
+    target = find_target(workspace_projects(workspace_root), workspace_root, project_name)
     folder = target.path / WHEELS_DIR
     if not (folder / WHEELS_YAML).is_file():
         raise AislandError(
@@ -1393,9 +1421,9 @@ def install_zip(
     return subprocess.run([str(python), str(zip_path), "--into", str(into), *args]).returncode
 
 
-def _clash(project: WorkspaceProject, payload: Dict[str, Any], version: str) -> List[str]:
+def _clash(project: WorkspaceProject, payload: PypiProject, version: str) -> List[str]:
     """The warning for a name PyPI gives to another project, when pip would take theirs."""
-    theirs = str((payload.get("info") or {}).get("version") or "")
+    theirs = _pypi_version(payload)
     try:
         if Version(theirs) < Version(version):
             return []
@@ -1410,14 +1438,14 @@ def _clash(project: WorkspaceProject, payload: Dict[str, Any], version: str) -> 
 def _compare(
     uv: str,
     project: WorkspaceProject,
-    payload: Dict[str, Any],
+    payload: PypiProject,
     scratch: Path,
     owners: Dict[str, str],
     new_names: Dict[str, Set[str]],
 ) -> PublishedDependency:
     """``project``'s PyPI wheel against the one its checkout builds; records whose modules are whose and
     the names only the checkout's changed files use (``new_names``, for :func:`attribute_failure`)."""
-    pypi_version = str((payload.get("info") or {}).get("version") or "")
+    pypi_version = _pypi_version(payload)
     entry = _pure_wheel(payload)
     if entry is None:
         owners.setdefault(project.distribution.replace("-", "_"), project.distribution)
@@ -1439,7 +1467,7 @@ def _compare(
 # --- rendering -------------------------------------------------------------------------------
 
 
-def _size(n_bytes: int) -> str:
+def human_size(n_bytes: int) -> str:
     return f"{n_bytes / 1e6:.1f} MB" if n_bytes >= 1e6 else f"{n_bytes / 1e3:.0f} kB"
 
 
@@ -1457,7 +1485,7 @@ def _table(rows: List[List[str]]) -> List[str]:
 def _built_lines(report: WheelsReport) -> List[str]:
     """The report's first block: what was built, for the scope it ran with."""
     target, n = report.target, len(report.built)
-    where = f"{report.wheels_dir} ({_size(report.wheels_bytes)})"
+    where = f"{report.wheels_dir} ({human_size(report.wheels_bytes)})"
     if report.scope == "unpublished":
         if not n:
             return [f"{target} needs no workspace project that is not on PyPI; {report.wheels_dir} holds no wheel."]
@@ -1602,7 +1630,7 @@ def render_report(report: WheelsReport) -> str:
         zip_name = Path(report.zip_file).name
         where = "any folder" if report.zip_standalone else f"the {target} folder"
         tail.append(
-            f"Zip: {report.zip_file} ({_size(report.zip_bytes)}) — install it from {where} with: python {zip_name}"
+            f"Zip: {report.zip_file} ({human_size(report.zip_bytes)}) — install it from {where} with: python {zip_name}"
         )
     tail += _bundle_lines(report)
     if tail:
@@ -1617,7 +1645,7 @@ def _bundle_lines(report: WheelsReport) -> List[str]:
         return []
     count = len(bundle.projects)
     lines = [
-        f"Bundle: {bundle.wheel} ({_size(bundle.bytes)}) — {count} project{'s' if count != 1 else ''} in one wheel "
+        f"Bundle: {bundle.wheel} ({human_size(bundle.bytes)}) — {count} project{'s' if count != 1 else ''} in one wheel "
         f"({', '.join(bundle.projects)}); install it with: pip install {Path(bundle.wheel).name}"
     ]
     if not report.checked:

@@ -1,24 +1,26 @@
 import base64
 import functools
 import json
+import logging
 import os
 import re
 import shutil
 import subprocess
 import time
-import tomllib
 import urllib.error
 import urllib.parse
 import urllib.request
 import xml.etree.ElementTree as ET
 from pathlib import Path
-from typing import Any, Dict, List, Mapping, Optional, Sequence, cast
+from typing import Dict, List, Optional, Sequence
 
 import click
 from packaging.requirements import InvalidRequirement, Requirement
 from packaging.utils import canonicalize_name
 
-from aisland import ci_templates, failures, provision, supervisor
+from aisland import ci_templates, failures, provision
+from aisland import pyproject as pyproject_toml
+from aisland import supervisor
 from aisland.downloads import TIMEOUT, download
 from aisland.errors import AislandError
 from aisland.installers import install_brew_packages
@@ -33,6 +35,8 @@ from aisland.selection import read_committed as sel_committed
 from aisland.services.base import BaseService
 from aisland.services.jenkins_java import JenkinsJava, choose_java, find_runtimes, newest_versioned_formula
 from aisland.sources import DEFAULT_REF, GitHubRepository, project_repositories, released_on_pypi
+
+logger = logging.getLogger(__name__)
 
 #: Every GitHub Action a generated ``ci.yml`` uses — the ONE place their versions live. Each is a
 #: MAJOR tag whose ``action.yml`` declares ``using: node24`` (2026-09-26: GitHub annotated every run
@@ -95,7 +99,7 @@ TIMED_OUT_MESSAGE = "${stage} timed out after ${minutes} min - its limit in Jenk
 #: and a catch clause's class name is never checked by it.
 
 
-def registers_slow_marker(pyproject_data: Mapping[str, Any]) -> bool:
+def registers_slow_marker(pyproject_data: pyproject_toml.Table) -> bool:
     """True when the project registers the `slow` pytest marker — its declaration that it has a slow run."""
     markers = pyproject_data.get("tool", {}).get("pytest", {}).get("ini_options", {}).get("markers", [])
     return any(str(m).split(":", 1)[0].strip() == "slow" for m in markers)
@@ -106,8 +110,7 @@ def _project_has_slow_tests(project_dir: Path) -> bool:
     pyproject = project_dir / "pyproject.toml"
     if not pyproject.is_file():
         return False
-    with open(pyproject, "rb") as handle:
-        return registers_slow_marker(tomllib.load(handle))
+    return registers_slow_marker(pyproject_toml.load(pyproject))
 
 
 def discover_github_projects(workspace_root: Path) -> Dict[str, GitHubRepository]:
@@ -131,12 +134,7 @@ def discover_github_projects(workspace_root: Path) -> Dict[str, GitHubRepository
         pyproject = workspace_root / folder / "pyproject.toml"
         name: Optional[str] = None
         if pyproject.exists():
-            try:
-                with open(pyproject, "rb") as fh:
-                    found = (tomllib.load(fh).get("project") or {}).get("name")
-            except (OSError, tomllib.TOMLDecodeError):
-                found = None
-            name = found if isinstance(found, str) and found else None
+            name = pyproject_toml.name(pyproject)
         elif folder in detached:
             name = detached[folder].distribution or folder
         if name:
@@ -153,7 +151,7 @@ def _unreleased_from_wheels(project_name: str, pyproject_path: Path, unreleased:
     found = wheels_extra.remembered_extra(pyproject_path)
     covered: set[str] = set()
     if found is not None:
-        data = tomllib.loads(pyproject_path.read_text(encoding="utf-8"))
+        data = pyproject_toml.load(pyproject_path)
         for spec in (data.get("project", {}).get("optional-dependencies", {}) or {}).get(found[0], []) or []:
             try:
                 covered.add(canonicalize_name(Requirement(str(spec)).name))
@@ -275,7 +273,7 @@ class JenkinsService(BaseService):
                 data = json.loads(response.read().decode())
                 if not isinstance(data, dict):
                     return {}
-                return cast(dict[Any, Any], data)
+                return data
         except (OSError, ValueError):  # no answer, or no JSON
             # Silence this error if we already have a jar file, as we can still proceed.
             if not self.manager_jar.exists():
@@ -429,7 +427,7 @@ class JenkinsService(BaseService):
         """
         installed = self._are_plugins_installed()
         if installed:
-            click.echo("  - All required Jenkins plugins are already installed.")
+            logger.debug("every required Jenkins plugin is already in %s", self.service_data_dir / "plugins")
             return False
 
         plugins_dir = self.service_data_dir / "plugins"
@@ -455,6 +453,7 @@ class JenkinsService(BaseService):
             # Run the manager tool. It handles dependencies and version resolution.
             # We capture output to keep it clean unless there's an error.
             click.echo("  - Downloading necessary Jenkins plugins...")
+            logger.debug("running %s", " ".join(cmd))
             result = subprocess.run(cmd, check=True, capture_output=True, text=True)
             if "Installed" in result.stdout or "Done" in result.stdout:
                 click.echo("  - Jenkins plugins and dependencies synchronized.")
@@ -1055,8 +1054,7 @@ pipeline {{
         # in never churns the other projects' committed CI files. Exit code 5 ("no tests
         # matched the marker") is tolerated in the slow leg: a registered marker with nothing
         # currently marked is a valid state, not a failure.
-        with open(pyproject_path, "rb") as fh:
-            _pyproject_data = tomllib.load(fh)
+        _pyproject_data = pyproject_toml.load(pyproject_path)
         has_slow_marker = registers_slow_marker(_pyproject_data)
         # A project whose `dev` extra lists PLAYWRIGHT gets its browser fetched right after the
         # dev install, in every artifact that runs its tests — the package alone cannot open a
@@ -1114,12 +1112,7 @@ pipeline {{
         def _load_project_table(pyproject: Path) -> dict:
             """The [project] table of one pyproject.toml; {} when missing/unparseable
             (a detached submodule's directory is empty and contributes nothing)."""
-            try:
-                with open(pyproject, "rb") as f:
-                    data = tomllib.load(f)
-            except (OSError, tomllib.TOMLDecodeError):
-                return {}
-            table = data.get("project", {})
+            table = pyproject_toml.read(pyproject).get("project", {})
             return table if isinstance(table, dict) else {}
 
         def _internal_requirements(project_table: dict, extras: frozenset[str]) -> list[Requirement]:
@@ -1673,7 +1666,7 @@ pipeline {{
         dotenv_path = workspace_root / ".env"
         dotenv_vars = supervisor.read_workspace_env(workspace_root)  # the one reader: what the shell reads
         if dotenv_vars:
-            click.echo(f"  - Loaded {len(dotenv_vars)} key(s) from {dotenv_path}")
+            logger.debug("read %d key(s) from %s", len(dotenv_vars), dotenv_path)
         else:
             click.echo("  - No workspace .env found; skipping injection.")
 
