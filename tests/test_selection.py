@@ -185,7 +185,7 @@ def test_the_committed_choice_is_in_workspace_toml_under_the_selections_name(wor
     s.write_committed(workspace, "tracker", ["mlflow"])
     assert workspace_file.load(workspace).settings == {"framework": ["torch", "keras"], "tracker": ["mlflow"]}
     assert (
-        '[workspace]\nframework = ["torch", "keras"]\ntracker = ["mlflow"]\n'
+        '[workspace]\nformat = 1\nframework = ["torch", "keras"]\ntracker = ["mlflow"]\n'
         in (workspace / "workspace.toml").read_text()
     )
     assert not (workspace / "config.toml").exists()
@@ -193,7 +193,7 @@ def test_the_committed_choice_is_in_workspace_toml_under_the_selections_name(wor
 
 def test_writing_a_selection_keeps_the_projects_and_the_other_selections(workspace: Path) -> None:
     (workspace / "workspace.toml").write_text(
-        '[workspace]\ntracker = ["aim"]\n\n[project."models"]\nurl = "https://example.com/models.git"\nbranch = "main"\n'
+        '[workspace]\nformat = 1\ntracker = ["aim"]\n\n[project."models"]\nurl = "https://example.com/models.git"\nbranch = "main"\n'
     )
     s.write_committed(workspace, "framework", ["torch"])
     listed = workspace_file.load(workspace)

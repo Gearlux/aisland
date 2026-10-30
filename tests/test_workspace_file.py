@@ -193,6 +193,7 @@ def test_the_written_file_says_how_to_start_a_machine_from_it_and_reads_back_the
     assert "#        .venv/bin/aisland setup" in text.splitlines()
     assert text.split("\n[workspace]\n", 1)[1] == textwrap.dedent(
         """\
+        format = 1
         framework = ["torch"]
 
         [project."models"]
@@ -393,7 +394,10 @@ def test_a_path_equal_to_the_name_is_not_written(tmp_path: Path) -> None:
     body = written.read_text().split("# =========================================================================\n")[
         -1
     ]
-    assert body == '\n[project."models"]\nurl = "u"\n\n[project."tools"]\npath = "t"\nurl = "v"\n'
+    assert (
+        body
+        == '\n[workspace]\nformat = 1\n\n[project."models"]\nurl = "u"\n\n[project."tools"]\npath = "t"\nurl = "v"\n'
+    )
 
 
 def test_a_project_without_a_url_is_read_its_settings_kept(tmp_path: Path) -> None:
@@ -452,7 +456,7 @@ def test_the_how_to_uses_the_files_name(tmp_path: Path) -> None:
     lines = written.read_text().splitlines()
     assert lines[0] == "# workspace.toml — the studio workspace: its projects and its choices, committed."
     assert "#        uv venv --seed --prompt studio .venv" in lines
-    assert lines[lines.index("[workspace]") + 1] == 'name = "studio"'
+    assert lines[lines.index("[workspace]") + 2] == 'name = "studio"'
 
 
 @pytest.mark.parametrize("value", ["3", '"a/b"', '""', '"two words"'])
@@ -468,3 +472,33 @@ def test_a_broken_file_leaves_the_name_to_the_origin_and_the_folder(tmp_path: Pa
     root = _repository(tmp_path / "plain")
     _file(root, "[workspace]\nname = 3\n")
     assert projects.get_workspace_name(root) == "plain"
+
+
+# --- the format ------------------------------------------------------------------------------------------------
+
+
+def test_the_file_says_its_format_first_and_reads_back_without_it_in_the_settings(tmp_path: Path) -> None:
+    written = workspace_file.write(tmp_path, workspace_file.WorkspaceFile(settings={"name": "studio"}))
+    assert written is not None
+    lines = written.read_text().splitlines()
+    assert lines[lines.index("[workspace]") + 1] == f"format = {workspace_file.FORMAT}"
+    assert workspace_file.read(written).settings == {"name": "studio"}
+
+
+def test_a_file_without_a_format_is_read_as_the_first(tmp_path: Path) -> None:
+    path = _file(tmp_path, '[workspace]\nname = "studio"\n')
+    assert workspace_file.read(path).settings == {"name": "studio"}
+
+
+def test_a_newer_format_is_refused_naming_its_line_and_the_upgrade(tmp_path: Path) -> None:
+    path = _file(tmp_path, '[workspace]\nname = "studio"\nformat = 2\n')
+    assert _refusal(path) == (
+        f"{path}:3: workspace.toml is format 2, written by a newer aisland; this one reads format 1. "
+        "Upgrade it: pip install --upgrade aisland"
+    )
+
+
+@pytest.mark.parametrize("value", ['"1"', "0", "true", "1.5"])
+def test_a_format_that_is_no_whole_number_is_refused(tmp_path: Path, value: str) -> None:
+    path = _file(tmp_path, f"[workspace]\nformat = {value}\n")
+    assert _refusal(path) == f"{path}:2: format must be a whole number, as format = 1"

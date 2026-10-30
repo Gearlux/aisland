@@ -14,7 +14,7 @@ from typing import List, Tuple
 
 import click
 
-from aisland import failures, locations, provision, selection
+from aisland import failures, locations, provision, selection, workspace_check, workspace_file
 from aisland.editor_files import sync_mypy_path, write_code_workspace, write_pyrightconfig
 from aisland.harness import install_harness
 from aisland.installers import ensure_uv_in_venv
@@ -153,12 +153,11 @@ def setup_workspace(non_interactive: bool = False, install_all: bool = False) ->
         click.echo(f"  - {line}")
 
     # 0d. workspace.toml: its projects brought in line with .gitmodules (or the clones) — a new one added, a changed
-    #     url or folder followed, a gone one dropped. Imported here: workspace_file reads discovery, which imports
-    #     this module.
-    from aisland import workspace_file
-
+    #     url or folder followed, a gone one dropped — then each key no part of aisland reads named (a typo).
     for line in workspace_file.refresh(workspace_root):
         click.echo(f"  - {line}")
+    for line in workspace_check.unknown_keys(workspace_root):
+        click.echo(line, err=True)
 
     # 1. The system tools the workspace needs (aisland's own and the projects' sys-dependencies).
     provision.install(workspace_root, aislands_own=False)

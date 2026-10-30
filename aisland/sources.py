@@ -144,6 +144,10 @@ class ProjectSource:
 # --- committed layer: each project's table in <workspace>/workspace.toml ------------------
 
 
+#: The keys a project's table in ``workspace.toml`` holds for its source; its ref is the project's own ``branch``.
+COMMITTED_KEYS = ("source", "version", "distribution")
+
+
 def read_committed_sources(workspace_root: Path) -> Dict[str, ProjectSource]:
     """Each project of ``workspace.toml`` that has a ``source``; its ``branch`` is a git source's ref.
 

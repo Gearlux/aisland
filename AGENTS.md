@@ -28,7 +28,7 @@ expects is an `AislandError`, one `Error:` line; `--debug` adds the traceback. [
 imports no project's code. [test-stats-workspace] the test-run record is written only in an aisland workspace.
 [linux-docker] on Linux the container engine is the system's, checked and never managed. [mcp-services] the MCP
 service tools take any service of the workspace. [manager-split] `aisland setup` runs steps that each live in a
-module of their own.
+module of their own. [workspace-format] `workspace.toml` says its format, and a key no part of aisland reads is named.
 
 ## Current state
 
@@ -275,6 +275,16 @@ start-time port pre-flight naming the PID is the only signal). All service state
   aisland finds — a link counts, and
   `init`'s `.gitignore` says `.venv` (not `.venv/`) so the link is ignored; never add a venv-name setting without
   asking. (`tests/test_workspace_init.py`)
+  - **The file carries its `format` and names a key nobody reads (user pick 2026-10-30, release review item 5).**
+    [workspace-format] `render` writes `[workspace] format = 1` first (`workspace_file.FORMAT`); `read` takes a file
+    without it as format 1, refuses a newer one naming the line and `pip install --upgrade aisland`, and refuses a
+    value that is no whole number. `workspace_check.unknown_keys` names every key no part of aisland reads — a
+    project's: `workspace_file.PROJECT_KEYS` and each plugin's (`sources.COMMITTED_KEYS`, `mirrors.MIRROR_KEY`,
+    `activation.ACTIVE_KEY`, `tracking.TRACK_KEY`, `pytest_stats.RECORD_KEY`); the workspace's: `name`, `format`,
+    `track`, `test-stats` and every selection — with its line and the closest key (`difflib`). `aisland setup`,
+    `workspace show` and `workspace configure` print the lines on stderr and go on: a warning never fails a command.
+    A new setting adds its key to `workspace_check` in the same change, or every workspace using it is warned
+    (`tests/test_workspace_check.py`, `tests/test_workspace_file.py::test_a_newer_format_is_refused_naming_its_line_and_the_upgrade`).
   - **A new workspace whose `init` fails half way is removed (user request 2026-10-28, release review).** A folder
     `init` made, or found empty, goes when a clone fails or the run is interrupted, and the error says so: the same
     command runs again. A folder that held files is never deleted (the error names `.git` and `.gitmodules` to remove);

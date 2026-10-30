@@ -28,7 +28,7 @@ from aisland import tunnel as tunnel_mod
 from aisland import tunnel_connect as tunnel_connect_mod
 from aisland import wheels, wheels_prune
 from aisland import workspace as workspace_mod
-from aisland import workspace_file
+from aisland import workspace_check, workspace_file
 from aisland.clean import DEFAULT_KEEP_DAYS
 from aisland.errors import AislandError
 from aisland.manager import setup_workspace
@@ -433,8 +433,11 @@ def workspace_show(as_json: bool) -> None:
     """
     if not locations.workspace_found():
         raise AislandError(locations.missing_workspace_message())
-    found = discovery.discover(get_workspace_root())
+    root = get_workspace_root()
+    found = discovery.discover(root)
     loaded = discovery.load(found)
+    for line in workspace_check.unknown_keys(root):
+        click.echo(line, err=True)
     if as_json:
         click.echo(json.dumps(discovery.as_json(found, loaded), indent=2))
         return
@@ -581,8 +584,11 @@ def workspace_configure(ctx: click.Context) -> None:
     aisland workspace configure extras set dev --machine-only
     """
     if ctx.invoked_subcommand is None:
-        for line in configure.overview(get_workspace_root() if locations.workspace_found() else None):
+        root = get_workspace_root() if locations.workspace_found() else None
+        for line in configure.overview(root):
             click.echo(line)
+        for line in workspace_check.unknown_keys(root) if root else []:
+            click.echo(line, err=True)
 
 
 @workspace_group.group("provision", invoke_without_command=True)

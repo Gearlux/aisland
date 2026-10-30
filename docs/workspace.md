@@ -227,6 +227,9 @@ say how to start on a machine that has no aisland yet:
 #        .venv/bin/aisland workspace init . --from workspace.toml
 #   3. ...
 #        .venv/bin/aisland setup
+[workspace]
+format = 1
+
 [project."models"]
 path = "models"
 url = "git@github.com:acme/models.git"
@@ -242,6 +245,23 @@ branch it is cloned on (without one, the repository's default branch). A branch 
 kept: setup only writes one for a project that has none. A link in the workspace folder to a project
 (`ml -> machine_learning`) is written as its `path`, so a workspace that uses links comes back with
 direct checkouts.
+
+`format` says which shape of the file this is. A file without it is read as format 1; one written by a newer aisland
+is refused with the upgrade to make:
+
+```text
+Error: workspace.toml:2: workspace.toml is format 2, written by a newer aisland; this one reads format 1. Upgrade it: pip install --upgrade aisland
+```
+
+**A key aisland does not read is named.** A project's table holds `path`, `url`, `branch` and the settings of
+`aisland workspace configure` (`source`, `version`, `distribution`, `mirror`, `active`) and of `track` and
+`test-stats`; `[workspace]` holds `format`, `name`, `track`, `test-stats` and the selections. Any other key — a typo,
+most often — is kept as written and does nothing, so `aisland setup`, `aisland workspace show` and
+`aisland workspace configure` name it with its line and the key it is closest to, and go on:
+
+```text
+Warning: workspace.toml:12: project 'models': sorce is no setting aisland reads (did you mean source?)
+```
 
 **Add a project by writing it in.** A project the file lists with a `url` that the workspace does not have yet is
 cloned by the next `aisland setup`, as a submodule on its `branch`:

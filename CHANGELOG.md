@@ -18,6 +18,8 @@ The first release on PyPI: `pip install aisland`.
   starts and ends, with git's download progress on a terminal. A project written into `workspace.toml` with its url
   is cloned by the next `aisland setup`, and setup leaves every project's `git status` as it found it. An `init` that
   fails half way removes the folder it made, so the same command runs again.
+- **`workspace.toml` carries its `format`** (1): a file a newer aisland wrote is refused with the upgrade to make, and a
+  key no part of aisland reads (a typo such as `sorce`) is named with its line and the key it is closest to.
 - **`aisland workspace configure`** chooses, per project, where it comes from (`source`: a checkout, GitHub or
   PyPI), whether this machine has it (`active`) and where it is mirrored (`mirror`), and per workspace the extras
   the projects offer.

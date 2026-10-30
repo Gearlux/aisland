@@ -41,8 +41,13 @@ _SECTIONS = ("workspace", "project")
 #: :func:`aisland.projects.get_workspace_name`); no selection may take it.
 NAME_KEY = "name"
 
+#: The ``[workspace]`` key saying which shape of the file this is, and the one this aisland reads and writes. A file
+#: without it is read as format 1; a newer format is refused, naming the upgrade.
+FORMAT_KEY = "format"
+FORMAT = 1
+
 #: A project's own keys, in the order they are written; any other key of its table follows, as written.
-_PROJECT_KEYS = ("path", "url", "branch")
+PROJECT_KEYS = ("path", "url", "branch")
 
 #: A folder of the workspace: one plain, visible folder name.
 _FOLDER_NAME = re.compile(r"[A-Za-z0-9_][A-Za-z0-9_.-]*")
@@ -110,16 +115,17 @@ def read(path: Path) -> WorkspaceFile:
         where = Where(path, line if line else _top_line(text, "project"))
         if not isinstance(table, dict):
             raise FileError(f'{where}: project {name!r} is not a table: write it as [project."{name}"]')
-        for key in _PROJECT_KEYS:
+        for key in PROJECT_KEYS:
             if key in table and not isinstance(table[key], str):
                 raise FileError(f'{where}: project {name!r}: {key} must be text, as {key} = "<text>"')
         folder = table.get("path", name)
         if not _FOLDER_NAME.fullmatch(folder):
             raise FileError(f"{where}: project {name!r}: path {folder!r} is not a folder of the workspace")
-        others = {key: value for key, value in table.items() if key not in _PROJECT_KEYS}
+        others = {key: value for key, value in table.items() if key not in PROJECT_KEYS}
         projects[name] = Project(name, folder, table.get("url"), table.get("branch"), others, where)
     _refuse_a_shared_folder(projects)
     settings = dict(data.get("workspace", {}))
+    _check_format(path, text, settings.pop(FORMAT_KEY, FORMAT))
     if NAME_KEY in settings and not (
         isinstance(settings[NAME_KEY], str) and _FOLDER_NAME.fullmatch(settings[NAME_KEY])
     ):
@@ -129,6 +135,20 @@ def read(path: Path) -> WorkspaceFile:
             f'{where}: the workspace\'s name must be one plain name (letters, digits, _ . -), as {NAME_KEY} = "studio"'
         )
     return WorkspaceFile(settings, projects)
+
+
+def _check_format(path: Path, text: str, value: Any) -> None:
+    """Refuse a format this aisland cannot read: a newer one (written by a newer aisland) or a value that is none."""
+    if isinstance(value, int) and not isinstance(value, bool) and 1 <= value <= FORMAT:
+        return
+    header = table_line(text, "workspace")
+    where = Where(path, key_line(text, header, FORMAT_KEY) if header else None)
+    if isinstance(value, int) and not isinstance(value, bool) and value > FORMAT:
+        raise FileError(
+            f"{where}: {FILE_NAME} is format {value}, written by a newer aisland; this one reads format {FORMAT}. "
+            "Upgrade it: pip install --upgrade aisland"
+        )
+    raise FileError(f"{where}: {FORMAT_KEY} must be a whole number, as {FORMAT_KEY} = {FORMAT}")
 
 
 def name_of(root: Path) -> Optional[str]:
@@ -223,12 +243,10 @@ def _key(name: str) -> str:
 
 
 def render(workspace: WorkspaceFile, name: str) -> str:
-    """The whole file: the how-to, ``[workspace]``, then a ``[project."<name>"]`` per project."""
-    lines = [_header(name)]
-    if workspace.settings:
-        lines.append("[workspace]")
-        lines += [f"{_key(key)} = {_value(value)}" for key, value in workspace.settings.items()]
-        lines.append("")
+    """The whole file: the how-to, ``[workspace]`` (its ``format`` first), then a ``[project."<name>"]`` per project."""
+    lines = [_header(name), "[workspace]", f"{FORMAT_KEY} = {FORMAT}"]
+    lines += [f"{_key(key)} = {_value(value)}" for key, value in workspace.settings.items()]
+    lines.append("")
     for project in workspace.projects.values():
         lines.append(f"[project.{json.dumps(project.name)}]")
         if project.path != project.name:

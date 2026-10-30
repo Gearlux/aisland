@@ -165,7 +165,7 @@ class TestCommittedSources:
     def test_writing_sources_leaves_the_workspace_section_alone(self, tmp_path: Path) -> None:
         (tmp_path / "workspace.toml").write_text('[workspace]\nframework = ["torch"]\n')
         s.write_committed_sources(tmp_path, {"loggair": s.ProjectSource(kind="pypi")})
-        assert self._file(tmp_path)["workspace"] == {"framework": ["torch"]}
+        assert self._file(tmp_path)["workspace"] == {"format": 1, "framework": ["torch"]}
 
     def test_an_unknown_kind_is_skipped_with_a_warning_naming_its_line(
         self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
