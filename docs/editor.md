@@ -5,7 +5,10 @@ The files `aisland setup` writes for the editor — Pyright configuration and th
 `aisland setup` also writes **`pyrightconfig.json`** files so Pyright /
 Pylance resolve cross-project imports against the same project set
 installed editable into the `.venv` — one at the workspace root
-(`venvPath: "."`, plus each project dir on `extraPaths`) and one inside
+(`venvPath: "."`, plus each project dir on `extraPaths`, and each project
+inside the workspace on `exclude`, since the workspace file opens every
+project as a folder of its own and analysing it twice runs Pylance out of
+memory; imports still resolve) and one inside
 **every project dir** (`venvPath: ".."` back to the shared `.venv`,
 sibling projects on `extraPaths`) for when you open a single project as
 its own editor window. All copies use relative paths only, so they are
@@ -40,6 +43,15 @@ included. The settings and extension recommendations come from
 `aisland setup`. The file is gitignored and rewritten, so a setting you change
 in VS Code at *Workspace* scope is gone at the next setup — put a personal one
 in your *User* settings.
+
+The file's header says what to do when Pylance, VS Code's Python language
+server, keeps running out of memory in a large workspace (no completion,
+*Go to Symbol in Workspace* finds nothing): add
+`"python.analysis.nodeExecutable": "auto"` to your *User* settings and reload
+the window. The workspace file cannot carry that setting — Pylance makes it
+machine-scoped, and VS Code ignores such a setting in a workspace file.
+[`aisland doctor`](doctor.md) reads the language server's log and says when
+it has been crashing so.
 
 ### One file alone (`aisland workspace code-workspace|bashrc`)
 

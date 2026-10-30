@@ -506,8 +506,8 @@ Root `AGENTS.md` "Two Test Runs" (user ruling 2026-10-05). [test-stats]
 
 - A recurring environment skew becomes a `check_*` in `doctor.py`, listed in `CHECKS`, not
   just a note. Current checks: `opencv`, `huggingface_hub`, `mcp`, `docker-creds`,
-  `colima-tls`, `jenkins-java`, `torch-ext-lock`, `tunnel-relay`, `tunnel-connect` (rules for project authors: root `AGENTS.md` "Known Environment
-  Skews").
+  `colima-tls`, `jenkins-java`, `torch-ext-lock`, `tunnel-relay`, `tunnel-connect`, `pylance-memory` (rules for
+  project authors: root `AGENTS.md` "Known Environment Skews").
   [doctor]
   - Cheap, read-only, specific; a failure carries a copy-pasteable remedy
     (`tests/test_doctor.py::test_every_registered_check_returns_a_result`).
@@ -522,6 +522,15 @@ Root `AGENTS.md` "Two Test Runs" (user ruling 2026-10-05). [test-stats]
   minutes, and only in this Python's own folder (`py<ver>_*`) — another Python's folder is another venv's
   (`tests/test_doctor_torch_extension_lock.py::TestATorchWhoseLockCannotBlock`,
   `::test_another_pythons_folder_is_not_this_venvs`).
+- **`pylance-memory` reads the newest language-server log of a VS Code window opened on the workspace (user pick
+  2026-10-30).** `Python Language Server.log` under `_vscode_logs_root()`, the window picked by the workspace root in
+  its `Starting service instance … for workspace "<root>"` line, the newest by mtime; an unreadable log is passed
+  over. A `JavaScript heap out of memory` line with no `Client: Running with node:` after it fails with the
+  user-settings line `"python.analysis.nodeExecutable": "auto"`; after one, a crash fails with
+  `"python.analysis.nodeArguments"` (16 GB); a start on its own Node.js after the last crash passes saying when. Both
+  settings are `"scope": "machine"`: the remedy names the USER settings, never the workspace file, and aisland never
+  writes the user's VS Code settings. No log of the workspace (a remote machine) passes with a note
+  (`tests/test_doctor_pylance_memory.py`).
 - The `colima-tls` fix stays manual and doctor-guided (user ruling 2026-08-31, do not
   re-litigate). Never auto-install the network's CA or prompt for it.
 
@@ -566,6 +575,12 @@ Root `AGENTS.md` "Two Test Runs" (user ruling 2026-10-05). [test-stats]
   `<workspace>.code-workspace`, and `.project.bashrc.completion` (`aisland completion
   install`). Never commit editor
   `extraPaths`. (`tests/test_pyrightconfig.py`, `tests/test_mcp_config.py`)
+  - **The root `pyrightconfig.json` excludes every project inside the workspace (user pick 2026-10-30).** The
+    workspace file opens each project as a folder of its own; the root's analysis reading them too (2,721 files in
+    acme) ran Pylance out of memory every half minute. Imports still resolve through `extraPaths`; a project
+    outside the workspace (`../x`) is not excluded; a project's own file excludes none. A window opened on the bare
+    root indexes no project — open the workspace file
+    (`tests/test_pyrightconfig.py::TestWritePyrightConfig::test_the_root_excludes_every_project_inside_it`).
 - **The workspace's `env.complete` and `env.example` are generated per machine from each project's own two files
   (user choices 2026-10-27: `env.complete` every variable, written by the agent; `env.example` the common ones,
   written by the user; never committed; a generated test per project; `--missing`).** [env-example]
@@ -636,6 +651,12 @@ Root `AGENTS.md` "Two Test Runs" (user ruling 2026-10-05). [test-stats]
   this platform's profile keeps its shell when the machine has it, else the bash on PATH (in acme on
   this machine the output is unchanged). (`::test_another_workspace_s_settings_name_its_own_folder`)
   (`tests/test_code_workspace.py`) [folders]
+  - **The header says what to do when Pylance crashes (user request 2026-10-30).** `_CODE_WORKSPACE_HEADER` carries
+    the steps — confirm `JavaScript heap out of memory` in the "Python Language Server" output, put
+    `"python.analysis.nodeExecutable": "auto"` in the USER settings, reload the window. Never write that setting into
+    the template: Pylance declares it `"scope": "machine"`, which VS Code ignores in a workspace file; the template is
+    strict JSON, so the header is the file's one place for a comment
+    (`::test_the_header_says_what_to_do_when_pylance_crashes`).
   - The log folder is loggair's answer, asked out of process (`python -P -m loggair --json`,
     from the root, `.env` over the environment): never a path typed into aisland, never an
     import of loggair. (`::test_the_real_loggair_report_names_its_log_folder`)

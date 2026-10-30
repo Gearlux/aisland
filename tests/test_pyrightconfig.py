@@ -37,7 +37,28 @@ class TestWritePyrightConfig:
             "**/.venv",
             "**/.*_cache",
             "**/node_modules",
+            "confluid",
+            "matrainer",
         ]
+
+    def test_the_root_excludes_every_project_inside_it(self, tmp_path: Path) -> None:
+        """An editor window lists each project as a folder of its own, whose instance analyses it; the root's
+        instance analysing them too read every file twice and ran Pylance out of memory. Imports still resolve
+        through `extraPaths`. A project outside the workspace is no file of the root's: it is not excluded."""
+        projects = _fake_projects(tmp_path / "acme", ["matrainer", "confluid"])
+        (tmp_path / "elsewhere").mkdir()
+        projects.append({"name": "elsewhere", "path": tmp_path / "elsewhere"})
+        write_pyrightconfig(tmp_path / "acme", projects)
+
+        data = json.loads((tmp_path / "acme" / "pyrightconfig.json").read_text())
+        assert data["exclude"][-2:] == ["confluid", "matrainer"]
+        assert "../elsewhere" not in data["exclude"]
+        assert data["extraPaths"] == ["../elsewhere", "confluid", "matrainer"]
+
+    def test_a_projects_own_config_excludes_no_project(self, tmp_path: Path) -> None:
+        write_pyrightconfig(tmp_path, _fake_projects(tmp_path, ["confluid", "matrainer"]))
+        data = json.loads((tmp_path / "confluid" / "pyrightconfig.json").read_text())
+        assert data["exclude"] == ["**/__pycache__", "**/.venv", "**/.*_cache", "**/node_modules"]
 
     def test_extra_paths_are_relative_and_sorted(self, tmp_path: Path) -> None:
         projects = _fake_projects(tmp_path, ["matrainer", "confluid", "raidar-ultralytics"])

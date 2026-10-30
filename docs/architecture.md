@@ -1474,6 +1474,39 @@ not judged by this one's torch.
 
 **What you may change.** Lower `_TORCH_OS_LOCK_SINCE` to 2.14.0 once a 2.14.0 build is measured the same way.
 
+---
+
+### Pylance runs out of memory: the root excludes its projects, the doctor reads the log (2026-10-30)
+
+**Context.** In a workspace of 28 projects the generated workspace file has 30 folders: the root, every project,
+the log folder. Pylance starts one analysis per folder, and the root's covered every project again (2,721 files,
+past its 2,000-file index limit). It runs on VS Code's own Node.js, whose heap is about 1 GB: it died with
+`JavaScript heap out of memory` while first reading the folders, VS Code restarted it, it died again — seven times
+in a morning, every 25 s at worst — and nothing on screen said why; completion and symbol search were simply gone.
+Excluding the projects from the root alone did not stop it (two more crashes); a Node.js of Pylance's own
+(`python.analysis.nodeExecutable: auto`, an 8 GB heap by its default `--max-old-space-size=8192`) did. Pylance
+declares that setting, and `nodeArguments`, `"scope": "machine"`: VS Code reads it only from User settings.
+
+**Decision.** The root `pyrightconfig.json` excludes every project inside the workspace (each is a folder of its
+own; imports still resolve through `extraPaths`). The fix aisland cannot apply is written where the user meets the
+problem: the workspace file's header gives the steps, and `aisland doctor`'s `pylance-memory` reads the newest
+language-server log of a window opened on the workspace and fails with the line to add. aisland never writes the
+user's VS Code settings.
+
+**Consequences.** Each file is analysed once. A window opened on the bare root folder indexes no project. The check
+reads VS Code's local logs, so a remote machine passes with a note; a crash after which Pylance started on its own
+Node.js passes, saying when.
+
+**Example.**
+
+```
+✗ pylance-memory   Pylance ran out of memory 7 times, the last at 2026-10-30 12:06:49 (…/window9/exthost/ms-python.python/Python Language Server.log) — no completion or symbol search while it restarts
+    fix: add "python.analysis.nodeExecutable": "auto" to your VS Code User settings (Cmd/Ctrl+Shift+P → "Preferences: Open User Settings (JSON)"), then "Developer: Reload Window"
+```
+
+**What you may change.** The log lines the check matches (`_PYLANCE_OUT_OF_MEMORY`, `_PYLANCE_OWN_NODE`) when
+Pylance changes its wording; the 16 GB of the second remedy.
+
 ## Every pytest run of a workspace project is recorded, and the split is read from the record
 
 *2026-10-05*

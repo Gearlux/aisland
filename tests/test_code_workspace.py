@@ -171,7 +171,7 @@ def test_another_workspace_s_settings_name_its_own_folder(tmp_path: Path, monkey
     editor_files.write_code_workspace(root)
     text = editor_files.code_workspace_path(root).read_text()
     settings = _read(root)["settings"]
-    assert "WORKSPACE" not in text.split("\n", 6)[-1]  # past the header: the template's name is replaced
+    assert "WORKSPACE" not in text[len(editor_files._CODE_WORKSPACE_HEADER) :]  # the template's name is replaced
     assert settings["python.defaultInterpreterPath"] == "${workspaceFolder:acme}/.venv/bin/python"
     assert settings["terminal.integrated.defaultProfile.osx"] == "acme-bash"
     assert settings["terminal.integrated.profiles.osx"]["acme-bash"]["args"] == [
@@ -232,6 +232,20 @@ def test_the_regenerate_header_is_a_command_the_cli_accepts(workspace: Path) -> 
     # The command's own parser is the authority on whatever follows its name.
     with command.make_context(argv[2], argv[3:], resilient_parsing=False):
         pass
+
+
+def test_the_header_says_what_to_do_when_pylance_crashes(workspace: Path) -> None:
+    """The setting that fixes the crash is machine-scoped, so the file can only say where it goes: user settings."""
+    editor_files.write_code_workspace(workspace)
+    text = editor_files.code_workspace_path(workspace).read_text()
+    header = text[: len(editor_files._CODE_WORKSPACE_HEADER)]
+    assert header == editor_files._CODE_WORKSPACE_HEADER
+    assert all(line.startswith("//") for line in header.splitlines())
+    assert "IF PYLANCE CRASHES" in header
+    assert '"python.analysis.nodeExecutable": "auto"' in header
+    assert "Preferences: Open User Settings (JSON)" in header
+    assert "Developer: Reload Window" in header
+    assert "python.analysis.nodeExecutable" not in _read(workspace)["settings"]
 
 
 def test_an_unchanged_file_is_not_rewritten(workspace: Path) -> None:

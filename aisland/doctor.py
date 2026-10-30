@@ -31,7 +31,7 @@ from typing import Callable, List, Optional, Tuple
 import click
 from packaging.version import InvalidVersion, Version
 
-from aisland import tunnel, tunnel_connect
+from aisland import locations, tunnel, tunnel_connect
 from aisland.services.docker import DockerService
 from aisland.services.jenkins import JenkinsService
 from aisland.services.jenkins_java import JenkinsJava
@@ -520,6 +520,108 @@ def check_tunnel_connect() -> CheckResult:
     return CheckResult("tunnel-connect", True, f"devtunnel ready: {account}")
 
 
+#: Each VS Code window's Python language-server log, below `<logs>/<session>/window<N>/exthost/`.
+_PYLANCE_LOG = Path("ms-python.python") / "Python Language Server.log"
+
+#: What V8 prints when the language server's heap is full; every worker thread prints it, so a crash is the
+#: lines of one second.
+_PYLANCE_OUT_OF_MEMORY = "JavaScript heap out of memory"
+
+#: What Pylance logs when it starts on a Node.js of its own (`python.analysis.nodeExecutable`), never on VS Code's.
+_PYLANCE_OWN_NODE = "Client: Running with node: "
+
+#: The fix while Pylance runs on VS Code's Node.js (a heap of about 1 GB): its own, with `--max-old-space-size=8192`
+#: (its default `python.analysis.nodeArguments`). Both settings are machine-scoped: VS Code ignores them in a
+#: workspace file, so they go in the User settings.
+_PYLANCE_OWN_NODE_REMEDY = (
+    'add "python.analysis.nodeExecutable": "auto" to your VS Code User settings (Cmd/Ctrl+Shift+P → '
+    '"Preferences: Open User Settings (JSON)"), then "Developer: Reload Window"'
+)
+
+#: The fix when Pylance ran out of memory on its own Node.js too: a larger heap than its default 8 GB.
+_PYLANCE_HEAP_REMEDY = (
+    'add "python.analysis.nodeArguments": ["--max-old-space-size=16384"] to your VS Code User settings '
+    '(Cmd/Ctrl+Shift+P → "Preferences: Open User Settings (JSON)"), then "Developer: Reload Window"'
+)
+
+
+def _vscode_logs_root() -> Path:
+    """Where VS Code keeps its logs: `~/Library/Application Support/Code/logs` on macOS, `%APPDATA%\\Code\\logs` on
+    Windows, `$XDG_CONFIG_HOME/Code/logs` (else `~/.config/Code/logs`) elsewhere."""
+    if sys.platform == "darwin":
+        return Path.home() / "Library" / "Application Support" / "Code" / "logs"
+    if sys.platform == "win32":
+        appdata = os.environ.get("APPDATA")
+        return (Path(appdata) if appdata else Path.home() / "AppData" / "Roaming") / "Code" / "logs"
+    xdg = os.environ.get("XDG_CONFIG_HOME")
+    return (Path(xdg) if xdg else Path.home() / ".config") / "Code" / "logs"
+
+
+def _pylance_log(logs: Path, workspace: Path) -> Optional[Tuple[Path, List[str]]]:
+    """The newest language-server log of a window opened on `workspace`, and its lines; None when there is none.
+
+    A window's log names each of its folders (`Starting service instance … for workspace "<folder>"`), so the
+    workspace's own folder picks its windows out; a log that cannot be read is passed over."""
+    if not logs.is_dir():
+        return None
+    marker = f'for workspace "{workspace}"'
+    candidates = sorted(logs.glob(f"*/window*/exthost/{_PYLANCE_LOG.as_posix()}"), key=lambda p: p.stat().st_mtime)
+    for path in reversed(candidates):
+        try:
+            text = path.read_text(errors="replace")
+        except OSError:
+            continue
+        if marker in text:
+            return path, text.splitlines()
+    return None
+
+
+def check_pylance_memory() -> CheckResult:
+    """VS Code's Python language server does not keep running out of memory in this workspace's window.
+
+    Pylance runs on VS Code's own Node.js, whose heap is about 1 GB; a workspace of many projects fills it while
+    the server first reads them, it dies with `JavaScript heap out of memory`, VS Code restarts it, and it dies
+    again — no completion, hover or symbol search, with nothing on screen saying why (2026-10-30: seven crashes
+    in a morning, every half minute at worst). On a Node.js of its own (`python.analysis.nodeExecutable: auto`)
+    it gets 8 GB. Read from the newest log of a window opened on the workspace: a crash after which Pylance
+    started on its own Node.js passes; one before any such start fails with the setting to add, and one on its
+    own Node.js too with a larger heap. A machine with no VS Code log of the workspace (a remote one: the logs
+    are the local VS Code's) passes with a note.
+    """
+    found = _pylance_log(_vscode_logs_root(), locations.workspace_root())
+    if found is None:
+        return CheckResult("pylance-memory", True, "no VS Code window of this workspace has logged Pylance here")
+    log, lines = found
+    crashes = [index for index, line in enumerate(lines) if _PYLANCE_OUT_OF_MEMORY in line]
+    if not crashes:
+        return CheckResult("pylance-memory", True, f"Pylance has not run out of memory ({log})")
+    last_crash = crashes[-1]
+    own_node = [index for index, line in enumerate(lines) if _PYLANCE_OWN_NODE in line]
+    crashed_at = lines[last_crash][:19]
+    if own_node and own_node[-1] > last_crash:
+        since = lines[own_node[-1]][:19]
+        return CheckResult(
+            "pylance-memory",
+            True,
+            f"Pylance ran out of memory at {crashed_at} and runs on its own Node.js since {since}",
+        )
+    if own_node:
+        return CheckResult(
+            "pylance-memory",
+            False,
+            f"Pylance ran out of memory at {crashed_at} on its own Node.js too ({log})",
+            _PYLANCE_HEAP_REMEDY,
+        )
+    times = len({lines[index][:19] for index in crashes})
+    return CheckResult(
+        "pylance-memory",
+        False,
+        f"Pylance ran out of memory {times} times, the last at {crashed_at} ({log}) — no completion or symbol "
+        "search while it restarts",
+        _PYLANCE_OWN_NODE_REMEDY,
+    )
+
+
 #: Every check the doctor runs, in report order.
 CHECKS: Tuple[Callable[[], CheckResult], ...] = (
     check_opencv_single_variant,
@@ -531,6 +633,7 @@ CHECKS: Tuple[Callable[[], CheckResult], ...] = (
     check_torch_extension_lock,
     check_tunnel_relay,
     check_tunnel_connect,
+    check_pylance_memory,
 )
 
 
@@ -570,6 +673,7 @@ __all__ = [
     "check_jenkins_java",
     "check_mcp_server_api",
     "check_opencv_single_variant",
+    "check_pylance_memory",
     "check_torch_extension_lock",
     "run_checks",
     "run_doctor",

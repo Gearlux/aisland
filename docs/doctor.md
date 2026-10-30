@@ -28,8 +28,9 @@ aisland doctor
 #   ✓ torch-ext-lock   torch 2.14.1 holds an OS lock while it builds — a killed build leaves no lock that blocks
 #   ✓ tunnel-relay     no tunnel configured here (nothing in ~/.aisland/tunnel)
 #   ✓ tunnel-connect   `aisland tunnel connect` not used here (nothing in ~/.aisland/tunnel)
+#   ✓ pylance-memory   Pylance ran out of memory at 2026-10-30 12:06:49 and runs on its own Node.js since 2026-10-30 12:15:51
 #
-# All 9 checks passed.
+# All 10 checks passed.
 ```
 
 It exits non-zero when a check fails, so it works as a CI preflight step. Current checks:
@@ -45,6 +46,7 @@ It exits non-zero when a check fails, so it works as a CI preflight step. Curren
 | `torch-ext-lock` | With torch 2.14.1 or newer it passes: torch builds under an OS lock that a killed process releases, and the `lock` file it leaves after every build blocks nothing. With an older torch: no JIT-extension build lock in this Python's folder (`<torch extensions root>/py<this python>_<accelerator>/<ext>/lock`, the root `$TORCH_EXTENSIONS_DIR` or torch's per-user cache) is older than two minutes — a build takes seconds, and torch waits on an existing lock without a timeout, deleting it only when the compiling process lives through the build; a younger lock is a build in progress and passes | An import that compiles the extension sleeps forever with no error (about 8 s of CPU, then nothing) — an import that hangs instead of failing; the fix line is the `rm` of the file |
 | `tunnel-relay` | A machine that has used `aisland tunnel` reaches the relay the tunnel dials out to (probed only there) | The tunnel starts, logs nothing useful and never appears in the editor; the fix line is the `curl` that confirms it |
 | `tunnel-connect` | A machine that has used `aisland tunnel connect` has `devtunnel` on PATH, `msgpack` (the `[connect]` extra) and a signed-in `devtunnel` (checked only there; offline, it passes with a note) | `connect` stops with `No 'devtunnel' command found`, `needs msgpack` or `devtunnel is not signed in`; the fix line installs or signs in |
+| `pylance-memory` | VS Code's Python language server, Pylance, has not run out of memory in the newest window opened on this workspace — or has started on a Node.js of its own since (read from that window's `Python Language Server.log` under VS Code's `logs` folder; a machine with no such log passes with a note) | No completion, no hover, *Go to Symbol in Workspace* finds nothing; the log repeats `FATAL ERROR: … JavaScript heap out of memory` every half minute or so. The fix line adds `"python.analysis.nodeExecutable": "auto"` to the User settings — never the workspace file: VS Code ignores a machine-scoped setting there — and, when it crashed on its own Node.js too, a larger heap through `"python.analysis.nodeArguments"` |
 
 Every check is cheap and read-only, and reports one specific skew with the command that fixes it.
 

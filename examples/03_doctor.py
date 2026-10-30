@@ -32,6 +32,7 @@ CHECKS = {
     "torch-ext-lock",
     "tunnel-relay",
     "tunnel-connect",
+    "pylance-memory",
 }
 
 
