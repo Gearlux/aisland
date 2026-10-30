@@ -19,7 +19,17 @@ import tomllib
 from pathlib import Path
 from typing import Any, Dict, List, Tuple
 
-from aisland import activation, discovery, mirrors, pytest_stats, selection, sources, tracking, workspace_file
+from aisland import (
+    activation,
+    ci_templates,
+    discovery,
+    mirrors,
+    pytest_stats,
+    selection,
+    sources,
+    tracking,
+    workspace_file,
+)
 from aisland.discovery import Where, key_line, table_line
 
 #: Every key a project's table may hold, and the part of aisland that reads it.
@@ -30,6 +40,7 @@ PROJECT_KEYS: Tuple[str, ...] = (
     activation.ACTIVE_KEY,
     tracking.TRACK_KEY,
     pytest_stats.RECORD_KEY,
+    workspace_file.CI_SECTION,
 )
 #: Every key ``[workspace]`` may hold besides the selections.
 WORKSPACE_KEYS: Tuple[str, ...] = (
@@ -74,6 +85,14 @@ def unknown_keys(root: Path) -> List[str]:
             if key not in known:
                 where = Where(path, key_line(text, header, key) if header else None)
                 warnings.append(f"Warning: {where}: [workspace] {key} is no setting aisland reads{_hint(key, known)}")
+    ci = data.get(workspace_file.CI_SECTION)
+    if isinstance(ci, dict):
+        known = (ci_templates.TEMPLATES_KEY, ci_templates.VARIABLES_KEY)
+        header = table_line(text, workspace_file.CI_SECTION)
+        for key in ci:
+            if key not in known:
+                where = Where(path, key_line(text, header, key) if header else None)
+                warnings.append(f"Warning: {where}: [ci] {key} is no setting aisland reads{_hint(key, known)}")
     projects = data.get("project")
     for name, table in projects.items() if isinstance(projects, dict) else []:
         if not isinstance(table, dict):

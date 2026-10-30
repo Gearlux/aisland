@@ -1,0 +1,140 @@
+name: <[ title ]> CI
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+
+jobs:
+  quality-gates:
+    name: Quality Gates
+    runs-on: ubuntu-latest
+    steps:
+    - uses: <[ actions['checkout'] ]>
+<% if token_owner %><% include '_gh_token.yml.jinja' %><% endif %>    - name: Set up Python 3.12
+      uses: <[ actions['setup-python'] ]>
+      with:
+        python-version: "3.12"
+    - name: Install uv
+      uses: <[ actions['setup-uv'] ]>
+    - name: Install dependencies
+      run: |
+        <% include '_gh_preinstall.yml.jinja' %>
+        uv pip install --system -e ".[<[ extras|join(',') ]>]"
+    - name: Run Isort
+      run: isort --check-only .
+    - name: Run Black
+      run: black --check .
+    - name: Run Flake8
+      run: flake8 .
+    - name: Run Mypy
+      run: mypy .
+
+  unit-tests:
+    name: Unit Tests & Coverage
+    needs: [quality-gates]
+    runs-on: ubuntu-latest
+    timeout-minutes: <[ runner_limits['Unit Tests'] ]>
+    steps:
+    - uses: <[ actions['checkout'] ]>
+<% if token_owner %><% include '_gh_token.yml.jinja' %><% endif %>    - name: Set up Python 3.12
+      uses: <[ actions['setup-python'] ]>
+      with:
+        python-version: "3.12"
+    - name: Install uv
+      uses: <[ actions['setup-uv'] ]>
+    - name: Install dependencies
+      run: |
+        <% include '_gh_preinstall.yml.jinja' %>
+        uv pip install --system -e ".[<[ extras|join(',') ]>]"<% if browser %>
+        playwright install --with-deps <[ browser ]><% endif %>
+    - name: Run Tests
+      run: |
+        if [ -d tests ] && find tests -name '*.py' | grep -q .; then
+          pytest tests<% if slow_tests %> -m 'not slow'<% endif %> --junitxml=test-report.xml --cov=<[ package ]> --cov-report=xml --cov-report=term
+        else
+          echo "No tests found. Skipping."
+        fi
+    - name: Upload Test Results
+      uses: <[ actions['upload-artifact'] ]>
+      with:
+        name: test-results
+        path: test-report.xml
+      if: always()
+<% if slow_tests %><% include '_gh_slow_job.yml.jinja' %><% endif %>
+  verify-examples:
+    name: Verify Examples
+    needs: [unit-tests]
+    runs-on: ubuntu-latest
+    timeout-minutes: <[ runner_limits['Verify Examples'] ]>
+    steps:
+    - uses: <[ actions['checkout'] ]>
+<% if token_owner %><% include '_gh_token.yml.jinja' %><% endif %>    - name: Set up Python 3.12
+      uses: <[ actions['setup-python'] ]>
+      with:
+        python-version: "3.12"
+    - name: Install uv
+      uses: <[ actions['setup-uv'] ]>
+    - name: Install dependencies
+      run: |
+        <% include '_gh_preinstall.yml.jinja' %>
+        uv pip install --system -e ".[<[ extras|join(',') ]>]"
+    - name: Run Examples
+      run: |
+        for f in examples/*.py; do
+          if [ -f "$f" ]; then
+            echo "Verifying $f..."
+            python3 "$f"
+          fi
+        done
+        # Directory examples opt in by shipping a run.py entry point;
+        # network-dependent / install-only example apps ship no run.py
+        # and are skipped by construction.
+        for f in examples/*/run.py; do
+          if [ -f "$f" ]; then
+            echo "Verifying $f..."
+            python3 "$f"
+          fi
+        done
+
+  verify-notebooks:
+    name: Verify Notebooks
+    needs: [unit-tests]
+    runs-on: ubuntu-latest
+    timeout-minutes: <[ runner_limits['Verify Notebooks'] ]>
+    steps:
+    - uses: <[ actions['checkout'] ]>
+<% if token_owner %><% include '_gh_token.yml.jinja' %><% endif %>    - name: Set up Python 3.12
+      uses: <[ actions['setup-python'] ]>
+      with:
+        python-version: "3.12"
+    - name: Install uv
+      uses: <[ actions['setup-uv'] ]>
+    - name: Install dependencies
+      run: |
+        <% include '_gh_preinstall.yml.jinja' %>
+        uv pip install --system -e ".[<[ extras|join(',') ]>]"
+        # Notebook-only dependencies live in the optional `[notebook]` extra
+        # when a project ships notebooks; absence is not an error.
+        uv pip install --system -e ".[notebook]" 2>/dev/null || echo "No [notebook] extras declared; continuing with defaults."
+        uv pip install --system jupyter nbconvert
+    - name: Execute Notebooks
+      run: |
+        if [ ! -d notebooks ]; then
+          echo "No notebooks directory. Skipping."
+          exit 0
+        fi
+        shopt -s nullglob
+        nbs=(notebooks/*.ipynb)
+        if [ ${#nbs[@]} -eq 0 ]; then
+          echo "No notebooks to verify."
+          exit 0
+        fi
+        for nb in "${nbs[@]}"; do
+          echo "Executing $nb..."
+          jupyter nbconvert --to notebook --execute \
+            --output "/tmp/$(basename "$nb" .ipynb)-ci.ipynb" \
+            "$nb"
+        done
+

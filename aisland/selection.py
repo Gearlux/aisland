@@ -28,6 +28,7 @@ An UNSET selection is not an EMPTY one: empty means "none, deliberately"; unset 
 
 from __future__ import annotations
 
+import dataclasses
 import re
 import subprocess
 import tomllib
@@ -194,7 +195,7 @@ def write_committed(root: Path, name: str, names: Optional[Sequence[str]]) -> No
         settings.pop(name, None)
     else:
         settings[name] = list(names)
-    workspace_file.write(root, workspace_file.WorkspaceFile(settings, current.projects))
+    workspace_file.write(root, dataclasses.replace(current, settings=settings))
 
 
 def _machine_key(name: str) -> str:

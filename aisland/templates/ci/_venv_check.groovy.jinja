@@ -1,0 +1,12 @@
+sh """${VENV_BIN}/python3 -P - '<[ distribution ]>' "${env.WORKSPACE_ROOT}/<[ project ]>" <<'PY'
+import importlib.metadata, json, pathlib, sys
+dist, checkout = sys.argv[1], pathlib.Path(sys.argv[2]).resolve()
+try:
+    raw = importlib.metadata.distribution(dist).read_text("direct_url.json")
+    found = json.loads(raw)["url"] if raw else "an install with no source URL"
+except importlib.metadata.PackageNotFoundError:
+    found = "not installed"
+if found != checkout.as_uri():
+    sys.exit(f"{dist} is not installed from {checkout} (found: {found}) - run `aisland setup`")
+print(f"{dist} -> {checkout}")
+PY"""

@@ -23,6 +23,7 @@ branch), else origin's default branch; the switch is never forced.
 
 from __future__ import annotations
 
+import dataclasses
 import os
 import subprocess
 from dataclasses import dataclass
@@ -171,7 +172,7 @@ def _write_workspace_default(root: Path, track: bool) -> None:
         settings.pop(TRACK_KEY, None)
     else:
         settings[TRACK_KEY] = False
-    workspace_file.write(root, workspace_file.WorkspaceFile(settings, current.projects))
+    workspace_file.write(root, dataclasses.replace(current, settings=settings))
 
 
 def set_committed(root: Path, projects: Sequence[str], track: bool) -> List[Change]:

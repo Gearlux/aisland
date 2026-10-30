@@ -1,0 +1,14 @@
+# aisland's own CI template set: what `aisland jenkins scaffold` writes when the workspace names no other.
+# Copy it to start a set of your own: aisland jenkins templates export ci-templates
+#
+# [files] maps each file the set writes, relative to the project, to its template here; a template no file names
+# (the `_*.jinja` pieces) is only included by the others. Values: <[ fact ]>, logic: <% if … %>, comments: <# … #>.
+# [variables] declares a set's own settings — `name = { default = "…", help = "…" }`, without a default required —
+# which a workspace sets in workspace.toml's [ci.variables] and a project in its own `ci = { name = "…" }`.
+
+[files]
+"Jenkinsfile.local" = "Jenkinsfile.local.jinja"
+"Jenkinsfile" = "Jenkinsfile.jinja"
+".github/workflows/ci.yml" = "ci.yml.jinja"
+
+[variables]

@@ -72,7 +72,7 @@ def test_a_key_close_to_none_lists_the_keys_aisland_reads(ws: Path) -> None:
     _write(ws, '[project."app"]\nurl = "u"\ncolour = "red"\n')
     (warning,) = workspace_check.unknown_keys(ws)
     assert warning.endswith(
-        "colour is no setting aisland reads (it reads active, branch, distribution, mirror, path, source, test-stats, "
+        "colour is no setting aisland reads (it reads active, branch, ci, distribution, mirror, path, source, test-stats, "
         "track, url, version)"
     )
 

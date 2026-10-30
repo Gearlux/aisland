@@ -114,7 +114,7 @@ def test_the_old_workspace_file_is_refused_naming_its_line(tmp_path: Path) -> No
 def test_a_section_the_file_has_not_is_refused_naming_its_line(tmp_path: Path) -> None:
     path = _file(tmp_path, '[workspace]\n\n[sources.models]\nsource = "local"\n')
     assert _refusal(path) == (
-        f'{path}:3: [sources] is no section of workspace.toml — it has [workspace] and [project."<name>"]'
+        f'{path}:3: [sources] is no section of workspace.toml — it has [workspace], [ci] and [project."<name>"]'
     )
 
 

@@ -147,3 +147,88 @@ playwright install --with-deps chromium   # --with-deps: the OS libraries an Ubu
 Chromium only: it is the one browser a workspace test asks for. A project without the
 dependency gets byte-identical output, and the browser cache is per user (`~/Library/Caches/
 ms-playwright` on macOS), so a Jenkins agent downloads it once, not per build.
+
+## The CI files come from a template set
+
+`aisland jenkins scaffold <project>` works out what CI needs to know about the project — its package, its extras,
+whether it has slow tests, the dependencies to install from git — and writes every file of the workspace's
+**template set** from those facts. Without a choice that is aisland's own set: `Jenkinsfile.local`, `Jenkinsfile` and
+`.github/workflows/ci.yml`. A workspace whose CI looks different — a shared library, a pod agent, a private package
+index, only a `Jenkinsfile` — chooses its own set in `workspace.toml`:
+
+```toml
+[ci]
+templates = "ci-templates"            # a folder of the workspace, or the name an installed package registers
+
+[ci.variables]
+index_url = "https://pypi.example.com/simple"
+
+[project."models"]
+url = "git@github.com:acme/models.git"
+ci = { agent_label = "gpu-pod" }      # this project's own value; `templates = "…"` here picks a set for it alone
+```
+
+Start a set from aisland's own:
+
+```bash
+aisland jenkins templates export ci-templates
+```
+
+A set is a folder with a `template.toml` and its templates:
+
+```toml
+[files]                                # each file the set writes, relative to the project, and its template
+"Jenkinsfile" = "Jenkinsfile.jinja"
+
+[variables]                            # the set's own settings; without a default, required
+agent_label = { default = "linux-pod", help = "the pod template a build runs in" }
+index_url = { help = "the package index CI installs from" }
+```
+
+A template is Jinja2 with `<[ value ]>`, `<% logic %>` and `<# comment #>` — Groovy's `[[…]]`, GitHub's `${{ … }}` and
+the shell's `[[ … ]]` all pass through untouched:
+
+```groovy
+pipeline {
+    agent { kubernetes { inheritFrom '<[ variables.agent_label ]>' } }
+    stages {
+        stage('Setup') { steps { sh "pip install --index-url <[ variables.index_url ]> -e '.[<[ extras|join(',') ]>]'" } }
+        stage('Unit Tests') { steps { sh "pytest<% if slow_tests %> -m 'not slow'<% endif %> --cov=<[ package ]>" } }
+    }
+}
+```
+
+The facts a template reads:
+
+| Fact | What it is |
+|---|---|
+| `project`, `title` | the project's folder, and its name in a title (`Models`) |
+| `distribution`, `package` | its `[project] name`, and the package `--cov` measures |
+| `extras` | the extras CI installs, `dev` first |
+| `slow_tests` | whether the project registers the `slow` marker |
+| `browser` | the browser a `playwright` dev dependency needs, or none |
+| `unreleased`, `unreleased_owners` | the workspace dependencies not on PyPI, in install order (`dep.name`, `dep.url`, `dep.ref`), and their owners |
+| `token_owner`, `token_secret` | the GitHub owner whose private repositories CI clones with an app token, and its secrets' prefix |
+| `stage_limits`, `runner_limits` | each long stage's limit in minutes, on Jenkins and on a GitHub runner |
+| `actions` | the GitHub actions aisland's set uses, by name |
+| `workspace`, `jenkins_url` | the workspace's name and the local Jenkins' address |
+| `variables` | the set's own variables |
+
+aisland writes each file's header itself — what made it, from which template, how to remake it — and checks every
+`Jenkinsfile*` against the running Jenkins before writing it. A file whose name says nothing of its comments gives
+it in `[files]`: `"notes.txt" = { template = "notes.jinja", comment = ";" }`.
+
+A package offers a set to every workspace that installs it through an entry point naming the package that holds it:
+
+```toml
+[project.entry-points."aisland.ci_templates"]
+acme-ci = "acme_ci_templates"
+```
+
+What cannot be used is refused before anything is written, naming the file and the line:
+
+```text
+Error: workspace.toml:2: templates = 'nowhere' is no folder of the workspace and no template set an installed package registers (the sets: aisland)
+Error: workspace.toml: the 'ci-templates' template set needs index_url — set it in [ci.variables] (index_url: the package index CI installs from)
+Error: ci-templates/Jenkinsfile.jinja:2: 'pakage' is undefined
+```

@@ -23,7 +23,7 @@ import json
 import re
 import subprocess
 import tomllib
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Set, Tuple
 
@@ -34,8 +34,10 @@ from aisland.errors import AislandError
 #: The file, at the workspace root.
 FILE_NAME = "workspace.toml"
 
-#: The sections the file has.
-_SECTIONS = ("workspace", "project")
+#: The sections the file has: the workspace's own choices, its CI template set, and its projects.
+_SECTIONS = ("workspace", "ci", "project")
+#: The section naming the CI template set and its variables (:mod:`aisland.ci_templates`).
+CI_SECTION = "ci"
 
 #: The ``[workspace]`` key naming the workspace (else its origin's repository, else its folder:
 #: :func:`aisland.projects.get_workspace_name`); no selection may take it.
@@ -71,10 +73,12 @@ class Project:
 
 @dataclass
 class WorkspaceFile:
-    """The file's two sections: ``[workspace]`` (``settings``) and the projects, in the file's order."""
+    """The file's sections: ``[workspace]`` (``settings``), ``[ci]`` (the CI template set, ``ci``) and the projects,
+    in the file's order."""
 
     settings: Dict[str, Any] = field(default_factory=dict)
     projects: Dict[str, Project] = field(default_factory=dict)
+    ci: Dict[str, Any] = field(default_factory=dict)
 
 
 # --- reading -------------------------------------------------------------------------------------------------------
@@ -108,7 +112,9 @@ def read(path: Path) -> WorkspaceFile:
                 f'{where}: [projects] is the old workspace file — write each project as [project."<name>"] '
                 "with path, url and branch"
             )
-        raise FileError(f'{where}: [{key}] is no section of {FILE_NAME} — it has [workspace] and [project."<name>"]')
+        raise FileError(
+            f'{where}: [{key}] is no section of {FILE_NAME} — it has [workspace], [ci] and [project."<name>"]'
+        )
     projects: Dict[str, Project] = {}
     for name, table in data.get("project", {}).items():
         line = table_line(text, "project", name)
@@ -134,7 +140,10 @@ def read(path: Path) -> WorkspaceFile:
         raise FileError(
             f'{where}: the workspace\'s name must be one plain name (letters, digits, _ . -), as {NAME_KEY} = "studio"'
         )
-    return WorkspaceFile(settings, projects)
+    ci = data.get(CI_SECTION, {})
+    if not isinstance(ci, dict):
+        raise FileError(f"{Where(path, _top_line(text, CI_SECTION))}: [{CI_SECTION}] must be a table")
+    return WorkspaceFile(settings, projects, dict(ci))
 
 
 def _check_format(path: Path, text: str, value: Any) -> None:
@@ -247,6 +256,17 @@ def render(workspace: WorkspaceFile, name: str) -> str:
     lines = [_header(name), "[workspace]", f"{FORMAT_KEY} = {FORMAT}"]
     lines += [f"{_key(key)} = {_value(value)}" for key, value in workspace.settings.items()]
     lines.append("")
+    if workspace.ci:
+        lines.append(f"[{CI_SECTION}]")
+        lines += [
+            f"{_key(key)} = {_value(value)}" for key, value in workspace.ci.items() if not isinstance(value, dict)
+        ]
+        lines.append("")
+        for key, table in workspace.ci.items():
+            if isinstance(table, dict):
+                lines.append(f"[{CI_SECTION}.{_key(key)}]")
+                lines += [f"{_key(name)} = {_value(item)}" for name, item in table.items()]
+                lines.append("")
     for project in workspace.projects.values():
         lines.append(f"[project.{json.dumps(project.name)}]")
         if project.path != project.name:
@@ -263,7 +283,7 @@ def render(workspace: WorkspaceFile, name: str) -> str:
 def write(root: Path, workspace: WorkspaceFile) -> Optional[Path]:
     """Write ``workspace`` to ``<root>/workspace.toml``; with nothing in it, remove the file and return None."""
     path = root / FILE_NAME
-    if not workspace.settings and not workspace.projects:
+    if not workspace.settings and not workspace.projects and not workspace.ci:
         path.unlink(missing_ok=True)
         return None
     path.write_text(render(workspace, workspace.settings.get(NAME_KEY) or root.name))
@@ -287,7 +307,7 @@ def set_settings(root: Path, keys: Tuple[str, ...], values: Dict[str, Dict[str, 
         if old.url is None and not others:
             continue
         projects[name] = Project(name, old.path, old.url, branch, others)
-    write(root, WorkspaceFile(dict(current.settings), projects))
+    write(root, replace(current, settings=dict(current.settings), projects=projects))
     return root / FILE_NAME
 
 
@@ -420,7 +440,7 @@ def refresh(root: Path) -> List[str]:
         projects[old.name] = Project(old.name, item.path, item.url, branch, dict(old.others))
     for project in optional + to_add:
         projects[project.name] = project
-    updated = WorkspaceFile(dict(current.settings), projects)
+    updated = replace(current, settings=dict(current.settings), projects=projects)
     if updated != current or (updated.projects and not (root / FILE_NAME).is_file()):
         write(root, updated)
     return lines

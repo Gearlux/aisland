@@ -1,0 +1,27 @@
+
+        stage('Slow Tests') {
+            when {
+                expression { return params.SLOW_TESTS }
+            }
+            steps {
+                limited('Slow Tests', <[ stage_limits['Slow Tests'] ]>) {
+                    sh 'rm -f slow-test-report.xml'
+                    script {
+                        // 5 = the marker is registered but nothing is currently marked — valid, not a failure.
+                        def rc = sh(script: "${VENV_BIN}/pytest tests -m slow --junitxml=slow-test-report.xml", returnStatus: true)
+                        if (rc != 0 && rc != 5) {
+                            error("Slow tests failed (exit ${rc}).")
+                        }
+                    }
+                }
+            }
+            post {
+                always {
+                    script {
+                        if (fileExists('slow-test-report.xml')) {
+                            junit allowEmptyResults: true, testResults: 'slow-test-report.xml'
+                        }
+                    }
+                }
+            }
+        }

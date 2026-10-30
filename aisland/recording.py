@@ -15,6 +15,7 @@ The plugin reads both with the standard library alone (:func:`aisland.pytest_sta
 
 from __future__ import annotations
 
+import dataclasses
 import subprocess
 from pathlib import Path
 from typing import List, Optional, Sequence
@@ -65,7 +66,7 @@ def set_committed(root: Path, projects: Sequence[str], on: bool) -> None:
             settings.pop(KEY, None)
         else:
             settings[KEY] = False
-        workspace_file.write(root, workspace_file.WorkspaceFile(settings, current.projects))
+        workspace_file.write(root, dataclasses.replace(current, settings=settings))
         explicit = {}
         _git(root, "config", "--local", "--unset", pytest_stats.MACHINE_DEFAULT_KEY)
     default = workspace_default(root)

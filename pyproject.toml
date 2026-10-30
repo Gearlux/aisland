@@ -27,6 +27,9 @@ classifiers = [
 ]
 dependencies = [
     "click>=8.0.0",
+    # Renders a project's CI files from a template set (aisland/ci_templates.py): aisland's own in
+    # aisland/templates/ci/, or one a workspace or an installed package brings.
+    "jinja2>=3.1.6",
     # Generates the process-compose desired-state document (aisland/supervisor.py).
     "pyyaml>=6.0",
     # PEP 508 requirement parsing for the CI scaffolder's internal-dep closure
@@ -104,7 +107,7 @@ include = ["aisland*"]
 # into every workspace (aisland/harness.py: the commands, their helper script, the generic rules — `harness/` is no
 # Python package, so its script is data too). setup.py adds project.bashrc.
 [tool.setuptools.package-data]
-aisland = ["py.typed", "code-workspace.json", "git/*.sh", "templates/*", "harness/*.md", "harness/commands/*.md", "harness/scripts/*.py"]
+aisland = ["py.typed", "code-workspace.json", "git/*.sh", "templates/*", "templates/ci/*", "harness/*.md", "harness/commands/*.md", "harness/scripts/*.py"]
 
 [tool.black]
 line-length = 120

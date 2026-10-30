@@ -9,6 +9,7 @@ import click
 from click.shell_completion import CompletionItem
 
 from aisland import (
+    ci_templates,
     configure,
     discovery,
     editor,
@@ -1523,6 +1524,34 @@ def jenkins_init(project: Optional[str], local: bool) -> None:
 def jenkins_scaffold(project: Optional[str], force: bool) -> None:
     """Generate standard Jenkinsfile, Jenkinsfile.local, and GitHub Actions for a project or all projects."""
     JenkinsService().scaffold_pipelines(project_name=project, force=force)
+
+
+@jenkins.group(name="templates", cls=_Group)
+def jenkins_templates() -> None:
+    """The template set `aisland jenkins scaffold` writes a project's CI files from.
+
+    aisland's own set by default; a workspace names another in workspace.toml — a folder of the workspace, or the name
+    an installed package registers:
+
+    \b
+    [ci]
+    templates = "ci-templates"
+    [ci.variables]
+    agent_label = "linux-pod"
+    """
+
+
+@jenkins_templates.command(name="export")
+@click.argument("folder", type=click.Path(file_okay=False, path_type=Path))
+def jenkins_templates_export(folder: Path) -> None:
+    """Copy aisland's own template set into FOLDER (new or empty), to start a set of your own from it.
+
+    \b
+    aisland jenkins templates export ci-templates
+    """
+    copied = ci_templates.export(folder)
+    click.echo(f"==> Copied aisland's template set into {folder} ({len(copied)} files)")
+    click.echo(f'  - Point the workspace at it: [ci] templates = "{folder.name}" in workspace.toml')
 
 
 @jenkins.command(name="remove")

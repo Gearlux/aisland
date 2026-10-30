@@ -30,7 +30,10 @@ The first release on PyPI: `pip install aisland`.
   the system's own Docker Engine, which aisland checks and never manages. `aisland supervisor status|attach|down` shows, attaches
   to and stops the process-compose supervisor behind them, and `aisland swiftbar` puts the workspace's Jenkins
   builds and GitHub Actions runs in the macOS menu bar.
-- **`aisland jenkins scaffold`** writes a project's `Jenkinsfile`, `Jenkinsfile.local` and GitHub `ci.yml`;
+- **`aisland jenkins scaffold`** writes a project's CI files from a template set — aisland's own (`Jenkinsfile`,
+  `Jenkinsfile.local` and GitHub's `ci.yml`), or one the workspace names in `workspace.toml`'s `[ci]`: a folder of
+  Jinja2 templates with variables of its own, or a set an installed package registers; `aisland jenkins templates
+  export` copies aisland's set to start from;
   `aisland jenkins init [--local]` seeds the Jenkins jobs for them, and `aisland tests nightly` reports the local
   Jenkins' nightly runs.
 - **`aisland check`** runs the quality gates (`isort`, `black`, `flake8`, `mypy`, `pytest`, `act`) on every project

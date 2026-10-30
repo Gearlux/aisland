@@ -1,0 +1,4 @@
+<% if unreleased %>
+        # Internal <[ unreleased_owners ]> dependencies — installed FIRST with --no-deps so
+        # `-e .[dev]` below finds them pre-satisfied instead of hitting PyPI.<% for dep in unreleased %>
+        uv pip install --system --no-deps git+<[ dep.url ]>@<[ dep.ref ]><% endfor %><% endif %>

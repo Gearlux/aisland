@@ -28,7 +28,8 @@ expects is an `AislandError`, one `Error:` line; `--debug` adds the traceback. [
 imports no project's code. [test-stats-workspace] the test-run record is written only in an aisland workspace.
 [linux-docker] on Linux the container engine is the system's, checked and never managed. [mcp-services] the MCP
 service tools take any service of the workspace. [manager-split] `aisland setup` runs steps that each live in a
-module of their own. [workspace-format] `workspace.toml` says its format, and a key no part of aisland reads is named.
+module of their own. [workspace-format] `workspace.toml` says its format, and a key no part of aisland reads is named. [ci-templates] the CI
+files are rendered from a template set the workspace chooses.
 
 ## Current state
 
@@ -808,6 +809,21 @@ User rulings 2026-10-23. [frameworks] (`tests/test_selection.py`)
 
 A bare `::` pin in this section is in `tests/test_jenkins_scaffold.py`.
 
+- **The files come from a TEMPLATE SET (user picks 2026-10-30: Jinja2 in the core install, a set from a folder or a
+  package's entry point, before 0.1.0).** [ci-templates] `scaffold_pipelines` works out the project's FACTS
+  (`ci_templates.Facts`) and renders every file of the chosen set (`ci_templates.render`); it writes no file text of
+  its own. aisland's set is `aisland/templates/ci/` — `template.toml`'s `[files]` names the three files, the `_*.jinja`
+  pieces are included — and every rule of this section is now a rule of those templates and the facts. Delimiters
+  `<[ ]>`, `<% %>`, `<# #>` (never Jinja's braces: `[[…]]` Groovy lists, `${{ }}` and `[[ ]]` shell tests appear in CI
+  files), `StrictUndefined`, `keep_trailing_newline`. Chosen by `workspace.toml` `[ci] templates` (a folder of the
+  workspace, else an `aisland.ci_templates` entry point name) and a project's `ci = { templates = … }`; variables:
+  the set's defaults, `[ci.variables]`, the project's `ci` table — an undeclared one and a required one unset are
+  refused naming the file, and a project on a set of its own takes from `[ci.variables]` only what its set
+  declares. aisland writes each file's provenance header (`ci_templates.header`, by the file's comment); a set never
+  needs to. A change to aisland's own output is a change to its templates, held byte for byte by the existing pins
+  (`tests/test_ci_templates.py`; the port was checked on every project of the workspace: 81 files identical but for
+  the header's template line).
+
 - **CI installs what is RELEASED (user ruling 2026-09-26, do not re-litigate).** The runner
   files ask PyPI per internal dep (`released_on_pypi`: a final, non-yanked version whose
   metadata points at `github.com/<owner>/`, the owner of the dep's remote): released → no install line; else
@@ -858,7 +874,7 @@ A bare `::` pin in this section is in `tests/test_jenkins_scaffold.py`.
 - **A long stage of `Jenkinsfile.local` has a time limit (user choice 2026-10-15).** `STAGE_LIMITS`
   (Unit Tests 15, Slow Tests 60, Verify Examples 15, Verify Notebooks 15 min — about twice the
   longest healthy run of 2026-10-10..15) is the ONE table; each such stage's steps run inside the
-  `limited` helper the file defines (`_LIMITED_HELPER`), which past the limit FAILS the stage with
+  `limited` helper the file defines (`templates/ci/_limited.groovy.jinja`), which past the limit FAILS the stage with
   `TIMED_OUT_MESSAGE` — the stage and the limit named — and rethrows an abort clicked before it.
   Initialize and the quality gates get none. **`ci.yml`'s jobs get `RUNNER_LIMIT_FACTOR` (3) times their stage's
   limit (`runner_limit`, user pick 2026-10-28 over waiting to measure a runner: a hung job held one for GitHub's six
