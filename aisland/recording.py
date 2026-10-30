@@ -16,18 +16,13 @@ The plugin reads both with the standard library alone (:func:`aisland.pytest_sta
 from __future__ import annotations
 
 import dataclasses
-import subprocess
 from pathlib import Path
 from typing import List, Optional, Sequence
 
-from aisland import locations, pytest_stats, workspace_file
+from aisland import gitcmd, locations, pytest_stats, workspace_file
 from aisland.errors import AislandError
 
 KEY = pytest_stats.RECORD_KEY
-
-
-def _git(root: Path, *args: str) -> subprocess.CompletedProcess[str]:
-    return subprocess.run(["git", *args], cwd=root, capture_output=True, text=True)
 
 
 def _named(root: Path, projects: Sequence[str]) -> List[str]:
@@ -49,9 +44,9 @@ def workspace_default(root: Path) -> bool:
 def _set_machine_choice(root: Path, project: str, on: Optional[bool]) -> None:
     key = pytest_stats.machine_key(project)
     if on is None:
-        _git(root, "config", "--local", "--unset", key)
+        gitcmd.git(root, "config", "--local", "--unset", key)
     else:
-        _git(root, "config", "--local", key, "true" if on else "false")
+        gitcmd.git(root, "config", "--local", key, "true" if on else "false")
 
 
 def set_committed(root: Path, projects: Sequence[str], on: bool) -> None:
@@ -68,7 +63,7 @@ def set_committed(root: Path, projects: Sequence[str], on: bool) -> None:
             settings[KEY] = False
         workspace_file.write(root, dataclasses.replace(current, settings=settings))
         explicit = {}
-        _git(root, "config", "--local", "--unset", pytest_stats.MACHINE_DEFAULT_KEY)
+        gitcmd.git(root, "config", "--local", "--unset", pytest_stats.MACHINE_DEFAULT_KEY)
     default = workspace_default(root)
     for name in named:
         explicit[name] = on
@@ -86,7 +81,7 @@ def set_machine(root: Path, projects: Sequence[str], on: bool) -> None:
         for project in named:
             _set_machine_choice(root, project, on)
         return
-    _git(root, "config", "--local", pytest_stats.MACHINE_DEFAULT_KEY, "true" if on else "false")
+    gitcmd.git(root, "config", "--local", pytest_stats.MACHINE_DEFAULT_KEY, "true" if on else "false")
     for project in workspace_file.load(root).projects:
         _set_machine_choice(root, project, None)
 

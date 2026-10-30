@@ -19,7 +19,7 @@ from typing import Dict, List, Optional
 
 import click
 
-from aisland import local_workspace, tracking, workspace_file
+from aisland import gitcmd, local_workspace, tracking, workspace_file
 
 #: The project's setting in ``workspace.toml`` and the last part of this machine's ``aisland.active.<project>.active``.
 ACTIVE_KEY = "active"
@@ -95,10 +95,6 @@ def resolve(root: Path, non_interactive: bool) -> None:
 # --- setup brings the folders in line ------------------------------------------------------------------------------
 
 
-def _git(root: Path, *args: str) -> subprocess.CompletedProcess[str]:
-    return subprocess.run(["git", *args], cwd=root, capture_output=True, text=True)
-
-
 def _submodule_names(root: Path) -> Dict[str, str]:
     """``{path: submodule name}`` from ``.gitmodules``."""
     return {path: name for name, path, _active in _gitmodules(root)}
@@ -146,13 +142,13 @@ def _reconcile(root: Path) -> List[str]:
         if want and not checked_out:
             if name is not None:
                 click.echo(f"  - init {project.path} (active)")
-                done = _git(root, "submodule", "update", "--init", project.path)
+                done = gitcmd.git(root, "submodule", "update", "--init", project.path)
             elif project.url is not None:
                 click.echo(f"  - add {project.path} (active)")
                 branch = ["-b", project.branch] if project.branch else []
                 # A local workspace's `.gitignore` ignores everything: git adds the path only with `-f`.
                 force = ["-f"] if local_workspace.is_local(root) else []
-                done = _git(root, "submodule", "add", "-q", *force, *branch, project.url, project.path)
+                done = gitcmd.git(root, "submodule", "add", "-q", *force, *branch, project.url, project.path)
                 name = _submodule_names(root).get(project.path)
             else:
                 click.echo(f"    skip {project.path}: active, but workspace.toml gives it no url to clone from.")
@@ -166,16 +162,16 @@ def _reconcile(root: Path) -> List[str]:
         elif not want and checked_out and name is not None:
             click.echo(f"  - deinit {project.path} (inactive)")
             # No ``-f``: a deinit that would discard uncommitted work refuses, protecting it.
-            if _git(root, "submodule", "deinit", project.path).returncode != 0:
+            if gitcmd.git(root, "submodule", "deinit", project.path).returncode != 0:
                 click.echo(f"    skip {project.name}: deinit refused; resolve local changes and re-run.")
                 stuck.append(project.name)
         if name is None:
             continue
-        _git(root, "config", "--local", f"submodule.{name}.active", "true" if want else "false")
+        gitcmd.git(root, "config", "--local", f"submodule.{name}.active", "true" if want else "false")
         if defaults.get(project.name) is False:
-            _git(root, "config", "-f", ".gitmodules", f"submodule.{name}.active", "false")
+            gitcmd.git(root, "config", "-f", ".gitmodules", f"submodule.{name}.active", "false")
         else:
-            _git(root, "config", "-f", ".gitmodules", "--unset", f"submodule.{name}.active")
+            gitcmd.git(root, "config", "-f", ".gitmodules", "--unset", f"submodule.{name}.active")
     return stuck
 
 

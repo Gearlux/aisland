@@ -136,7 +136,7 @@ _ABSENT: Tuple[str, Any] = ("missing", None)
 
 def _pypi(monkeypatch: pytest.MonkeyPatch, answers: Dict[str, Tuple[str, Any]]) -> None:
     """Answer PyPI's JSON from `answers`; any other name is absent."""
-    monkeypatch.setattr(w, "_pypi_json", lambda distribution: answers.get(distribution, _ABSENT))
+    monkeypatch.setattr(w, "pypi_json", lambda distribution: answers.get(distribution, _ABSENT))
 
 
 # --- the workspace's projects and what a project needs -----------------------------------------

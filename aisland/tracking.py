@@ -30,7 +30,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Dict, List, Optional, Sequence
 
-from aisland import local_workspace, workspace_file
+from aisland import gitcmd, local_workspace, workspace_file
 from aisland.errors import AislandError
 
 TRACK_KEY = "track"
@@ -39,12 +39,8 @@ TRACK_KEY = "track"
 _OURS = ("all", "none")
 
 
-def _git(root: Path, *args: str) -> subprocess.CompletedProcess[str]:
-    return subprocess.run(["git", *args], cwd=root, capture_output=True, text=True)
-
-
 def _get(root: Path, *args: str) -> Optional[str]:
-    run = _git(root, "config", *args)
+    run = gitcmd.git(root, "config", *args)
     return run.stdout.strip() if run.returncode == 0 else None
 
 
@@ -98,9 +94,9 @@ def machine_choice(root: Path, project: str) -> Optional[bool]:
 
 def _set_machine_choice(root: Path, project: str, track: Optional[bool]) -> None:
     if track is None:
-        _git(root, "config", "--local", "--unset", _machine_key(project))
+        gitcmd.git(root, "config", "--local", "--unset", _machine_key(project))
         return
-    _git(root, "config", "--local", _machine_key(project), "true" if track else "false")
+    gitcmd.git(root, "config", "--local", _machine_key(project), "true" if track else "false")
 
 
 @dataclass(frozen=True)
@@ -137,17 +133,17 @@ def apply(root: Path) -> List[Change]:
         shared = _get(root, "-f", ".gitmodules", "--get", key)
         if not committed(root, project):
             if shared != "all":
-                _git(root, "config", "-f", ".gitmodules", key, "all")
+                gitcmd.git(root, "config", "-f", ".gitmodules", key, "all")
         elif shared == "all":
-            _git(root, "config", "-f", ".gitmodules", "--unset", key)
+            gitcmd.git(root, "config", "-f", ".gitmodules", "--unset", key)
         choice = machine_choice(root, project)
         here = _get(root, "--local", "--get", key)
         if choice is not None:
             want = "none" if choice else "all"
             if here != want:
-                _git(root, "config", "--local", key, want)
+                gitcmd.git(root, "config", "--local", key, want)
         elif here in _OURS:
-            _git(root, "config", "--local", "--unset", key)
+            gitcmd.git(root, "config", "--local", "--unset", key)
         after = _ignored(root, name)
         if after != before:
             changes.append(Change(project, tracked=not after, here=choice is not None))
@@ -189,7 +185,7 @@ def set_committed(root: Path, projects: Sequence[str], track: bool) -> List[Chan
     if not named:
         _write_workspace_default(root, track)
         explicit = {}
-        _git(root, "config", "--local", "--unset", _MACHINE_DEFAULT_KEY)
+        gitcmd.git(root, "config", "--local", "--unset", _MACHINE_DEFAULT_KEY)
     default = workspace_default(root)
     for name in named:
         explicit[name] = track
@@ -208,7 +204,7 @@ def set_machine(root: Path, projects: Sequence[str], track: bool) -> List[Change
         for project in named:
             _set_machine_choice(root, project, track)
     else:
-        _git(root, "config", "--local", _MACHINE_DEFAULT_KEY, "true" if track else "false")
+        gitcmd.git(root, "config", "--local", _MACHINE_DEFAULT_KEY, "true" if track else "false")
         for project in _submodules(root):
             _set_machine_choice(root, project, None)
     return apply(root)
@@ -218,9 +214,9 @@ def _followed_branch(root: Path, name: str, folder: Path) -> Optional[str]:
     """The branch an untracked submodule follows: ``.gitmodules``' (``.``: the root's), else origin's default."""
     branch = _get(root, "-f", ".gitmodules", "--get", f"submodule.{name}.branch")
     if branch == ".":
-        branch = _git(root, "branch", "--show-current").stdout.strip() or None
+        branch = gitcmd.git(root, "branch", "--show-current").stdout.strip() or None
     if not branch:
-        head = _git(folder, "symbolic-ref", "-q", "--short", "refs/remotes/origin/HEAD").stdout.strip()
+        head = gitcmd.git(folder, "symbolic-ref", "-q", "--short", "refs/remotes/origin/HEAD").stdout.strip()
         branch = head[len("origin/") :] if head.startswith("origin/") else None
     return branch
 
@@ -237,23 +233,23 @@ def follow_branches(root: Path) -> List[str]:
         folder = root / path
         if not (folder / ".git").exists() or not _ignored(root, name):
             continue
-        if _git(folder, "branch", "--show-current").stdout.strip():
+        if gitcmd.git(folder, "branch", "--show-current").stdout.strip():
             continue
         subprocess.run(["git", "fetch", "-q", "origin"], cwd=folder, capture_output=True, env=quiet)
         branch = _followed_branch(root, name, folder)
         if branch is None:
             lines.append(f"{project}: stays on no branch — .gitmodules names none and origin has no default")
             continue
-        if _git(folder, "rev-parse", "-q", "--verify", f"refs/heads/{branch}").returncode == 0:
-            done = _git(folder, "switch", "-q", branch)
+        if gitcmd.git(folder, "rev-parse", "-q", "--verify", f"refs/heads/{branch}").returncode == 0:
+            done = gitcmd.git(folder, "switch", "-q", branch)
         else:
-            done = _git(folder, "switch", "-q", "-c", branch, "--track", f"origin/{branch}")
+            done = gitcmd.git(folder, "switch", "-q", "-c", branch, "--track", f"origin/{branch}")
         if done.returncode != 0:
             refusal = (done.stderr.strip().splitlines() or ["failed"])[0]
             lines.append(f"{project}: stays on no branch — git switch {branch} refused: {refusal}")
             continue
         # A local branch behind origin's moves up to it; one with commits of its own is left for `git pull-all`.
-        _git(folder, "merge", "-q", "--ff-only", f"origin/{branch}")
+        gitcmd.git(folder, "merge", "-q", "--ff-only", f"origin/{branch}")
         lines.append(f"{project}: on {branch} (it was on no branch)")
     return lines
 

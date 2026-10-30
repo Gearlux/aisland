@@ -364,7 +364,7 @@ class TestTheRunWithABundle:
         assert report.ok
         text = w.render_report(report)
         assert (
-            f"Bundle: app/wheels/bundle/app_bundle-0.5.0-py3-none-any.whl ({w._size(report.bundle.bytes)}) — 3 projects "
+            f"Bundle: app/wheels/bundle/app_bundle-0.5.0-py3-none-any.whl ({w.human_size(report.bundle.bytes)}) — 3 projects "
             "in one wheel (app, libx, pubdep); install it with: pip install app_bundle-0.5.0-py3-none-any.whl\n"
             "  Installed alone in an empty venv (it + PyPI): all 3 modules imported\n" in text
         )
