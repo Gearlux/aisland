@@ -22,13 +22,14 @@ container on it — unasked. Mounts apply at VM boot; the profile file is the re
 the VM currently shares, which is what :meth:`DockerService.configured_mounts` reads.
 """
 
+import logging
 import os
 import platform
 import shutil
 import subprocess
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, List, Sequence, Union
+from typing import List, Sequence, Union
 
 import click
 import yaml
@@ -36,6 +37,8 @@ import yaml
 from aisland import failures, provision
 from aisland.errors import AislandError
 from aisland.services.base import BaseService
+
+logger = logging.getLogger(__name__)
 
 #: The Colima profile aisland drives (its default profile). ``colima start --save-config``
 #: (default true) writes the effective flags — mounts included — into ``colima.yaml`` here.
@@ -137,7 +140,7 @@ class DockerService(BaseService):
             return False
         return result.returncode == 0
 
-    def launch(self, background: bool = True, mounts: Sequence[str] = (), **kwargs: Any) -> None:
+    def launch(self, background: bool = True, mounts: Sequence[str] = (), **kwargs: object) -> None:
         """Start the Docker engine via Colima.
 
         Args:
@@ -267,7 +270,7 @@ class DockerService(BaseService):
             # Check if /var/run/docker.sock already exists and points to the right place
             if standard_socket.exists() or standard_socket.is_symlink():
                 if standard_socket.is_symlink() and os.readlink(standard_socket) == str(colima_socket):
-                    click.echo("  - Standard socket symlink already configured.")
+                    logger.debug("%s already links to %s", standard_socket, colima_socket)
                     return
 
                 # If it exists but is wrong/different, we need to remove it
@@ -321,7 +324,7 @@ class LinuxDockerService(BaseService):
             return False
         return result.returncode == 0
 
-    def launch(self, background: bool = True, mounts: Sequence[str] = (), **kwargs: Any) -> None:
+    def launch(self, background: bool = True, mounts: Sequence[str] = (), **kwargs: object) -> None:
         """Check that the engine runs; refuse, naming how to fix it, when it is missing or stopped."""
         if mounts:
             raise AislandError(

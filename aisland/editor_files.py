@@ -236,7 +236,7 @@ def _terminal_shell(path: str) -> str:
     return shutil.which("bash") or path
 
 
-def _code_workspace_settings(name: str) -> Dict[str, Any]:
+def _code_workspace_settings(name: str) -> Dict[str, Any]:  # Any: VS Code's settings JSON
     """The template's settings and extensions for the workspace ``name`` on this machine.
 
     The template names the workspace `WORKSPACE`: every `${workspaceFolder:WORKSPACE}` and the `WORKSPACE-bash`
@@ -246,7 +246,7 @@ def _code_workspace_settings(name: str) -> Dict[str, Any]:
     text = CODE_WORKSPACE_TEMPLATE.read_text()
     text = text.replace(f"${{workspaceFolder:{_TEMPLATE_WORKSPACE}}}", f"${{workspaceFolder:{name}}}")
     text = text.replace(f'"{_TEMPLATE_WORKSPACE}-bash"', json.dumps(f"{name}-bash"))
-    settings: Dict[str, Any] = json.loads(text)
+    settings: Dict[str, Any] = json.loads(text)  # Any: as the return's
     key = _PROFILE_PLATFORMS.get(platform.system())
     if key is not None:
         for profile in settings["settings"].get(f"terminal.integrated.profiles.{key}", {}).values():

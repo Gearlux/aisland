@@ -55,7 +55,9 @@ Every check is cheap and read-only, and reports one specific skew with the comma
 Every command that fails prints one `Error:` line on stderr and exits 1 — a refusal in aisland's own words, or what
 the machine refused (a file it may not read, a program that failed). A command that goes on past a failure (`aisland
 setup` installing the other projects, `aisland services start` starting the other services) prints that line and
-still exits 1 at the end. To see where an error came from, run the command again with `--debug`:
+still exits 1 at the end. To see where an error came from, run the command again with `--debug`; it also shows
+aisland's debug log on stderr, one `aisland: <module>: <message>` line each (the workspace root it found and why, every
+`git` and install command it ran, the files it read):
 
 ```bash
 aisland --debug docker start

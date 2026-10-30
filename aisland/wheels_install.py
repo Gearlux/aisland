@@ -34,7 +34,8 @@ import subprocess
 import sys
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, List, Literal, Optional, Sequence, Tuple, get_args
+from types import ModuleType
+from typing import List, Literal, Optional, Sequence, Tuple, get_args
 
 #: The file beside this script that lists the wheels.
 WHEELS_FILE = "wheels.yaml"
@@ -57,7 +58,7 @@ class Entry:
     line: int
 
 
-def _yaml() -> Any:
+def _yaml() -> ModuleType:
     # Imported here, not at the top: this script must start in an environment without PyYAML, to install it.
     import yaml
 

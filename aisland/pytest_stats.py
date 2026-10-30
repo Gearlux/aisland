@@ -484,7 +484,7 @@ def _local_records(folder: Path, cutoff: datetime) -> Tuple[List[_Run], List[_Re
     return list(runs.values()), records
 
 
-def _lines(folder: Path, first_day: date) -> Iterator[Dict[str, Any]]:
+def _lines(folder: Path, first_day: date) -> Iterator[Dict[str, Any]]:  # Any: see the docstring
     """The JSON lines of the day files from `first_day` on; a damaged line (a run killed mid-write) is skipped.
 
     Values are `Any`: a parsed JSON line mixes strings, numbers and booleans, and `_local_records` converts each.

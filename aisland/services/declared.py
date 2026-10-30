@@ -11,10 +11,11 @@ The project writes no aisland code: :class:`DeclaredService` is the generic serv
 
 from __future__ import annotations
 
-from typing import Any
+from typing import Optional
 
 import click
 
+from aisland import supervisor
 from aisland.discovery import Service
 from aisland.services.base import BaseService
 
@@ -26,11 +27,13 @@ class DeclaredService(BaseService):
         super().__init__(declared.name)
         self.declared = declared
 
-    def launch(self, background: bool = False, **kwargs: Any) -> None:
+    def launch(self, background: bool = False, **kwargs: object) -> None:
         """Run the declared command; with a port and a ready path, wait until ``http://localhost:<port><ready>``
         answers (and refuse a port another process holds)."""
         port, ready = self.declared.port, self.declared.ready
-        readiness = {"port": port, "path": ready} if port is not None and ready is not None else None
+        readiness: Optional[supervisor.Readiness] = (
+            {"port": port, "path": ready} if port is not None and ready is not None else None
+        )
         self.start(list(self.declared.command), background=background, readiness=readiness)
 
     def info(self) -> None:

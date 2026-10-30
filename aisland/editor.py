@@ -178,7 +178,7 @@ def _installed(folder: Path) -> List[Path]:
     return sorted(child for child in folder.iterdir() if child.is_dir())
 
 
-def _read_json(path: Path) -> Dict[str, Any]:
+def _read_json(path: Path) -> Dict[str, object]:
     try:
         data = json.loads(path.read_text(encoding="utf-8-sig"))
     except (OSError, json.JSONDecodeError):
@@ -287,7 +287,7 @@ def read_choice(workspace_root: Path) -> EditorChoice:
     if not (workspace_root / ".git").exists():
         return EditorChoice()
     listing = _git_config(workspace_root, "--get-regexp", r"^aisland\.editor\.").stdout
-    values: Dict[str, Any] = {}
+    values: Dict[str, Any] = {}  # Any: each key's own type, checked by EditorChoice's fields
     for line in listing.splitlines():
         key, _, value = line.partition(" ")
         field = key[len(_KEY_PREFIX) :]
@@ -348,9 +348,9 @@ def clear_colors(workspace_root: Path) -> None:
         _store(workspace_root, field, None)
 
 
-def workspace_settings(choice: EditorChoice) -> Dict[str, Any]:
+def workspace_settings(choice: EditorChoice) -> Dict[str, object]:
     """The settings the choice adds to the workspace file; nothing for no choice."""
-    settings: Dict[str, Any] = {}
+    settings: Dict[str, object] = {}
     if choice.theme:
         settings["workbench.colorTheme"] = choice.theme
     customizations: Dict[str, str] = {}

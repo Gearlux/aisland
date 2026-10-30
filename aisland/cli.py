@@ -1,4 +1,5 @@
 import json
+import logging
 import os
 import subprocess
 import traceback
@@ -231,12 +232,56 @@ def _add_service_commands(group: click.Group, entry: "service_registry.Entry") -
 #: `ctx.meta` key: `aisland --debug` was given.
 _DEBUG = "aisland.debug"
 
+#: The parent of every module's logger (`logging.getLogger(__name__)`): `aisland --debug` shows its debug records.
+_LOGGER = logging.getLogger("aisland")
+
+
+class _DebugLog(logging.Handler):
+    """aisland's debug log on stderr, one `aisland: <module>: <message>` line a record.
+
+    Written through click, so the line reaches the stream click writes to — a test runner's too — and never mixes
+    into stdout, which holds the command's result."""
+
+    def emit(self, record: logging.LogRecord) -> None:
+        try:
+            click.echo(f"aisland: {record.name.removeprefix('aisland.')}: {record.getMessage()}", err=True)
+        except (OSError, TypeError, ValueError):  # a closed stream, a message whose arguments do not fit it
+            self.handleError(record)
+
+
+#: One handler for the process, so a second run in it (a test's runner) never adds a second.
+_debug_log = _DebugLog()
+
+
+def _quiet_debug_log(level: int) -> None:
+    """Take the debug log off again: the handler removed, the logger's level put back to ``level``."""
+    _LOGGER.removeHandler(_debug_log)
+    _LOGGER.setLevel(level)
+
+
+def _show_debug_log(ctx: click.Context, param: click.Parameter, value: bool) -> bool:
+    """`--debug`'s callback: the `aisland` logger at DEBUG with :data:`_debug_log`, until the run ends.
+
+    Run while the options are parsed, so what the group decides before the command (the workspace root) is logged
+    too. Without `--debug` nothing is configured: a record below WARNING goes nowhere and the output is unchanged."""
+    if value and _debug_log not in _LOGGER.handlers:
+        before = _LOGGER.level
+        _LOGGER.addHandler(_debug_log)
+        _LOGGER.setLevel(logging.DEBUG)
+        ctx.call_on_close(lambda: _quiet_debug_log(before))
+    return value
+
 
 @click.group(cls=_WorkspaceGroup)
 # The installed distribution's version (aisland.__version__ reads the same metadata); eager, so it answers before the
 # workspace check, outside a workspace too.
 @click.version_option(package_name="aisland", prog_name="aisland")
-@click.option("--debug", is_flag=True, help="Show an error's traceback, not only its Error line.")
+@click.option(
+    "--debug",
+    is_flag=True,
+    callback=_show_debug_log,
+    help="Show an error's traceback, not only its Error line, and aisland's debug log on stderr.",
+)
 @click.pass_context
 def main(ctx: click.Context, debug: bool) -> None:
     """One workspace of many Python projects, set up the same way on every machine: a shared venv, local services,

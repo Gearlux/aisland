@@ -28,7 +28,7 @@ import functools
 import subprocess
 import sys
 from dataclasses import asdict
-from typing import Any, Callable, Dict, List, Literal, Optional, TypeVar
+from typing import Callable, Dict, List, Literal, Optional, ParamSpec, TypeVar
 
 import click
 
@@ -69,13 +69,14 @@ commands the person runs themselves (`aisland setup`, `aisland clean <project>`)
 
 
 _Result = TypeVar("_Result")
+_Params = ParamSpec("_Params")
 
 
 class ToolRefusal(AislandError):
     """A refusal a tool anticipated (no such project, a command that failed): its words reach the client."""
 
 
-def _refusals_reach_the_client(function: Callable[..., _Result]) -> Callable[..., _Result]:
+def _refusals_reach_the_client(function: Callable[_Params, _Result]) -> Callable[_Params, _Result]:
     """Raise an anticipated refusal — a :class:`ToolRefusal`, or aisland's own ``Error:`` (a
     :class:`click.ClickException`) — as the SDK's ``ToolError``, the one exception whose words the client reads.
 
@@ -84,7 +85,7 @@ def _refusals_reach_the_client(function: Callable[..., _Result]) -> Callable[...
     """
 
     @functools.wraps(function)
-    def wrapper(*args: Any, **kwargs: Any) -> _Result:
+    def wrapper(*args: _Params.args, **kwargs: _Params.kwargs) -> _Result:
         try:
             return function(*args, **kwargs)
         except (ToolRefusal, click.ClickException) as refusal:
@@ -93,7 +94,7 @@ def _refusals_reach_the_client(function: Callable[..., _Result]) -> Callable[...
     return wrapper
 
 
-def _choice(choice: editor.EditorChoice) -> Dict[str, Any]:
+def _choice(choice: editor.EditorChoice) -> Dict[str, object]:
     """This machine's editor choice as the tools return it."""
     return asdict(choice)
 
@@ -114,7 +115,7 @@ def _run_aisland(args: List[str]) -> "subprocess.CompletedProcess[str]":
     )
 
 
-def _service_state(name: str, process: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+def _service_state(name: str, process: Optional[supervisor.ProcessState] = None) -> Dict[str, object]:
     """A service's state: from ``process`` (a supervisor listing's entry), else asked of the supervisor."""
     if process is None:
         process = supervisor.get_process(name) or {}
@@ -135,7 +136,7 @@ def _service_entry(name: str) -> service_registry.Entry:
     ]
 
 
-def _service_command(name: str, action: str) -> Dict[str, Any]:
+def _service_command(name: str, action: str) -> Dict[str, object]:
     """Run ``aisland NAME ACTION`` — ``start`` and ``restart`` in the background where the service runs under the
     supervisor (the container engine and the menu detach by themselves and take no ``--background``)."""
     entry = _service_entry(name)
@@ -150,30 +151,30 @@ def _service_command(name: str, action: str) -> Dict[str, Any]:
 # --- the tools ----------------------------------------------------------------------------
 
 
-def tool_doctor() -> Dict[str, Any]:
+def tool_doctor() -> Dict[str, object]:
     """Run `aisland doctor`'s environment checks: each check's name, whether it passed, what it found and the
     command that fixes it."""
     results = doctor.run_checks()
     return {"ok": all(r.ok for r in results), "python": sys.executable, "checks": [asdict(r) for r in results]}
 
 
-def tool_tests_report(project: str, days: int = pytest_stats.DEFAULT_WINDOW_DAYS) -> Dict[str, Any]:
+def tool_tests_report(project: str, days: int = pytest_stats.DEFAULT_WINDOW_DAYS) -> Dict[str, object]:
     """A project's test runs over the last `days` days (`aisland tests report PROJECT --json`): its fast run
     against the 5-minute budget, the slowest tests, the tests that failed, and what to move between the runs."""
     if not (pytest_stats.WORKSPACE_ROOT / project / "pyproject.toml").is_file():
         raise ToolRefusal(f"no project {project!r} in the workspace {pytest_stats.WORKSPACE_ROOT}")
-    report: Dict[str, Any] = pytest_stats.build_report(project, days=days).to_dict()
+    report: Dict[str, object] = pytest_stats.build_report(project, days=days).to_dict()
     return report
 
 
-def tool_editor_themes() -> Dict[str, Any]:
+def tool_editor_themes() -> Dict[str, object]:
     """The colour themes VS Code offers on this machine — name, kind, the extension that brings it; `current`
     marks the workspace window's. Empty without VS Code."""
     chosen = editor.read_choice(get_workspace_root()).theme
     return {"themes": [{**asdict(theme), "current": theme.name == chosen} for theme in editor.list_themes()]}
 
 
-def tool_editor_colors(part: str = "") -> Dict[str, Any]:
+def tool_editor_colors(part: str = "") -> Dict[str, object]:
     """The workspace window's colour choice, and the CSS colour names (with their #rrggbb) holding `part` — all
     148 when `part` is empty."""
     return {
@@ -182,7 +183,7 @@ def tool_editor_colors(part: str = "") -> Dict[str, Any]:
     }
 
 
-def tool_editor_set_theme(name: str) -> Dict[str, Any]:
+def tool_editor_set_theme(name: str) -> Dict[str, object]:
     """Show the workspace window in theme `name` (as `editor_themes` lists it, case ignored); this machine only,
     every other window keeps the user's theme. Returns the window's choice. On a machine without VS Code (a remote
     one: its window's themes are the local VS Code's) `name` is kept as typed and a `note` says it is unchecked."""
@@ -197,7 +198,7 @@ def tool_editor_set_theme(name: str) -> Dict[str, Any]:
 
 def tool_editor_set_color(
     role: editor.ColorRole, color: str, area: Optional[editor.ColorArea] = None
-) -> Dict[str, Any]:
+) -> Dict[str, object]:
     """Colour the workspace window's background or foreground, over any theme: `color` a CSS name (navy, dark slate
     blue) or #RGB, #RGBA, #RRGGBB, #RRGGBBAA; `area` frame (title, activity and status bar), sidebar (also the
     side bar) or both (also the editor, side bar, panel and terminal), kept for later colours. Returns the window's choice.
@@ -208,7 +209,7 @@ def tool_editor_set_color(
     return _choice(editor.read_choice(root))
 
 
-def tool_editor_unset(what: EditorPart) -> Dict[str, Any]:
+def tool_editor_unset(what: EditorPart) -> Dict[str, object]:
     """Give the workspace window back to the user's setting: `theme`, one colour (`background`, `foreground`), or
     `colors` — both colours and the area. Returns the window's choice."""
     root = get_workspace_root()
@@ -222,13 +223,13 @@ def tool_editor_unset(what: EditorPart) -> Dict[str, Any]:
     return _choice(editor.read_choice(root))
 
 
-def tool_sources() -> Dict[str, Any]:
+def tool_sources() -> Dict[str, object]:
     """Each managed project's source (`aisland workspace configure source`): committed, this machine's override, the effective one
     and the folder's state."""
     return {"sources": sources_mod.describe(get_workspace_root())}
 
 
-def tool_services_status() -> Dict[str, Any]:
+def tool_services_status() -> Dict[str, object]:
     """Every service the supervisor knows: running or not, its PID, its ports and the supervisor's status. Empty
     when no supervisor runs."""
     processes = supervisor.list_processes()
@@ -240,24 +241,24 @@ def tool_services_status() -> Dict[str, Any]:
     }
 
 
-def tool_tunnel_list() -> Dict[str, Any]:
+def tool_tunnel_list() -> Dict[str, object]:
     """The workspaces opened through `aisland tunnel`, newest first (`aisland tunnel list --json`)."""
     return {"workspaces": tunnel_mod.store_payload(tunnel_mod.load_store())}
 
 
-def tool_service_start(name: str) -> Dict[str, Any]:
+def tool_service_start(name: str) -> Dict[str, object]:
     """Start a service of the workspace by name — aisland's (docker, jenkins, swiftbar) or one a project brings, as
     `services_status` and `aisland services status` name them (`aisland <name> start`, in the background): its state
     after, and what the command printed. A name no service has is refused, listing the services."""
     return _service_command(name, "start")
 
 
-def tool_service_stop(name: str) -> Dict[str, Any]:
+def tool_service_stop(name: str) -> Dict[str, object]:
     """Stop a service of the workspace (`aisland <name> stop`): its state after, and what the command printed."""
     return _service_command(name, "stop")
 
 
-def tool_service_restart(name: str) -> Dict[str, Any]:
+def tool_service_restart(name: str) -> Dict[str, object]:
     """Restart a service of the workspace (`aisland <name> restart`, in the background): its state after, and what
     the command printed."""
     return _service_command(name, "restart")
@@ -285,7 +286,7 @@ _CHANGING = (
 # --- the server ---------------------------------------------------------------------------
 
 
-def _build_server() -> Any:
+def _build_server() -> "Optional[MCPServer]":
     """The server with every tool registered; ``None`` without the ``[mcp]`` extra.
 
     Tools only: the request handlers for resources and prompts are dropped, so the capabilities advertise tools

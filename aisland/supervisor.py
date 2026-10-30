@@ -35,7 +35,7 @@ import sqlite3
 import subprocess
 from contextlib import closing, contextmanager
 from pathlib import Path
-from typing import Any, Dict, Iterator, List, Optional, Tuple
+from typing import Any, Dict, Iterator, List, NotRequired, Optional, Tuple, TypedDict, cast
 
 import click
 import yaml
@@ -273,7 +273,27 @@ def is_server_running() -> bool:
     return result.returncode == 0
 
 
-def load_config() -> Dict[str, Any]:
+class Readiness(TypedDict):
+    """A service's HTTP readiness probe: ``http://127.0.0.1:<port><path>`` (``path`` default ``/``)."""
+
+    port: int
+    path: NotRequired[str]
+
+
+class ProcessState(TypedDict, total=False):
+    """One process as process-compose's ``process list --output json`` lists it: the keys aisland reads."""
+
+    name: str
+    status: str
+    is_running: bool
+    is_ready: str
+    has_ready_probe: bool
+    pid: int
+    exit_code: int
+    restarts: int
+
+
+def load_config() -> Dict[str, Any]:  # Any: the YAML document process-compose reads, nested as it defines
     """Read the desired-state document (empty skeleton if absent/corrupt)."""
     if CONFIG_FILE.exists():
         try:
@@ -285,7 +305,7 @@ def load_config() -> Dict[str, Any]:
     return {"version": "0.5", "processes": {}}
 
 
-def save_config(config: Dict[str, Any]) -> None:
+def save_config(config: Dict[str, object]) -> None:
     """Write the desired-state document with its provenance header."""
     DATA_DIR.mkdir(parents=True, exist_ok=True)
     body = yaml.safe_dump(config, sort_keys=True, default_flow_style=False)
@@ -297,7 +317,7 @@ def register_process(
     command: List[str],
     env: Optional[Dict[str, str]] = None,
     log_file: Optional[Path] = None,
-    readiness: Optional[Dict[str, Any]] = None,
+    readiness: Optional[Readiness] = None,
     enabled: bool = True,
 ) -> None:
     """Create or replace a process entry in the desired-state document.
@@ -312,7 +332,7 @@ def register_process(
         enabled: Desired state — False registers the entry without starting it.
     """
     config = load_config()
-    entry: Dict[str, Any] = {
+    entry: Dict[str, object] = {
         "command": shlex.join(command),
         "working_dir": str(_workspace_root()),
         "disabled": not enabled,
@@ -498,7 +518,7 @@ def _start_server() -> None:
 
 
 #: The one `process list` answer of a snapshot (:func:`snapshot`); ``None`` outside one, or before its first question.
-_snapshot_list: Optional[Dict[str, Dict[str, Any]]] = None
+_snapshot_list: Optional[Dict[str, ProcessState]] = None
 _in_snapshot = False
 
 
@@ -522,7 +542,7 @@ def _client_reachable() -> bool:
     return find_binary() is not None and (os.name == "nt" or SOCKET_PATH.exists())
 
 
-def list_processes() -> Dict[str, Dict[str, Any]]:
+def list_processes() -> Dict[str, ProcessState]:
     """Return the server's process states keyed by name ({} if no server).
 
     One client call: a `process list` that fails already means there is no server to ask, so no `project state`
@@ -530,7 +550,7 @@ def list_processes() -> Dict[str, Dict[str, Any]]:
     global _snapshot_list
     if _in_snapshot and _snapshot_list is not None:
         return _snapshot_list
-    processes: Dict[str, Dict[str, Any]] = {}
+    processes: Dict[str, ProcessState] = {}
     if _client_reachable():
         result = _run_client(["process", "list", "--output", "json"])
         if result.returncode == 0:
@@ -538,13 +558,15 @@ def list_processes() -> Dict[str, Dict[str, Any]]:
                 listed = json.loads(result.stdout)
             except json.JSONDecodeError:
                 listed = []
-            processes = {proc["name"]: proc for proc in listed if isinstance(proc, dict) and "name" in proc}
+            processes = {
+                proc["name"]: cast(ProcessState, proc) for proc in listed if isinstance(proc, dict) and "name" in proc
+            }
     if _in_snapshot:
         _snapshot_list = processes
     return processes
 
 
-def get_process(name: str) -> Optional[Dict[str, Any]]:
+def get_process(name: str) -> Optional[ProcessState]:
     """Return one process's state dict, or None if unknown / no server."""
     return list_processes().get(name)
 
@@ -628,7 +650,7 @@ def print_status() -> None:
         click.echo(f"    {name:<13} : {click.style(status, fg=color)} {detail}")
 
 
-def wait_for(name: str, running: bool, timeout: float = 30.0) -> Optional[Dict[str, Any]]:
+def wait_for(name: str, running: bool, timeout: float = 30.0) -> Optional[ProcessState]:
     """Poll until the process's is_running matches ``running`` (or timeout).
 
     Returns the final state dict (None if the process never appeared). This
@@ -638,7 +660,7 @@ def wait_for(name: str, running: bool, timeout: float = 30.0) -> Optional[Dict[s
     import time
 
     deadline = time.monotonic() + timeout
-    state: Optional[Dict[str, Any]] = None
+    state: Optional[ProcessState] = None
     while time.monotonic() < deadline:
         state = get_process(name)
         if state is not None and bool(state.get("is_running")) == running:
@@ -647,7 +669,7 @@ def wait_for(name: str, running: bool, timeout: float = 30.0) -> Optional[Dict[s
     return state
 
 
-def wait_for_outcome(name: str, timeout: float = 45.0) -> Tuple[str, Optional[Dict[str, Any]]]:
+def wait_for_outcome(name: str, timeout: float = 45.0) -> Tuple[str, Optional[ProcessState]]:
     """Wait for a just-started process to reach a definite startup outcome.
 
     A momentary ``is_running`` is NOT success — a crash-looping process (e.g.
@@ -666,7 +688,7 @@ def wait_for_outcome(name: str, timeout: float = 45.0) -> Tuple[str, Optional[Di
 
     deadline = time.monotonic() + timeout
     stable_polls = 0
-    state: Optional[Dict[str, Any]] = None
+    state: Optional[ProcessState] = None
     while time.monotonic() < deadline:
         state = get_process(name)
         if state is not None:

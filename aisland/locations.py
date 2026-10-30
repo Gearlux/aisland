@@ -16,9 +16,12 @@ Nothing here raises: outside a workspace the root falls back to the folder you r
 command (:func:`workspace_found`, :func:`missing_workspace_message`) before anything is written there.
 """
 
+import logging
 import os
 from pathlib import Path
-from typing import Dict, List, Literal, Mapping, Optional
+from typing import Dict, List, Literal, Mapping, Optional, Tuple
+
+logger = logging.getLogger(__name__)
 
 #: The installed package's folder: ``<workspace>/aisland/aisland`` in a checkout, ``site-packages/aisland`` from a wheel.
 PACKAGE_DIR = Path(__file__).parent.absolute()
@@ -62,20 +65,33 @@ def checkout_workspace_root(package_file: Optional[Path] = None) -> Path:
     #    stray .gitmodules elsewhere in the tree can't hijack the result).
     for cand in chain:
         if (cand / ".gitmodules").is_file() and (cand / "TASKS.md").exists():
-            return cand
+            return _said(cand, "from the checkout: it holds .gitmodules and TASKS.md")
 
     # 2. No submodules in this checkout: OUTERMOST TASKS.md wins over a project's.
     with_tasks = [cand for cand in chain if (cand / "TASKS.md").exists()]
     if with_tasks:
-        return with_tasks[-1]
+        return _said(with_tasks[-1], "from the checkout: no .gitmodules above it, the outermost TASKS.md")
 
     # 3. Outermost .git (the superproject's directory, not a submodule's file).
     with_git = [cand for cand in chain if (cand / ".git").exists()]
     if with_git:
-        return with_git[-1]
+        return _said(with_git[-1], "from the checkout: no .gitmodules or TASKS.md above it, the outermost .git")
 
     # 4. Absolute fallback: <root>/aisland/aisland/manager.py -> <root>.
-    return start.parents[2]
+    return _said(start.parents[2], "from the checkout: no marker above it, two folders above the package")
+
+
+#: The last answer :func:`_said` logged: every command asks for the root many times, the log says it once.
+_last_said: Optional[Tuple[Path, str]] = None
+
+
+def _said(root: Path, why: str) -> Path:
+    """``root``, logged at debug with ``why`` when it differs from the last answer logged."""
+    global _last_said
+    if _last_said != (root, why):
+        _last_said = (root, why)
+        logger.debug("workspace root %s (%s)", root, why)
+    return root
 
 
 #: What :func:`_is` asks of a path.
@@ -150,15 +166,21 @@ def find_workspace(start: Path) -> Optional[Path]:
     of every folder under it. A folder that cannot be looked into holds none of these, and the search goes on above
     it.
     """
+    found = _find_workspace(start)
+    return found[0] if found else None
+
+
+def _find_workspace(start: Path) -> Optional[Tuple[Path, str]]:
+    """:func:`find_workspace`'s answer and the rule that gave it, in words for the debug log."""
     for candidate in [start, *start.parents]:
         if _is(candidate / ".gitmodules", "file"):
-            return candidate
+            return candidate, f"{candidate} holds .gitmodules"
         if candidate == start and holds_projects(candidate):
-            return candidate
+            return candidate, f"{candidate}, the folder aisland runs in, holds projects"
         if _is(candidate / "pyproject.toml", "file"):
-            return candidate.parent
+            return candidate.parent, f"{candidate} is a project, the workspace its parent"
         if _is(candidate / ".git", "folder"):
-            return candidate
+            return candidate, f"{candidate} is a repository"
     return None
 
 
@@ -167,8 +189,9 @@ def wheel_workspace_root(cwd: Path, environ: Mapping[str, str]) -> Optional[Path
     the git repository ``cwd`` is in; None when neither names one. The named folder is not checked here."""
     named = environ.get(WORKSPACE_ENV, "")
     if named:
-        return Path(named).expanduser().resolve()
-    return find_workspace(cwd.resolve())
+        return _said(Path(named).expanduser().resolve(), f"from a wheel: {WORKSPACE_ENV} names it")
+    found = _find_workspace(cwd.resolve())
+    return _said(found[0], f"from a wheel: {found[1]}") if found else None
 
 
 def workspace_root() -> Path:

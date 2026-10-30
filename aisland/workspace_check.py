@@ -17,19 +17,11 @@ from __future__ import annotations
 import difflib
 import tomllib
 from pathlib import Path
-from typing import Any, Dict, List, Tuple
+from typing import List, Tuple
 
-from aisland import (
-    activation,
-    ci_templates,
-    discovery,
-    mirrors,
-    pytest_stats,
-    selection,
-    sources,
-    tracking,
-    workspace_file,
-)
+from aisland import activation, ci_templates, discovery, mirrors
+from aisland import pyproject as pyproject_toml
+from aisland import pytest_stats, selection, sources, tracking, workspace_file
 from aisland.discovery import Where, key_line, table_line
 
 #: Every key a project's table may hold, and the part of aisland that reads it.
@@ -73,7 +65,7 @@ def unknown_keys(root: Path) -> List[str]:
         return []
     text = path.read_text()
     try:
-        data: Dict[str, Any] = tomllib.loads(text)
+        data: pyproject_toml.Table = tomllib.loads(text)
     except tomllib.TOMLDecodeError:
         return []
     warnings: List[str] = []

@@ -49,7 +49,7 @@ from pathlib import Path
 from typing import Dict, List, Optional, Sequence, Set, Tuple
 
 from aisland.errors import AislandError
-from aisland.wheels import WHEELS_DIR, _find_target, _size, workspace_projects
+from aisland.wheels import WHEELS_DIR, find_target, human_size, workspace_projects
 
 #: Where origin keeps the record of every prune: a chain of commits, one per prune, never a branch or a tag.
 PRUNE_REF = "refs/wheels-prune/map"
@@ -506,7 +506,7 @@ def _record_root_pointer(workspace_root: Path, path: str, changed: Dict[str, str
 
 def prune(workspace_root: Path, project_name: str, apply: bool = False) -> PruneReport:
     """``aisland wheels prune PROJECT [--apply]``: see the module's docstring."""
-    target = _find_target(workspace_projects(workspace_root), workspace_root, project_name)
+    target = find_target(workspace_projects(workspace_root), workspace_root, project_name)
     repo = target.path
     _check_repository(repo, target.name)
     if apply:
@@ -636,7 +636,7 @@ def _put_back(repo: Path, name: str) -> None:
 
 def reset(workspace_root: Path, project_name: str) -> ResetReport:
     """``aisland wheels reset PROJECT``: see the module's docstring."""
-    target = _find_target(workspace_projects(workspace_root), workspace_root, project_name)
+    target = find_target(workspace_projects(workspace_root), workspace_root, project_name)
     repo = target.path
     _check_repository(repo, target.name)
     report = ResetReport(project=target.name, prunes=0)
@@ -736,7 +736,7 @@ def render_prune(report: PruneReport) -> str:
         return "\n".join(lines)
     count = f"{len(report.stripped)} of {report.versions} wheel versions"
     if not report.applied:
-        lines.append(f"{name}: {count} are held by no branch or tag ({_size(report.stripped_bytes)}) — they go")
+        lines.append(f"{name}: {count} are held by no branch or tag ({human_size(report.stripped_bytes)}) — they go")
         lines.append(f"  kept: {report.kept}, held by {', '.join(report.holders) or 'nothing'}")
         if report.problems:
             lines.append("--apply would stop:")
@@ -744,11 +744,13 @@ def render_prune(report: PruneReport) -> str:
         else:
             lines.append(f"aisland wheels prune {name} --apply   rewrites history and force-pushes origin")
         return "\n".join(lines)
-    lines.append(f"{name}: {count} stripped ({_size(report.stripped_bytes)}), {report.rewritten} commits rewritten")
+    lines.append(
+        f"{name}: {count} stripped ({human_size(report.stripped_bytes)}), {report.rewritten} commits rewritten"
+    )
     lines.append(f"  kept: {report.kept}, held by {', '.join(report.holders)}")
     lines.append(f"  pushed to origin: {', '.join(report.pushed)}")
     if report.size_before is not None and report.size_after is not None:
-        lines.append(f"  this clone: {_size(report.size_before)} → {_size(report.size_after)}")
+        lines.append(f"  this clone: {human_size(report.size_before)} → {human_size(report.size_after)}")
     if report.root_pointer:
         lines.append(_root_pointer_line(name, report.root_pointer))
     lines.append(f"  backup: {report.backup}")
@@ -780,7 +782,7 @@ def render_reset(report: ResetReport) -> str:
         paths = ", ".join(line.split(None, 1)[1] for line in report.set_aside)
         lines.append(f"  uncommitted changes set aside and put back: {paths}")
     if report.size_before is not None and report.size_after is not None:
-        lines.append(f"  this clone: {_size(report.size_before)} → {_size(report.size_after)}")
+        lines.append(f"  this clone: {human_size(report.size_before)} → {human_size(report.size_after)}")
     if report.root_pointer:
         lines.append(_root_pointer_line(name, report.root_pointer))
     lines.append(f"  backup: {report.backup}")

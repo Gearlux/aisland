@@ -3,7 +3,7 @@ folder and log, and its start, stop, status, info and reset."""
 
 import os
 import shutil
-from typing import Any, Dict, List, Optional
+from typing import Any, List, Optional
 
 import click
 
@@ -51,7 +51,7 @@ class BaseService:
         cmd: List[str],
         env: Optional[dict] = None,
         background: bool = False,
-        readiness: Optional[Dict[str, Any]] = None,
+        readiness: Optional[supervisor.Readiness] = None,
     ) -> None:
         """Register the service with the supervisor and bring it up.
 
@@ -209,7 +209,7 @@ class BaseService:
         click.echo(f"  Log file      : {self.log_file}")
         click.echo(f"  Supervisor    : process-compose ({supervisor.CONFIG_FILE})")
 
-    def restart(self, **kwargs: Any) -> None:
+    def restart(self, **kwargs: Any) -> None:  # Any: launch's options, each typed by the subclass
         """Restart the service."""
         click.echo(f"Restarting {self.name}...")
         self.stop()

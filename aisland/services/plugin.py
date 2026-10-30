@@ -19,7 +19,7 @@ class may declare options of its own (``options = {"repo": "help"}``), offered o
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Any, Dict, List, Mapping, Optional
+from typing import Any, Callable, Dict, List, Mapping, Optional
 
 import click
 
@@ -57,7 +57,9 @@ class ServiceContext:
         ready: Optional[str] = None,
     ) -> None:
         """Run ``command`` under the supervisor; with ``port`` and ``ready``, wait until it answers there."""
-        readiness = {"port": port, "path": ready} if port is not None and ready is not None else None
+        readiness: Optional[supervisor.Readiness] = (
+            {"port": port, "path": ready} if port is not None and ready is not None else None
+        )
         self._service.start(list(command), env=env, background=self.background, readiness=readiness)
 
     def write_env(self, values: Dict[str, str]) -> None:
@@ -91,20 +93,20 @@ class PluginService(BaseService):
     """The service a project's class implements; what the class leaves out is :class:`BaseService`'s."""
 
     # The class is whatever the project's code defines — aisland only calls the methods it has.
-    def __init__(self, name: str, implementation: Any) -> None:
+    def __init__(self, name: str, implementation: Any) -> None:  # Any: a project's class, its methods its own
         super().__init__(name)
         self.implementation = implementation
         self.options: Dict[str, str] = dict(getattr(implementation, "options", {}))
         self.supervised = bool(getattr(implementation, "supervised", True))
 
-    def _own(self, method: str) -> Optional[Any]:
+    def _own(self, method: str) -> Optional[Callable[["ServiceContext"], object]]:
         found = getattr(self.implementation, method, None)
         return found if callable(found) else None
 
     def launch(self, background: bool = False, port: Optional[int] = None, **options: Optional[str]) -> None:
         self.implementation.start(ServiceContext(self, port=port, background=background, options=options))
 
-    def restart(self, **kwargs: Any) -> None:
+    def restart(self, **kwargs: Any) -> None:  # Any: launch's options, each typed there
         click.echo(f"Restarting {self.name}...")
         self.stop()
         self.launch(**kwargs)

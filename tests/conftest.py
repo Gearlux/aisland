@@ -1,5 +1,7 @@
 """Shared test fixtures for aisland."""
 
+import logging
+import sys
 from pathlib import Path
 from typing import Iterator, Set
 
@@ -50,3 +52,16 @@ def tunnel_state(monkeypatch: pytest.MonkeyPatch, tmp_path_factory: pytest.TempP
     state = tmp_path_factory.mktemp("tunnel-state")
     monkeypatch.setenv("AISLAND_TUNNEL_HOME", str(state))
     return state
+
+
+@pytest.fixture(autouse=True)
+def quiet_debug_log() -> Iterator[None]:
+    """Every test leaves aisland's debug log off.
+
+    ``aisland --debug`` adds its handler to the ``aisland`` logger for one run and takes it off when the run ends; a
+    run that stops while its options are parsed never ends, and its handler would print every later test's debug
+    records (``tests/test_debug_log.py``)."""
+    yield
+    cli = sys.modules.get("aisland.cli")  # a test that never imported the CLI never turned the log on
+    if cli is not None:
+        cli._quiet_debug_log(logging.NOTSET)

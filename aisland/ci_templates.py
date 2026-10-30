@@ -24,18 +24,21 @@ from __future__ import annotations
 
 import importlib
 import importlib.metadata
+import logging
 import shutil
 import tomllib
 import traceback
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
-from typing import Any, Dict, List, Mapping, Optional
+from typing import Dict, List, Mapping, Optional
 
 import jinja2
 
 from aisland import locations, workspace_file
 from aisland.discovery import Where, key_line, table_line
 from aisland.errors import AislandError
+
+logger = logging.getLogger(__name__)
 
 #: The name of aisland's own set, and its folder in the package.
 BUILTIN = "aisland"
@@ -97,7 +100,7 @@ class Facts:
 class Variable:
     """One setting a set declares: its default (None: required) and what it is for."""
 
-    default: Any
+    default: object
     help: str
 
 
@@ -210,7 +213,7 @@ class Choice:
     """The set a project's CI files come from and the variables it is rendered with."""
 
     template_set: TemplateSet
-    variables: Dict[str, Any]
+    variables: Dict[str, object]
 
 
 def choice(root: Path, project: str) -> Choice:
@@ -229,10 +232,12 @@ def choice(root: Path, project: str) -> Choice:
     own_set = bool(own.get(TEMPLATES_KEY)) and own.get(TEMPLATES_KEY) != current.ci.get(TEMPLATES_KEY)
     if own.get(TEMPLATES_KEY):
         name, where = own.pop(TEMPLATES_KEY), listed.where if listed else None
+        chooser = "named by the project's ci"
     else:
         own.pop(TEMPLATES_KEY, None)
         name = current.ci.get(TEMPLATES_KEY)
         where = Where(path, key_line(text, ci_header, TEMPLATES_KEY) if ci_header else None)
+        chooser = f"named by [{workspace_file.CI_SECTION}] {TEMPLATES_KEY}" if name else "aisland's, nobody names one"
     template_set = find_set(root, name, where)
     if own_set:
         # [ci.variables] are the workspace's set's: a project on a set of its own takes the ones its set declares.
@@ -258,6 +263,9 @@ def choice(root: Path, project: str) -> Choice:
             f"{path}: the {template_set.name!r} template set needs {', '.join(missing)} — set it in "
             f"[{workspace_file.CI_SECTION}.{VARIABLES_KEY}] ({needed})"
         )
+    logger.debug(
+        "%s: template set %r (%s, %s), variables %s", project, template_set.name, template_set.folder, chooser, values
+    )
     return Choice(template_set, values)
 
 
@@ -308,7 +316,7 @@ def render(chosen: Choice, facts: Facts) -> Dict[str, str]:
     """Every file of the set, its header first, by its path in the project. Raises :class:`TemplateError` naming the
     template and its line for a template that does not parse or uses a value nobody gave."""
     environment = _environment(chosen.template_set.folder)
-    values: Mapping[str, Any] = {**asdict(facts), "variables": chosen.variables}
+    values: Mapping[str, object] = {**asdict(facts), "variables": chosen.variables}
     rendered: Dict[str, str] = {}
     for output in chosen.template_set.files:
         try:

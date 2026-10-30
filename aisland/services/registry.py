@@ -37,10 +37,10 @@ class Service(Protocol):
 
     name: str
 
-    def launch(self, *args: Any, **kwargs: Any) -> None:
+    def launch(self, *args: Any, **kwargs: Any) -> None:  # Any: each service's own options (a port, mounts)
         """Start it."""
 
-    def restart(self, *args: Any, **kwargs: Any) -> None:
+    def restart(self, *args: Any, **kwargs: Any) -> None:  # Any: as launch's
         """Stop and start it."""
 
     def stop(self) -> None:
@@ -96,10 +96,10 @@ class _Plugin:
 
     def __init__(self, plugin: discovery.Plugin, entry: importlib.metadata.EntryPoint) -> None:
         self._plugin, self._entry = plugin, entry
-        self._obj: Optional[Any] = None
+        self._obj: Optional[Any] = None  # Any: a project's class, called by the methods its kind declares
 
     @property
-    def obj(self) -> Any:
+    def obj(self) -> Any:  # Any: as _obj
         if self._obj is None:
             loaded = discovery.load_one(self._plugin, self._entry)
             if loaded.kind != "service":

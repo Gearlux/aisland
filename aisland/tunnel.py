@@ -47,12 +47,15 @@ import urllib.request
 from dataclasses import asdict, dataclass, replace
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Sequence, Tuple
+from typing import TYPE_CHECKING, Any, Dict, List, Optional, Sequence, Tuple
 from urllib.parse import parse_qs, urlparse
 
 import click
 
 from aisland.errors import AislandError
+
+if TYPE_CHECKING:
+    from click.shell_completion import CompletionItem
 
 #: The relay the tunnel dials out to; also what the doctor check probes.
 RELAY_HOST = "global.rel.tunnels.api.visualstudio.com"
@@ -278,9 +281,9 @@ def read_provider() -> Optional[str]:
     return provider or None
 
 
-def _scan_log(text: str) -> Dict[str, Any]:
+def _scan_log(text: str) -> Dict[str, object]:
     """What the tunnel's log says so far: the tunnel address, or the sign-in the user must complete."""
-    found: Dict[str, Any] = {}
+    found: Dict[str, object] = {}
     if _READY_MARKER in text:
         for line in text.splitlines():
             if _READY_MARKER in line:
@@ -293,7 +296,7 @@ def _scan_log(text: str) -> Dict[str, Any]:
     return found
 
 
-def _watch_log(timeout: float) -> Dict[str, Any]:
+def _watch_log(timeout: float) -> Dict[str, object]:
     """Poll the log until it says the tunnel is up or that a sign-in is pending, or until ``timeout``."""
     deadline = time.monotonic() + timeout
     while True:
@@ -330,7 +333,7 @@ def start(
     provider: Optional[str] = None,
     timeout: float = START_TIMEOUT_S,
     sign_in: bool = True,
-) -> Dict[str, Any]:
+) -> Dict[str, Any]:  # Any: the --json payload; its reader indexes into pending_signin
     """Bring up a tunnel to this machine and report what the log said.
 
     Args:
@@ -385,7 +388,7 @@ def start(
     return {**status(), "name": tunnel_name, **found}
 
 
-def stop() -> Dict[str, Any]:
+def stop() -> Dict[str, object]:
     """Stop the tunnel this machine started; saying so is not an error when none runs."""
     pid = read_pid()
     if pid is None or not _alive(pid):
@@ -399,11 +402,11 @@ def stop() -> Dict[str, Any]:
     return {"running": False, "stopped": True, "pid": pid}
 
 
-def status() -> Dict[str, Any]:
+def status() -> Dict[str, object]:
     """What this machine's tunnel is doing, as JSON-serializable fields."""
     pid = read_pid()
     is_running = pid is not None and _alive(pid)
-    payload: Dict[str, Any] = {
+    payload: Dict[str, object] = {
         "running": is_running,
         "pid": pid if is_running else None,
         "name": name_in_log(),
@@ -569,7 +572,7 @@ def save_store(entries: Sequence[Workspace]) -> Path:
     return path
 
 
-def store_payload(entries: Sequence[Workspace]) -> List[Dict[str, Any]]:
+def store_payload(entries: Sequence[Workspace]) -> List[Dict[str, object]]:
     """The remembered workspaces as JSON-serializable dicts — what ``--json`` and the MCP tool emit."""
     return [asdict(entry) for entry in entries]
 
@@ -696,7 +699,9 @@ def resolve_target(target: Optional[str] = None, name: Optional[str] = None, ask
     return replace(candidate, name=_ask_name(candidate.name, stripped) if ask else stripped)
 
 
-def complete_workspace(ctx: Any, param: Any, incomplete: str) -> List[Any]:
+def complete_workspace(
+    ctx: Optional[click.Context], param: Optional[click.Parameter], incomplete: str
+) -> List[CompletionItem]:
     """Shell completion for a workspace argument: the remembered names, with folder and age as help.
 
     Completion runs inside the user's shell on every TAB, so this answers from the cache only — no
@@ -720,7 +725,7 @@ def open_editor(
     folder: Optional[str] = None,
     name: Optional[str] = None,
     ask: bool = True,
-) -> Dict[str, Any]:
+) -> Dict[str, object]:
     """Attach the LOCAL editor to a tunnel, remembering the workspace for next time.
 
     Args:

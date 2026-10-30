@@ -121,7 +121,7 @@ needs — in its own `pyproject.toml`, under `[tool.aisland]`. It never imports 
 | pull, push or tag every project | `git pull-all`, `git push-all`, `git tag-all <tag>` | [git](https://github.com/Gearlux/aisland/blob/main/docs/git.md) |
 | run the local services | `aisland services start [NAME…]` | [services](https://github.com/Gearlux/aisland/blob/main/docs/services.md) |
 | check the environment | `aisland doctor` | [doctor](https://github.com/Gearlux/aisland/blob/main/docs/doctor.md) |
-| see where a command failed | `aisland --debug <command>` (every error is one `Error:` line, exit 1; this adds its traceback) | [doctor](https://github.com/Gearlux/aisland/blob/main/docs/doctor.md) |
+| see where a command failed | `aisland --debug <command>` (every error is one `Error:` line, exit 1; this adds its traceback and aisland's debug log) | [doctor](https://github.com/Gearlux/aisland/blob/main/docs/doctor.md) |
 | write a project's CI files | `aisland jenkins scaffold <project>` | [ci](https://github.com/Gearlux/aisland/blob/main/docs/ci.md) |
 | see a project's test runs and slowest tests | `aisland tests report <project>` | [tests](https://github.com/Gearlux/aisland/blob/main/docs/tests.md) |
 | carry a project to a machine without the workspace | `aisland wheels build <project>` | [wheels](https://github.com/Gearlux/aisland/blob/main/docs/wheels.md) |

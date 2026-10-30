@@ -43,12 +43,16 @@ import time
 import tty
 from dataclasses import asdict, dataclass
 from pathlib import Path
-from types import ModuleType
-from typing import Any, Callable, Dict, Iterator, List, Optional, Tuple
+from types import FrameType, ModuleType
+from typing import TYPE_CHECKING, Callable, Dict, Iterator, List, Mapping, Optional, Tuple
 
 from aisland import tunnel_shell
 from aisland.errors import AislandError
 from aisland.tunnel import state_dir
+
+if TYPE_CHECKING:
+    import click
+    from click.shell_completion import CompletionItem
 
 #: The VS Code tunnel's control port (the CLI's ``CONTROL_PORT``); ``devtunnel connect`` forwards it
 #: to the same number here.
@@ -183,7 +187,7 @@ def render_tunnels(tunnels: List[Tunnel]) -> str:
     return "\n".join(lines)
 
 
-def tunnels_payload(tunnels: List[Tunnel]) -> List[Dict[str, Any]]:
+def tunnels_payload(tunnels: List[Tunnel]) -> List[Dict[str, object]]:
     """The tunnels as JSON-serializable records."""
     return [asdict(entry) for entry in tunnels]
 
@@ -223,7 +227,9 @@ def _save_cache(tunnels: List[Tunnel]) -> None:
         pass
 
 
-def complete_tunnel(ctx: Any, param: Any, incomplete: str) -> List[Any]:
+def complete_tunnel(
+    ctx: Optional[click.Context], param: Optional[click.Parameter], incomplete: str
+) -> List[CompletionItem]:
     """Shell completion for ``connect``: the names of the last list, with id and state as help.
 
     Like :func:`aisland.tunnel.complete_workspace` it answers from a file only — no network on a TAB —
@@ -392,7 +398,7 @@ def run_shell(
     msgpack = _msgpack()
     unpacker = msgpack.Unpacker(raw=False)
 
-    def send(message: Dict[str, Any]) -> None:
+    def send(message: Mapping[str, object]) -> None:
         sock.sendall(msgpack.packb(message, use_bin_type=True))
 
     command, args = remote_command(rows, cols, folder)
@@ -486,7 +492,7 @@ def _resizes() -> Iterator[Optional[int]]:
     read_end, write_end = os.pipe()
     os.set_blocking(write_end, False)
 
-    def handler(signum: int, frame: Any) -> None:
+    def handler(signum: int, frame: Optional[FrameType]) -> None:
         with contextlib.suppress(BlockingIOError):
             os.write(write_end, b"r")
 

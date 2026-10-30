@@ -151,8 +151,8 @@ def test_completion_offers_every_name_and_filters_by_prefix(state: Path) -> None
 
     filtered = tunnel.complete_workspace(None, None, "san")
     assert [item.value for item in filtered] == ["sandbox-48"]
-    assert "/mnt/workspace" in filtered[0].help
-    assert "just now" in filtered[0].help
+    assert "/mnt/workspace" in str(filtered[0].help)
+    assert "just now" in str(filtered[0].help)
 
 
 def test_completion_answers_nothing_rather_than_raising(monkeypatch: pytest.MonkeyPatch, state: Path) -> None:
@@ -380,4 +380,4 @@ def test_a_prefix_completes_the_workspace_after_the_first_open(editor: List[List
     offered = tunnel.complete_workspace(None, None, "sand")
 
     assert [item.value for item in offered] == ["sandbox-4821"]
-    assert "/mnt/workspace" in offered[0].help
+    assert "/mnt/workspace" in str(offered[0].help)

@@ -3,6 +3,7 @@
 :mod:`aisland.provision`'s."""
 
 import hashlib
+import logging
 import os
 import platform
 import shutil
@@ -10,7 +11,7 @@ import subprocess
 import tarfile
 import tempfile
 from pathlib import Path
-from typing import Any
+from typing import Dict, List, NotRequired, TypedDict
 
 import click
 
@@ -18,6 +19,26 @@ from aisland import failures, locations
 from aisland.downloads import download
 from aisland.errors import AislandError
 from aisland.paths import BIN_DIR, TOOLS_DIR
+
+logger = logging.getLogger(__name__)
+
+
+class UserspaceTool(TypedDict):
+    """One entry of :data:`USERSPACE_TOOLS`: a pinned release and how to install it.
+
+    ``url`` and ``extract_subdir`` are templates of ``{version}`` and ``{arch}`` (the architecture in the tool's own
+    names, ``arch_names``, when they differ from aisland's ``amd64``/``arm64``); ``bin_subdir`` is the binaries'
+    folder inside the archive (``""``: at its root; default ``bin``); ``sha256`` maps aisland's architecture names to
+    the archive's digest."""
+
+    version: str
+    url: str
+    extract_subdir: str
+    binaries: List[str]
+    sha256: Dict[str, str]
+    arch_names: NotRequired[Dict[str, str]]
+    bin_subdir: NotRequired[str]
+
 
 # Registry of tools aisland can install entirely in userspace (no sudo / package
 # manager required). Used on Linux where the macOS brew flow is unavailable.
@@ -28,7 +49,7 @@ from aisland.paths import BIN_DIR, TOOLS_DIR
 # by the same {arch} token used in the URL — node ships an x64-only asset, so it
 # is keyed "amd64". When bumping `version`, refresh the digests from upstream in
 # the SAME edit (e.g. `curl -sL <checksums-url>`), or the install will abort.
-USERSPACE_TOOLS: dict[str, dict[str, Any]] = {
+USERSPACE_TOOLS: Dict[str, UserspaceTool] = {
     "node": {
         "version": "v22.11.0",
         "url": "https://nodejs.org/dist/{version}/node-{version}-linux-{arch}.tar.xz",
@@ -87,6 +108,7 @@ def install_brew_packages(packages: set) -> None:
     for pkg in sorted(packages):
         click.echo(f"==> Installing {pkg} via Homebrew...")
         try:
+            logger.debug("running brew install --quiet %s (HOMEBREW_NO_AUTO_UPDATE=1)", pkg)
             subprocess.check_call(["brew", "install", "--quiet", pkg], env=env)
             click.echo(f"  - {pkg} installed successfully.")
         except subprocess.CalledProcessError as e:
@@ -136,7 +158,7 @@ def install_userspace_tool(name: str) -> None:
 
     BIN_DIR.mkdir(parents=True, exist_ok=True)
     if all((BIN_DIR / b).exists() for b in binaries):
-        click.echo(f"  - {name} {version} already installed (symlinks present in {BIN_DIR}).")
+        logger.debug("%s %s already installed (symlinks present in %s)", name, version, BIN_DIR)
         return
 
     cache_dir = TOOLS_DIR / "cache"
@@ -152,9 +174,9 @@ def install_userspace_tool(name: str) -> None:
             if tarball.exists():
                 tarball.unlink()
             return
-        click.echo(f"  - Cached at {tarball}.")
+        logger.debug("cached at %s", tarball)
     else:
-        click.echo(f"  - Using cached tarball {tarball}.")
+        logger.debug("using cached tarball %s", tarball)
 
     # Integrity gate: verify BEFORE extracting anything. This covers both the
     # fresh download and a reused cache entry (a poisoned cache must not be
@@ -174,7 +196,7 @@ def install_userspace_tool(name: str) -> None:
             )
             tarball.unlink()
             return
-        click.echo(f"  - Verified {tarball.name} (sha256 OK).")
+        logger.debug("verified %s (sha256 OK)", tarball.name)
     else:
         click.echo(
             f"  - Warning: no pinned sha256 for {name}/{arch}; installing UNVERIFIED. "
@@ -223,7 +245,7 @@ def install_userspace_tool(name: str) -> None:
                 failures.report(f"  - Error: {dst} exists and is not a symlink; refusing to overwrite.")
                 continue
         os.symlink(src, dst)
-        click.echo(f"  - linked {binary} -> {src}")
+        logger.debug("linked %s -> %s", dst, src)
 
     click.echo(f"==> {name} {version} installed under {extract_root}.")
     click.echo(f"  - Ensure {BIN_DIR} is on PATH (project.bashrc handles this).")
@@ -314,5 +336,6 @@ def ensure_uv_in_venv(venv_bin: Path) -> str:
         raise AislandError("Workspace venv missing pip")
 
     click.echo(f"==> Bootstrapping uv into {venv_bin}...")
+    logger.debug("running %s install --quiet --upgrade uv", pip_path)
     subprocess.check_call([str(pip_path), "install", "--quiet", "--upgrade", "uv"])
     return str(uv_path)

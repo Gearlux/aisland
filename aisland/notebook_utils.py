@@ -68,7 +68,11 @@ _STRIPPED_CELL_METADATA_KEYS = (
 )
 
 
-def _normalize_notebook_metadata(nb_data: Dict[str, Any]) -> None:
+#: A notebook's JSON (nbformat 4), or one of its cells.
+Notebook = Dict[str, Any]  # Any: nbformat's nesting, each key read where it is used
+
+
+def _normalize_notebook_metadata(nb_data: Notebook) -> None:
     """Rewrite top-level metadata in place, stripping machine-specific blocks.
 
     Three classes of churn are addressed:
@@ -88,7 +92,7 @@ def _normalize_notebook_metadata(nb_data: Dict[str, Any]) -> None:
 
     language_info = metadata.get("language_info")
     if isinstance(language_info, dict):
-        normalized: Dict[str, Any] = {k: language_info[k] for k in _STABLE_LANGUAGE_INFO_KEYS if k in language_info}
+        normalized: Notebook = {k: language_info[k] for k in _STABLE_LANGUAGE_INFO_KEYS if k in language_info}
         codemirror = language_info.get("codemirror_mode")
         if isinstance(codemirror, dict) and "name" in codemirror:
             normalized["codemirror_mode"] = {"name": codemirror["name"]}
@@ -100,7 +104,7 @@ def _normalize_notebook_metadata(nb_data: Dict[str, Any]) -> None:
         metadata.pop(key, None)
 
 
-def _strip_cell_metadata(cell: Dict[str, Any]) -> None:
+def _strip_cell_metadata(cell: Notebook) -> None:
     """Drop machine-specific per-cell metadata blocks.
 
     See ``_STRIPPED_CELL_METADATA_KEYS`` — covers wall-clock execution
@@ -114,7 +118,7 @@ def _strip_cell_metadata(cell: Dict[str, Any]) -> None:
         cell_meta.pop(key, None)
 
 
-def clean_notebook_outputs(nb_data: Dict[str, Any]) -> Dict[str, Any]:
+def clean_notebook_outputs(nb_data: Notebook) -> Notebook:
     """Normalize a parsed notebook so it diffs cleanly across machines.
 
     Always:

@@ -40,7 +40,7 @@ import subprocess
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 from pathlib import Path
-from typing import Any, Dict, Iterator, List, Optional, Sequence, Set, Tuple
+from typing import Any, Dict, Iterator, List, Mapping, Optional, Sequence, Set, Tuple
 
 import click
 
@@ -241,7 +241,7 @@ def read_backups(root: Path) -> List[Backup]:
     return sorted(backups, key=lambda backup: backup.created)
 
 
-def read_manifest(stamp_dir: Path) -> Dict[str, Any]:
+def read_manifest(stamp_dir: Path) -> Dict[str, Any]:  # Any: a backup's JSON manifest, each value checked on use
     """A backup's manifest, or an empty mapping when it is missing or unreadable.
 
     Everything about a backup is answered from here rather than re-walked from disk: the
@@ -259,15 +259,17 @@ def read_manifest(stamp_dir: Path) -> Dict[str, Any]:
     return data if isinstance(data, dict) else {}
 
 
-def _as_int(value: Any) -> int:
+def _as_int(value: object) -> int:
     """A manifest number, or 0 for anything that is not one."""
+    if not isinstance(value, (int, float, str)):  # the JSON values int() takes
+        return 0
     try:
         return int(value)
-    except (TypeError, ValueError):
+    except ValueError:
         return 0
 
 
-def _manifest_paths(manifest: Dict[str, Any]) -> List[str]:
+def _manifest_paths(manifest: Mapping[str, object]) -> List[str]:
     """The ``entries[].path`` values of a manifest, skipping anything malformed."""
     raw = manifest.get("entries")
     if not isinstance(raw, list):

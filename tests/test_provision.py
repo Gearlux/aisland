@@ -11,6 +11,7 @@ specific in a way unit tests can't usefully verify.
 from __future__ import annotations
 
 import hashlib
+import logging
 import os
 import platform
 import re
@@ -119,9 +120,9 @@ def test_userspace_install_unknown_tool_errors(monkeypatch: pytest.MonkeyPatch, 
 
 
 def test_userspace_install_skips_when_already_installed(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, capsys: Any
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, capsys: Any, caplog: pytest.LogCaptureFixture
 ) -> None:
-    """Idempotency: if all target symlinks already exist, no download is attempted."""
+    """Idempotency: if all target symlinks already exist, no download is attempted — said in the debug log only."""
     bin_dir = tmp_path / "bin"
     bin_dir.mkdir()
     # Pre-create all three symlinks so the idempotency check fires.
@@ -136,8 +137,13 @@ def test_userspace_install_skips_when_already_installed(
 
     monkeypatch.setattr(installers, "download", _explode)
 
-    installers.install_userspace_tool("node")
-    assert "already installed" in capsys.readouterr().out
+    with caplog.at_level(logging.DEBUG, logger="aisland"):
+        installers.install_userspace_tool("node")
+    assert "already installed" not in capsys.readouterr().out
+    assert (
+        f"node {installers.USERSPACE_TOOLS['node']['version']} already installed (symlinks present in {bin_dir})"
+        in (caplog.messages)
+    )
 
 
 def _build_fake_node_tarball(staging: Path, extract_subdir: str) -> Path:
@@ -154,8 +160,11 @@ def _build_fake_node_tarball(staging: Path, extract_subdir: str) -> Path:
     return tarball
 
 
-def test_userspace_install_extracts_and_symlinks(monkeypatch: pytest.MonkeyPatch, tmp_path: Path, capsys: Any) -> None:
-    """End-to-end: a fake tarball is extracted and binaries are symlinked into BIN_DIR."""
+def test_userspace_install_extracts_and_symlinks(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, capsys: Any, caplog: pytest.LogCaptureFixture
+) -> None:
+    """End-to-end: a fake tarball is extracted and binaries are symlinked into BIN_DIR. The download, the digest and
+    the links are aisland's own mechanics: the debug log says them, the output shows the steps and the result."""
     bin_dir = tmp_path / "bin"
     tools_dir = tmp_path / "tools"
     monkeypatch.setattr(installers, "BIN_DIR", bin_dir)
@@ -179,9 +188,17 @@ def test_userspace_install_extracts_and_symlinks(monkeypatch: pytest.MonkeyPatch
 
     monkeypatch.setattr(installers, "download", fake_urlretrieve)
 
-    installers.install_userspace_tool("node")
+    with caplog.at_level(logging.DEBUG, logger="aisland"):
+        installers.install_userspace_tool("node")
 
-    assert "sha256 OK" in capsys.readouterr().out
+    out = capsys.readouterr().out
+    assert "sha256 OK" not in out and "Cached at" not in out and "linked" not in out
+    assert f"==> Downloading node {spec['version']}" in out and f"==> node {spec['version']} installed under" in out
+    (tarball,) = (tools_dir / "cache").iterdir()
+    assert f"cached at {tarball}" in caplog.messages
+    assert f"verified {tarball.name} (sha256 OK)" in caplog.messages
+    for binary in ("node", "npm", "npx"):
+        assert any(message.startswith(f"linked {bin_dir / binary} -> ") for message in caplog.messages)
     for binary in ("node", "npm", "npx"):
         link = bin_dir / binary
         assert link.is_symlink(), f"{binary} should be a symlink in {bin_dir}"
@@ -268,7 +285,7 @@ def test_userspace_install_rejects_checksum_mismatch(
 
 
 def test_userspace_install_rejects_tampered_cached_tarball(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, capsys: Any
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, capsys: Any, caplog: pytest.LogCaptureFixture
 ) -> None:
     """A pre-existing (cached) tarball is NOT trusted just because it is on disk —
     it is verified too, so a poisoned cache is rejected without re-downloading."""
@@ -291,10 +308,12 @@ def test_userspace_install_rejects_tampered_cached_tarball(
 
     monkeypatch.setattr(installers, "download", fail_urlretrieve)
 
-    installers.install_userspace_tool("node")
+    with caplog.at_level(logging.DEBUG, logger="aisland"):
+        installers.install_userspace_tool("node")
 
     captured = capsys.readouterr()
-    assert "Using cached tarball" in captured.out
+    assert f"using cached tarball {cache / tarball_name}" in caplog.messages
+    assert "Using cached tarball" not in captured.out
     assert "checksum mismatch" in captured.err
     assert not (cache / tarball_name).exists()
 

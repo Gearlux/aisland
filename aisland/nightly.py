@@ -56,7 +56,7 @@ class Api(Protocol):
 
     base_url: str
 
-    def json(self, path: str) -> Optional[Any]:
+    def json(self, path: str) -> Optional[Any]:  # Any: Jenkins' JSON, read by key
         """The parsed JSON at `path`, None for a 404."""
 
     def text(self, path: str) -> str:
@@ -81,7 +81,7 @@ class JenkinsApi:
         except (urllib.error.URLError, OSError) as error:
             raise JenkinsUnreachable(f"{self.base_url}: {getattr(error, 'reason', error)}") from error
 
-    def json(self, path: str) -> Optional[Any]:
+    def json(self, path: str) -> Optional[Any]:  # Any: Jenkins' JSON, read by key
         body = self._read(path)
         return None if body is None else json.loads(body)
 
@@ -186,7 +186,7 @@ class NightlyReport:
             items.append(item)
         return (head + ", ".join(items) + tail)[:NOTIFICATION_LIMIT]
 
-    def to_dict(self) -> Dict[str, Any]:
+    def to_dict(self) -> Dict[str, object]:
         return asdict(self)
 
 
@@ -205,7 +205,7 @@ def _what_failed(build: ProjectBuild) -> str:
     return (build.failed_stage or build.result or "failed").lower()
 
 
-def _causes(build: Dict[str, Any]) -> List[Dict[str, Any]]:
+def _causes(build: Dict[str, Any]) -> List[Dict[str, Any]]:  # Any: Jenkins' JSON, read by key
     return [cause for action in build.get("actions") or [] if action for cause in action.get("causes") or []]
 
 
@@ -255,7 +255,7 @@ def build_report(api: Api, orchestrator: str, since: datetime, now: datetime) ->
     return report
 
 
-def _project(api: Api, job: str, build: Dict[str, Any]) -> ProjectBuild:
+def _project(api: Api, job: str, build: Dict[str, Any]) -> ProjectBuild:  # Any: Jenkins' JSON
     result = None if build.get("building") else build.get("result")
     project = ProjectBuild(
         job, build["number"], result, round(build.get("duration", 0) / 60_000, 1), build.get("url", "")

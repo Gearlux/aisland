@@ -224,7 +224,7 @@ class SwiftBarService(BaseService):
         except OSError as e:
             failures.report(f"  - Error stopping SwiftBar: {e}")
 
-    def restart(self, **kwargs: Any) -> None:
+    def restart(self, **kwargs: Any) -> None:  # Any: launch's options, each typed there
         """Restart SwiftBar."""
         if not self._require_macos():
             return

@@ -4207,3 +4207,82 @@ index_url = "https://pypi.example.com/simple"
 
 The facts, by adding one to `Facts` with its documentation; aisland's templates, held by the scaffold's pins. Never
 give a template a way to run code or read files beyond its set.
+
+## A project's `pyproject.toml` and `.gitmodules` each have one reader (2026-10-30)
+
+### Context
+
+Fifteen places in nine modules opened a project's `pyproject.toml` with `tomllib`, each with its own handling: most
+took a broken file as one declaring nothing, discovery and `wheels build --extra` refused it naming the file, the rest
+let tomllib's error through. Three modules parsed `.gitmodules`, each with a `git config --get-regexp` process of its
+own and its own rule for a key written twice (`submodule_active_map` took the first `path`, `workspace_file` the last,
+`local_workspace` kept both).
+
+### Decision
+
+`pyproject.py` holds the three answers the callers had — `read` (`{}`), `parse` (`PyprojectError`, `<file>:
+<tomllib's message>`) and `load` (tomllib's errors) — and `name`; every caller keeps the one it had, word for word.
+`gitmodules.py` asks git once for `path`, `url`, `branch` and `active` and returns a frozen `Submodule` per submodule;
+the three readers keep their names and shapes as views over it. A repeated key is read as git reads it, the last value
+(`git config --get`; `git submodule init` registers the last `path` and `url`, measured with git 2.54).
+
+### Consequences
+
+The CI files of every project are byte-identical (the scaffold rendered before and after, PyPI, GitHub and Jenkins
+stubbed). A `.gitmodules` repeating `path` inside one submodule now reads the same in all three views, git's last
+value. The standard-library-only modules and `harness/` keep their own reads: they run where aisland is not installed.
+
+### Example
+
+```python
+from aisland import gitmodules, pyproject
+
+pyproject.read(Path("models/pyproject.toml")).get("project", {})   # {} when missing or broken
+pyproject.parse(text, path)                                         # PyprojectError: models/pyproject.toml: ...
+gitmodules.read(root)  # [Submodule(name='models', path='models', url='git@…', branch='main', active=True), …]
+```
+
+### What you may change
+
+Add a function a new caller needs (a table it reads in several places); never let a caller go back to `tomllib` or its
+own `--get-regexp`, and never give `.gitmodules` a second rule for a repeated key.
+
+## A diagnostic is a debug record `--debug` shows, never output (2026-10-30)
+
+### Context
+
+aisland had no logger: every library module reported with `click.echo` (about eighty lines in `jenkins.py` alone), so
+a line that only described aisland's own mechanics — `Using cached tarball …`, `Verified … (sha256 OK).`, `All
+required Jenkins plugins are already installed.` — could not be turned down, and the decisions that printed nothing
+(which workspace root, which template set, which `git` and install commands) could not be turned up.
+
+### Decision
+
+Each module that needs one has `logger = logging.getLogger(__name__)` (the standard library: aisland depends on no
+logging package). `aisland --debug`, through its option's callback, adds one handler to the `aisland` logger for the
+run — `aisland: <module>: <message>` on stderr, written through click — and removes it, the level restored, when the
+run ends; without the flag nothing is configured and nothing below WARNING shows. Eight `click.echo` lines that no
+one acts on moved to debug; every result, progress line, question and warning stayed output. New debug lines name the
+workspace root and the rule that found it (once per answer), the template set and its variables, each `gitcmd` call
+with its exit code, each install command, and the `pyproject.toml` and `.gitmodules` read.
+
+### Consequences
+
+A plain run prints what it printed, minus the eight lines; `--debug` adds the traceback and the debug log. A host that
+configures logging itself (pytest's `caplog`) receives the records without `--debug`, so a moved line is tested at
+DEBUG. `aisland --help` imports nothing new: `logging` was already loaded.
+
+### Example
+
+```bash
+aisland --debug workspace show
+# aisland: locations: workspace root /home/me/acme (from the checkout: it holds .gitmodules and TASKS.md)
+# aisland: gitmodules: read /home/me/acme/.gitmodules: 3 submodule(s)
+# aisland: pyproject: reading /home/me/acme/models/pyproject.toml
+```
+
+### What you may change
+
+Move a line to debug when no one acts on it, or a debug line back to output when someone does; add debug lines at
+silent decisions. Never print a diagnostic with `click.echo`, `print` or at `warning`/`info`, and never add a second
+handler or a logging dependency.

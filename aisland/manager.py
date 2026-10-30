@@ -7,6 +7,7 @@ The pieces live in their own modules — :mod:`aisland.projects` (the workspace 
 :mod:`aisland.uv_config` — and this module runs them in order.
 """
 
+import logging
 import os
 import subprocess
 from pathlib import Path
@@ -22,6 +23,8 @@ from aisland.mcp_config import no_venv, write_gemini_settings, write_mcp_json
 from aisland.paths import BASE_DIR, SERVICES_DIR
 from aisland.projects import get_install_order, get_workspace_root, install_groups, internal_dependencies
 from aisland.uv_config import write_root_uv_toml
+
+logger = logging.getLogger(__name__)
 
 
 def _run_installs(workspace_root: Path, uv_cmd: str, projects: List[dict]) -> Tuple[List[str], List[str]]:
@@ -51,6 +54,7 @@ def _run_installs(workspace_root: Path, uv_cmd: str, projects: List[dict]) -> Tu
         try:
             # Run from the workspace root so uv reads the generated root uv.toml (the merged
             # private indexes); the editable target is absolute, so cwd doesn't change WHAT installs.
+            logger.debug("running %s (in %s)", " ".join(cmd), workspace_root)
             subprocess.check_call(cmd, cwd=workspace_root)
         except subprocess.CalledProcessError as e:
             failures.report(f"  - Error: Failed to install {', '.join(names)}: {e}")
@@ -90,7 +94,8 @@ def link_project_bashrc(workspace_root: Path) -> None:
 
     if link.is_symlink():
         if link.resolve() == target.resolve():
-            return  # Already pointing at the right place.
+            logger.debug("%s already links to %s", link, target)
+            return
         link.unlink()
     elif link.exists():
         click.echo(
@@ -244,6 +249,7 @@ def setup_workspace(non_interactive: bool = False, install_all: bool = False) ->
         if browser:
             click.echo(f"==> Installing Playwright's {PLAYWRIGHT_BROWSER} for {project['name']}...")
             try:
+                logger.debug("running %s (in %s)", " ".join(browser), project_dir)
                 subprocess.check_call(browser, cwd=project_dir)
             except (subprocess.CalledProcessError, FileNotFoundError) as e:
                 failures.report(

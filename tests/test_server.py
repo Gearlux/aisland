@@ -60,13 +60,19 @@ def repo(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     return root
 
 
+def _server() -> "server.MCPServer":
+    """The server, which the test venv's ``[mcp]`` extra builds."""
+    assert server.mcp_server is not None
+    return server.mcp_server
+
+
 def _tools() -> Dict[str, Any]:
-    return {tool.name: tool for tool in asyncio.run(server.mcp_server.list_tools())}
+    return {tool.name: tool for tool in asyncio.run(_server().list_tools())}
 
 
 def _result(name: str, args: Optional[Dict[str, Any]] = None) -> Any:
     async def go() -> Any:
-        async with Client(server.mcp_server) as connection:
+        async with Client(_server()) as connection:
             return await connection.call_tool(name, args or {})
 
     return asyncio.run(go())
@@ -114,9 +120,7 @@ def test_every_tool_says_what_it_does() -> None:
 
 def test_the_server_advertises_tools_only() -> None:
     """No `resources/list` bait: an empty answer reads to some clients as a dead server."""
-    capabilities = server.mcp_server._lowlevel_server.get_capabilities(
-        NotificationOptions(), experimental_capabilities={}
-    )
+    capabilities = _server()._lowlevel_server.get_capabilities(NotificationOptions(), experimental_capabilities={})
     assert capabilities.tools is not None
     assert capabilities.resources is None and capabilities.prompts is None
 

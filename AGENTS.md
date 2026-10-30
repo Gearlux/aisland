@@ -29,7 +29,8 @@ imports no project's code. [test-stats-workspace] the test-run record is written
 [linux-docker] on Linux the container engine is the system's, checked and never managed. [mcp-services] the MCP
 service tools take any service of the workspace. [manager-split] `aisland setup` runs steps that each live in a
 module of their own. [workspace-format] `workspace.toml` says its format, and a key no part of aisland reads is named. [ci-templates] the CI
-files are rendered from a template set the workspace chooses.
+files are rendered from a template set the workspace chooses. [file-readers] a project's `pyproject.toml` and
+`.gitmodules` each have one reader. [debug-log] a diagnostic is a debug record `--debug` shows, never output.
 
 ## Current state
 
@@ -37,6 +38,22 @@ The workspace's dev-infrastructure CLI, `aisland` (click, `aisland/cli.py`):
 - `errors.py`: `AislandError`, the root of every exception aisland defines (a `click.ClickException`, so the CLI
   prints it as one `Error:` line) [errors-root]. `downloads.py`: `download(url, target)`, every file aisland fetches,
   with a time limit.
+- `gitcmd.py`: `git(repo, *args, network=, timeout=, check=)`, the one helper that runs `git` and captures its text
+  output (`network=True`: no credential prompt, 60 s default limit; `check=True`: an `AislandError` naming the command).
+  `wheels.py` (`git -C`), `mirrors.py` (no time limit on a push), `wheels_prune.py` (its own flags and stdin) and
+  `workspace_file.py` (`git -C`, None on failure) keep helpers whose behaviour differs.
+- `pyproject.py`: the one reader of a project's `pyproject.toml` [file-readers] — `read(path)` (`{}` for a missing,
+  unreadable or broken file), `parse(text, path)` (a `PyprojectError(AislandError, ValueError)` `<file>: <tomllib's
+  message>`; discovery re-raises its words as a `DeclarationError`), `load(path)` (tomllib's own errors), `name(path)`.
+  Not used by the standard-library-only modules (`wheels_install.py`, `wheels_unzip.py`, `tunnel_shell.py`,
+  `pytest_stats.py`, `locations.py`) and `harness/`; other TOML files (`workspace.toml`, `uv.toml`, a template set's
+  `template.toml`) keep their readers (`tests/test_pyproject.py`).
+- `gitmodules.py`: the one reader of `.gitmodules` [file-readers] — `read(root)`, a frozen `Submodule` (`name`,
+  `path`, `url`, `branch`, `active`) per submodule with a `path`, from ONE `git config -f .gitmodules --get-regexp`
+  process (`gitcmd.git`); a key written twice is read as git reads it, the last value.
+  `projects.submodule_active_map`, `workspace_file.submodules` and `local_workspace.submodule_names` are views over it
+  (`tests/test_gitmodules.py`). Single-key `--get` reads and writes of one key (`tracking`, `mirrors.primary_url`,
+  `sources.remote_url`, `activation`) stay where they are.
 - `locations.py`: where the workspace and the state are — from a checkout as always, from a wheel
   where aisland runs (standard library only; the pytest plugin imports it).
 - `manager.py`: `aisland setup` — it runs the steps in order: provisioning, submodule activation, editable installs
@@ -49,7 +66,8 @@ The workspace's dev-infrastructure CLI, `aisland` (click, `aisland/cli.py`):
   - `editor_files.py`: the VS Code workspace file, `pyrightconfig.json`, the root `mypy.ini`'s `mypy_path`;
   - `mcp_config.py`: `.mcp.json` and `.gemini/settings.json`; `uv_config.py`: the root `uv.toml`;
   - `quality.py`: `aisland check`.
-  A name another module uses is public (no `_`); a new step goes into its own module, never back into `manager.py`.
+  A name another module uses is public (no `_`) — in every module of the package, not only the manager split; a name
+  only its own module and its tests use stays private. A new step goes into its own module, never back into `manager.py`.
   **A test patches the module whose code makes the call**, never the module that defines the name: `from x import f`
   binds a copy, so patching `manager.f` misses `quality`'s `f`. The workspace root has one source every module reaches —
   a test points it at its folder with `monkeypatch.setattr(locations, "workspace_root", lambda: tmp_path)`. Why: after
@@ -164,6 +182,16 @@ Invariants: only supervisor-started services exist (one started elsewhere is inv
 start-time port pre-flight naming the PID is the only signal). All service state lives under
 `<workspace>/aisland/data/` (from a wheel, `<workspace>/.aisland/data/`).
 
+## Reading a project's files
+
+- **A project's `pyproject.toml` is read through `pyproject.py`, `.gitmodules` through `gitmodules.py` — never a
+  reader of a module's own (user request 2026-10-30).** [file-readers] A new reader picks `read` (lists or probes:
+  a broken file declares nothing), `parse` (refuses naming the file and the line) or `load` (a file already found and
+  checked) and adds a view, never a second `tomllib.load` of a `pyproject.toml` or a second `--get-regexp` of
+  `.gitmodules`. Why: fifteen `pyproject.toml` reads and three `.gitmodules` parsers had each grown error handling and
+  key rules of their own. The standard-library-only modules and `harness/` are the exception (they run where aisland
+  is not installed) (`tests/test_pyproject.py`, `tests/test_gitmodules.py`).
+
 ## Errors exit 1
 
 - **A command that prints an `Error:` line exits 1 (user request 2026-10-27, release review).** A failure that ends
@@ -185,6 +213,26 @@ start-time port pre-flight naming the PID is the only signal). All service state
   part file left), and a `git` network call sets `GIT_TERMINAL_PROMPT=0` and a timeout
   (`tests/test_errors_exit_one.py::test_no_library_module_raises_clicks_own_exception_or_exits` and its neighbours,
   `tests/test_downloads.py`).
+
+## Diagnostics and types
+
+- **A diagnostic is `logging.getLogger(__name__).debug(...)`, shown by `--debug`; results and progress stay
+  `click.echo` (user request 2026-10-30).** [debug-log] A module that reports aisland's own mechanics no user acts on
+  (a cached download reused, a digest that matched, a step with nothing to do, which file was read, which command
+  ran, the workspace root and why) logs it at debug with the standard library's `logging` — never loguru or loggair,
+  which aisland does not depend on. `aisland --debug` (`cli._show_debug_log`, the option's callback, so the group's
+  own decisions are logged too) puts ONE handler on the `aisland` logger for the run — `aisland: <module>: <message>`
+  on stderr — and takes it off when the run ends, the level put back; without it nothing below WARNING shows and the
+  output is unchanged. `click.echo` keeps the command's result, the progress a person watches (`==>` steps, `[OK]
+  Created …`), a question, a warning the operator must act on and anything a script or test parses; when unsure, it
+  stays output. A line moved to debug is asserted through `caplog` at DEBUG, never in the output; a debug line costs
+  nothing when off (`%`-style arguments, no work before the call) (`tests/test_debug_log.py`).
+- **`Any` only with a `# Any: <why>` on its line (user request 2026-10-30).** A JSON or TOML shape aisland reads by
+  key gets a `TypedDict` (`installers.UserspaceTool`, `wheels.ModuleFailure`/`ImportRun`, `sources.PypiProject`,
+  `supervisor.Readiness`/`ProcessState`); a value only passed on is `object` / `Mapping[str, object]`; a completion
+  callback takes `Optional[click.Context]`/`Optional[click.Parameter]`. What stays `Any` — a parsed TOML table
+  (`pyproject.Table`), Jenkins' or VS Code's JSON, a project's plugin object, a service's own options — says why on
+  the line, or once on the alias it goes through. No `# type: ignore` is added to make a type fit.
 
 ## Workspace root and paths
 
@@ -1151,9 +1199,9 @@ User choice 2026-10-08: an aisland command, only the named project's closure, bo
   request 2026-10-19).** [folders-as-submodules] `projects.workspace_folders` is the project list: `.gitmodules`' submodules
   when it exists, else every direct, non-hidden subfolder holding a `pyproject.toml`, active. A new
   reader of "the workspace's projects" uses it, never `submodule_active_map` (which stays the
-  submodules only: activation, deinit, mirrors; read with ONE `git config --get-regexp` process — every command
-  reads it, and a process per submodule made `aisland --help` take 79 s on a loaded machine:
-  `tests/test_submodule_active_map.py`). What needs a submodule is refused naming the
+  submodules only: activation, deinit, mirrors; read through `gitmodules.read`, ONE `git config --get-regexp`
+  process — every command reads it, and a process per submodule made `aisland --help` take 79 s on a loaded machine:
+  `tests/test_submodule_active_map.py`, `tests/test_gitmodules.py`). What needs a submodule is refused naming the
   reason: a `github`/`pypi` source (it would empty the folder for good), a mirror, a wheel of a
   project in no git repository. (`tests/test_folder_workspace.py`)
 - **A link to a folder inside the workspace is a short name, never a project (user request 2026-10-21).** [aliases]
