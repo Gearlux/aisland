@@ -1,4 +1,4 @@
-"""A command that prints an `Error:` line exits 1 (aisland rules → "A CLI Error Is One `Error:` Line And Exit 1").
+"""A command that prints an `Error:` line exits 1.
 
 Two kinds of failure. One that ends the command (no such project, no `.venv`, a bad argument) is raised: one `Error:`
 line on stderr, exit 1. One the command goes on past — a project that fails to install while setup installs the

@@ -220,10 +220,6 @@ in that project's `AGENTS.md`. The commands in `.agents/workflows/` cite these r
 
 ## Command-line tools
 
-- **A CLI Error Is One `Error:` Line And Exit 1:** library code raises typed exceptions and never exits; only the
-  CLI's entry point turns an expected error into one `Error: <message>` line on stderr and exit 1. `--debug` lets the
-  exception propagate with its traceback. A missing required argument names the command path and both spellings of
-  the option.
 - **A Project's Exceptions Share One Root And Inherit The Builtin They Replace:** every exception a project defines
   derives from its root exception and from the builtin it stands for (`class UnknownClassError(ProjectError,
   ValueError)`), so `except ProjectError` catches the project's and `except ValueError` keeps working. Its message
