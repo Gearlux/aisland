@@ -38,6 +38,7 @@ READ_ONLY = {
     "sources",
     "services_status",
     "tunnel_list",
+    "tunnel_status",
 }
 CHANGING = {
     "editor_set_theme",
@@ -46,6 +47,8 @@ CHANGING = {
     "service_start",
     "service_stop",
     "service_restart",
+    "tunnel_start",
+    "tunnel_stop",
 }
 
 
