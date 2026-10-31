@@ -125,6 +125,7 @@ def _second_clone(tmp_path: Path, setup: Setup, name: str = "other") -> Path:
 # --- prune: what it finds --------------------------------------------------------------------------
 
 
+@pytest.mark.slow
 def test_without_apply_it_names_what_goes_and_changes_nothing(setup: Setup) -> None:
     before = _refs(setup.repo)
     report = wp.prune(setup.root, "models")
@@ -186,7 +187,6 @@ def test_apply_strips_the_unheld_version_everywhere_and_keeps_every_tip_and_tag(
     assert "Every other clone of models: aisland wheels reset models, before its next pull" in text
 
 
-@pytest.mark.slow
 def test_origin_keeps_a_record_of_the_versions_and_the_commits(setup: Setup) -> None:
     old = _git(setup.repo, "rev-list", "main").split()
     wp.prune(setup.root, "models", apply=True)
@@ -200,7 +200,6 @@ def test_origin_keeps_a_record_of_the_versions_and_the_commits(setup: Setup) -> 
     )
 
 
-@pytest.mark.slow
 def test_a_second_prune_chains_its_record_on_the_first(setup: Setup) -> None:
     wp.prune(setup.root, "models", apply=True)
     first = _git(setup.origin, "rev-parse", wp.PRUNE_REF)
@@ -211,7 +210,6 @@ def test_a_second_prune_chains_its_record_on_the_first(setup: Setup) -> None:
     assert _git(setup.origin, "rev-parse", f"{wp.PRUNE_REF}^") == first
 
 
-@pytest.mark.slow
 def test_a_stash_survives_the_prune(setup: Setup) -> None:
     (setup.repo / "code.py").write_text("work in progress\n")
     _git(setup.repo, "stash", "-q")
@@ -220,7 +218,6 @@ def test_a_stash_survives_the_prune(setup: Setup) -> None:
     assert (setup.repo / "code.py").read_text() == "work in progress\n"
 
 
-@pytest.mark.slow
 def test_a_detached_head_follows_its_rewritten_commit(setup: Setup) -> None:
     _git(setup.repo, "checkout", "-q", "--detach", "HEAD~1")
     message = _git(setup.repo, "log", "-1", "--format=%s")
@@ -231,7 +228,6 @@ def test_a_detached_head_follows_its_rewritten_commit(setup: Setup) -> None:
     assert not _ok(setup.repo, "rev-parse", "--verify", "-q", "refs/wheels-prune/head")
 
 
-@pytest.mark.slow
 def test_the_root_records_the_rewritten_twin_of_its_commit_alone(setup: Setup) -> None:
     recorded = _git(setup.repo, "rev-parse", "HEAD~1")
     _git(setup.root, "update-index", "--add", "--cacheinfo", f"160000,{recorded},models")
@@ -255,7 +251,6 @@ def _commit_index(root: Path, message: str) -> None:
     _git(root, "commit", "-q", "-m", message)
 
 
-@pytest.mark.slow
 def test_a_root_recording_an_untouched_commit_is_left(setup: Setup) -> None:
     recorded = _git(setup.repo, "rev-parse", "HEAD~5")  # "the project": before any wheel
     _git(setup.root, "update-index", "--add", "--cacheinfo", f"160000,{recorded},models")
@@ -280,6 +275,7 @@ def _refused(setup: Setup, match: str) -> None:
     assert not _ok(setup.origin, "rev-parse", "--verify", "-q", wp.PRUNE_REF)
 
 
+@pytest.mark.slow
 def test_a_change_no_commit_holds_is_refused(setup: Setup) -> None:
     (setup.repo / "code.py").write_text("changed\n")
     _refused(setup, r"models has changes no commit holds: M code.py")
@@ -315,6 +311,7 @@ def test_without_apply_the_refusals_are_listed_not_raised(setup: Setup) -> None:
     assert "--apply would stop:\n  models has changes no commit holds: M code.py" in wp.render_prune(report)
 
 
+@pytest.mark.slow
 def test_without_git_filter_repo_apply_names_the_extra_and_a_dry_run_still_works(
     setup: Setup, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -336,7 +333,6 @@ def test_a_project_without_origin_is_refused(tmp_path: Path) -> None:
         wp.prune(root, "models")
 
 
-@pytest.mark.slow
 def test_a_push_made_meanwhile_refuses_the_whole_push_and_the_backup_restores(
     tmp_path: Path, setup: Setup, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -363,7 +359,6 @@ def test_a_push_made_meanwhile_refuses_the_whole_push_and_the_backup_restores(
 # --- reset --------------------------------------------------------------------------------------------
 
 
-@pytest.mark.slow
 def test_reset_brings_another_clone_onto_the_pruned_history_keeping_its_work(tmp_path: Path, setup: Setup) -> None:
     other_root = _second_clone(tmp_path, setup)
     other = other_root / "models"
@@ -390,7 +385,6 @@ def test_reset_brings_another_clone_onto_the_pruned_history_keeping_its_work(tmp
     assert "  main: 1 commit origin lacks, kept on top of origin's" in text
 
 
-@pytest.mark.slow
 def test_reset_takes_every_prune_it_missed(tmp_path: Path, setup: Setup) -> None:
     other_root = _second_clone(tmp_path, setup)
     wp.prune(setup.root, "models", apply=True)
@@ -407,7 +401,6 @@ def test_reset_takes_every_prune_it_missed(tmp_path: Path, setup: Setup) -> None
     assert _gone(other, setup.v1) and _gone(other, setup.v2)
 
 
-@pytest.mark.slow
 def test_reset_a_second_time_changes_nothing(tmp_path: Path, setup: Setup) -> None:
     other_root = _second_clone(tmp_path, setup)
     wp.prune(setup.root, "models", apply=True)
@@ -427,7 +420,6 @@ def test_reset_with_nothing_pruned_on_origin_changes_nothing(tmp_path: Path, set
     assert _refs(other_root / "models") == before
 
 
-@pytest.mark.slow
 def test_reset_sets_uncommitted_changes_aside_and_puts_them_back(tmp_path: Path, setup: Setup) -> None:
     other_root = _second_clone(tmp_path, setup)
     other = other_root / "models"
@@ -570,7 +562,6 @@ def test_reset_leaves_a_root_recording_a_commit_no_prune_rewrote(tmp_path: Path,
     assert _git(other_root, "rev-parse", "HEAD") == head
 
 
-@pytest.mark.slow
 def test_reset_moves_a_detached_head_with_its_commit(tmp_path: Path, setup: Setup) -> None:
     other_root = _second_clone(tmp_path, setup)
     other = other_root / "models"
@@ -581,7 +572,6 @@ def test_reset_moves_a_detached_head_with_its_commit(tmp_path: Path, setup: Setu
     assert _git(other, "rev-parse", "HEAD") == _git(setup.origin, "rev-parse", "main~2")
 
 
-@pytest.mark.slow
 def test_reset_names_a_tag_that_differs_from_origins_and_leaves_it(tmp_path: Path, setup: Setup) -> None:
     other_root = _second_clone(tmp_path, setup)
     other = other_root / "models"
@@ -602,7 +592,6 @@ def _cli(root: Path, monkeypatch: pytest.MonkeyPatch, *args: str) -> str:
     return result.output
 
 
-@pytest.mark.slow
 def test_the_commands_print_the_reports_and_their_json(
     tmp_path: Path, setup: Setup, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -615,6 +604,7 @@ def test_the_commands_print_the_reports_and_their_json(
     assert reset is not None and reset["prunes"] == 1
 
 
+@pytest.mark.slow
 def test_a_refusal_is_one_error_line_and_exit_1(setup: Setup, monkeypatch: pytest.MonkeyPatch) -> None:
     (setup.repo / "code.py").write_text("changed\n")
     monkeypatch.setattr("aisland.cli.get_workspace_root", lambda: setup.root)

@@ -386,6 +386,7 @@ class TestTheBuildRemembersTheExtra:
         _commit(root / "app", "the extra")
         return root
 
+    @pytest.mark.slow
     def test_a_rebuild_without_the_option_follows_a_new_version(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
@@ -405,6 +406,7 @@ class TestTheBuildRemembersTheExtra:
         assert "    uv pip install -e ./app[wheels]\n" in (root / "app" / "wheels" / "README.md").read_text()
         assert "#     To regenerate: aisland wheels build app\n" in (root / "app" / "pyproject.toml").read_text()
 
+    @pytest.mark.slow
     def test_a_rebuild_of_the_projects_own_wheel_leaves_the_block_and_says_so(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
@@ -423,6 +425,7 @@ class TestTheBuildRemembersTheExtra:
         )
         assert "uv pip install" not in (root / "app" / "wheels" / "README.md").read_text()
 
+    @pytest.mark.slow
     def test_the_option_with_the_projects_own_wheel_writes_it_and_the_command_names_it(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:

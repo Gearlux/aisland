@@ -1125,6 +1125,7 @@ class TestTheRunWithFakedBuilds:
         assert [(e.project, e.install) for e in entries] == [("libx", True)]
         assert (root / "app" / "wheels" / "install.py").is_file()
 
+    @pytest.mark.slow
     def test_no_check_builds_and_writes_the_wheels_and_neither_compares_nor_installs(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
@@ -1319,6 +1320,7 @@ class TestTheRunWithFakedBuilds:
         assert sorted(p.name for p in (root / "app" / "wheels").glob("*.whl")) == ["libx-0.1.0-py3-none-any.whl"]
         assert "own wheel" not in w.render_report(report)
 
+    @pytest.mark.slow
     def test_include_project_refuses_the_project_dirty_and_force_builds_it_as_it_is(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:

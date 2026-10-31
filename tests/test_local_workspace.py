@@ -76,6 +76,7 @@ def test_a_marked_workspace_is_local_and_an_unmarked_one_is_not(local: Path, tmp
     assert not local_workspace.is_local(tmp_path / "no-repository")
 
 
+@pytest.mark.slow
 def test_a_project_added_by_hand_is_committed(local: Path, tmp_path: Path) -> None:
     _git(local, "submodule", "add", "-q", "-f", str(_remote(tmp_path, "tools")), "tools")
     assert local_workspace.settle(local).lines() == ["committed .gitmodules, tools"]

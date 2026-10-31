@@ -394,6 +394,7 @@ class TestTheRunWithABundle:
         assert not (folder / "bundle").exists(), "a bundle of older commits must not sit beside the new wheels"
         assert report.bundle is None and "Bundle:" not in w.render_report(report)
 
+    @pytest.mark.slow
     def test_the_zip_leaves_the_bundle_out(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
         root = _faked._scoped_workspace(tmp_path, monkeypatch)
         _faked._fake_builds(monkeypatch, {})
@@ -436,6 +437,7 @@ class TestTheRunWithABundle:
         assert report.ok
         assert "  Not checked (--no-check): the bundle was not installed in an empty venv." in w.render_report(report)
 
+    @pytest.mark.slow
     def test_a_bundle_that_does_not_install_fails_the_run_and_is_not_committed(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
@@ -452,6 +454,7 @@ class TestTheRunWithABundle:
             "    × No solution found when resolving dependencies\n" in w.render_report(report)
         )
 
+    @pytest.mark.slow
     def test_a_module_the_bundle_cannot_import_fails_the_run_and_is_listed(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
@@ -468,6 +471,7 @@ class TestTheRunWithABundle:
         assert "  Installed alone in an empty venv (it + PyPI); these did not import:\n" in text
         assert "    libx  ModuleNotFoundError: No module named 'libx'\n    1 other module imported\n" in text
 
+    @pytest.mark.slow
     def test_a_project_whose_dependencies_are_dynamic_is_refused(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:

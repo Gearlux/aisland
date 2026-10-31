@@ -80,6 +80,7 @@ def test_a_clone_is_found_with_its_origin_and_branch(ws: Path, tmp_path: Path) -
     assert clones.unlisted(ws) == [clones.Clone("foo", str(tmp_path / "remote" / "foo"), "dev/main")]
 
 
+@pytest.mark.slow
 def test_setup_adds_the_clone_as_it_is_and_lists_it(
     ws: Path, tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
@@ -95,6 +96,7 @@ def test_setup_adds_the_clone_as_it_is_and_lists_it(
     assert capsys.readouterr().out == ""
 
 
+@pytest.mark.slow
 def test_setup_never_asks(ws: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     def ask(*args: object, **kwargs: object) -> bool:
         raise AssertionError("setup asked")
@@ -104,12 +106,14 @@ def test_setup_never_asks(ws: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     assert len(clones.add_unlisted(ws)) == 1
 
 
+@pytest.mark.slow
 def test_a_clone_added_once_is_listed_and_never_offered_again(ws: Path) -> None:
     clones.add_unlisted(ws)
     assert clones.unlisted(ws) == []
     assert clones.add_unlisted(ws) == []
 
 
+@pytest.mark.slow
 def test_a_clone_on_no_branch_is_added_without_one(ws: Path, tmp_path: Path) -> None:
     _git(ws / "foo", "checkout", "-q", "--detach")
     assert clones.add_unlisted(ws) == [f"added foo as a submodule ({tmp_path / 'remote' / 'foo'}, on no branch)"]
@@ -176,6 +180,7 @@ def test_a_folder_of_clones_has_none_to_add(tmp_path: Path) -> None:
     assert clones.unlisted(root) == []
 
 
+@pytest.mark.slow
 def test_a_clone_git_refuses_to_add_is_said_and_setup_goes_on(
     ws: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

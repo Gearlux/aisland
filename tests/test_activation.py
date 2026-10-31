@@ -92,10 +92,12 @@ def ws(tmp_path: Path) -> Path:
 # --- what is optional, and what is in effect here ----------------------------------------------------------------
 
 
+@pytest.mark.slow
 def test_a_project_with_an_active_key_is_optional_and_the_value_is_its_default(ws: Path) -> None:
     assert activation.optional(ws) == {"tools": False, "extra": True}
 
 
+@pytest.mark.slow
 def test_this_machines_choice_wins_else_the_default_else_on(ws: Path) -> None:
     assert [activation.effective(ws, p) for p in ("models", "tools", "extra")] == [True, False, True]
     activation.set_machine_choice(ws, "tools", True)
@@ -122,6 +124,7 @@ def answers(monkeypatch: pytest.MonkeyPatch) -> List[str]:
     return asked
 
 
+@pytest.mark.slow
 def test_setup_asks_about_each_optional_project_with_its_default_and_keeps_the_answer(
     ws: Path, answers: List[str]
 ) -> None:
@@ -130,18 +133,21 @@ def test_setup_asks_about_each_optional_project_with_its_default_and_keeps_the_a
     assert (activation.machine_choice(ws, "tools"), activation.machine_choice(ws, "extra")) == (False, True)
 
 
+@pytest.mark.slow
 def test_an_answered_project_is_not_asked_again_under_yes(ws: Path, answers: List[str]) -> None:
     activation.set_machine_choice(ws, "tools", True)
     activation.resolve(ws, non_interactive=True)
     assert answers == ["  Activate 'extra'? (clone + install) [Y/n]"]
 
 
+@pytest.mark.slow
 def test_without_yes_every_optional_project_is_asked_its_answer_the_default(ws: Path, answers: List[str]) -> None:
     activation.set_machine_choice(ws, "tools", True)
     activation.resolve(ws, non_interactive=False)
     assert answers[0] == "  Activate 'tools'? (clone + install) [Y/n]"
 
 
+@pytest.mark.slow
 def test_a_workspace_without_optional_projects_asks_nothing(ws: Path, answers: List[str]) -> None:
     (ws / "workspace.toml").write_text('[project."models"]\nurl = "u"\n')
     activation.resolve(ws, non_interactive=False)
@@ -208,6 +214,7 @@ def _configure(*args: str) -> str:
     return result.output
 
 
+@pytest.mark.slow
 def test_the_listing_shows_the_optional_projects_and_this_machines_choices(at: Path) -> None:
     activation.set_machine_choice(at, "models", False)
     assert _configure().splitlines() == [
@@ -250,6 +257,7 @@ def test_unset_machine_only_forgets_this_machines_choice(at: Path) -> None:
     assert activation.machine_choice(at, "tools") is None
 
 
+@pytest.mark.slow
 def test_set_refuses_a_project_the_file_does_not_list(at: Path) -> None:
     result = CliRunner().invoke(cli.main, ["workspace", "configure", "active", "set", "gamma", "true"])
     assert result.exit_code == 1
@@ -278,6 +286,7 @@ def test_init_from_clones_only_the_projects_without_an_active_key(tmp_path: Path
     assert list(workspace_file.load(fresh).projects) == ["models", "tools", "extra"]  # the optional ones stay listed
 
 
+@pytest.mark.slow
 def test_setup_keeps_an_optional_project_the_workspace_does_not_have_yet(ws: Path) -> None:
     """`extra` (optional, not checked out) stays listed; a project with no url to clone from is dropped."""
     (ws / "workspace.toml").write_text((ws / "workspace.toml").read_text() + '\n[project."gone"]\npath = "gone"\n')
@@ -302,7 +311,6 @@ def test_a_project_written_into_the_file_by_hand_is_kept_for_setup_to_add(ws: Pa
     assert (ws / "workspace.toml").read_text() == before
 
 
-@pytest.mark.slow
 def test_setup_clones_a_project_written_into_the_file_by_hand(
     ws: Path, tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
@@ -383,10 +391,12 @@ def test_an_active_project_that_cannot_be_added_is_said_and_returned(
     assert "skip bad: " in out
 
 
+@pytest.mark.slow
 def test_the_listing_leaves_out_a_project_that_is_neither_optional_nor_chosen(at: Path) -> None:
     assert [line.split()[0] for line in _configure().splitlines()[1:]] == ["tools", "extra"]
 
 
+@pytest.mark.slow
 def test_unset_refuses_a_project_the_file_does_not_list(at: Path) -> None:
     result = CliRunner().invoke(cli.main, ["workspace", "configure", "active", "unset", "gamma"])
     assert result.exit_code == 1

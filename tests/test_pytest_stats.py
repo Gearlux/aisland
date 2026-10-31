@@ -433,6 +433,84 @@ def test_a_damaged_line_is_skipped(stores: Tuple[Path, Path]) -> None:
     assert _report(stores).local_runs == 1
 
 
+_PROJECT_TESTS = """
+import pytest
+
+
+class Base:
+    def test_inherited(self):
+        pass
+
+
+class TestKept(Base):
+    def test_method(self):
+        pass
+
+    class TestInner:
+        def test_deep(self):
+            pass
+
+
+class TestFromElsewhere(pytest.Class):
+    pass
+
+
+@pytest.mark.parametrize("n", [1, 2])
+def test_param(n):
+    pass
+
+
+test_assigned = lambda: None  # noqa: E731
+"""
+
+
+def _project_with_tests(tmp_path: Path) -> Path:
+    folder = tmp_path / "proj"
+    (folder / "tests").mkdir(parents=True)
+    (folder / "tests" / "test_kept.py").write_text(_PROJECT_TESTS)
+    (folder / "tests" / "test_broken.py").write_text("def test_x(:\n")
+    return folder
+
+
+def test_a_test_the_project_no_longer_has_is_neither_listed_nor_proposed_but_its_failures_stay(
+    stores: Tuple[Path, Path], tmp_path: Path
+) -> None:
+    stats, jobs = stores
+    gone = ["tests/test_deleted.py::test_a", "tests/test_kept.py::test_renamed", "tests/test_kept.py::TestGone::test_m"]
+    kept = [
+        "tests/test_kept.py::test_param[1]",
+        "tests/test_kept.py::TestKept::test_method",
+        "tests/test_kept.py::TestKept::test_inherited",
+        "tests/test_kept.py::TestKept::TestInner::test_deep",
+        "tests/test_kept.py::TestFromElsewhere::test_from_a_base_defined_elsewhere",
+        "tests/test_kept.py::test_assigned",
+        "tests/test_broken.py::test_x",
+    ]
+    tests = [(t, 100.0, "passed", False) for t in gone + kept]
+    _local(stats, _NOW - timedelta(days=1), 3600.0, tests + [("tests/test_deleted.py::test_slow", 9.0, "failed", True)])
+    report = pytest_stats.build_report(
+        "proj", now=_NOW, stats_dir=stats, jenkins_jobs_dir=jobs, project_dir=_project_with_tests(tmp_path)
+    )
+    assert sorted(t.test for t in report.to_slow) == sorted(kept)
+    assert sorted(t.test for t in report.slowest_fast) == sorted(kept)
+    assert report.to_fast == []
+    assert [t.test for t in report.failed] == ["tests/test_deleted.py::test_slow"]
+
+
+def test_a_method_missing_from_a_class_and_its_bases_in_the_same_file_is_gone(tmp_path: Path) -> None:
+    present = pytest_stats._Present(_project_with_tests(tmp_path))
+    assert not present("tests/test_kept.py::TestKept::test_nowhere")
+    assert not present("tests/test_kept.py::TestKept::TestMissing::test_deep")
+    assert present("tests/test_kept.py::TestKept::test_inherited")
+
+
+def test_what_the_report_cannot_read_counts_as_present(tmp_path: Path) -> None:
+    present = pytest_stats._Present(_project_with_tests(tmp_path))
+    assert present("tests.test_b::test_z")  # a JUnit address: no file to read
+    assert present("tests/test_broken.py::test_gone")  # the file does not parse
+    assert pytest_stats._Present(tmp_path / "elsewhere")("tests/test_deleted.py::test_a")  # no project folder here
+
+
 def test_the_text_report_names_the_overrun_and_what_to_move(stores: Tuple[Path, Path]) -> None:
     stats, _ = stores
     _local(stats, _NOW - timedelta(days=1), 420.0, [("t::big", 200.0, "passed", False)])

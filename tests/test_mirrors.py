@@ -382,6 +382,7 @@ class TestSync:
         assert _outcomes(result)["scratch"] == "absent"
         assert "refs/heads/scratch" not in ws.mirror_refs()
 
+    @pytest.mark.slow
     def test_a_branch_only_on_the_primary_is_not_copied(self, ws: Workspace) -> None:
         seed = ws.seeds["alpha"]
         ws.git(seed, "branch", "dev/elsewhere")

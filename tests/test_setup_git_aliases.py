@@ -145,6 +145,7 @@ def test_a_multi_line_alias_an_earlier_run_wrote_is_replaced_by_one_line(sandbox
     assert "\n" not in _git("config", "--local", "--get", "alias.tag-all", cwd=root, env=env)
 
 
+@pytest.mark.slow
 def test_the_one_line_aliases_still_run(sandbox: tuple[Path, dict]) -> None:
     root, env = sandbox
     _run_script(root, env)

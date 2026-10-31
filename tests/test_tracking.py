@@ -168,6 +168,7 @@ def test_doing_it_twice_changes_nothing_more(ws: Path, monkeypatch: pytest.Monke
     assert again.output.splitlines() == ["==> untracked: models (in workspace.toml and .gitmodules — commit them)"]
 
 
+@pytest.mark.slow
 def test_an_ignore_setting_of_the_users_own_is_left_alone(ws: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     _git(ws, "config", "-f", ".gitmodules", "submodule.tools.ignore", "dirty")
     _run(ws, monkeypatch, "track")
@@ -177,6 +178,7 @@ def test_an_ignore_setting_of_the_users_own_is_left_alone(ws: Path, monkeypatch:
 # --- this machine only ----------------------------------------------------------------------------------------------
 
 
+@pytest.mark.slow
 def test_machine_only_untracks_here_and_commits_nothing(ws: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     result = _run(ws, monkeypatch, "untrack", "models", "--machine-only")
     assert result.exit_code == 0, result.output
@@ -220,6 +222,7 @@ def test_this_machines_choice_survives_a_deinit_and_setup_writes_it_back(
     assert _git(ws, "config", "--local", "submodule.models.ignore") == "all"
 
 
+@pytest.mark.slow
 def test_a_settled_workspace_needs_no_change(ws: Path) -> None:
     assert tracking.apply(ws) == []
 
@@ -227,6 +230,7 @@ def test_a_settled_workspace_needs_no_change(ws: Path) -> None:
 # --- refusals --------------------------------------------------------------------------------------------------------
 
 
+@pytest.mark.slow
 def test_an_unknown_project_is_refused_naming_the_projects(ws: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     before = (ws / ".gitmodules").read_text()
     result = _run(ws, monkeypatch, "untrack", "models", "nothing")
@@ -335,6 +339,7 @@ def test_the_branch_gitmodules_names_is_followed_and_dot_is_the_roots(ws: Path, 
     ]
 
 
+@pytest.mark.slow
 def test_a_tracked_project_on_no_branch_is_left_on_its_commit(ws: Path, tmp_path: Path) -> None:
     before = _detach(ws, "models")
     _publish(tmp_path, "models")

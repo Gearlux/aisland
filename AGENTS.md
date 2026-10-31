@@ -542,6 +542,12 @@ Root `AGENTS.md` "Two Test Runs" (user ruling 2026-10-05). [test-stats]
   mapping (`::test_the_junit_address_is_the_one_pytests_own_junit_report_writes`).
 - The report proposes moves; nothing moves a test between legs but an edit to its
   `@pytest.mark.slow` (or a `FAST_SAMPLE`). Never deselect by history at collection time.
+- **The report proposes only tests the project still has (user pick 2026-10-31).** `pytest_stats._Present` reads
+  the nodeid's file with `ast` (never an import, never a collection): gone when the file is, or when it parses and
+  no longer defines the function in the classes named (a base class in the same file counts); anything it cannot
+  tell — a JUnit address, no project folder here, a file that does not parse, a base defined elsewhere — counts as
+  present. It filters the slowest tests and both move lists; `failed` keeps every test, gone or not
+  (`tests/test_pytest_stats.py::test_a_test_the_project_no_longer_has_is_neither_listed_nor_proposed_but_its_failures_stay`).
 - **aisland's own fast run is PARALLEL — `-n 4` in `addopts`, `pytest-xdist` in `dev`** (user pick 3, 2026-10-28,
   over moving tests to the slow run: by the report's rule even every never-failed test moved left it over budget).
   Measured under load: 790 s in one process, 490 s over six workers, every test passing; the time is git, uv and

@@ -115,7 +115,9 @@ Tests that failed:
 A fast run over 5 minutes adds a list headed `Move to the slow run (never failed, slowest
 first) to fit 5m 00s:` — the tests whose seconds cover the overrun; and a slow test that failed
 is listed under `Slow tests that failed - move into the fast run:`. Moving one is an edit: add
-or remove its `@pytest.mark.slow`.
+or remove its `@pytest.mark.slow`. The slowest tests and both lists name only tests the project still has: a test
+whose file is gone, or which its file no longer defines, keeps its line under `Tests that failed` and is proposed for
+no move.
 The fast run's time counts only complete runs of the whole fast run. Why it is built this way:
 [`architecture.md`](architecture.md) → "Every pytest run of a workspace project is
 recorded".

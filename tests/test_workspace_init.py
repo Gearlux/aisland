@@ -330,6 +330,7 @@ def test_a_workspace_file_clones_each_project_on_its_branch(tmp_path: Path) -> N
     assert "    workspace.toml            the projects, how to start another machine from them" in lines
 
 
+@pytest.mark.slow
 def test_the_file_becomes_the_new_workspaces_own(tmp_path: Path) -> None:
     models = _remote(tmp_path, "models", branches=("dev",))
     body = '[workspace]\nframework = ["torch"]\n\n' + _project("models", models, "dev")
@@ -354,6 +355,7 @@ def test_a_workspace_file_and_add_together_clone_the_files_projects_first(tmp_pa
     assert list(workspace_file.load(root).projects) == ["models", "tools"]  # the added one is written in too
 
 
+@pytest.mark.slow
 def test_init_without_a_file_writes_one_listing_the_added_projects(tmp_path: Path) -> None:
     tools = _remote(tmp_path, "tools")
     assert _init(tmp_path, "--add", str(tools)).exit_code == 0
@@ -393,6 +395,7 @@ def test_a_missing_workspace_file_is_refused(tmp_path: Path) -> None:
     assert not (tmp_path / "acme").exists()
 
 
+@pytest.mark.slow
 def test_a_project_with_a_path_is_cloned_into_that_folder(tmp_path: Path) -> None:
     models = _remote(tmp_path, "models", branches=("dev",))
     listed = _workspace_toml(tmp_path, _project("models", models, "dev", path="m"))
@@ -518,6 +521,7 @@ def test_untracked_in_an_existing_repository_untracks_its_submodules(tmp_path: P
     assert workspace_file.load(root).settings["track"] is False  # the projects to come follow it too
 
 
+@pytest.mark.slow
 def test_a_local_workspace_without_projects_makes_no_commit(tmp_path: Path, author: None) -> None:
     result = _init(tmp_path, "--local")
     assert result.exit_code == 0, result.output
@@ -569,6 +573,7 @@ def test_local_in_an_existing_repository_is_refused(tmp_path: Path) -> None:
     assert sorted(p.name for p in root.iterdir()) == [".git"]
 
 
+@pytest.mark.slow
 def test_rewrite_of_the_gitignore_in_a_local_workspace_keeps_it_local(tmp_path: Path, author: None) -> None:
     _init(tmp_path, "--local")
     root = tmp_path / "acme"

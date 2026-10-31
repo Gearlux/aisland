@@ -21,6 +21,7 @@ record it cannot write is one printed line. ``-p no:aisland_test_stats`` disable
 
 from __future__ import annotations
 
+import ast
 import json
 import os
 import statistics
@@ -31,7 +32,7 @@ import xml.etree.ElementTree as ET
 from dataclasses import asdict, dataclass
 from datetime import date, datetime, timedelta
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Dict, Iterator, List, Literal, Optional, Tuple
+from typing import TYPE_CHECKING, Any, Dict, Iterator, List, Literal, Optional, Tuple, Union
 
 from aisland import locations
 
@@ -397,8 +398,13 @@ def build_report(
     now: Optional[datetime] = None,
     stats_dir: Optional[Path] = None,
     jenkins_jobs_dir: Optional[Path] = None,
+    project_dir: Optional[Path] = None,
 ) -> StatsReport:
-    """Read the last `days` of PROJECT's local runs and Jenkins builds and say what the two-run rule needs."""
+    """Read the last `days` of PROJECT's local runs and Jenkins builds and say what the two-run rule needs.
+
+    The slowest tests and the moves name only tests the project still has (:class:`_Present`, in ``project_dir``,
+    default ``<workspace>/PROJECT``): a test deleted or renamed keeps its records for the window, and a move proposed
+    for it would be one nobody can make. The failures keep every test, gone or not — they are history."""
     now = now or datetime.now().astimezone()
     cutoff = now - timedelta(days=days)
     runs, local = _local_records((stats_dir or STATS_DIR) / project, cutoff)
@@ -411,7 +417,9 @@ def build_report(
         key=lambda r: r.at,
     )
     fast_seconds = statistics.median(r.seconds for r in fast) if fast else None
-    by_seconds = sorted(tallies, key=lambda t: (-t.seconds, t.test))
+    folder = project_dir or WORKSPACE_ROOT / project
+    present = _Present(folder)
+    by_seconds = sorted((t for t in tallies if present(t.test)), key=lambda t: (-t.seconds, t.test))
     failed = sorted((t for t in tallies if t.failures), key=lambda t: (-t.failures, str(t.last_failure), t.test))
     return StatsReport(
         project=project,
@@ -425,11 +433,72 @@ def build_report(
         slowest_fast=[t for t in by_seconds if t.slow is False][:SLOWEST_SHOWN],
         failed=failed,
         to_slow=_to_slow(by_seconds, fast_seconds),
-        to_fast=[t for t in failed if t.slow is True],
+        to_fast=[t for t in failed if t.slow is True and present(t.test)],
         recording=switch.on,
         recorded_by=switch.by,
         switch_name=switch.project,
     )
+
+
+class _Present:
+    """Whether a recorded test is still in the project, read from its file without importing it.
+
+    A test is gone when its file is, or when the file parses and no longer defines it: its function (a parametrized
+    id's name before ``[``), within the classes its nodeid names, a method also found on a base class defined in the
+    same file. Whatever cannot be told counts as present — a JUnit address (no ``.py`` file), a project folder that is
+    not here, a file that does not parse, a class whose base is defined elsewhere, a test assigned by name
+    (``test_x = make()``) — so the report never hides a test it cannot read."""
+
+    def __init__(self, project_dir: Path) -> None:
+        self.project_dir = project_dir
+        self.here = project_dir.is_dir()
+        self.trees: Dict[Path, Optional[ast.Module]] = {}
+
+    def __call__(self, test: str) -> bool:
+        path, _, rest = test.partition("::")
+        if not self.here or not rest or not path.endswith(".py"):
+            return True
+        file = self.project_dir / path
+        if not file.is_file():
+            return False
+        tree = self._tree(file)
+        if tree is None:
+            return True
+        *classes, name = rest.split("::")
+        module = {node.name: node for node in tree.body if isinstance(node, ast.ClassDef)}
+        scope: Union[ast.Module, ast.ClassDef] = tree
+        for class_name in classes:
+            found = next((n for n in scope.body if isinstance(n, ast.ClassDef) and n.name == class_name), None)
+            if found is None:
+                return False
+            scope = found
+        return _defines(scope, name.split("[", 1)[0], module)
+
+    def _tree(self, file: Path) -> Optional[ast.Module]:
+        if file not in self.trees:
+            try:
+                self.trees[file] = ast.parse(file.read_text(encoding="utf-8"))
+            except (OSError, SyntaxError, ValueError):
+                self.trees[file] = None
+        return self.trees[file]
+
+
+def _defines(scope: Union[ast.Module, ast.ClassDef], name: str, module: Dict[str, ast.ClassDef]) -> bool:
+    """Whether ``scope`` defines ``name`` — or may: through a base class defined elsewhere."""
+    for node in scope.body:
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)) and node.name == name:
+            return True
+        if isinstance(node, (ast.Assign, ast.AnnAssign)):
+            targets = node.targets if isinstance(node, ast.Assign) else [node.target]
+            if any(isinstance(t, ast.Name) and t.id == name for t in targets):
+                return True
+    if isinstance(scope, ast.ClassDef):
+        for base in scope.bases:
+            if not isinstance(base, ast.Name) or base.id not in module:
+                return True
+            if module[base.id] is not scope and _defines(module[base.id], name, module):
+                return True
+    return False
 
 
 def _to_slow(by_seconds: List[Tally], fast_seconds: Optional[float]) -> List[Tally]:
