@@ -222,7 +222,7 @@ with open('isort-checkstyle.xml', 'w') as f:
                 }
             }
         }
-<% if slow_tests %><% include '_slow_stage.groovy.jinja' %><% endif %>
+<% if slow_tests %><% include '_slow_stage.groovy.jinja' %><% endif %><% if node_tests %><% include '_node_stage.groovy.jinja' %><% endif %>
         stage('Verify Examples') {
             steps {
                 echo 'Running project examples...'

@@ -18,7 +18,7 @@ import click
 from packaging.requirements import InvalidRequirement, Requirement
 from packaging.utils import canonicalize_name
 
-from aisland import ci_templates, failures, provision
+from aisland import ci_templates, failures, gitcmd, provision
 from aisland import pyproject as pyproject_toml
 from aisland import supervisor
 from aisland.downloads import TIMEOUT, download
@@ -50,6 +50,7 @@ GH_ACTIONS: Dict[str, str] = {
     "setup-uv": "astral-sh/setup-uv@v7",
     "upload-artifact": "actions/upload-artifact@v7",
     "create-github-app-token": "actions/create-github-app-token@v3",
+    "setup-node": "actions/setup-node@v7",
 }
 
 #: When the LOCAL orchestrator (`<workspace>.local`) builds every project on its own: 01:00 every night (user
@@ -69,12 +70,14 @@ NIGHTLY_CHECK_CRON = "30 9 * * 1-5"
 #: Verify Notebooks 1.4 min); Initialize and the quality gates run tools, not the project's code, and get none. Waiting
 #: for an executor does not count: the node is held before the first stage. Raise a limit HERE when a project's healthy
 #: run approaches it (the morning report names a timed-out stage), then re-scaffold every project. The push pipelines
-#: carry none: a runner's limits are measured on the runner (aisland/TASKS.md).
+#: carry none: a runner's limits are measured on the runner (aisland/TASKS.md). Node Tests (2026-10-31, no nightly run
+#: yet): `npm ci` and the tests of the workspace's three Node folders took under a minute each on this machine.
 STAGE_LIMITS: Dict[str, int] = {
     "Unit Tests": 15,
     "Slow Tests": 60,
     "Verify Examples": 15,
     "Verify Notebooks": 15,
+    "Node Tests": 10,
 }
 #: A GitHub job's limit is its stage's times this (user pick 2026-10-28): a runner is slower than this machine, whose
 #: runs the table was measured on, and without one a hung job holds the runner for GitHub's six hours. `ci.yml`'s
@@ -103,6 +106,42 @@ def registers_slow_marker(pyproject_data: pyproject_toml.Table) -> bool:
     """True when the project registers the `slow` pytest marker — its declaration that it has a slow run."""
     markers = pyproject_data.get("tool", {}).get("pytest", {}).get("ini_options", {}).get("markers", [])
     return any(str(m).split(":", 1)[0].strip() == "slow" for m in markers)
+
+
+#: Folders a Node package's tests never live in: installed packages, and hidden folders (`.vscode-test`, `.git`).
+_NOT_NODE_SOURCES = ("node_modules",)
+
+
+def node_test_folders(project_dir: Path) -> List[str]:
+    """The folders of the project holding a `package.json` with a `test` script — its declaration that `npm test` is
+    a test run of its own, which CI runs in a Node Tests stage. Paths relative to the project, POSIX, sorted.
+
+    The `package.json` files are the ones git sees there (tracked, or untracked and not ignored): an installed
+    package's under `node_modules/` or a service's data folder is no source of the project. Outside a git repository,
+    the folders are walked, `node_modules` and hidden folders skipped. A `package.json` that is no JSON object is
+    passed over, as npm itself would fail it.
+    """
+    listed = gitcmd.git(project_dir, "ls-files", "--cached", "--others", "--exclude-standard", "--", "*package.json")
+    if listed.returncode == 0:
+        candidates = [project_dir / line for line in listed.stdout.splitlines() if Path(line).name == "package.json"]
+    else:
+        candidates = []
+        for walked, subfolders, files in os.walk(project_dir):
+            subfolders[:] = [d for d in subfolders if d not in _NOT_NODE_SOURCES and not d.startswith(".")]
+            if "package.json" in files:
+                candidates.append(Path(walked) / "package.json")
+    folders = set()
+    for manifest in candidates:
+        try:
+            data = json.loads(manifest.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            continue
+        scripts = data.get("scripts") if isinstance(data, dict) else None
+        test = scripts.get("test") if isinstance(scripts, dict) else None
+        folder = manifest.parent.relative_to(project_dir)
+        if isinstance(test, str) and test.strip() and not set(_NOT_NODE_SOURCES) & set(folder.parts):
+            folders.add(folder.as_posix())
+    return sorted(folders)
 
 
 def _project_has_slow_tests(project_dir: Path) -> bool:
@@ -1066,6 +1105,9 @@ pipeline {{
         # download happens once). `aisland setup` runs the same install for a developer's venv
         # (`selection.browser_install_command`), so the two never disagree on the browser.
         needs_browser = "playwright" in dev_extra_names(_pyproject_data)
+        # A `package.json` with a `test` script is the declaration that `npm test` is a run of its own (no aisland
+        # knob, as the `slow` marker and the playwright dependency): each such folder gets the Node Tests stage.
+        node_tests = node_test_folders(project_path)
 
         # CI asks ONE question per internal dependency — is it RELEASED on PyPI? — and nothing
         # about the workspace's sources (`workspace.toml`) (user ruling 2026-09-26: "it should always
@@ -1240,6 +1282,7 @@ pipeline {{
             extras=ci_extras.split(","),
             browser=PLAYWRIGHT_BROWSER if needs_browser else None,
             slow_tests=has_slow_marker,
+            node_tests=node_tests,
             unreleased=[ci_templates.Dependency(dep, github_projects[dep].url, DEFAULT_REF) for dep in from_github],
             unreleased_owners=owners,
             token_owner=token_owner,

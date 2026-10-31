@@ -8,7 +8,7 @@ Records: [sources] project sources · [folders] the generated workspace file · 
 selection · [completion] completion install · [config] one config file · [clean] reclaiming
 disk · [containers] containerised services · [closure] the pre-install closure ·
 [playwright] dev dependencies needing more than pip · [local-pipeline] the local pipeline ·
-[stage-limits] a long stage's time limit · [doctor] the environment doctor · [test-stats] every
+[stage-limits] a long stage's time limit · [node-tests] a `package.json` test script is a CI stage · [doctor] the environment doctor · [test-stats] every
 pytest run recorded · [pull-all]
 `pull-all` settles a pointer only to a commit holding both sides · [tunnel] the remote tunnel runs where there is no
 workspace and its remembered workspaces are a cache · [wheels] a project
@@ -927,7 +927,7 @@ A bare `::` pin in this section is in `tests/test_jenkins_scaffold.py`.
   `::test_a_seeded_local_job_accepts_the_slow_switch_before_its_first_run`)
 - **A long stage of `Jenkinsfile.local` has a time limit (user choice 2026-10-15).** `STAGE_LIMITS`
   (Unit Tests 15, Slow Tests 60, Verify Examples 15, Verify Notebooks 15 min — about twice the
-  longest healthy run of 2026-10-10..15) is the ONE table; each such stage's steps run inside the
+  longest healthy run of 2026-10-10..15; Node Tests 10, set before any nightly run) is the ONE table; each such stage's steps run inside the
   `limited` helper the file defines (`templates/ci/_limited.groovy.jinja`), which past the limit FAILS the stage with
   `TIMED_OUT_MESSAGE` — the stage and the limit named — and rethrows an abort clicked before it.
   Initialize and the quality gates get none. **`ci.yml`'s jobs get `RUNNER_LIMIT_FACTOR` (3) times their stage's
@@ -956,6 +956,16 @@ A bare `::` pin in this section is in `tests/test_jenkins_scaffold.py`.
 - `playwright` in a `dev` extra: setup and the runner files fetch chromium (`--with-deps` in
   `ci.yml`); `Jenkinsfile.local` fetches nothing. (`tests/test_playwright_browser.py`,
   `::TestAPlaywrightDevDependencyInstallsItsBrowser`) [playwright]
+- **A `package.json` with a `test` script is a Node test run CI runs (user pick 2026-10-31).** [node-tests]
+  `jenkins.node_test_folders` reads the `package.json` files git sees in the project (tracked, or untracked and not
+  ignored; a walk skipping `node_modules` and hidden folders outside git) and keeps each folder whose `scripts.test`
+  is a non-empty string — the fact `node_tests`, last in `Facts` and defaulted. Each gets, in a Node Tests stage after
+  the unit tests: `npm ci` (else `npm install`) and `npm test` in `Jenkinsfile` and in `ci.yml`'s `node-tests` job
+  (the project installed, `setup-node` Node.js 24); in `Jenkinsfile.local` only `npm test`, a folder without
+  `node_modules` stopping the stage with `<project>/<folder> has no node_modules - run npm install there` — the local
+  pipeline installs nothing ([local-pipeline]). The venv is first on the stage's `PATH` (`PATH+VENV`). A project
+  without such a folder gets byte-identical files. (`::TestAPackageJsonWithATestScriptGetsNodeTests`,
+  `::TestWhichFoldersHoldNodeTests`)
 - Verify Examples runs `examples/*.py` and `examples/*/run.py`.
   (`::test_scaffold_emits_directory_example_runner`)
 - A declaration a project already makes (a marker, a dependency) is the opt-in; never add an

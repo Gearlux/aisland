@@ -94,6 +94,9 @@ class Facts:
     #: The workspace's name and the local Jenkins' address.
     workspace: str
     jenkins_url: str
+    #: The project's folders holding a `package.json` with a `test` script (POSIX, relative, sorted; empty: none) —
+    #: last and defaulted, so a set constructing the facts by position keeps working.
+    node_tests: List[str] = field(default_factory=list)
 
 
 @dataclass(frozen=True)

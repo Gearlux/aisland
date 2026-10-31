@@ -1,0 +1,16 @@
+
+        stage('Node Tests') {
+            steps {
+                limited('Node Tests', <[ stage_limits['Node Tests'] ]>) {
+                    // Each folder whose package.json has a `test` script runs `npm test` on the packages the checkout
+                    // has: this pipeline installs nothing, as it tests the venv. The venv comes first on the PATH, so a
+                    // test that starts the project's Python finds it.
+                    withEnv(["PATH+VENV=${VENV_BIN}"]) {
+<% for folder in node_tests %>                        dir('<[ folder ]>') {
+                            sh 'if [ ! -d node_modules ]; then echo "<[ project ]>/<[ folder ]> has no node_modules - run npm install there"; exit 1; fi'
+                            sh 'npm test'
+                        }
+<% endfor %>                    }
+                }
+            }
+        }

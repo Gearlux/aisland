@@ -148,6 +148,49 @@ Chromium only: it is the one browser a workspace test asks for. A project withou
 dependency gets byte-identical output, and the browser cache is per user (`~/Library/Caches/
 ms-playwright` on macOS), so a Jenkins agent downloads it once, not per build.
 
+## A `package.json` with a `test` script gets a Node Tests stage
+
+A project that holds a Node package — a web front end, an editor extension — runs its tests with `npm test`, and
+pytest never sees them. A `package.json` whose `scripts` has a `test` is the whole declaration (no aisland knob, as
+for the `slow` marker and the `playwright` dependency) — `<project>/frontend/package.json`:
+
+```json
+{ "scripts": { "test": "vitest run" } }
+```
+
+`aisland jenkins scaffold` finds every such folder among the files git sees in the project — never under
+`node_modules/` or in an ignored folder — and adds a Node Tests stage after the unit tests, a folder at a time:
+
+```groovy
+// Jenkinsfile — the packages from the lock file, then the tests
+dir('frontend') {
+    sh 'if [ -f package-lock.json ]; then npm ci; else npm install; fi'
+    sh 'npm test'
+}
+```
+
+```groovy
+// Jenkinsfile.local — it installs nothing: the checkout's own packages are tested
+dir('frontend') {
+    sh 'if [ ! -d node_modules ]; then echo "models/frontend has no node_modules - run npm install there"; exit 1; fi'
+    sh 'npm test'
+}
+```
+
+```yaml
+# ci.yml — a node-tests job beside unit-tests: the project installed, Node.js 24, then each folder
+- name: Node Tests (frontend)
+  working-directory: frontend
+  run: |
+    if [ -f package-lock.json ]; then npm ci; else npm install; fi
+    npm test
+```
+
+The workspace's venv comes first on the stage's `PATH`, so a test that starts the project's Python finds the project
+installed. The local stage has a 10-minute limit like the others. `node` must be on Jenkins' `PATH`: a project
+needing it declares it under `[tool.aisland.sys-dependencies]` (`brew = ["node"]`, `userspace = ["node"]`), and
+`aisland setup` installs it. A project without such a folder gets byte-identical files.
+
 ## The CI files come from a template set
 
 `aisland jenkins scaffold <project>` works out what CI needs to know about the project — its package, its extras,
@@ -206,6 +249,7 @@ The facts a template reads:
 | `distribution`, `package` | its `[project] name`, and the package `--cov` measures |
 | `extras` | the extras CI installs, `dev` first |
 | `slow_tests` | whether the project registers the `slow` marker |
+| `node_tests` | the project's folders whose `package.json` has a `test` script, relative and sorted (empty: none) |
 | `browser` | the browser a `playwright` dev dependency needs, or none |
 | `unreleased`, `unreleased_owners` | the workspace dependencies not on PyPI, in install order (`dep.name`, `dep.url`, `dep.ref`), and their owners |
 | `token_owner`, `token_secret` | the GitHub owner whose private repositories CI clones with an app token, and its secrets' prefix |

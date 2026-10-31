@@ -26,7 +26,7 @@ and what to do about it. A patch release (0.1.0 → 0.1.1) changes none of it.
   `<% %>` and `<# #>`, the entry point group `aisland.ci_templates`, and the facts a template reads: `project`,
   `title`, `distribution`, `package`, `extras`, `browser`, `slow_tests`, `unreleased` (each with `name`, `url`,
   `ref`), `unreleased_owners`, `token_owner`, `token_secret`, `stage_limits`, `runner_limits`, `actions`,
-  `timed_out_message`, `workspace`, `jenkins_url`. A later release may add facts; it removes or renames none.
+  `timed_out_message`, `workspace`, `jenkins_url`, `node_tests`. A later release may add facts; it removes or renames none.
 - **The tools of `aisland-mcp`** ([mcp](mcp.md)): their names, their arguments and the keys of the JSON object each
   returns.
 - **The environment variables** the README's table lists, and what each one does.

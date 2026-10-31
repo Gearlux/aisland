@@ -33,7 +33,9 @@ The first release on PyPI: `pip install aisland`.
 - **`aisland jenkins scaffold`** writes a project's CI files from a template set — aisland's own (`Jenkinsfile`,
   `Jenkinsfile.local` and GitHub's `ci.yml`), or one the workspace names in `workspace.toml`'s `[ci]`: a folder of
   Jinja2 templates with variables of its own, or a set an installed package registers; `aisland jenkins templates
-  export` copies aisland's set to start from;
+  export` copies aisland's set to start from. A folder of a project whose `package.json` has a `test` script gets a
+  Node Tests stage in all three files — `npm ci` and `npm test` on the push pipelines, `npm test` on the checkout's own
+  packages in the local one;
   `aisland jenkins init [--local]` seeds the Jenkins jobs for them, and `aisland tests nightly` reports the local
   Jenkins' nightly runs.
 - **`aisland check`** runs the quality gates (`isort`, `black`, `flake8`, `mypy`, `pytest`, `act`) on every project

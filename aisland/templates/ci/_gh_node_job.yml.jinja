@@ -1,0 +1,28 @@
+
+  node-tests:
+    name: Node Tests
+    needs: [quality-gates]
+    runs-on: ubuntu-latest
+    timeout-minutes: <[ runner_limits['Node Tests'] ]>
+    steps:
+    - uses: <[ actions['checkout'] ]>
+<% if token_owner %><% include '_gh_token.yml.jinja' %><% endif %>    - name: Set up Python 3.12
+      uses: <[ actions['setup-python'] ]>
+      with:
+        python-version: "3.12"
+    - name: Install uv
+      uses: <[ actions['setup-uv'] ]>
+    - name: Install dependencies
+      run: |
+        <% include '_gh_preinstall.yml.jinja' %>
+        uv pip install --system -e ".[<[ extras|join(',') ]>]"
+    - name: Set up Node.js 24
+      uses: <[ actions['setup-node'] ]>
+      with:
+        node-version: "24"
+<% for folder in node_tests %>    - name: Node Tests (<[ folder ]>)
+      working-directory: <[ folder ]>
+      run: |
+        if [ -f package-lock.json ]; then npm ci; else npm install; fi
+        npm test
+<% endfor %>

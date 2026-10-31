@@ -144,6 +144,17 @@ def _make_pyproject_with_playwright(dir_: Path, name: str, slow_marker: bool = F
     )
 
 
+def _with_node_tests(dir_: Path) -> None:
+    """A `frontend/` folder whose `package.json` has a `test` script: the project's declaration of a Node test run."""
+    (dir_ / "frontend").mkdir(parents=True, exist_ok=True)
+    (dir_ / "frontend" / "package.json").write_text('{"scripts": {"test": "vitest run"}}\n', encoding="utf-8")
+
+
+def _make_pyproject_with_slow_marker_and_node_tests(dir_: Path, name: str) -> None:
+    _make_pyproject_with_slow_marker(dir_, name)
+    _with_node_tests(dir_)
+
+
 def _scaffolded(monkeypatch: pytest.MonkeyPatch, tmp_path: Path, make: Any) -> dict[str, str]:
 
     make(tmp_path / "proj", "proj")
@@ -560,7 +571,7 @@ class TestTheWorkflowActionsRunOnNode24:
 
     @staticmethod
     def _every_job(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> str:
-        """A ci.yml carrying every optional job and step: the slow leg AND the app-token step."""
+        """A ci.yml carrying every optional job and step: the slow leg, the Node tests AND the app-token step."""
 
         marker = "\n[tool.pytest.ini_options]\nmarkers = [\"slow: heavy tests; deselect with -m 'not slow'.\"]\n"
         _make_gearlux_workspace(
@@ -572,6 +583,7 @@ class TestTheWorkflowActionsRunOnNode24:
         )
         monkeypatch.setattr(locations, "workspace_root", lambda: tmp_path)
         monkeypatch.setattr("aisland.services.jenkins.is_private_repo", lambda repository: True)
+        _with_node_tests(tmp_path / "app")
         JenkinsService().scaffold_pipelines(project_name="app", force=True)
         return (tmp_path / "app" / ".github" / "workflows" / "ci.yml").read_text(encoding="utf-8")
 
@@ -581,7 +593,7 @@ class TestTheWorkflowActionsRunOnNode24:
         ci = self._every_job(monkeypatch, tmp_path)
         used = {line.split("uses:", 1)[1].strip() for line in ci.splitlines() if "uses:" in line}
         assert used == set(GH_ACTIONS.values()), used ^ set(GH_ACTIONS.values())
-        assert "slow-tests:" in ci and "create-github-app-token" in ci  # both optional paths were rendered
+        assert "slow-tests:" in ci and "node-tests:" in ci and "create-github-app-token" in ci  # every optional path
 
     def test_the_table_names_the_node24_majors(self) -> None:
         from aisland.services.jenkins import GH_ACTIONS
@@ -592,6 +604,7 @@ class TestTheWorkflowActionsRunOnNode24:
             "setup-uv": "astral-sh/setup-uv@v7",
             "upload-artifact": "actions/upload-artifact@v7",
             "create-github-app-token": "actions/create-github-app-token@v3",
+            "setup-node": "actions/setup-node@v7",
         }
 
 
@@ -609,15 +622,15 @@ class TestALongStageHasATimeLimit:
     def test_every_long_stage_runs_inside_its_limit_from_the_one_table(
         self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
     ) -> None:
-        local = _scaffolded(monkeypatch, tmp_path, _make_pyproject_with_slow_marker)["Jenkinsfile.local"]
-        assert set(STAGE_LIMITS) == {"Unit Tests", "Slow Tests", "Verify Examples", "Verify Notebooks"}
+        local = _scaffolded(monkeypatch, tmp_path, _make_pyproject_with_slow_marker_and_node_tests)["Jenkinsfile.local"]
+        assert set(STAGE_LIMITS) == {"Unit Tests", "Slow Tests", "Verify Examples", "Verify Notebooks", "Node Tests"}
         for stage, minutes in STAGE_LIMITS.items():
             assert isinstance(minutes, int) and minutes > 0, stage
             wrapper = f"limited('{stage}', {minutes}) {{"
             assert local.count(wrapper) == 1, stage
             opened = local.index(f"stage('{stage}')")
             assert opened < local.index("steps {", opened) < local.index(wrapper, opened), stage
-        assert local.count("limited(") == len(STAGE_LIMITS) + 1, "the four calls and the definition, nothing else"
+        assert local.count("limited(") == len(STAGE_LIMITS) + 1, "the five calls and the definition, nothing else"
         assert "limited('Initialize'" not in local and "limited('Quality Gates'" not in local
 
     def test_the_helper_fails_the_stage_naming_it_and_its_limit_and_keeps_an_early_abort(
@@ -639,8 +652,8 @@ class TestALongStageHasATimeLimit:
         self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
     ) -> None:
         local = _scaffolded(monkeypatch, tmp_path, _make_pyproject)["Jenkinsfile.local"]
-        assert "limited('Slow Tests'" not in local
-        assert local.count("limited(") == len(STAGE_LIMITS), "three calls and the definition"
+        assert "limited('Slow Tests'" not in local and "limited('Node Tests'" not in local
+        assert local.count("limited(") == 4, "three calls and the definition"
 
     def test_the_push_jenkinsfile_carries_no_limit(self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
         """The CON pin: the push Jenkinsfile's limits stay a follow-up (aisland/TASKS.md)."""
@@ -657,12 +670,14 @@ class TestALongStageHasATimeLimit:
 
         from aisland.services.jenkins import RUNNER_LIMIT_FACTOR, STAGE_LIMITS
 
-        jobs = yaml.safe_load(_scaffolded(monkeypatch, tmp_path, _make_pyproject_with_slow_marker)["ci.yml"])["jobs"]
+        files = _scaffolded(monkeypatch, tmp_path, _make_pyproject_with_slow_marker_and_node_tests)
+        jobs = yaml.safe_load(files["ci.yml"])["jobs"]
         stages = {
             "unit-tests": "Unit Tests",
             "slow-tests": "Slow Tests",
             "verify-examples": "Verify Examples",
             "verify-notebooks": "Verify Notebooks",
+            "node-tests": "Node Tests",
         }
         assert RUNNER_LIMIT_FACTOR == 3
         assert {job: jobs[job].get("timeout-minutes") for job in stages} == {
@@ -685,3 +700,123 @@ class TestALongStageHasATimeLimit:
             cleared = content.index("sh 'rm -f slow-test-report.xml'", slow)
             assert cleared < content.index("pytest tests -m slow", slow), name
         assert "rm -f" not in files["ci.yml"]
+
+
+class TestAPackageJsonWithATestScriptGetsNodeTests:
+    """A `package.json` whose `scripts.test` is set is the project's declaration that `npm test` is a test run of its
+    own (user pick 2026-10-31: the editor extension's tests ran in no CI), the same shape as the `slow` marker: no
+    aisland knob. Each such folder gets `npm ci` (or `npm install` without a lock file) and `npm test` in a Node Tests
+    stage of all three files, the venv first on the PATH so a test starting the project's Python finds it; a project
+    without one gets none of it."""
+
+    def test_each_folder_runs_its_install_and_its_tests_in_all_three_files(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ) -> None:
+        def make(dir_: Path, name: str) -> None:
+            _make_pyproject(dir_, name)
+            _with_node_tests(dir_)
+            (dir_ / "editors" / "vscode").mkdir(parents=True)
+            (dir_ / "editors" / "vscode" / "package.json").write_text('{"scripts": {"test": "node --test out/"}}')
+
+        files = _scaffolded(monkeypatch, tmp_path, make)
+        install = "if [ -f package-lock.json ]; then npm ci; else npm install; fi"
+        stages = {}
+        for name in ("Jenkinsfile", "Jenkinsfile.local"):
+            content = files[name]
+            stage = content[content.index("stage('Node Tests')") : content.index("stage('Verify Examples')")]
+            assert 'withEnv(["PATH+VENV=${VENV_BIN}"])' in stage, name
+            assert stage.index("dir('editors/vscode')") < stage.index("dir('frontend')"), name
+            assert stage.count("sh 'npm test'") == 2, name
+            assert content.index("stage('Unit Tests')") < content.index("stage('Node Tests')"), name
+            stages[name] = stage
+        assert stages["Jenkinsfile"].count(f"sh '{install}'") == 2
+        # The local pipeline installs nothing (user instruction 2026-09-13): it tests the checkout's packages, and a
+        # folder without them stops the stage naming the command.
+        local = stages["Jenkinsfile.local"]
+        assert "npm ci" not in local and "npm install;" not in local
+        assert (
+            local.count(
+                'if [ ! -d node_modules ]; then echo "proj/frontend has no node_modules - run npm install there"; exit 1; fi'
+            )
+            == 1
+        )
+        assert local.index(f"limited('Node Tests', {STAGE_LIMITS['Node Tests']})") < local.index(
+            "dir('editors/vscode')"
+        )
+
+        import yaml
+
+        job = yaml.safe_load(files["ci.yml"])["jobs"]["node-tests"]
+        assert job["needs"] == ["quality-gates"]
+        runs = [step for step in job["steps"] if "working-directory" in step]
+        assert [(step["working-directory"], step["run"].splitlines()) for step in runs] == [
+            ("editors/vscode", [install, "npm test"]),
+            ("frontend", [install, "npm test"]),
+        ]
+        names = [step.get("name") for step in job["steps"]]
+        assert names.index("Install dependencies") < names.index("Set up Node.js 24") < names.index(runs[0]["name"])
+        # One blank line parts the new job and stage from the next, as between every other two.
+        assert "        npm test\n\n  verify-examples:" in files["ci.yml"]
+        for name in ("Jenkinsfile", "Jenkinsfile.local"):
+            assert "            }\n        }\n\n        stage('Verify Examples')" in files[name], name
+
+    def test_a_project_without_one_gets_no_node_stage(self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+        files = _scaffolded(monkeypatch, tmp_path, _make_pyproject)
+        for name, content in files.items():
+            assert "Node Tests" not in content and "npm" not in content and "setup-node" not in content, name
+        # The line that includes the stage adds no line of its own: one blank line still parts Unit Tests from what
+        # follows, as before the stage existed.
+        for name in ("Jenkinsfile", "Jenkinsfile.local"):
+            assert "            }\n        }\n\n        stage('Verify Examples')" in files[name], name
+        assert "      if: always()\n\n  verify-examples:" in files["ci.yml"]
+
+
+class TestWhichFoldersHoldNodeTests:
+    """`node_test_folders`: the `package.json` files git sees, else a walk; only a non-empty `test` script counts."""
+
+    @staticmethod
+    def _write(root: Path, files: dict[str, str]) -> None:
+        for rel, text in files.items():
+            (root / rel).parent.mkdir(parents=True, exist_ok=True)
+            (root / rel).write_text(text, encoding="utf-8")
+
+    def test_outside_git_the_folders_are_walked_and_only_a_test_script_counts(self, tmp_path: Path) -> None:
+        from aisland.services.jenkins import node_test_folders
+
+        self._write(
+            tmp_path,
+            {
+                "package.json": '{"scripts": {"test": "jest"}}',
+                "web/package.json": '{"scripts": {"test": "vitest run"}}',
+                "web/node_modules/dep/package.json": '{"scripts": {"test": "mocha"}}',
+                ".vscode-test/x/package.json": '{"scripts": {"test": "mocha"}}',
+                "no-test/package.json": '{"scripts": {"build": "tsc"}}',
+                "blank-test/package.json": '{"scripts": {"test": "  "}}',
+                "no-scripts/package.json": '{"name": "x"}',
+                "broken/package.json": "{not json",
+                "a-list/package.json": "[1, 2]",
+            },
+        )
+        assert node_test_folders(tmp_path) == [".", "web"]
+
+    def test_in_git_an_ignored_folder_is_no_source_and_an_untracked_one_is(self, tmp_path: Path) -> None:
+        from aisland.services.jenkins import node_test_folders
+
+        subprocess.run(["git", "init", "-q", str(tmp_path)], check=True)
+        self._write(
+            tmp_path,
+            {
+                ".gitignore": "data/\n",
+                "data/plugin/package.json": '{"scripts": {"test": "mocha"}}',
+                "frontend/package.json": '{"scripts": {"test": "vitest run"}}',
+                "frontend/node_modules/dep/package.json": '{"scripts": {"test": "mocha"}}',
+                "tools/package.json": '{"scripts": {"test": "node --test"}}',
+            },
+        )
+        subprocess.run(["git", "-C", str(tmp_path), "add", "frontend/package.json"], check=True)
+        assert node_test_folders(tmp_path) == ["frontend", "tools"]
+
+    def test_a_folder_with_none_has_none(self, tmp_path: Path) -> None:
+        from aisland.services.jenkins import node_test_folders
+
+        assert node_test_folders(tmp_path) == []
