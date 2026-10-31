@@ -180,6 +180,7 @@ def test_a_user_page_names_no_project_of_the_workspace(page: Path) -> None:
 @pytest.mark.parametrize(
     "words, command", list(_commands(main)), ids=lambda value: value if isinstance(value, str) else ""
 )
+@pytest.mark.usefixtures("empty_workspace")
 def test_a_commands_help_names_no_project_of_the_workspace(
     words: str, command: click.Command, monkeypatch: pytest.MonkeyPatch
 ) -> None:

@@ -455,6 +455,7 @@ class TestReporting:
         out = capsys.readouterr().out
         assert "✗ x" in out and "fix: do the thing" in out
 
+    @pytest.mark.usefixtures("empty_workspace")
     def test_every_registered_check_returns_a_result(self) -> None:
         results: List[doctor.CheckResult] = doctor.run_checks()
         assert len(results) == len(doctor.CHECKS)

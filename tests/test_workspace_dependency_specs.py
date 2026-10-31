@@ -35,6 +35,7 @@ import tomllib
 from pathlib import Path
 from typing import Dict, List, NamedTuple
 
+import pytest
 from packaging.requirements import Requirement
 from packaging.version import Version
 
@@ -194,6 +195,7 @@ def test_external_and_detached_dependencies_are_left_alone(tmp_path: Path) -> No
     assert find_unsatisfiable_specs(root) == []
 
 
+@pytest.mark.real_workspace
 def test_the_real_workspace_has_no_unsatisfiable_internal_specs() -> None:
     """The integration pin: `aisland setup` can resolve the whole graph from local checkouts."""
     violations = find_unsatisfiable_specs(get_workspace_root())

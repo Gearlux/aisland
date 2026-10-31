@@ -52,6 +52,7 @@ def fast_run_default_violations(workspace_root: Path) -> List[str]:
     return sorted(violations)
 
 
+@pytest.mark.real_workspace
 def test_the_real_workspace_runs_the_fast_run_by_default() -> None:
     violations = fast_run_default_violations(get_workspace_root())
     assert not violations, "\n".join(violations)
@@ -115,6 +116,7 @@ def test_aislands_own_pytest_reads_the_table_that_registers_slow(pytestconfig: p
     assert slow not in collected.stdout.splitlines() and "deselected" in collected.stdout
 
 
+@pytest.mark.real_workspace
 def test_aislands_own_fast_run_is_parallel(pytestconfig: pytest.Config) -> None:
     """Plain `pytest` runs over four worker processes: one process took 13 min on this machine against the
     workspace's 5-minute budget, most of it waiting on git, uv and builds (user pick 3, 2026-10-28). Asked itself,

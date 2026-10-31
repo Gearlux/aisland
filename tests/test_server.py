@@ -326,7 +326,7 @@ def test_editor_unset_forgets_what_it_names(
 
 
 @pytest.fixture
-def ran(monkeypatch: pytest.MonkeyPatch) -> List[List[str]]:
+def ran(monkeypatch: pytest.MonkeyPatch, repo: Path) -> List[List[str]]:
     """Every `aisland` command line the service tools run, each answering exit 0 with one line; the workspace's
     services are aisland's own and `notes`, one a project brings."""
     calls: List[List[str]] = []
@@ -390,7 +390,7 @@ def test_the_schema_names_no_fixed_list_of_services() -> None:
     assert "mlflow" not in server.INSTRUCTIONS.lower()
 
 
-def test_a_command_that_fails_is_an_error_carrying_its_output(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_a_command_that_fails_is_an_error_carrying_its_output(monkeypatch: pytest.MonkeyPatch, repo: Path) -> None:
     monkeypatch.setattr(
         server,
         "_run_aisland",
@@ -399,7 +399,7 @@ def test_a_command_that_fails_is_an_error_carrying_its_output(monkeypatch: pytes
     assert "Error: port 9080 is in use by PID 12" in _error("service_start", {"name": "jenkins"})
 
 
-def test_the_aisland_command_runs_with_this_interpreter_at_the_workspace_root() -> None:
+def test_the_aisland_command_runs_with_this_interpreter_at_the_workspace_root(repo: Path) -> None:
     """At the root `-P` keeps the `aisland/` checkout from shadowing the package; from a wheel the root is where
     aisland finds its workspace."""
     result = server._run_aisland(["workspace", "--help"])
@@ -465,6 +465,7 @@ def test_over_stdio_a_print_goes_to_stderr_and_the_tools_still_answer(tmp_path: 
     assert "noise on stdout" in (tmp_path / "stderr.log").read_text()
 
 
+@pytest.mark.real_workspace
 def test_the_workspace_lists_the_server_in_mcp_json(tmp_path: Path) -> None:
     """`aisland setup` writes `.mcp.json` from discovery: a `<pkg>.server:main` script importing `mcp.server`."""
     root = projects.get_workspace_root()

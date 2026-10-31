@@ -29,6 +29,13 @@ from aisland.cli import main
 from . import test_wheels
 from .test_wheels import _commit, _end_to_end_workspace, _project, _report, _wheel, offline_uv
 
+
+@pytest.fixture(autouse=True)
+def _own_workspace(empty_workspace: Path) -> Path:
+    """The commands of this file run in a workspace of the test's own, never the developer's."""
+    return empty_workspace
+
+
 __all__ = ["offline_uv"]  # the fixture, imported so the end-to-end tests here can ask for it
 
 #: The faked builds of test_wheels.py, reached through its module: a test class imported by name here would be

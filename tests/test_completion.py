@@ -406,6 +406,7 @@ def test_without_liquifai_the_command_reports_no_liquifai_app(
     assert "    liquifai apps: (none discovered)" in result.output.splitlines()
 
 
+@pytest.mark.usefixtures("empty_workspace")
 def test_the_file_names_no_workspace_project(rc: Path, all_present: None) -> None:
     """What aisland writes into a user's shell file is aisland's: its block is marked `aisland`, and its
     provenance line names the module (a pip user has no `aisland/aisland/` folder)."""

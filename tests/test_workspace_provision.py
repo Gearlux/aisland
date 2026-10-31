@@ -282,6 +282,7 @@ def test_setup_provisions_through_the_same_install(tmp_path: Path, monkeypatch: 
     assert seen == [root]
 
 
+@pytest.mark.usefixtures("empty_workspace")
 def test_the_old_command_is_gone() -> None:
     result = CliRunner().invoke(cli.main, ["provision"])
     assert result.exit_code == 2

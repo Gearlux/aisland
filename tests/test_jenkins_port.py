@@ -52,6 +52,7 @@ def test_info_names_the_running_port(on_9081: None, capsys: pytest.CaptureFixtur
     assert "  URL           : http://localhost:9081" in capsys.readouterr().out
 
 
+@pytest.mark.usefixtures("empty_workspace")
 def test_the_safe_restart_asks_the_running_jenkins(
     on_9081: None, requested: List[str], monkeypatch: pytest.MonkeyPatch
 ) -> None:

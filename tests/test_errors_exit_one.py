@@ -179,6 +179,7 @@ def test_a_taken_port_is_reported(service: base.BaseService, monkeypatch: pytest
     assert failures.reported() == 1
 
 
+@pytest.mark.usefixtures("empty_workspace")
 def test_a_service_that_fails_to_start_is_reported(service: base.BaseService, monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(supervisor, "port_in_use", lambda port: None)
     for name in ("register_process", "apply", "start_process"):

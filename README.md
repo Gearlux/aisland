@@ -189,6 +189,8 @@ None is needed; each changes one default. `env.complete` lists them with every v
 - [Agent commands and rules](https://github.com/Gearlux/aisland/blob/main/docs/harness.md)
 - [Notebooks](https://github.com/Gearlux/aisland/blob/main/docs/notebooks.md)
 - [Remote machines](https://github.com/Gearlux/aisland/blob/main/docs/tunnel.md)
+- [Stability](https://github.com/Gearlux/aisland/blob/main/docs/stability.md) — what a release keeps, and what may
+  change in any release
 - [Design decisions](https://github.com/Gearlux/aisland/blob/main/docs/architecture.md) — why each mechanism is the
   way it is
 

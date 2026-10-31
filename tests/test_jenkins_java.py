@@ -373,6 +373,7 @@ def jenkins_bin(machine: Dict[str, Any], monkeypatch: pytest.MonkeyPatch) -> Dic
 
 
 class TestJenkinsStart:
+    @pytest.mark.usefixtures("empty_workspace")
     def test_starts_on_the_accepted_java_not_the_one_first_on_path(self, jenkins_bin: Dict[str, Any]) -> None:
         put_on_path(jenkins_bin, brew_keg(jenkins_bin, "openjdk", "26.0.2.1", accepted=False))
         keg_25 = brew_keg(jenkins_bin, "openjdk@25", "25.0.3", accepted=True)

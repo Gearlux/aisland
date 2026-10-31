@@ -28,6 +28,13 @@ from aisland import wheels as w
 from aisland import wheels_install as wi
 from aisland.cli import main
 
+
+@pytest.fixture(autouse=True)
+def _own_workspace(empty_workspace: Path) -> Path:
+    """The commands of this file run in a workspace of the test's own, never the developer's."""
+    return empty_workspace
+
+
 # --- helpers -------------------------------------------------------------------------------
 
 

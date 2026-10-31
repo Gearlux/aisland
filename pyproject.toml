@@ -128,4 +128,7 @@ norecursedirs = ["data", ".venv", "tools", "bin"]
 # 490 s over six workers, every test passing — most of a test's time is git, uv and builds in subprocesses. Four, the
 # cores a GitHub runner has: more workers than cores is slower, never wrong, so CI needs no setting of its own.
 addopts = "-m 'not slow' -n 4"
-markers = ["slow: never failed and among the slowest; left out of the fast run, run by CI's slow leg"]
+markers = [
+    "slow: never failed and among the slowest; left out of the fast run, run by CI's slow leg",
+    "real_workspace: reads the workspace aisland is checked out in (tests/conftest.py::no_real_workspace)",
+]

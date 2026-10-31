@@ -7,10 +7,12 @@ serves the ML libraries, aisland the workspace it runs in (user ruling 2026-10-2
 The tools are a chosen set, never the whole CLI (user choice 2026-10-21):
 
 * reading — ``doctor``, ``tests_report``, ``editor_themes``, ``editor_colors``, ``sources``, ``services_status``,
-  ``tunnel_list``: each the data its command prints with ``--json`` (or would), from the same function;
+  ``tunnel_list``, ``tunnel_status``: each the data its command prints with ``--json`` (or would), from the same
+  function;
 * changing this machine, never destroying — ``editor_set_theme``, ``editor_set_color``, ``editor_unset`` (the
-  workspace window's theme and colours, :mod:`aisland.editor`) and ``service_start``/``stop``/``restart`` for any
-  service of the workspace, each run as the ``aisland`` command itself so it behaves exactly as typed.
+  workspace window's theme and colours, :mod:`aisland.editor`), ``service_start``/``stop``/``restart`` for any
+  service of the workspace and ``tunnel_start``/``tunnel_stop`` (the remote tunnel to this machine), each run as the
+  ``aisland`` command itself so it behaves exactly as typed.
 
 What prompts (``setup``), runs for minutes or deletes (``clean``, ``backups prune``, ``* reset``, ``jenkins init``,
 ``source set``) stays a command. Every tool answers with one JSON object; a refusal is the tool's error, in the
@@ -25,6 +27,7 @@ argument schema.
 """
 
 import functools
+import json
 import subprocess
 import sys
 from dataclasses import asdict
@@ -52,19 +55,23 @@ MISSING_EXTRA = "Error: aisland-mcp needs the mcp extra: pip install 'aisland[mc
 
 #: What ``editor_unset`` forgets: the theme, one colour, or both colours and the area.
 EditorPart = Literal["theme", "background", "foreground", "colors"]
+#: The accounts ``aisland tunnel start`` signs in with (its ``--provider`` choices).
+TunnelProvider = Literal["github", "microsoft"]
 #: How long a service command may take: Jenkins' start waits for its readiness probe.
 SERVICE_TIMEOUT = 300
 
 INSTRUCTIONS = """\
 aisland manages this machine's development workspace: its environment checks, test statistics, project sources,
-the services (Jenkins, the Docker engine, SwiftBar and the ones its projects bring) and the VS Code window's theme
-and colours.
+the services (Jenkins, the Docker engine, SwiftBar and the ones its projects bring), the VS Code window's theme
+and colours, and the remote-editing tunnel to this machine.
 
 Read first: `doctor` (what is broken and the command that fixes it), `services_status`, `sources`,
 `tests_report(project)`. The editor tools change only this machine's workspace window: `editor_themes` and
 `editor_colors` list the choices, `editor_set_theme` / `editor_set_color` / `editor_unset` apply them.
-`service_start` / `service_stop` / `service_restart` take any service of the workspace by name. Setup, cleaning and resets are
-commands the person runs themselves (`aisland setup`, `aisland clean <project>`).
+`service_start` / `service_stop` / `service_restart` take any service of the workspace by name. `tunnel_status` and
+`tunnel_list` read the tunnel and the workspaces opened through it; `tunnel_start` / `tunnel_stop` bring it up or down
+(a sign-in still pending is answered with the code to hand the user). Setup, cleaning and resets are commands the
+person runs themselves (`aisland setup`, `aisland clean <project>`).
 """
 
 
@@ -246,6 +253,49 @@ def tool_tunnel_list() -> Dict[str, object]:
     return {"workspaces": tunnel_mod.store_payload(tunnel_mod.load_store())}
 
 
+def tool_tunnel_status() -> Dict[str, object]:
+    """Whether a remote-editing tunnel to this machine is running, under which name and account, and its address
+    once it is up (`aisland tunnel status --json`)."""
+    return tunnel_mod.status()
+
+
+def _tunnel_command(args: List[str]) -> Dict[str, object]:
+    """Run ``aisland tunnel ARGS --json`` and answer the JSON it printed, unchanged; its refusal in its own words."""
+    line = ["tunnel", *args, "--json"]
+    result = _run_aisland(line)
+    if result.returncode != 0:
+        said = "\n".join(part.strip() for part in (result.stderr, result.stdout) if part.strip())
+        raise ToolRefusal(said or f"aisland {' '.join(line)} exited with {result.returncode}")
+    try:
+        payload = json.loads(result.stdout)
+    except json.JSONDecodeError as error:
+        raise ToolRefusal(f"aisland {' '.join(line)} printed no JSON: {result.stdout.strip()}") from error
+    if not isinstance(payload, dict):
+        raise ToolRefusal(f"aisland {' '.join(line)} printed no JSON object: {result.stdout.strip()}")
+    return payload
+
+
+def tool_tunnel_start(
+    name: Optional[str] = None, provider: Optional[TunnelProvider] = None, cli: Optional[str] = None
+) -> Dict[str, object]:
+    """Bring up a remote-editing tunnel to THIS machine (`aisland tunnel start --json`): its status, with `url` once
+    it is up. When the account still needs a sign-in it answers `pending_signin` (`url`, `code`) at once instead of
+    waiting — hand the code to the user, then ask `tunnel_status`. A tunnel already running is reported, never a
+    second started. `name` defaults to $WORKSPACE, else the hostname; `provider` is the account to sign in with,
+    remembered afterwards; `cli` a VS Code CLI archive for a machine that cannot reach the download host."""
+    args = ["start"]
+    for flag, value in (("--name", name), ("--provider", provider), ("--cli", cli)):
+        if value:
+            args += [flag, value]
+    return _tunnel_command(args)
+
+
+def tool_tunnel_stop() -> Dict[str, object]:
+    """Stop the remote-editing tunnel to this machine (`aisland tunnel stop --json`): `stopped` false when none ran.
+    The remembered workspaces and the sign-in are kept."""
+    return _tunnel_command(["stop"])
+
+
 def tool_service_start(name: str) -> Dict[str, object]:
     """Start a service of the workspace by name — aisland's (docker, jenkins, swiftbar) or one a project brings, as
     `services_status` and `aisland services status` name them (`aisland <name> start`, in the background): its state
@@ -272,6 +322,7 @@ _READING = (
     tool_sources,
     tool_services_status,
     tool_tunnel_list,
+    tool_tunnel_status,
 )
 _CHANGING = (
     tool_editor_set_theme,
@@ -280,6 +331,8 @@ _CHANGING = (
     tool_service_start,
     tool_service_stop,
     tool_service_restart,
+    tool_tunnel_start,
+    tool_tunnel_stop,
 )
 
 

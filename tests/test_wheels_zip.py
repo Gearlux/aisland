@@ -24,6 +24,13 @@ from aisland.cli import main
 
 from .test_wheels import TestTheRunWithFakedBuilds, _commit, _git, _project, _pypi, _report, _workspace
 
+
+@pytest.fixture(autouse=True)
+def _own_workspace(empty_workspace: Path) -> Path:
+    """The commands of this file run in a workspace of the test's own, never the developer's."""
+    return empty_workspace
+
+
 _fake_builds = TestTheRunWithFakedBuilds._fake_builds
 
 

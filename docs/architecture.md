@@ -1,14 +1,14 @@
 # aisland — architecture decisions
 
 Design rationale for aisland's mechanisms: *why* each exists, what it protects, and what a
-change would ripple into. Usage lives in [`../README.md`](../README.md); the agent-facing
-rulebook lives in [`../AGENTS.md`](../AGENTS.md). These three cross-link and never duplicate.
+change would ripple into. Usage lives in [`../README.md`](../README.md) and the pages it indexes under `docs/`;
+the agent-facing rulebook lives in [`../AGENTS.md`](../AGENTS.md). These cross-link and never duplicate.
 
 ---
 
 ## Project sources are a two-layer registry, and only the committed layer reaches a committed file
 
-*2026-07-28*
+*2026-07-28; the layers' storage rewritten for `workspace.toml` 2026-10-22* [sources]
 
 ### Context
 
@@ -46,8 +46,13 @@ Configuration is **two layers**, mirroring the existing `.gitmodules active` +
 
 | layer | storage | committed |
 |---|---|---|
-| default | the `[sources.<project>]` tables of `<workspace>/config.toml` | yes |
-| override | `git config --local aisland.source.<project>` | no |
+| default | the project's table in `<workspace>/workspace.toml`: `source`, `version`, and `distribution` only where it differs from the name; a git source's ref is the project's own `branch` | yes |
+| override | `git config --local aisland.source.<project>.source\|branch\|version` | no |
+
+Both are set with `aisland workspace configure source set|unset [--machine-only]`. Until 2026-10-22 the default layer
+was the `[sources.<project>]` tables of a separate `config.toml` and the override a single key, `aisland.source.<project>`;
+they moved into the project's table so that a project's branch and name were no longer written twice (record
+"`aisland workspace configure`: one set of commands built from each plugin's keys").
 
 The layers are **not** interchangeable. Each artifact reads exactly one:
 
@@ -72,11 +77,13 @@ every consumer's committed CI install confluid from GitHub `main` (and switching
 them again — sixteen projects, twice, in one afternoon), and liquifai, released on PyPI but
 developed `local`, was built from GitHub `main` by every consumer. The user's ruling: CI "should
 always point to released packages, and to GitHub for non-released ones". So the scaffolder asks
-`sources.released_on_pypi(dep)` — a FINAL, non-yanked version whose metadata points at
-`github.com/Gearlux/` — and `aisland source set` / `unset` regenerate nothing at all. The earlier
+`sources.released_on_pypi(dep, owner)` — a FINAL, non-yanked version whose metadata points at
+`github.com/<owner>/`, the owner of the dependency's own remote (an organisation written into aisland until
+2026-10-26, record "A project is the workspace's own by its GitHub remote") — and `aisland workspace configure
+source set|unset` regenerate nothing at all. The earlier
 objection to a scaffold-time probe (an offline run would flip every project to git URLs) is met
 by refusing instead of guessing: an unreachable PyPI raises `ReleaseProbeError` and the project's
-files are not written. Rejected alternative: a hand-kept "released" list in `config.toml` —
+files are not written. Rejected alternative: a hand-kept "released" list in the committed configuration —
 offline, but it has to be remembered at every first release, and forgetting it silently keeps a
 released dependency on GitHub.
 
@@ -97,28 +104,28 @@ introducing the mechanism changed no behaviour anywhere until a source was actua
 - **Provenance, not existence, is what gets validated.** PyPI names are global, so a workspace
   project can share a name with an unrelated package; checking only that the name resolves would
   install a stranger's code into the shared venv. The workspace convention that every pyproject
-  declares a `github.com/Gearlux/…` repository URL makes the published metadata a usable marker,
-  so `_pypi_provenance` requires it. `github` gets the same treatment one level down:
+  declares its `github.com/<owner>/…` repository URL makes the published metadata a usable marker,
+  so `_pypi_provenance` requires the owner of the project's own remote. `github` gets the same treatment one level down:
   `_remote_ref_exists` refuses a ref the remote does not have. Both probes are *inconclusive*
   rather than rejecting when they cannot reach the network — an offline machine must not be
   blocked by a check it cannot perform.
 - **Detaching a project hides it from discovery, which the scaffolder had to be taught.**
-  `discover_gearlux_projects` learns each project's distribution name by reading its
-  `pyproject.toml`; an emptied directory has none. For `pypi` the resulting drop was accidentally
+  The scaffolder's project list (`jenkins.discover_github_projects`) learns each project's distribution name by
+  reading its `pyproject.toml`; an emptied directory has none. For `pypi` the resulting drop was accidentally
   correct (the dep is meant to leave the git-URL loop), which is exactly why the gap survived
   until `github` existed — there it erases the pin the kind exists to express, and CI silently
-  installs the PyPI release instead of the requested ref. The registry's `distribution` field,
+  installs the PyPI release instead of the requested ref. The committed source's `distribution` field,
   recorded for the deinit case anyway, is the fallback.
 - **Nothing is ever forced, and a failed apply rolls back.** `git switch` and `git submodule
   deinit` run without `-f`; a dirty submodule refuses, is reported, and the venv is left
-  untouched — matching `reconcile_submodules`' protective deinit rather than inventing a second
-  policy. `set_project_source` then restores the previous registry and override, because a
-  registry claiming a state the working tree does not have would be re-attempted by every
+  untouched — matching `activation.reconcile`'s protective deinit rather than inventing a second
+  policy. `set_project_source` then puts `workspace.toml` back byte for byte and restores the override, because a
+  committed source claiming a state the working tree does not have would be re-attempted by every
   subsequent `aisland setup`.
-- **Two mechanisms could fight over one submodule**, so they don't: `reconcile_submodules` folds
+- **Two mechanisms could fight over one submodule**, so they don't: `activation.reconcile` folds
   `sources.detached_projects()` — BOTH detaching kinds, not just `pypi` — into its active set,
   otherwise the next `aisland setup` would re-init a directory the source says is empty.
-- **No source change re-scaffolds anything** (2026-09-26). CI reads no source, so `source set`
+- **No source change re-scaffolds anything** (2026-09-26). CI reads no source, so `configure source set`
   and `unset` have nothing to regenerate; what changes a CI file is a dependency's FIRST RELEASE,
   picked up by the next `aisland jenkins scaffold`.
 - **Generating CI needs PyPI** (2026-09-26). `released_on_pypi` is asked once per distribution
@@ -134,23 +141,27 @@ introducing the mechanism changed no behaviour anywhere until a source was actua
 ### Example
 
 ```bash
-$ aisland source set loggair github --ref dev/main   # from local:main — no CI touched
-==> loggair: committed source set to github:dev/main in config.toml
-==> loggair: github @ dev/main (git+https://github.com/Gearlux/loggair.git@dev/main)
-==> Wrote acme.code-workspace (28 folders)
+$ aisland workspace configure source set models github --branch dev/main   # from local:main — no CI touched
+==> models: committed source set to github:dev/main in workspace.toml
+==> models: github @ dev/main (git+https://github.com/acme/models.git@dev/main)
 
-$ aisland source set loggair pypi                    # no CI touched either
-==> loggair: committed source set to pypi in config.toml
+$ aisland workspace configure source set models pypi                       # no CI touched either
+==> models: committed source set to pypi in workspace.toml
+```
+
+```toml
+# workspace.toml — the committed layer is the project's own table
+[project."models"]
+url = "git@github.com:acme/models.git"
+branch = "dev/main"
+source = "github"
 ```
 
 ```python
 # The scaffolder reads NO source — it asks PyPI, per internal dependency, for the runner files.
 # `Jenkinsfile.local` calls none of this: it installs nothing, so it depends on nothing.
 def _dep_is_released(dep: str) -> bool:
-    return released_on_pypi(dep)   # released -> `.[dev]` resolves it; else git+…@main
-
->>> [(d, released_on_pypi(d, "Gearlux")) for d in ("liquifai", "recordstream", "purifai")]
-[('liquifai', True), ('recordstream', False), ('purifai', False)]   # 0.1.0a1 only / a stranger's name
+    return released_on_pypi(dep, github_projects[dep].owner)   # released -> `.[dev]` resolves it; else git+…@main
 ```
 
 ### What you may change
@@ -158,8 +169,9 @@ def _dep_is_released(dep: str) -> bool:
 - Adding a source kind means extending the `SourceKind` `Literal`; everything that enumerates
   kinds (the click `Choice`, the docs table) derives from it via `get_args` — do not restate the
   set anywhere.
-- The registry schema is additive: a new per-project key is fine, but keep it a flat table of
-  string scalars so `write_committed_sources` needs no TOML-writer dependency.
+- The committed keys are additive: a new per-project key is fine, as a string scalar in the project's
+  table, written through `workspace_file.set_settings` (as `write_committed_sources` does) and listed in
+  `sources.COMMITTED_KEYS`, so `workspace_check` does not name it as unknown.
 - A new kind must decide two things before anything else: does it carry a `ref` (`REF_KINDS`) and
   does it leave a working tree (`DETACHED_KINDS`). Every call site branches on those, not on the
   kind name.
@@ -170,8 +182,8 @@ def _dep_is_released(dep: str) -> bool:
   to remove.
 - The `local` kind's editable install has ONE spelling, `selection.editable_target` (the `dev`
   extra plus the selected extras on both axes), shared with `setup_workspace` (2026-08-22). Do
-  not inline a bare `uv pip install -e <dir>` at a new call site: that is how `aisland source set
-  … local` dropped every extra `setup` had just installed, and the helper exists so the two
+  not inline a bare `uv pip install -e <dir>` at a new call site: that is how setting a source to
+  `local` once dropped every extra `setup` had just installed, and the helper exists so the two
   installs cannot disagree again.
 
 ---
@@ -185,15 +197,15 @@ def _dep_is_released(dep: str) -> bool:
 `acme.code-workspace` was a tracked, hand-maintained file. aisland only commented the folder
 entries of the `[sources]` projects out and back in, line by line, and only from the COMMITTED
 layer — a tracked file must not differ per machine. Two failures followed. A per-machine override
-never reached the editor: `aisland source set loggair local --machine-only` installed the checkout
+never reached the editor: a source set to `local` for one machine only installed the checkout
 but left the editor's list alone, so loggair stayed hidden on the one machine developing it. And everything else stayed manual: seven projects added between 2026-09-28 and 2026-10-04 each
 took a hand edit of two lists (`folders` and a `python.analysis.extraPaths` that pyright ignores
 while `pyrightconfig.json` exists), and inactive optional submodules showed as empty folders.
 
 ### Decision
 
-Generate the whole file on every `aisland setup` and every `aisland source set|unset|apply`, and
-gitignore it, like `pyrightconfig.json` and `.mcp.json`:
+Generate the whole file on every `aisland setup` and every `aisland workspace configure source set|unset`
+(and alone, `aisland workspace code-workspace`), and gitignore it, like `pyrightconfig.json` and `.mcp.json`:
 
 - **Folders** are what this machine has checked out: the workspace, then every discovered project
   in dependency order (sorted by folder name first, so the order the disk lists folders in never
@@ -228,6 +240,7 @@ gitignore it, like `pyrightconfig.json` and `.mcp.json`:
 // Source template: aisland/aisland/code-workspace.json (aisland.editor_files.write_code_workspace)
 // To regenerate:  aisland workspace code-workspace
 // =========================================================================
+// … (what to do when Pylance crashes)
 {
     "folders": [
         { "name": "acme", "path": "." },
@@ -263,7 +276,9 @@ one signature into a command and a tool, is out for the same reason: `aisland se
 
 `aisland/server.py` is a stdio MCP server, `aisland-mcp`, behind the `[mcp]` extra. Its tools are a list chosen with
 the user, not the CLI generated: seven that read and six that change this machine without destroying anything
-(the editor's theme and colours, starting and stopping Jenkins and MLflow). Each returns one JSON object: the data
+(the editor's theme and colours, starting, stopping and restarting a service — Jenkins and MLflow only until
+2026-10-29, any service of the workspace since: record "The MCP service tools take any service of the workspace").
+Each returns one JSON object: the data
 its command prints with `--json`, from the same function (`doctor.run_checks`, `pytest_stats.build_report`,
 `sources.describe`, `tunnel.store_payload`, `editor.*`). A service tool runs the `aisland` command as a subprocess
 (this interpreter, `-P`, the workspace root), so it starts a service exactly as a person does. The server drops
@@ -283,14 +298,13 @@ is not a copy of the `_LLMSafeMCPServer` the confluid-based servers share.
 → tools/call editor_set_color {"role": "background", "color": "navy"}
 ← {"theme": "Monokai Pro", "background": "navy", "foreground": "white", "area": "frame"}
 → tools/call service_start {"name": "clearml"}
-← error: Error executing tool service_start: … name: Input should be 'jenkins' or 'mlflow' …
+← error: no service 'clearml' (the services: docker, jenkins, swiftbar)
 ```
 
 ### What you may change
 
 - Add a tool: a function returning one JSON object, in `_READING` or `_CHANGING`, its command's `--json` the same
   data; `tests/test_server.py::READ_ONLY`/`CHANGING` name it.
-- The services a tool controls (`SERVICES`).
 - What must not change: no tool that prompts, runs for minutes or deletes; the extra stays optional; aisland's
   tools stay out of navigaitor.
 
@@ -302,14 +316,14 @@ is not a copy of the `_LLMSafeMCPServer` the confluid-based servers share.
 
 A window of one workspace should be told apart at a glance, or shown in a theme of its own. VS Code reads
 `workbench.colorTheme` and `workbench.colorCustomizations` from a `.code-workspace` file, but aisland rewrites
-that file on every `aisland setup` and `aisland source …`, so a choice made in VS Code at *Workspace* scope (or
+that file on every `aisland setup` and `aisland workspace configure source …`, so a choice made in VS Code at *Workspace* scope (or
 by the Peacock extension, which writes there) is lost at the next setup. A colour is a personal choice: the user
 ruled it must stay on the machine and never reach a committed file.
 
 ### Decision
 
 `aisland/editor.py` keeps the choice in `git config --local aisland.editor.{theme,background,foreground,area}`
-— the per-machine layer `aisland source --machine-only` already uses — and `editor_files.write_code_workspace` adds
+— the per-machine layer `aisland workspace configure … --machine-only` already uses — and `editor_files.write_code_workspace` adds
 `editor.workspace_settings(editor.read_choice(root))` over the template's settings on every write.
 
 - The theme is what VS Code stores in `workbench.colorTheme`: a contributed theme's `id`, else its label
@@ -390,130 +404,6 @@ appear (it would need an extension of aisland's own on the local machine).
 
 ---
 
-## Framework selection is a second two-layer registry, and CI reads only the committed layer (2026-07-30)
-
-*Superseded 2026-10-23 by "What each project installs: selections the projects declare, committed in
-`workspace.toml`": the two layers and the committed-only CI rule stand; the axes, `config.toml` and the commands below
-are gone.*
-
-### Context
-
-The workspace's packages were made framework-neutral: each keeps a numpy/config core and puts
-its ML framework behind an extra — `recordstream[torch]`, `sonair[lightning]` / `[keras]`,
-`matrainer[torch,lightning,keras,tensorflow]`. That is what makes "install only what I work with"
-*expressible*, but nothing yet *decided* it. `aisland setup`'s install line was:
-
-```python
-target = f"{project_dir}[dev]" if project["has_dev"] else str(project_dir)
-```
-
-so immediately after the extras split, a fresh setup produced a sonair with no training backend
-at all. The decision had to live somewhere, and the obvious somewhere — "just install every
-extra" — is wrong twice over: sonair declares eight engine extras (`lightning`, `torch`, `keras`,
-`tensorflow`, `fastai`, `huggingface`, `jax`, `mlx`) that are alternatives to one another, and no
-machine works with all of them, and `dev` / `http` / `viz` / `notebook` / `all` sit in the same
-table as `torch` and `keras`, so no name-based rule can tell a training engine from a
-documentation extra.
-
-### Decision
-
-**Split it in two: a project declares, the workspace selects.**
-
-1. **Declaration** lives in the project's own `pyproject.toml`, because only the project knows
-   which of its extras are frameworks and which are implemented:
-
-   ```toml
-   [tool.aisland]
-   frameworks = ["lightning", "keras"]
-   ```
-
-   A project with no declaration is *inert* — it installs exactly as it always did, which is what
-   keeps this change invisible for the fifteen-odd projects that ship no framework extra.
-
-2. **Selection** is a list of framework NAMES, and each project installs what it declares ∩ what
-   is selected. The names line up across projects deliberately (`keras` is `keras` everywhere),
-   so one selection drives everything with no per-project mapping table.
-
-3. **Two configuration layers, mirroring `aisland/sources.py`**: the committed `frameworks`
-   key of `config.toml` and a per-machine `git config --local aisland.frameworks`. The
-   committed layer is the shared default AND the only layer the CI scaffolder reads.
-
-4. **`None` is not `[]`.** An absent selection means *nobody has chosen* and `aisland setup`
-   prompts, recording the answer; a recorded empty selection means *no frameworks, I mean it* and
-   is honoured silently.
-
-### Consequences
-
-- **A local narrowing can never reach a runner.** This is the invariant, not a nicety: if one
-  developer's "I only use torch" reached the generated `Jenkinsfile` / `ci.yml`, every runner
-  would stop installing Keras and sonair's Keras suite would pass by not running. The failure
-  presents as a green CI that no longer checks anything, so `scaffold_pipelines` computes
-  `ci_extras` from `read_committed_frameworks` and never from `effective_frameworks`.
-- **CI installs the union, and that is affordable.** Measured 2026-07-30: torch 2.13 +
-  tensorflow 2.20 + keras 3.15 + pytorch-lightning 2.6.5 co-resolve on one numpy. Committing
-  everything and letting each machine narrow is therefore a real option, not a hope.
-- **Reinstall order is load-bearing.** `apply_frameworks` iterates `get_install_order`, not
-  `discover_projects`: a consumer's extra can name a sibling's (`sonair[keras]` requires
-  `matrainer[keras]>=0.1.0`), and installing the consumer first resolves against the sibling's
-  already-installed metadata — uv then warns `does not have an extra named 'keras'` and installs
-  without it. Found on the first real run of the function, not in review.
-- **Deselecting does not uninstall.** uv has no notion of "the packages that belonged to this
-  extra" — they are ordinary dependencies, possibly shared — so dropping `keras` leaves the wheel
-  behind. Accepted: a stale wheel costs disk, not correctness.
-- **`--non-interactive` selects everything** when nothing is recorded. A headless setup must
-  neither hang on the prompt nor hand back a workspace that cannot train.
-- **Scope is deliberately limited to projects that OFFER a choice** (decided 2026-07-30 after
-  reading each project, not counting its imports). `recordstream`, `matrainer`, `sonair`,
-  `deltaid`, `distilaide` and `raidar` declare frameworks because a genuine alternative exists:
-  each keeps its core install free of torch and puts every engine behind an extra. Another
-  keeps `torch` as a plain hard dependency and is NOT declarable:
-
-  | project | why it requires torch |
-  | --- | --- |
-  | `raidar-ultralytics` | the ultralytics detection trainer; `__init__.py` imports its torch/ultralytics classes eagerly. |
-
-  Moving their deps behind a `[torch]` extra was considered and REJECTED: `pip install
-  raidar-ultralytics` would then yield a package whose `__init__` raises `ImportError`, which is
-  dishonest packaging for a project that genuinely needs torch. The consequence to accept is that selecting `keras` on
-  a FULL workspace still installs torch — the selection narrows multi-backend projects, and does
-  not promise a framework-free venv. (`torpaido` was a second case and is fixed rather than
-  excepted: it declared `torch` while referencing it *zero* times, so the dependency was simply
-  dropped.) A future mechanism for "skip this project unless its framework is selected" is the
-  path if a truly torch-free venv is ever wanted; it is not this one.
-
-### Example
-
-```python
-# the whole rule, at the one place setup installs a project
-extras = extras_for(project["name"],
-                    declared_frameworks(project_dir / "pyproject.toml"),  # ["lightning","keras"]
-                    selected_frameworks)                                  # ["torch","keras"]
-target = install_target(project_dir, project["has_dev"], extras)          # /w/sonair[dev,keras]
-```
-
-```bash
-$ aisland framework set torch lightning keras
-==> Recorded as `frameworks` in config.toml: torch, lightning, keras
-==> Installing recordstream (/w/recordstream[dev,torch])...
-==> Installing matrainer (/w/matrainer[dev,torch,lightning,keras])...
-==> Installing sonair (/w/sonair[dev,lightning,keras])...
-```
-
-### What you may change (and where it's documented)
-
-- **A new framework**: add the extra to the project, name it in that project's
-  `[tool.aisland] frameworks`, and it appears in `aisland framework list` automatically. No
-  aisland edit — the vocabulary is derived from the declarations.
-- **Which frameworks CI installs**: `aisland framework set …` (committed layer), then re-scaffold.
-  Do NOT hand-edit a generated `Jenkinsfile` / `ci.yml` to change extras — the next scaffold
-  reverts it.
-- **A per-machine deviation**: `aisland framework set … --machine-only`. What must not change is
-  that this layer stays out of every tracked file.
-- **The prompt's default** (currently blank = all) is a judgement call and safe to revisit; the
-  unset-vs-empty distinction underneath it is not.
-- **Usage** lives in the README's "ML Frameworks" section; per-project declarations are commented
-  in each `pyproject.toml`.
-
 ## Completion install is a command, not a section of the bootstrap script (2026-07-31)
 
 **Context.** Shell completion for the workspace's CLIs was installed by ~70 lines
@@ -583,10 +473,13 @@ aisland completion install --target-rc ~/.bashrc # or your own rc
 ```python
 # setup.sh's whole share of the job:
 #   "$VENV_DIR/bin/aisland" completion install
-NON_LIQUIFAI_CLIS = (NonLiquifaiCli("aisland", "click"), NonLiquifaiCli("hydraide", "click"))
+NON_LIQUIFAI_CLIS = (NonLiquifaiCli("aisland", "click"),)   # a project's click CLIs: its [tool.aisland] click-commands
 ```
 
-**What you may change.** Add a CLI as a row in `NON_LIQUIFAI_CLIS`. A fourth
+**What you may change.** aisland's own CLIs are the rows of `NON_LIQUIFAI_CLIS`; a
+project's click CLI is declared by the project (`[tool.aisland] click-commands`, since
+2026-10-28: record "A project names its click CLIs, and the package names nothing of the
+workspace it was written in"), never a row here. A fourth
 completion *mechanism* means a new `CliKind` and its renderer. Do not move any of
 this back into `setup.sh`, and do not let it grow a second copy there — the
 duplicate would rot exactly as the original did.
@@ -694,9 +587,9 @@ imports aisland.
 ### Example
 
 ```text
-aisland wheels build app <TAB>   →  --include-published --all --include-project --zip --commit --force --no-check --json --help
+aisland wheels build app <TAB>   →  --include-published --all --include-project --extra --bundle --zip --commit --force --no-check --json --help
 aisland tests report aisland <TAB>  →  --days --json --help
-aisland <TAB>                       →  aim backups check clean …   (commands only)
+aisland <TAB>                       →  backups check clean completion …   (commands only)
 ```
 
 ```python
@@ -710,100 +603,6 @@ class _Command(click.Command):
 - Which words a group offers, with `tests/test_cli_option_completion.py`.
 - What must not change: every aisland group is a `_Group`, so no command misses the behaviour
   (`::test_every_group_makes_its_commands_and_subgroups_with_the_completing_classes`).
-
-## The workspace's committed configuration is ONE file, and `uv.toml` cannot join it
-
-*2026-08-01* — *superseded 2026-10-23: the one file is `workspace.toml` and `config.toml` is gone ("What each project
-installs: …"); the reason `uv.toml` stays separate stands.*
-
-### Context
-
-Three mechanisms grew their own workspace-root file, each with its own provenance header,
-its own reader and its own writer: `sources.toml` (`aisland source`), `frameworks.toml` and
-`trackers.toml` (`aisland framework` / `aisland tracker`). They are the same KIND of thing —
-a committed, shared decision whose per-machine deviation lives in `.git/config` and never
-reaches a tracked file — and the resemblance was already load-bearing: `selection.py` was
-written by generalising `sources.py`, and every rule in one record repeats in the other.
-
-Four `*.toml` at the workspace root also read as four things to configure, when only three
-of them were configuration at all. The fourth, `uv.toml`, is *generated* per machine and
-gitignored.
-
-### Decision
-
-`aisland/config.py` owns ONE committed file, `<workspace>/config.toml`, holding a top-level
-key per concern: `frameworks`, `trackers`, and a `[sources.<project>]` table per managed
-project. It owns the FILE — layout, comments, reading, rewriting — and none of the DATA:
-`selection.py` and `sources.py` convert their own types to plain TOML values and call
-`config.update`, which is why `config.py` imports nothing from aisland and cannot be part of
-an import cycle with its two callers.
-
-Four properties hold it together:
-
-1. **Every write is whole-file, keyed.** `update(root, key, value)` loads the document,
-   replaces one top-level key and re-renders, so `aisland tracker set` cannot disturb the
-   `[sources.*]` tables. The cost, stated in the file's own header: a hand-edited file is
-   normalised (and its comments dropped) by the next command that writes.
-2. **Scalars are emitted before tables.** TOML binds a bare key to the most recent table
-   header, so `frameworks = [...]` written after `[sources.confluid]` would silently become
-   `sources.confluid.frameworks`. The renderer partitions on this, not on taste.
-3. **An absent KEY is what *unset* means** — the distinction `resolve_for_setup` prompts on.
-   It used to be an absent FILE, which three concerns can no longer share. An empty document
-   still removes the file, so a workspace that has configured nothing carries no stub.
-4. **The legacy files are still read**, per key, and deleted by the first write (or by
-   `aisland config migrate`, which `aisland setup` calls). Without the fallback a checkout
-   predating the merge reads as "nothing is configured", which for sources means every
-   project silently unmanaged — a failure with no symptom until CI resolves the wrong thing.
-
-**`uv.toml` stays out, permanently.** uv reads only its own settings file and rejects any
-foreign table — measured against uv 0.11.8: `UV_CONFIG_FILE=config.toml uv pip install …`
-fails with ``error: Failed to parse: `config.toml`. The `sources` field is not allowed in a
-`uv.toml` file.`` It is also generated from the activated project set and gitignored (a
-private index must reach it only when its project is active), so it is not the same kind of
-artifact in the first place.
-
-### Consequences
-
-- One provenance header, one `aisland config show`, one file in a review diff.
-- `Axis.file` is gone; `Axis.plural` now names the `[tool.aisland]` declaration key, the
-  `config.toml` key AND the `.git/config` suffix — one word driving three things instead of
-  two, which is the drift this merge removes rather than adds.
-- A new axis needs no new file: `write_committed` already writes a key. It gets no comment
-  block until one is added to `_SECTION_DOC`, which is the only per-axis knowledge in
-  `config.py`.
-- The renderer is a general TOML emitter for the scalar/list/table subset, so an unknown
-  hand-added section survives a write instead of being dropped.
-- The legacy fallback is dead weight once every machine has migrated. It is deliberately
-  cheap to delete (one dict, one loop) and is tracked in `TASKS.md`.
-
-### Example
-
-```toml
-# config.toml — one file, three sections, each with its own command
-frameworks = ["torch", "lightning", "keras"]
-trackers   = ["mlflow", "tensorboard", "aim"]
-
-[sources.loggair]
-source = "pypi"
-distribution = "loggair"
-```
-
-```python
-# selection.py and sources.py never format anything — they hand over plain values
-update_config(workspace_root, axis.plural, list(names))          # frameworks = [...]
-update_config(workspace_root, SOURCES_KEY, table or None)        # [sources.*], or drop it
-```
-
-### What you may change
-
-Add a section by writing its key through `config.update` and (optionally) a comment block in
-`_SECTION_DOC`. Do NOT teach `config.py` about `ProjectSource` or `Axis` — the one-way
-dependency is what keeps it cycle-free. Do NOT move the uv overrides in here; uv cannot read
-this file, and `uv_config._ROOT_UV_BASE` -> the generated root `uv.toml` is a different
-artifact with a different lifetime. Deleting the legacy fallback is safe once no machine
-carries a pre-2026-08-01 checkout.
-
----
 
 ## Reclaiming a checkout's disk is a MOVE into a dated store, and it is per-project
 
@@ -889,8 +688,8 @@ an emptied backup is removed). Two of its rules are the interesting ones:
   honest behaviour for "delete what git ignores", not a bug — it is documented rather than
   special-cased, because special-casing one project's ignored paths would make the tool's
   contract unpredictable.
-- `aisland reset` and this command do not overlap: reset wipes each *service's* subdirectory,
-  never the whole `data/` tree, so backups survive it.
+- `aisland services reset` (and each service's own `reset`) and this command do not overlap: a reset wipes each
+  *service's* subdirectory, never the whole `data/` tree, so backups survive it.
 
 ### Example
 
@@ -937,9 +736,10 @@ the sweep and restore are built to work without it.
 
 ### Context
 
-Two aisland services now run as Docker containers rather than supervised processes (a
+Two aisland services then ran as Docker containers rather than supervised processes (a
 tracking server assembled from upstream's compose file, and a SigMF viewer that is one
-image), and on this workspace's macOS machines Docker is Colima — a Linux VM. That changes
+image; both have since moved into the projects that use them), and on this workspace's macOS machines Docker is
+Colima — a Linux VM. That changes
 what a bind mount means: `docker run -v <host>:<target>` binds a path *inside the VM*, and the
 VM sees only what Colima shares with it. Measured on colima 0.10.3: the default share is
 `$HOME` and nothing else, so a mount from `$DATA_ROOT=/Volumes/…` yields an EMPTY directory
@@ -1000,6 +800,8 @@ The container sees NO sidecars under /Volumes/Store/sigmf while the host has 77.
 ```
 
 ```python
+# The pin, in the class of the project that brings the viewer (it left aisland 2026-10-26: record "A service a
+# project brings"); a containerised service of aisland's own pins its image the same way.
 IQENGINE_VERSION = "202512200500.0.0-pre-202512200500"
 IQENGINE_DIGEST = "sha256:1b129f6e5e609c9abbd3ca1f2f3dbef533b31b95173f8845c5610ae202236f42"
 
@@ -1024,10 +826,10 @@ record exists to prevent.
 
 ### Context
 
-Gearlux distribution names are deliberately unpublished, so `.[dev]` alone cannot resolve a
-sibling dep from PyPI — the generated pipelines pre-install each internal dep from its git URL
+The workspace's distribution names were then unpublished, so `.[dev]` alone could not resolve a
+sibling dep from PyPI — the generated pipelines pre-install each unreleased internal dep from its git URL
 with `--no-deps` first, and something must compute *which* deps that loop names. The original
-rule collected the transitive closure of "every Gearlux name in `project.dependencies` **or any
+rule collected the transitive closure of "every workspace name in `project.dependencies` **or any
 extras group** of every reachable pyproject". Extras walk was justified for the scaffolded
 project itself (its CI does install `.[dev]`), but applying it transitively collected packages
 no install step would ever request: a signal-analysis app (since removed from the workspace)
@@ -1045,7 +847,7 @@ were name-stripped with `re.split(r"[>=< ]", …)`, which cannot parse `matraine
 The closure mirrors the install steps the templates themselves emit, node by node:
 
 - the **root** project contributes its base deps plus the extras its CI installs —
-  `.[dev,<selected axis extras>]` and the best-effort `.[notebook]` step;
+  `.[dev,<the committed selections' extras>]` and the best-effort `.[notebook]` step;
 - a **transitive** dep contributes its base deps plus *only* the extras the incoming
   requirement named (`matrainer[keras]` walks matrainer's `keras` extra) — its other extras
   are never requested by anything CI runs, so they contribute nothing;
@@ -1076,7 +878,7 @@ dependencies = ["libmid>=0.1.0"]          [project.optional-dependencies]
 ```groovy
 // app/Jenkinsfile — libmid is pre-installed; libextra is NOT (libmid installs bare,
 // and app's `.[dev]` resolves only libmid's base deps — nothing requests libmid[dev]):
-sh "${VENV_BIN}/uv pip install --no-deps git+https://github.com/Gearlux/libmid.git@main"
+sh "${VENV_BIN}/uv pip install --no-deps git+https://github.com/acme/libmid.git@main"
 sh "${VENV_BIN}/uv pip install -e .[dev]"
 ```
 
@@ -1200,7 +1002,7 @@ nothing.
 - A project that gains a dependency fails its local build with `ModuleNotFoundError` until
   `aisland setup` has run. That is the intended signal; the pipeline never installs it.
 - `Jenkinsfile.local` carries no dependency list and reads no source or selection configuration,
-  so neither `aisland source` nor `aisland framework`/`tracker` changes can rewrite it.
+  so no `aisland workspace configure` change can rewrite it.
 - With installs gone nothing holds the venv lock, and with the orchestrator off the executors a
   phase's builds run in parallel, bounded by the node's executor count.
 
@@ -1282,7 +1084,8 @@ recorded #36's 2 859 passed cases for #37.
   `catchError` meet a result it was never measured with. FAILURE is the path every failing project
   already takes through the orchestrator (`<job> completed: FAILURE`) and through the morning report.
 - The helper `limited(stage, minutes, body)` is defined in the generated file above `pipeline {`
-  (`_LIMITED_HELPER`) and rethrows a `FlowInterruptedException` that arrives before the limit —
+  (the template `templates/ci/_limited.groovy.jinja`; a Python string, `_LIMITED_HELPER`, until the CI templates of
+  2026-10-30) and rethrows a `FlowInterruptedException` that arrives before the limit —
   Abort clicked by hand stays an abort. It needs no sandbox approval: `System.currentTimeMillis`
   and `Closure.call` are in script-security's generic whitelist, and a catch clause's class name
   is never checked.
@@ -1432,6 +1235,10 @@ CHECKS: Tuple[Callable[[], CheckResult], ...] = (
     check_docker_credsstore,
     check_colima_vm_trust,
     check_jenkins_java,      # see "Jenkins runs on the Java its WAR accepts, by full path"
+    check_torch_extension_lock,
+    check_tunnel_relay,
+    check_tunnel_connect,
+    check_pylance_memory,
 )
 ```
 
@@ -1793,11 +1600,13 @@ the `opt` link survives a `brew upgrade`).
 - **`aisland jenkins start` refuses up front** when no JDK is accepted: it prints the refused JDKs
   and the install command, then exits 1 before the supervisor is touched.
 - **macOS provisioning installs the named formula** (`JenkinsService.provision_java`, called by
-  `provision_system`). The WAR names its releases only when some JDK can run its launcher, so a
+  `aisland workspace provision install` and, after asking, by `aisland jenkins start`; `aisland setup`
+  ran it until 2026-10-28, record "aisland installs its own tools when a feature first needs one,
+  after asking"). The WAR names its releases only when some JDK can run its launcher, so a
   machine with no such JDK (none at all, or only Java 8) first gets the newest `openjdk@N` to ask
-  with. Setup goes on when the WAR cannot be downloaded or no JDK is accepted; it never exits.
-- **The bare `openjdk` formula is never a sys-dependency** (a test reads aisland's
-  `pyproject.toml`).
+  with. Provisioning goes on when the WAR cannot be downloaded or no JDK is accepted; it never exits.
+- **The bare `openjdk` formula is never one of aisland's tools** (a test reads `provision.AISLAND_TOOLS`;
+  aisland's `pyproject.toml` held them until 2026-10-23).
 
 Rejected:
 
@@ -1814,9 +1623,9 @@ Rejected:
   `openjdk` keg are left alone.
 - Each start probes one JDK or more, about 0.1 s each, newest first, stopping at the first
   accepted.
-- Setup downloads the WAR (about 95 MB, once) to ask it. That download used to wait for the
-  first `aisland jenkins start`.
-- On a machine with no JDK that can ask, setup installs one JDK Jenkins may then refuse (the
+- Provisioning downloads the WAR (about 95 MB, once) to ask it; `aisland jenkins start` asks before
+  downloading it.
+- On a machine with no JDK that can ask, provisioning installs one JDK Jenkins may then refuse (the
   newest `openjdk@N`, 27 on 2026-10-07) beside the one it accepts.
 - Linux installs no Java; start and the doctor name the release to install.
 
@@ -1844,7 +1653,7 @@ Fix: brew install openjdk@25
   probe timeout, with `tests/test_jenkins_java.py`.
 - What must not change: Jenkins starts by full path on a JDK the WAR accepted; the WAR is the only
   source of the supported releases; the bare `openjdk` formula is not declared; provisioning never
-  exits setup.
+  exits.
 
 ## A project installed outside the workspace gets its unpublished dependencies as wheels
 
@@ -1869,7 +1678,7 @@ rather than a root script; only what the project needs; both checks below):
   projects: base dependencies, plus an extra only when a requirement names it. Every marker is
   followed, because the target machine's platform is not this one's.
 - **On PyPI** means a version, pre-releases included, whose metadata points at
-  `github.com/Gearlux/`, with a file that is not yanked. This differs on purpose from
+  `github.com/<owner>/` (the owner of the project's own remote), with a file that is not yanked. This differs on purpose from
   `sources.released_on_pypi` (final releases only): that one decides what CI installs, while this
   one asks what pip on another machine will find, and pip takes a pre-release when no final
   release exists.
@@ -2047,7 +1856,7 @@ report.not_built                                      # []: a needed project wit
 A `--all` build of one project is 26 wheels and 5.1 MB, rebuilt whenever a dependency moves. The folder sat
 in the project's tree with nothing ignoring it, so every `/commit-all` swept the wheels into history, and the
 user wanted them out unless asked for. The wheels also have to reach a machine that has neither the
-workspace nor aisland (`aisland` is not on PyPI), so carrying them must not need aisland there.
+workspace nor aisland (`aisland` was not on PyPI then), so carrying them must not need aisland there.
 
 ### Decision
 
@@ -2159,7 +1968,7 @@ report.project_wheel, report.zip_standalone
 
 ### What you may change
 
-- The report's wording and the README section, with `tests/test_wheels.py`.
+- The report's wording and its section of `docs/wheels.md`, with `tests/test_wheels.py`.
 - What must not change: without the flag every generated file is byte-identical; the own wheel is never in
   `built`; a standalone zip never unpacks over another project's folder or wheels.
 
@@ -2208,7 +2017,7 @@ Rejected:
 
 - On the other machine `pip show <dependency>` finds nothing, a package's `__version__` read from its
   distribution falls back to `0.0.0.dev0`, a later install of something requiring a bundled project puts
-  PyPI's copy over the bundle's files, and uninstalling is all or nothing (README's table).
+  PyPI's copy over the bundle's files, and uninstalling is all or nothing (the table in `docs/wheels.md`).
 - Plugins found by entry point group keep working: the groups are merged into the bundle's.
 
 ### Example
@@ -2229,7 +2038,7 @@ report.bundle.wheel, report.bundle.projects, report.bundle_import_failures
 
 ### What you may change
 
-- The report's wording, the README section and the bundle's description, with `tests/test_wheels_bundle.py`.
+- The report's wording, its section of `docs/wheels.md` and the bundle's description, with `tests/test_wheels_bundle.py`.
 - What must not change: one `.dist-info`; the separate wheels and every other file unchanged by the flag; a
   conflict refused, never resolved silently; the bundle's requirements read from `pyproject.toml`.
 
@@ -2247,7 +2056,8 @@ syncing (pulling from both) would make a second primary, with merges between the
 
 - The primary is the `.gitmodules` remote and nothing changes about it. The mirror is a second
   remote, named `mirror`, that only receives.
-- `aisland mirror sync` pushes the PRIMARY's `dev/main`, `main` and tags (read with
+- `aisland workspace mirror sync` (`aisland mirror sync` until 2026-10-22) pushes the PRIMARY's `dev/main`, `main`
+  and tags (read with
   `git ls-remote origin`, the missing objects fetched by id), never the local branches.
 - (2026-10-28, user request) It also copies every other branch the local checkout has — the
   local branch list chooses WHICH branches, the primary still says WHAT each holds. `dev/main` and
@@ -2260,8 +2070,9 @@ syncing (pulling from both) would make a second primary, with merges between the
   branch or tag is left alone.
 - `/push-all` and `/ship` run it as their last step (user choice 2026-10-16, option A), so a
   refused or unreachable mirror is a row in their report, not a lost line of git output.
-- Two layers like `aisland source`: committed `[mirrors.<project>] url` and the per-machine
-  `aisland.mirror.<project>`. Only submodules (user choice 2026-10-16).
+- Two layers like a project's source: committed, the project's `mirror` in `workspace.toml`; per machine,
+  `aisland.mirror.<project>.mirror`; both set with `aisland workspace configure mirror set|unset [--machine-only]`
+  (a `[mirrors.<project>] url` table and one key `aisland.mirror.<project>` until 2026-10-22, no longer read). Only submodules (user choice 2026-10-16).
 - The remote is marked `remote.mirror.aislandManaged`; setup and `unset` remove only a marked
   one, and `set` refuses to take over an unmarked one.
 - Every network call runs with `GIT_TERMINAL_PROMPT=0`.
@@ -2277,11 +2088,11 @@ syncing (pulling from both) would make a second primary, with merges between the
 ### Example
 
 ```bash
-aisland mirror set navigaitor git@github.com:Org/navigaitor.git
-aisland mirror sync
+aisland workspace configure mirror set models git@github.com:acme/models.git
+aisland workspace mirror sync
 ```
 ```
-==> navigaitor → git@github.com:Org/navigaitor.git
+==> models → git@github.com:acme/models.git
     dev/main  pushed (3 commits)
     main      in sync
     tags      pushed v0.4.0
@@ -2454,17 +2265,18 @@ when a git repository already marks one).
 - A checkout's behaviour is pinned path by path (`tests/test_locations.py`), so a change that lets
   the cwd leak into checkout mode fails there.
 - From a wheel, the aliases point into the venv: recreating it needs `aisland setup` again, which installs them.
-- aisland's own system tools (process-compose, Homebrew's bash) come from its `pyproject.toml`
-  `sys-dependencies`, which a wheel workspace does not discover: they are the user's to install.
-- The editor template is written for `acme`; its name is replaced by the workspace's, so the
-  template must keep naming the workspace only as `${workspaceFolder:acme}` and `acme-bash`.
+- aisland's own system tools then came from its `pyproject.toml` `sys-dependencies`, which a wheel workspace does
+  not discover; since 2026-10-23 they are `provision.AISLAND_TOOLS`, in the package (record "System tools"), so a
+  wheel workspace has them too.
+- The editor template names the workspace only as `${workspaceFolder:WORKSPACE}` and `WORKSPACE-bash`; the
+  name is replaced by the workspace's.
 
 ### Example
 
 ```text
 $ aisland workspace init acme            # aisland from a wheel
 ==> Created workspace acme in /Users/you/acme
-$ cd acme/models && python -c 'from aisland import manager; print(paths.DATA_DIR)'
+$ cd acme/models && python -c 'from aisland import paths; print(paths.DATA_DIR)'
 /Users/you/acme/.aisland/data
 $ git config alias.pull-all
 !GIT_PULL_ALL_ROOT="$(git rev-parse --show-superproject-working-tree --show-toplevel | head -n 1)" bash "/Users/you/acme/.venv/lib/python3.13/site-packages/aisland/git/git_pull_all.sh"
@@ -2552,70 +2364,13 @@ alpha                  merged origin/main (1 commit)
 - Which aliases a folder workspace gets, with `tests/test_folder_git_aliases.py`.
 - Never: a second project list beside `workspace_folders`, or `.gitmodules` overruled by the folders.
 
-## A workspace is written down in a file a machine without aisland reads (2026-10-20)
-
-### Context
-
-Setting a workspace up on another machine meant knowing three things nobody had written down: how to make a venv
-aisland works from (the editable aisland of another workspace works on THAT workspace, wherever it is run — the
-record above), how to install aisland into it, and every project's address and branch, typed one `--add` at a time.
-`aisland workspace init --add` took no branch, so each project came on its default branch.
-
-### Decision
-
-One file, `<name>.workspace.toml`, holds both halves:
-
-- **Comments for the machine that has no aisland yet**: the venv with uv and with pip (`--prompt <name>` names it;
-  a venv kept elsewhere is linked in as `.venv`), aisland from PyPI or from a wheel, then
-  `aisland workspace init . --from <file>` and `aisland setup`. They are comments because nothing can read the file
-  before aisland is installed.
-- **`[projects]` for aisland**: one `name = { url = …, branch = … }` per project, `name` the folder it is cloned into.
-  `init --from` adds each as a submodule on its branch (`git submodule add -b`), before any `--add`.
-- **`export` writes it** from the workspace: `.gitmodules`' submodules, a branch of `.` written as the root's branch
-  (a new workspace has no superproject branch to follow yet); without `.gitmodules`, each clone's `origin` and the
-  branch it is on, the same reading of a folder workspace as the record above. A project folder that is no clone,
-  and a clone without `origin`, are reported as left out.
-- **TOML**, because the workspace's one committed config is TOML and the standard library reads it (aisland needs
-  Python 3.12).
-- **Read before anything is written.** A file aisland refuses leaves the folder as it was; every refusal names the
-  file and the line — tomllib's position for a syntax error, `_line_of` for a project aisland refuses.
-
-Rejected: a venv-name setting. `.venv` is read in some twenty places (setup, the services' PATH, the git aliases, the
-generated editor and MCP files); a name of one's own is had with `--prompt` or a link, and `init`'s `.gitignore`
-writes `.venv` rather than `.venv/` so a link is ignored too. Rejected: a script that runs the three steps — the file
-is meant to be edited and read, and the steps differ per machine (uv or pip, PyPI or a wheel).
-
-### Consequences
-
-- The file is the user's after it is written: `export` never writes over it, and `init` never writes it.
-- An inactive submodule is exported like any other; a machine without access to it gets the clone's error from
-  `init`, naming its address — delete its line first.
-
-### Example
-
-```python
-from pathlib import Path
-from aisland import workspace
-
-workspace.export_workspace(Path("~/work/acme").expanduser())        # → ~/work/acme/acme.workspace.toml
-workspace.read_workspace_file(Path("acme.workspace.toml"))
-# [FileProject(name='models', url='git@github.com:acme/models.git', branch='dev/main'), ...]
-workspace.init_workspace(Path("."), from_file=Path("acme.workspace.toml"))
-```
-
-### What you may change
-
-- The comments' wording (with `tests/test_workspace_init.py::test_an_exported_file_says_how_to_create_the_workspace_from_it`).
-- A new project setting, added to `_PROJECT_KEYS`, written by `export` and read by `init` in the same change.
-- Never: reading the file after `git init`, a refusal without its line, `export` over an existing file.
-
 ## Every workspace gets aisland's agent commands and rules (2026-10-20)
 
 ### Context
 
 The workspace commands (`/commit-all`, `/commit-session`, `/list-actions`, `/pull-all`, `/push-all`, `/ship`) and the
 rules agents follow lived in ONE workspace's root: its `.agents/workflows/` and its `AGENTS.md`. The commands already
-depended only on aisland (`git pull-all`, `aisland mirror sync`, the install order), and most of the rules — evidence
+depended only on aisland (`git pull-all`, the mirror sync, the install order), and most of the rules — evidence
 before claims, agree the scope first, commit only on request, sessions coordinate before they edit — had nothing to
 do with that workspace's projects. Another aisland workspace started with neither, so its agents behaved
 differently, and every improvement had to be copied by hand.
@@ -2690,7 +2445,8 @@ same.
 - `locations.is_alias(folder, workspace)`: a symbolic link whose resolved target lies inside the (resolved)
   workspace is an alias. Every reader of the workspace's projects skips it — `projects.discover_projects` (which
   recurses with the workspace root, so a link inside a project is judged against the workspace),
-  `projects.workspace_folders`, `harness._project_folders`, `sources.known_projects`, `workspace.exportable_projects`.
+  `projects.workspace_folders`, `harness._project_folders`, `sources.known_projects`,
+  `workspace_file.workspace_projects`.
   The folder it names is found under its own name.
 - A link to a folder OUTSIDE the workspace is no alias: it is how a checkout kept elsewhere joins the workspace.
 - Both sides are resolved, so a workspace entered through a link of its own (`~/acme -> /build/acme`) tells
@@ -2706,18 +2462,17 @@ same.
   found either: a project lives in a project folder, a link only names one.
 - Setup only appends to `mypy.ini`: entries an earlier setup added through a link stay until removed by hand.
 - A workspace without such links gets byte-identical files.
-- The workspace file carries the short name as a project's `alias` (user ruling 2026-10-21): `export` writes a root
-  link to a project, or a folder checked out under a name other than its repository's (the project is then named
-  after its repository, `_repository_name`), as `alias`; `init --from` clones the project straight into the alias
-  folder — never a link, which stays a choice a user makes by hand. Names and aliases are one set of folders: an
-  alias that is another project's name or alias is refused at its line. A link outside the workspace is left out of
-  the file with the reason; a file without `alias` reads as before.
+- `workspace.toml` writes the short name as the project's `path` (user ruling 2026-10-21: links come back as direct
+  checkouts): a root link to a project, or a folder checked out under a name other than its repository's (the
+  project is then named after its repository), is written as `path`; `init --from` clones the project straight into
+  that folder — never a link, which stays a choice a user makes by hand. (The `alias` key the removed
+  `<name>.workspace.toml` carried for this is gone with it.)
 
 ### Example
 
 ```python
 from pathlib import Path
-from aisland import locations, manager
+from aisland import editor_files, locations
 
 root = Path("~/acme").expanduser()        # ml -> machine_learning, od -> object_detection/
 locations.is_alias(root / "ml", root)     # True
@@ -2772,7 +2527,7 @@ as before. Discovery and the missing-console-script warning still read the plain
 
 ```python
 from pathlib import Path
-from aisland import manager
+from aisland import mcp_config
 
 root = Path("~/acme").expanduser()
 mcp_config._with_workspace_env(root, {"app": {"command": f"{root}/.venv/bin/app-mcp"}})
@@ -2884,8 +2639,9 @@ plugins in aisland (the hard-coding this replaces).
   with one line naming the file and the line of the table.
 - Choices offered for a selection no project defines are reported, not refused: a workspace without the defining
   project, or with it switched off, still sets up.
-- The remaining steps (`TASKS.md`) build on this: `workspace.toml` and the generated `aisland workspace configure`,
-  the trainer declaring `framework`/`tracker`, and services declared by the projects that need them.
+- The later steps of the redesign built on this: `workspace.toml` and the generated `aisland workspace configure`,
+  the trainer declaring `framework`/`tracker`, and services declared by the projects that need them (the records
+  below).
 
 ### Example
 
@@ -2920,21 +2676,32 @@ class Database:            # the project's own code — no aisland import
 
 ### Context
 
-The workspace file of 2026-10-20 was written on request (`aisland workspace export`) and read only by `init --from`,
-so it went stale the moment a submodule was added, and it sat beside `config.toml` as a second committed description
-of the same workspace in a second format (`[projects]` with inline tables, an `alias`).
+Setting a workspace up on another machine meant knowing three things nobody had written down: how to make a venv
+aisland works from, how to install aisland into it, and every project's address and branch, typed one `--add` at a
+time. The first answer, of 2026-10-20, was a `<name>.workspace.toml` holding both halves — how-to comments for a
+machine without aisland, then a `[projects]` table of `name = { url = …, branch = … }` (with an `alias`) for
+`init --from`. It was written on request (`aisland workspace export`) and read only by `init --from`, so it went stale
+the moment a submodule was added, and it sat beside `config.toml` as a second committed description of the same
+workspace in a second format.
 
 ### Decision
 
-One file, `workspace.toml`, at the root and committed, shaped like `.gitmodules`: `[workspace]`, then a
-`[project."<name>"]` per project with `path`, `url` and `branch`. `aisland setup` keeps the projects current
-(`workspace_file.refresh`): new ones added, a changed url or path followed, gone ones dropped, a branch written once
-kept. `init --from` clones from it and copies it in. `export` is gone. The later steps of the redesign move
-`config.toml`'s settings into the same tables, each a key of the plugin that owns it.
+One file, `workspace.toml`, at the root and committed, shaped like `.gitmodules`: the how-to comments, `[workspace]`,
+then a `[project."<name>"]` per project with `path`, `url` and `branch`. `aisland setup` keeps the projects current
+(`workspace_file.refresh`): new ones added, a changed url or path followed, a branch written once kept (a project
+the workspace lacks: the amendment below). `init --from` clones from it and copies it in. `export` is gone. The later
+steps of the redesign moved `config.toml`'s settings into the same tables, each a key of the plugin that owns it.
+
+What the 2026-10-20 file got right carried over. The how-to stays comments, because nothing can read the file before
+aisland is installed. TOML, because the standard library reads it. A file `init --from` refuses leaves the folder as
+it was, every refusal naming the file and the line (the old `[projects]` layout among them). And there is no
+venv-name setting: `.venv` is read in some twenty places, a name of one's own is had with `--prompt` or a link, and
+`init`'s `.gitignore` writes `.venv` rather than `.venv/` so a link is ignored too.
 
 Rejected: keeping `export` (a file nobody refreshes is wrong by the next submodule); generating `.gitmodules` from
 the file (git and every git tool read `.gitmodules`; the file follows it instead); keeping a project gone from the
-workspace with a flag (its entry would clone a project the workspace no longer has).
+workspace with a flag (its entry would clone a project the workspace no longer has); a script that runs the
+how-to's steps (they differ per machine: uv or pip, PyPI or a wheel).
 
 ### Consequences
 
@@ -2951,8 +2718,9 @@ url = "git@github.com:acme/models.git"
 branch = "dev/main"
 ```
 ```python
-from aisland import workspace_file
+from aisland import workspace, workspace_file
 workspace_file.refresh(Path("~/work/acme").expanduser())   # ['workspace.toml: added models']
+workspace.init_workspace(Path("acme2"), from_file=Path("~/work/acme/workspace.toml").expanduser())
 ```
 
 ### What you may change
@@ -3114,7 +2882,7 @@ others", left a workspace made untracked with its new projects tracked).
 
 ### What you may change
 
-- The question's wording.
+- The report line's wording.
 - Never: a question before adding, or moving the clone's checkout.
 
 ---
@@ -3160,11 +2928,19 @@ active = false
 
 ## What each project installs: selections the projects declare, committed in `workspace.toml`
 
-*2026-10-23* [frameworks] [config]
+*2026-10-23; replaces the framework registry of 2026-07-30 and the one `config.toml` of 2026-08-01* [frameworks] [config]
 
 ### Context
 
-aisland hard-coded two selections, `FRAMEWORKS` and `TRACKERS` (their names, questions and hints), beside its own
+Selection began on 2026-07-30, when the workspace's packages put each ML framework behind an extra and "install every
+extra" was wrong twice over: a project's engine extras are alternatives no machine wants all of, and `dev`,
+`notebook` or `all` sit in the same table, so no name rule tells an engine from a documentation extra. So a project
+declared its choices and the workspace selected names, each project installing what it declares ∩ what is selected,
+in two layers like the project sources; the CI scaffolder read only the committed one, because one developer's "I
+only use torch" reaching a runner would turn a suite green by not running it. On 2026-08-01 the committed files
+then in use (`sources.toml`, `frameworks.toml`, `trackers.toml`) were merged into one `config.toml`.
+
+By 2026-10-23 aisland hard-coded two selections, `FRAMEWORKS` and `TRACKERS` (their names, questions and hints), beside its own
 `EXTRAS`. A project declared its menu under `[tool.aisland] frameworks = [...]`, the choice was committed in
 `config.toml` (`frameworks`, `trackers`) and kept per machine as `aisland.frameworks`; the commands were `aisland
 framework|tracker list|set|unset` (with `--no-apply`) and `aisland setup --framework/--extra`, and `aisland config
@@ -3182,6 +2958,18 @@ plugin of `aisland workspace configure` (`set NAME… [--machine-only]`, `unset`
 `--framework/--extra` and `--no-apply` are gone. A service whose backend is missing names `set` with the trackers
 already chosen plus its own: `set` takes the whole list, and the old message (`aisland tracker set mlflow`) would
 have dropped the rest.
+
+Every committed setting is now in `workspace.toml` — a project's in its table, a selection's choice under
+`[workspace]` — and its per-machine deviation in `.git/config`. `uv.toml` never joins it: uv reads only its own
+settings file and rejects a foreign table (measured against uv 0.11.8 when `config.toml` was made:
+``error: Failed to parse: `config.toml`. The `sources` field is not allowed in a `uv.toml` file.``), and the root
+`uv.toml` is generated per machine from the activated projects and gitignored, so a private index reaches it only
+while its project is active.
+
+Kept from 2026-07-30: unset is not empty (setup asks on unset; a recorded empty choice is honoured), the reinstall
+runs in setup's install order (a consumer's extra can name a sibling's, `models[keras]` requiring `lib[keras]`, and
+installing the consumer first resolves against the sibling's old metadata), deselecting uninstalls nothing, and a
+project that needs one framework outright keeps it as a base dependency rather than a faked extra.
 
 ### Consequences
 
@@ -3204,11 +2992,16 @@ choices = ["mlflow", "tensorboard", "aim", "clearml", "wandb"]
 tracker = ["mlflow", "tensorboard", "aim", "clearml", "wandb"]
 ```
 
+```bash
+aisland workspace configure tracker set mlflow tensorboard                  # the whole list; reinstalls at once
+aisland workspace configure tracker set mlflow --machine-only               # this machine: aisland.tracker.selected
+```
+
 ### What you may change
 
 - A selection's question (in the project that defines it), the listing's columns, the prompt's layout.
-- Never: a selection named in aisland's code (but `extras`), a second committed file, or a machine's choice
-  reaching a generated CI file.
+- Never: a selection named in aisland's code (but `extras`), a second committed file, `uv.toml`'s settings in
+  `workspace.toml`, or a machine's choice reaching a generated CI file.
 
 
 ## An extra a project marks is installed only when named (2026-10-23)
@@ -3340,8 +3133,9 @@ read — it got no service supervisor.
 
 Discovery reads the declaration (stage 1) and refuses what it cannot use, naming the file and the line. aisland's own
 tools are `provision.AISLAND_TOOLS`, in the package. `aisland workspace provision` lists this machine's tools (who
-needs each, whether it is installed) and `install` installs them, the function setup runs; `aisland provision` is
-gone. There is no configure plugin: which projects a machine has (the `active` plugin) already decides its tools.
+needs each, whether it is installed) and `install` installs them, the function setup runs (since 2026-10-28 for
+the projects' declarations only: record "aisland installs its own tools when a feature first needs one, after
+asking"); `aisland provision` is gone. There is no configure plugin: which projects a machine has (the `active` plugin) already decides its tools.
 
 ### Consequences
 
@@ -3387,7 +3181,8 @@ and may not take a name aisland uses. A moved service disappears with its projec
 
 - FiftyOne lives in curaitor (`curaitor/fiftyone_service.py`); its data folder stays `data/fiftyone/`.
 - `aisland services start` no longer starts FiftyOne; `aisland services start fiftyone` does.
-- Finding the list imports each installed project's class: about 0.1 s for curaitor.
+- Finding the list imported each installed project's class (about 0.1 s for curaitor) until 2026-10-29, when the
+  listing stopped importing project code (record "Listing the services imports no project's code").
 
 ### Example
 
@@ -3813,48 +3608,65 @@ Error: aisland's services need process-compose, which is not installed. Install 
 
 ---
 
-## The release review's second pass: one reader, one port, declared CLIs, a quick listing, an init that cleans up (2026-10-28)
+## `aisland --help` works out the projects' services once per run (2026-10-28)
 
 ### Context
 
-Six findings of the release review, picked together:
-
-1. `aisland --help` took 2.4 s in a workspace bringing six services: `registry.declared` ran once for the listing and
-   once per group (click asks each for its short help), and every run scanned the installed entry points once per
-   plugin — 42 scans, each reading every distribution's metadata.
-2. The package carried names of the workspace it was written in: a completion row for one project's CLI
-   (`hydraide`), a fallback e-mail address, a private project and a company in comments, the editor template's
-   placeholder name, a setup note naming a log tool in workspaces that never had it.
-3. The install command `init` and the venv error printed was a placeholder (`<the aisland wheel>`); twelve commands
-   were on no page; the README listed no requirement but Python and no environment variable.
-4. Jenkins' port 9080 was typed in thirteen places: started with `--port 9081`, it still got its safe restart, its
-   Jenkinsfile validation and the SwiftBar links on 9080.
-5. Two `.env` readers disagreed with each other and with the shell that sources the file: the services kept the
-   quotes of `KEY="a b"`, Jenkins stripped them, neither expanded `$HOME`, read `export` or dropped a trailing
-   comment, and the services' writer wrote a value with a space unquoted, which the shell then runs as a command.
-6. `init --from` stopped by a project that cannot be cloned left a repository holding the first projects, and the
-   same command then refused it ("already a git repository").
+A finding of the release review's second pass: `aisland --help` took 2.4 s in a workspace bringing six services.
+`registry.declared` ran once for the listing and once per group (click asks each group for its short help), and
+every run scanned the installed entry points once per plugin — 42 scans, each reading every distribution's metadata.
 
 ### Decision
 
-1. The group works out the projects' services once per run (`ctx.meta`), and `discovery.load` scans the entry points
-   once. 0.9 s remain: importing the plugin classes, which their groups need.
-2. A project names its click scripts in `[tool.aisland] click-commands` (stage 1 of discovery, refused naming the line
-   when no `[project.scripts]` entry has the name). Importing each script to ask "is it click?" was measured first:
-   2 minutes in this workspace, and it still missed the one CLI it was for, whose `main` is a plain function calling a
-   click group. The template's placeholder is `WORKSPACE`; the unused fallback address is gone; the private and
-   company names left the comments, pinned over every file of the package.
-3. The commands print `pip install aisland`; the pages show every command (pinned) and the README the requirements
-   and the variables (pinned against `env.complete`).
-4. `JenkinsService.DEFAULT_PORT` and `JenkinsService.url()`.
-5. `supervisor.read_workspace_env` reads what bash exports (each case pinned against bash itself), and
-   `write_workspace_env` quotes what bash would change.
-6. A folder `init` made or found empty is removed when it fails; a folder that held files never is.
+The top-level group works out the services the projects bring once per CLI run (`cli._WorkspaceGroup._declared`,
+kept in `ctx.meta`), and discovery scans the installed entry points once for every plugin (`discovery.installed`).
+0.9 s remained then: importing the plugin classes, which their groups needed — removed the next day (record "Listing
+the services imports no project's code").
+
+### Consequences
+
+`--help` and every lookup of a project's service read the declarations and the installed plugins once; a changed
+declaration is read by the next command, since nothing outlives the run.
+
+### Example
+
+```python
+def _declared(self, ctx: click.Context) -> List["service_registry.Entry"]:
+    key = "aisland.declared-services"
+    if key not in ctx.meta:
+        ctx.meta[key] = service_registry.declared(get_workspace_root(), reserved=self.commands)
+    return cast(List["service_registry.Entry"], ctx.meta[key])
+```
+
+### What you may change
+
+- Where the answer is kept, with `tests/test_plugin_services.py::test_one_help_finds_the_projects_services_once` and
+  `::test_loading_reads_the_installed_entry_points_once`.
+- Never: a group or a plugin that reads the declarations or scans the entry points again within one run.
+
+## A project names its click CLIs, and the package names nothing of the workspace it was written in (2026-10-28)
+
+### Context
+
+A finding of the release review's second pass: the package carried names of the workspace it was written in — a
+completion row for one project's CLI, a fallback e-mail address, a private project and a company in comments, the
+editor template's placeholder name, a setup note naming a log tool in workspaces that never had it. The completion
+row could not simply be computed: importing each script to ask "is it click?" was measured first, 2 minutes in the
+workspace aisland is developed in, and it still missed the one CLI it was for, whose `main` is a plain function
+calling a click group.
+
+### Decision
+
+A project names its click scripts in `[tool.aisland] click-commands`, read in stage 1 of discovery
+(`discovery._click_commands`) and refused naming the line when no `[project.scripts]` entry has the name; `aisland
+completion install` gives them click's completion beside aisland's own row of `NON_LIQUIFAI_CLIS`. The editor
+template's placeholder is `WORKSPACE`; the unused fallback address is gone; the private and company names left the
+comments, pinned over every file of the package.
 
 ### Consequences
 
 A workspace with a click CLI of its own declares it, or it gets no completion — the same opt-in as everything else a
-project brings. `KEY = value` in `.env` now sets nothing, as in the shell (it used to set `KEY`).
+project brings.
 
 ### Example
 
@@ -3868,8 +3680,143 @@ click-commands = ["app"]
 
 ### What you may change
 
+- The refusal's wording, with `tests/test_completion.py::test_a_projects_declared_click_command_is_found_without_importing_it`.
+- Never: importing a project's code to discover its CLI, a workspace's CLI named in aisland, or a private name in
+  the package (`tests/test_no_private_names.py::test_no_file_of_the_package_names_a_private_project_or_a_company`).
+
+## The commands print the real install line, and every command is on a page (2026-10-28)
+
+### Context
+
+A finding of the release review's second pass: the install command `init` and the venv error printed was a
+placeholder (`<the aisland wheel>`); twelve commands were on no page; the README listed no requirement but Python and
+no environment variable.
+
+### Decision
+
+The commands print `pip install aisland`. The pages show every command, and the README the requirements and the
+variables, each pinned: `tests/test_docs.py::test_every_command_is_shown_on_a_page` and
+`::test_every_variable_aisland_reads_is_in_the_readme` (against `env.complete`).
+
+### Consequences
+
+A new command, or a new variable a person sets, fails the docs tests until a page shows it.
+
+### Example
+
+```text
+$ aisland workspace init acme          # aisland not installed in acme/.venv
+...
+Next:
+    cd /home/you/acme
+    uv venv --seed .venv && .venv/bin/pip install aisland
+    .venv/bin/aisland setup
+```
+
+### What you may change
+
+- The wording of the lines, and which page shows a command.
+- Never: a placeholder in a line a person copies, or a command no page shows.
+
+## Jenkins' port is written once (2026-10-28)
+
+### Context
+
+A finding of the release review's second pass: Jenkins' port 9080 was typed in thirteen places. Started with
+`--port 9081`, Jenkins still got its safe restart, its Jenkinsfile validation and the SwiftBar links on 9080.
+
+### Decision
+
+The port is written once, `JenkinsService.DEFAULT_PORT`, and everything that talks to Jenkins asks
+`JenkinsService.url()`: the port it runs on, else the default — `info`, the safe restart, the scaffold's Jenkinsfile
+validation, `aisland tests nightly`'s links, the SwiftBar menu's links and the CLI's `--port` default.
+
+### Consequences
+
+A Jenkins started on another port is reached on that port by every part of aisland while it runs.
+
+### Example
+
+```python
+def url(self) -> str:
+    """Where Jenkins answers: the port it runs on, else :attr:`DEFAULT_PORT` (it is not running, or not here)."""
+    ports = self.get_ports()
+    return f"http://localhost:{ports[0] if ports else self.DEFAULT_PORT}"
+```
+
+### What you may change
+
+- The default, in `DEFAULT_PORT` alone, with `tests/test_jenkins_port.py`.
+- Never: a port typed beside `DEFAULT_PORT`.
+
+## `.env` is read as the shell reads it, by one reader (2026-10-28)
+
+### Context
+
+A finding of the release review's second pass: two `.env` readers disagreed with each other and with the shell that
+sources the file (`project.bashrc`'s `set -a; source .env`). The services kept the quotes of `KEY="a b"`, Jenkins
+stripped them, neither expanded `$HOME`, read `export` or dropped a trailing comment, and the services' writer wrote a
+value with a space unquoted, which the shell then runs as a command.
+
+### Decision
+
+`supervisor.read_workspace_env` is the one reader, and it reads what bash exports — `export`, quotes (single
+literal, double expanded, `\` escapes), `$VAR`/`${VAR}` from an earlier line then the environment (unset = empty), a
+trailing ` # note` dropped, a line bash reads as no assignment skipped — each case pinned against bash itself
+(`tests/test_workspace_env.py`). The services, `apply()` and Jenkins read through it; `write_workspace_env` quotes
+what bash would change, so both read a written value back verbatim.
+
+### Consequences
+
+`KEY = value` in `.env` now sets nothing, as in the shell (it used to set `KEY`).
+
+### Example
+
+```text
+.env                                read_workspace_env (= what bash exports, HOME=/home/you)
+SPACED="a b"                        SPACED   = a b
+LITERAL='$HOME/x'                   LITERAL  = $HOME/x
+export EXPORTED=/data               EXPORTED = /data
+DATA_ROOT=$HOME/data                DATA_ROOT = /home/you/data
+WITH_COMMENT=value # a note         WITH_COMMENT = value
+SPACED_KEY = spaced value           (nothing)
+```
+
+### What you may change
+
 - The shell forms the reader understands, each with a case checked against bash.
-- Never: a second `.env` parser, a port typed beside `DEFAULT_PORT`, importing a project's code to discover its CLI.
+- Never: a second `.env` parser.
+
+## A failed `init` removes the folder it made (2026-10-28)
+
+### Context
+
+A finding of the release review's second pass: `init --from` stopped by a project that cannot be cloned left a
+repository holding the first projects, and the same command then refused it ("already a git repository").
+
+### Decision
+
+A folder `init` made, or found empty, is removed when a clone fails or the run is interrupted, and the error says so:
+the same command runs again. A folder that held files is never deleted; the error names the `.git` and
+`.gitmodules` to remove. An existing repository set up in place is left as it stopped.
+
+### Consequences
+
+A failed `init` of a new workspace leaves nothing behind but the error.
+
+### Example
+
+```text
+$ aisland workspace init acme --from workspace.toml      # tools cannot be cloned
+Error: [2/2] tools: could not add … as a submodule: …
+/home/you/acme is removed again: this init made it. Run the same command once the cause is fixed.
+```
+
+### What you may change
+
+- The wording, with `tests/test_workspace_init.py::test_a_failed_init_from_a_file_removes_the_folder_it_made_and_runs_again`
+  and its neighbours.
+- Never: deleting a folder that held files before the init.
 
 ---
 

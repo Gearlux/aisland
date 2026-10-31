@@ -28,6 +28,12 @@ import yaml
 from aisland import supervisor
 
 
+@pytest.fixture(autouse=True)
+def _own_workspace(empty_workspace: Path) -> Path:
+    """The commands of this file run in a workspace of the test's own, never the developer's."""
+    return empty_workspace
+
+
 @pytest.fixture()
 def isolated_config(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     """Point the supervisor's generated files at a throwaway directory."""

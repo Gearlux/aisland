@@ -121,6 +121,7 @@ def test_from_a_wheel_outside_any_repository_there_is_no_workspace(tmp_path: Pat
     assert locations.wheel_workspace_root(plain, {"AISLAND_WORKSPACE": ""}) is None
 
 
+@pytest.mark.real_workspace
 def test_from_a_wheel_the_state_goes_to_the_workspace_s_aisland_folder(
     acme: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -142,6 +143,7 @@ def test_from_a_wheel_a_variable_naming_no_folder_is_reported(tmp_path: Path, mo
     )
 
 
+@pytest.mark.real_workspace
 def test_from_a_wheel_outside_a_workspace_the_message_says_how_to_get_one(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -175,6 +177,7 @@ def locked(tmp_path: Path) -> Iterator[Path]:
 
 
 @needs_permissions
+@pytest.mark.real_workspace
 def test_from_a_wheel_a_subfolder_you_may_not_enter_counts_as_no_project(
     locked: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

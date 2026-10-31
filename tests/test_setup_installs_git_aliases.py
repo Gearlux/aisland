@@ -57,6 +57,7 @@ def test_setup_installs_the_git_aliases(
     assert stubbed_setup == [tmp_path]
 
 
+@pytest.mark.usefixtures("empty_workspace")
 def test_there_is_no_separate_command_for_the_aliases() -> None:
     result = CliRunner().invoke(cli.main, ["git", "aliases"])
     assert result.exit_code == 2

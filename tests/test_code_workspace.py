@@ -312,6 +312,7 @@ def test_apply_rewrites_the_file(venv_root: Path, written: List[Path], project: 
 # --- the real workspace -------------------------------------------------------------------
 
 
+@pytest.mark.real_workspace
 def test_the_real_workspace_keeps_the_file_out_of_git() -> None:
     root = projects.get_workspace_root()
     if not (root / ".gitmodules").exists():

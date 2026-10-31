@@ -19,6 +19,12 @@ from aisland import cli
 from aisland.services import registry
 
 
+@pytest.fixture(autouse=True)
+def _own_workspace(empty_workspace: Path) -> Path:
+    """The commands of this file run in a workspace of the test's own, never the developer's."""
+    return empty_workspace
+
+
 class _Fake:
     """A service that records what it was asked to do; ``launch`` takes ``background`` only if the entry says so."""
 

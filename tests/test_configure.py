@@ -187,6 +187,7 @@ def test_configure_source_unset(root: Path, monkeypatch: pytest.MonkeyPatch) -> 
 
 
 @pytest.mark.parametrize("command", [["source", "list"], ["source", "apply"]])
+@pytest.mark.usefixtures("empty_workspace")
 def test_the_source_group_is_gone(command: List[str]) -> None:
     result = CliRunner().invoke(cli.main, command)
     assert result.exit_code == 2

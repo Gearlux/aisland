@@ -72,7 +72,12 @@ The workspace's dev-infrastructure CLI, `aisland` (click, `aisland/cli.py`):
   binds a copy, so patching `manager.f` misses `quality`'s `f`. The workspace root has one source every module reaches —
   a test points it at its folder with `monkeypatch.setattr(locations, "workspace_root", lambda: tmp_path)`. Why: after
   the split, tests patching `manager.get_workspace_root` let `aisland check` run on the REAL workspace (its
-  `isort .`/`black .` write files).
+  `isort .`/`black .` write files). **No test reaches the real workspace unless it says so (user pick 2026-10-30):**
+  the autouse `tests/conftest.py::no_real_workspace` makes `locations.workspace_root()` raise
+  `RealWorkspaceReached` naming the test; a test of the real workspace's facts carries `needs_workspace` or
+  `@pytest.mark.real_workspace`. An `aisland` a test starts as its own process is not covered — from a checkout it
+  finds the real root by its own place — so such a test passes its folder another way or runs a read-only command
+  (`tests/test_no_real_workspace.py`).
 - `workspace.py`: `aisland workspace init <folder>`, a new workspace or an existing repository set up in place (its
   starting files, the `--from` file's projects and the `--add` submodules, its `workspace.toml`, the git aliases;
   `--local`, `--untracked`).
@@ -649,9 +654,10 @@ Root `AGENTS.md` "Two Test Runs" (user ruling 2026-10-05). [test-stats]
   class name.
 - **aisland's MCP server is aisland's own, never navigaitor's (user ruling 2026-10-21).** [mcp-server] `aisland-mcp`
   (`server.py`, the `[mcp]` extra — never a base dependency) serves a CHOSEN set of tools (user choice 2026-10-21):
-  reading `doctor`, `tests_report`, `editor_themes`, `editor_colors`, `sources`, `services_status`, `tunnel_list`;
-  changing (`destructive_hint=False`) `editor_set_theme`, `editor_set_color`, `editor_unset` and
-  `service_start|stop|restart` for ANY service of the workspace (user choice 2026-10-29, replacing jenkins and mlflow
+  reading `doctor`, `tests_report`, `editor_themes`, `editor_colors`, `sources`, `services_status`, `tunnel_list`,
+  `tunnel_status`; changing (`destructive_hint=False`) `editor_set_theme`, `editor_set_color`, `editor_unset`,
+  `tunnel_start|stop` (`aisland tunnel start|stop --json` run as the command, its JSON answered unchanged; user pick
+  2026-10-30, moved here from navigaitor; `tests/test_server_tunnel.py`) and `service_start|stop|restart` for ANY service of the workspace (user choice 2026-10-29, replacing jenkins and mlflow
   only) [mcp-services]: `name` is a string in the schema, checked when the tool runs against `registry.entries`
   (`no service 'x' (the services: …)`), and `--background` is passed only where the entry takes it
   (`tests/test_server.py::test_every_service_of_the_workspace_is_one_a_tool_controls_and_no_other`). Never a tool for what prompts, runs for minutes or

@@ -82,4 +82,5 @@ The first release on PyPI: `pip install aisland`.
   workspace's MCP servers, and **`aisland notebooks clean`** is a git filter that clears notebook outputs before they
   are committed.
 - **`aisland-mcp`** (the `[mcp]` extra) offers a chosen set of these commands to an AI client; its service tools
-  start, stop and restart any service of the workspace.
+  start, stop and restart any service of the workspace, and its tunnel tools read, start and stop the remote tunnel
+  to this machine.
