@@ -548,6 +548,16 @@ Root `AGENTS.md` "Two Test Runs" (user ruling 2026-10-05). [test-stats]
   tell — a JUnit address, no project folder here, a file that does not parse, a base defined elsewhere — counts as
   present. It filters the slowest tests and both move lists; `failed` keeps every test, gone or not
   (`tests/test_pytest_stats.py::test_a_test_the_project_no_longer_has_is_neither_listed_nor_proposed_but_its_failures_stay`).
+  A test its file marks `slow` now (`_Present.marked_slow`: the function, a class it is in, a `pytestmark`) counts as
+  slow whatever its last run recorded; only a mark found counts, so a hook's or a parametrized case's mark keeps the
+  recorded one (`::test_a_test_marked_slow_in_its_file_since_its_last_run_is_not_proposed_again`).
+- **The overrun is weighed in test time (user pick 2026-11-01).** `_parallel`: the median, over the latest
+  `PARALLEL_RUNS` (5) whole fast runs, of each run's tests' seconds over its wall time, at least 1 — the latest only,
+  since a project that went parallel mid-window ran in one process before. `_to_slow` covers `overrun × parallel` of
+  test time and returns the wall seconds left uncovered (`StatsReport.uncovered_seconds`, the text's `Even moving all
+  of them …` line) (`::test_a_parallel_run_needs_the_overrun_times_its_parallelism_in_test_time`,
+  `::test_the_parallelism_is_the_latest_runs_not_the_windows`,
+  `::test_when_the_never_failed_tests_cannot_cover_the_overrun_the_report_says_how_much_is_left`).
 - **aisland's own fast run is PARALLEL — `-n 4` in `addopts`, `pytest-xdist` in `dev`** (user pick 3, 2026-10-28,
   over moving tests to the slow run: by the report's rule even every never-failed test moved left it over budget).
   Measured under load: 790 s in one process, 490 s over six workers, every test passing; the time is git, uv and

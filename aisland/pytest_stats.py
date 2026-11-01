@@ -29,7 +29,7 @@ import subprocess
 import time
 import tomllib
 import xml.etree.ElementTree as ET
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, replace
 from datetime import date, datetime, timedelta
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Dict, Iterator, List, Literal, Optional, Tuple, Union
@@ -66,6 +66,8 @@ RETENTION_DAYS = 90
 DEFAULT_WINDOW_DAYS = 30
 #: How many of the slowest fast-run tests the report lists.
 SLOWEST_SHOWN = 10
+#: How many of the latest whole fast runs say how many tests the fast run runs at once (`_parallel`).
+PARALLEL_RUNS = 5
 
 #: Which of a project's two runs this was: `fast` (plain `pytest`, i.e. `-m 'not slow'`, or plain `pytest` in a project
 #: that marks nothing slow), `slow` (`-m slow`), `all` (`-m ''` where `slow` is registered), `other` (any other `-m`).
@@ -362,6 +364,8 @@ class StatsReport:
     recording: bool = True  # whether local runs are recorded (`aisland workspace test-stats on|off`)
     recorded_by: RecordedBy = "default"  # who decided it
     switch_name: str = ""  # the project's name in workspace.toml, which `aisland workspace test-stats` takes
+    parallel: float = 1.0  # how many tests the whole fast runs ran at once: their tests' seconds over their wall time
+    uncovered_seconds: float = 0.0  # wall seconds of the overrun the never-failed tests cannot cover
 
     def to_dict(self) -> Dict[str, object]:
         return asdict(self)
@@ -390,6 +394,7 @@ class _Run:
     whole: bool
     seconds: float
     exit: int
+    test_seconds: float = 0.0  # its tests' seconds added up
 
 
 def build_report(
@@ -419,7 +424,10 @@ def build_report(
     fast_seconds = statistics.median(r.seconds for r in fast) if fast else None
     folder = project_dir or WORKSPACE_ROOT / project
     present = _Present(folder)
+    tallies = [replace(t, slow=True) if t.slow is False and present.marked_slow(t.test) else t for t in tallies]
     by_seconds = sorted((t for t in tallies if present(t.test)), key=lambda t: (-t.seconds, t.test))
+    parallel = _parallel(fast)
+    to_slow, uncovered = _to_slow(by_seconds, fast_seconds, parallel)
     failed = sorted((t for t in tallies if t.failures), key=lambda t: (-t.failures, str(t.last_failure), t.test))
     return StatsReport(
         project=project,
@@ -432,11 +440,13 @@ def build_report(
         last_fast_run_seconds=fast[-1].seconds if fast else None,
         slowest_fast=[t for t in by_seconds if t.slow is False][:SLOWEST_SHOWN],
         failed=failed,
-        to_slow=_to_slow(by_seconds, fast_seconds),
+        to_slow=to_slow,
         to_fast=[t for t in failed if t.slow is True and present(t.test)],
         recording=switch.on,
         recorded_by=switch.by,
         switch_name=switch.project,
+        parallel=parallel,
+        uncovered_seconds=uncovered,
     )
 
 
@@ -474,6 +484,38 @@ class _Present:
             scope = found
         return _defines(scope, name.split("[", 1)[0], module)
 
+    def marked_slow(self, test: str) -> bool:
+        """Whether the test's file marks it ``slow`` now — on the function, on a class it is in, or in a ``pytestmark``
+        of the module or of such a class. Only a mark found counts: a test whose file cannot be read, or that a hook
+        or a parametrized case marks, keeps the mark its last run recorded."""
+        path, _, rest = test.partition("::")
+        if not self.here or not rest or not path.endswith(".py"):
+            return False
+        file = self.project_dir / path
+        tree = self._tree(file) if file.is_file() else None
+        if tree is None:
+            return False
+        *classes, name = rest.split("::")
+        if _carries_slow(tree.body, []):
+            return True
+        scope: Union[ast.Module, ast.ClassDef] = tree
+        for class_name in classes:
+            found = next((n for n in scope.body if isinstance(n, ast.ClassDef) and n.name == class_name), None)
+            if found is None:
+                return False
+            if _carries_slow(found.body, found.decorator_list):
+                return True
+            scope = found
+        function = next(
+            (
+                n
+                for n in scope.body
+                if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef)) and n.name == name.split("[", 1)[0]
+            ),
+            None,
+        )
+        return function is not None and any(_is_slow(d) for d in function.decorator_list)
+
     def _tree(self, file: Path) -> Optional[ast.Module]:
         if file not in self.trees:
             try:
@@ -481,6 +523,23 @@ class _Present:
             except (OSError, SyntaxError, ValueError):
                 self.trees[file] = None
         return self.trees[file]
+
+
+def _is_slow(node: ast.expr) -> bool:
+    """Whether a decorator or a mark in a list is ``pytest.mark.slow`` (or ``mark.slow``, imported from pytest)."""
+    return ast.unparse(node) in ("pytest.mark.slow", "mark.slow")
+
+
+def _carries_slow(body: List[ast.stmt], decorators: List[ast.expr]) -> bool:
+    """Whether a class's decorators, or a ``pytestmark`` in a module's or a class's body, mark ``slow``."""
+    if any(_is_slow(d) for d in decorators):
+        return True
+    for node in body:
+        if isinstance(node, ast.Assign) and any(isinstance(t, ast.Name) and t.id == "pytestmark" for t in node.targets):
+            marks = node.value.elts if isinstance(node.value, (ast.List, ast.Tuple)) else [node.value]
+            if any(_is_slow(m) for m in marks):
+                return True
+    return False
 
 
 def _defines(scope: Union[ast.Module, ast.ClassDef], name: str, module: Dict[str, ast.ClassDef]) -> bool:
@@ -501,18 +560,32 @@ def _defines(scope: Union[ast.Module, ast.ClassDef], name: str, module: Dict[str
     return False
 
 
-def _to_slow(by_seconds: List[Tally], fast_seconds: Optional[float]) -> List[Tally]:
-    """The never-failed fast tests, slowest first, until their seconds cover the fast run's overrun."""
+def _parallel(fast: List[_Run]) -> float:
+    """How many tests the fast run runs at once now: over the latest :data:`PARALLEL_RUNS` whole fast runs, the median
+    of each run's tests' seconds over its wall time, never below 1 (a run in one process spends some time outside its
+    tests). Only the latest: a project that went parallel mid-window ran in one process before. ``fast`` is oldest
+    first; a run that recorded no test counts not."""
+    timed = [r for r in fast if r.seconds > 0 and r.test_seconds > 0][-PARALLEL_RUNS:]
+    ratios = [r.test_seconds / r.seconds for r in timed]
+    return round(max(1.0, statistics.median(ratios)), 2) if ratios else 1.0
+
+
+def _to_slow(
+    by_seconds: List[Tally], fast_seconds: Optional[float], parallel: float = 1.0
+) -> Tuple[List[Tally], float]:
+    """The never-failed fast tests, slowest first, until their seconds cover the fast run's overrun — and the wall
+    seconds of it they cannot cover. A run of ``parallel`` tests at once loses a wall second for every ``parallel``
+    seconds of tests moved, so the overrun is weighed in test time."""
     if fast_seconds is None or fast_seconds <= FAST_RUN_BUDGET_SECONDS:
-        return []
-    overrun, moved = fast_seconds - FAST_RUN_BUDGET_SECONDS, []
+        return [], 0.0
+    overrun, moved = (fast_seconds - FAST_RUN_BUDGET_SECONDS) * parallel, []
     for tally in by_seconds:
         if overrun <= 0:
             break
         if tally.slow is False and not tally.failures:
             moved.append(tally)
             overrun -= tally.seconds
-    return moved
+    return moved, round(max(0.0, overrun) / parallel, 3)
 
 
 def _local_records(folder: Path, cutoff: datetime) -> Tuple[List[_Run], List[_Record]]:
@@ -549,6 +622,7 @@ def _local_records(folder: Path, cutoff: datetime) -> Tuple[List[_Run], List[_Re
         found = runs.get(run_id)
         if found is None:  # outside the window, or its run line was lost
             continue
+        found.test_seconds += seconds
         records.append(_Record(junit_address(nodeid), nodeid, found.at.date(), found.at, seconds, outcome, slow))
     return list(runs.values()), records
 
@@ -688,6 +762,16 @@ def render_report(report: StatsReport) -> str:
     if report.to_slow:
         lines += ["", f"Move to the slow run (never failed, slowest first) to fit {budget}:"]
         lines += [f"  {t.seconds:8.1f} s  {t.test}" for t in report.to_slow]
+        if report.parallel > 1:
+            lines.append(
+                f"  (the fast run runs about {report.parallel:.1f} tests at once: each second over is "
+                f"{report.parallel:.1f} s of tests)"
+            )
+    if report.uncovered_seconds > 0:
+        lines.append(
+            f"  Even moving all of them leaves the fast run {_duration(report.uncovered_seconds)} over: every other "
+            "fast test has failed at least once."
+        )
     if report.to_fast:
         lines += ["", "Slow tests that failed - move into the fast run:"]
         lines += [f"  {t.failures} of {t.runs} failed  {t.test}" for t in report.to_fast]

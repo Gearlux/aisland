@@ -387,6 +387,67 @@ def test_over_budget_the_slowest_never_failed_fast_tests_are_proposed_for_the_sl
     )
 
 
+def test_a_parallel_run_needs_the_overrun_times_its_parallelism_in_test_time(stores: Tuple[Path, Path]) -> None:
+    stats, _ = stores
+    # 1440 s of tests ran in 360 s of wall time: four at once. 60 s over the budget is 240 s of test time, which
+    # two tests of 144 s cover; one process would have called one enough.
+    _local(stats, _NOW - timedelta(days=1), 360.0, [(f"t::{n}", 144.0, "passed", False) for n in "abcdefghij"])
+    report = _report(stores)
+    assert report.parallel == 4.0
+    assert [t.test for t in report.to_slow] == ["t::a", "t::b"]
+    assert report.uncovered_seconds == 0.0
+    assert "the fast run runs about 4.0 tests at once: each second over is 4.0 s of tests" in (
+        pytest_stats.render_report(report)
+    )
+
+
+def test_the_parallelism_is_the_latest_runs_not_the_windows(stores: Tuple[Path, Path]) -> None:
+    stats, _ = stores
+    # Ten runs in one process, then the project went parallel: five runs of four tests at once.
+    for day in range(20, 10, -1):
+        _local(stats, _NOW - timedelta(days=day), 400.0, [("t::a", 400.0, "passed", False)])
+    for day in range(5, 0, -1):
+        _local(stats, _NOW - timedelta(days=day), 100.0, [("t::a", 400.0, "passed", False)])
+    assert _report(stores).parallel == 4.0
+
+
+def test_when_the_never_failed_tests_cannot_cover_the_overrun_the_report_says_how_much_is_left(
+    stores: Tuple[Path, Path],
+) -> None:
+    stats, _ = stores
+    _local(stats, _NOW - timedelta(days=1), 420.0, [("t::a", 60.0, "passed", False), ("t::b", 300.0, "failed", False)])
+    report = _report(stores)
+    # 120 s over in one process; a covers 60 s, b caught a break and stays.
+    assert [t.test for t in report.to_slow] == ["t::a"]
+    assert report.uncovered_seconds == 60.0
+    assert "Even moving all of them leaves the fast run 1m 00s over" in pytest_stats.render_report(report)
+
+
+def test_a_test_marked_slow_in_its_file_since_its_last_run_is_not_proposed_again(
+    stores: Tuple[Path, Path], tmp_path: Path
+) -> None:
+    stats, jobs = stores
+    folder = tmp_path / "proj"
+    (folder / "tests").mkdir(parents=True)
+    (folder / "tests" / "test_m.py").write_text(
+        "import pytest\n\n\n@pytest.mark.slow\ndef test_marked():\n    pass\n\n\ndef test_plain():\n    pass\n\n\n"
+        "@pytest.mark.slow\nclass TestSlowClass:\n    def test_in_it(self):\n        pass\n"
+    )
+    (folder / "tests" / "test_module.py").write_text(
+        "import pytest\n\npytestmark = [pytest.mark.slow]\n\n\n" "def test_any():\n    pass\n"
+    )
+    names = [
+        "tests/test_m.py::test_marked",
+        "tests/test_m.py::test_plain",
+        "tests/test_m.py::TestSlowClass::test_in_it",
+        "tests/test_module.py::test_any",
+    ]
+    _local(stats, _NOW - timedelta(days=1), 3600.0, [(n, 100.0, "passed", False) for n in names])
+    report = pytest_stats.build_report("proj", now=_NOW, stats_dir=stats, jenkins_jobs_dir=jobs, project_dir=folder)
+    assert [t.test for t in report.to_slow] == ["tests/test_m.py::test_plain"]
+    assert [t.test for t in report.slowest_fast] == ["tests/test_m.py::test_plain"]
+
+
 def test_within_budget_nothing_is_proposed_for_the_slow_run(stores: Tuple[Path, Path]) -> None:
     stats, _ = stores
     _local(stats, _NOW - timedelta(days=1), 200.0, [("t::a", 150.0, "passed", False)])
@@ -509,6 +570,15 @@ def test_what_the_report_cannot_read_counts_as_present(tmp_path: Path) -> None:
     assert present("tests.test_b::test_z")  # a JUnit address: no file to read
     assert present("tests/test_broken.py::test_gone")  # the file does not parse
     assert pytest_stats._Present(tmp_path / "elsewhere")("tests/test_deleted.py::test_a")  # no project folder here
+
+
+def test_a_mark_the_file_does_not_show_is_left_to_the_last_run(tmp_path: Path) -> None:
+    present = pytest_stats._Present(_project_with_tests(tmp_path))
+    assert not present.marked_slow("tests.test_b::test_z")  # a JUnit address
+    assert not present.marked_slow("tests/test_broken.py::test_x")  # the file does not parse
+    assert not present.marked_slow("tests/test_deleted.py::test_a")  # no such file
+    assert not present.marked_slow("tests/test_kept.py::TestMissing::test_deep")  # no such class
+    assert not present.marked_slow("tests/test_kept.py::test_param[1]")  # no mark on it
 
 
 def test_the_text_report_names_the_overrun_and_what_to_move(stores: Tuple[Path, Path]) -> None:

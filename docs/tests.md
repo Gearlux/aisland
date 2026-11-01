@@ -117,7 +117,10 @@ first) to fit 5m 00s:` — the tests whose seconds cover the overrun; and a slow
 is listed under `Slow tests that failed - move into the fast run:`. Moving one is an edit: add
 or remove its `@pytest.mark.slow`. The slowest tests and both lists name only tests the project still has: a test
 whose file is gone, or which its file no longer defines, keeps its line under `Tests that failed` and is proposed for
-no move.
+no move; a test its file marks `slow` since its last run is proposed for no move to the slow run. A fast run that runs
+several tests at once (pytest-xdist's `-n`) loses one second of wall time for every few seconds of tests moved, so the
+list covers the overrun in test time: the report says how many tests the latest runs ran at once, and, when every
+never-failed test together still leaves the run over budget, by how much.
 The fast run's time counts only complete runs of the whole fast run. Why it is built this way:
 [`architecture.md`](architecture.md) → "Every pytest run of a workspace project is
 recorded".
