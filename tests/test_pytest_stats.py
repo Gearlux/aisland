@@ -448,6 +448,40 @@ def test_a_test_marked_slow_in_its_file_since_its_last_run_is_not_proposed_again
     assert [t.test for t in report.slowest_fast] == ["tests/test_m.py::test_plain"]
 
 
+def test_a_test_the_latest_whole_fast_run_did_not_run_is_no_longer_in_the_fast_run(
+    stores: Tuple[Path, Path], tmp_path: Path
+) -> None:
+    stats, jobs = stores
+    folder = tmp_path / "proj"
+    (folder / "tests").mkdir(parents=True)
+    # a case marked through `pytest.param(..., marks=pytest.mark.slow)` is no decorator the file shows by name
+    (folder / "tests" / "test_p.py").write_text(
+        "import pytest\n\n\n@pytest.mark.parametrize('n', [pytest.param(1, marks=pytest.mark.slow), 2])\n"
+        "def test_case(n):\n    pass\n"
+    )
+    both = [
+        ("tests/test_p.py::test_case[1]", 200.0, "passed", False),
+        ("tests/test_p.py::test_case[2]", 90.0, "passed", False),
+    ]
+    _local(stats, _NOW - timedelta(days=2), 600.0, both)
+    _local(stats, _NOW - timedelta(days=1), 500.0, both[1:])  # the latest whole fast run no longer runs case 1
+    report = pytest_stats.build_report("proj", now=_NOW, stats_dir=stats, jenkins_jobs_dir=jobs, project_dir=folder)
+    assert [t.test for t in report.to_slow] == ["tests/test_p.py::test_case[2]"]
+    assert [t.test for t in report.slowest_fast] == ["tests/test_p.py::test_case[2]"]
+
+
+def test_the_fast_run_time_is_read_from_the_latest_runs_not_the_whole_window(stores: Tuple[Path, Path]) -> None:
+    stats, _ = stores
+    # Ten runs of 600 s, then the tests moved: five runs of 240 s. The old runs are not the fast run any more.
+    for day in range(20, 10, -1):
+        _local(stats, _NOW - timedelta(days=day), 600.0, [("t::a", 100.0, "passed", False)])
+    for day in range(5, 0, -1):
+        _local(stats, _NOW - timedelta(days=day), 240.0, [("t::a", 100.0, "passed", False)])
+    report = _report(stores)
+    assert report.fast_run_seconds == 240.0 and report.whole_fast_runs == 15
+    assert report.to_slow == []
+
+
 def test_within_budget_nothing_is_proposed_for_the_slow_run(stores: Tuple[Path, Path]) -> None:
     stats, _ = stores
     _local(stats, _NOW - timedelta(days=1), 200.0, [("t::a", 150.0, "passed", False)])

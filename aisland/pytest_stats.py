@@ -32,7 +32,7 @@ import xml.etree.ElementTree as ET
 from dataclasses import asdict, dataclass, replace
 from datetime import date, datetime, timedelta
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Dict, Iterator, List, Literal, Optional, Tuple, Union
+from typing import TYPE_CHECKING, Any, Dict, Iterator, List, Literal, Optional, Set, Tuple, Union
 
 from aisland import locations
 
@@ -68,6 +68,9 @@ DEFAULT_WINDOW_DAYS = 30
 SLOWEST_SHOWN = 10
 #: How many of the latest whole fast runs say how many tests the fast run runs at once (`_parallel`).
 PARALLEL_RUNS = 5
+#: How many of the latest whole fast runs the fast run's time is the median of: older runs ran a fast run that was
+#: another set of tests (before the moves the report itself asked for).
+BASELINE_RUNS = 5
 
 #: Which of a project's two runs this was: `fast` (plain `pytest`, i.e. `-m 'not slow'`, or plain `pytest` in a project
 #: that marks nothing slow), `slow` (`-m slow`), `all` (`-m ''` where `slow` is registered), `other` (any other `-m`).
@@ -421,10 +424,18 @@ def build_report(
         (r for r in runs if r.leg == "fast" and r.whole and r.exit in _COMPLETE_EXITS),
         key=lambda r: r.at,
     )
-    fast_seconds = statistics.median(r.seconds for r in fast) if fast else None
+    fast_seconds = statistics.median(r.seconds for r in fast[-BASELINE_RUNS:]) if fast else None
     folder = project_dir or WORKSPACE_ROOT / project
     present = _Present(folder)
-    tallies = [replace(t, slow=True) if t.slow is False and present.marked_slow(t.test) else t for t in tallies]
+    ran_last = {r.nodeid for r in local if fast and r.at == fast[-1].at}
+    tallies = [
+        (
+            replace(t, slow=True)
+            if t.slow is False and (present.marked_slow(t.test) or _left_the_fast_run(t.test, ran_last, present))
+            else t
+        )
+        for t in tallies
+    ]
     by_seconds = sorted((t for t in tallies if present(t.test)), key=lambda t: (-t.seconds, t.test))
     parallel = _parallel(fast)
     to_slow, uncovered = _to_slow(by_seconds, fast_seconds, parallel)
@@ -523,6 +534,13 @@ class _Present:
             except (OSError, SyntaxError, ValueError):
                 self.trees[file] = None
         return self.trees[file]
+
+
+def _left_the_fast_run(test: str, ran_last: Set[Optional[str]], present: "_Present") -> bool:
+    """Whether a test the project still has, and an earlier fast run ran, is absent from the latest whole fast run:
+    something now keeps it out — a mark on one parametrized case, a hook, a deselect — whatever its file shows by
+    name. Nothing is claimed while the latest run recorded no test."""
+    return bool(ran_last) and test not in ran_last and present(test)
 
 
 def _is_slow(node: ast.expr) -> bool:

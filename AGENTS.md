@@ -558,6 +558,14 @@ Root `AGENTS.md` "Two Test Runs" (user ruling 2026-10-05). [test-stats]
   of them …` line) (`::test_a_parallel_run_needs_the_overrun_times_its_parallelism_in_test_time`,
   `::test_the_parallelism_is_the_latest_runs_not_the_windows`,
   `::test_when_the_never_failed_tests_cannot_cover_the_overrun_the_report_says_how_much_is_left`).
+- **The fast run's time is the latest runs', and a test the latest whole fast run left out is slow (user pick 2026-11-01,
+  "4").** `BASELINE_RUNS` (5): the report's `fast_run_seconds` is the median of the latest 5 whole fast runs, never the
+  window's — older runs ran another set of tests, and sizing a list against them made the report ask for more after
+  every move. A test the project still has that an earlier fast run ran and the latest whole fast run did not
+  (`_left_the_fast_run`) counts as slow: a mark on one parametrized case (`pytest.param(…, marks=pytest.mark.slow)`), a
+  hook or a deselect keeps it out whatever its file shows by name
+  (`::test_a_test_the_latest_whole_fast_run_did_not_run_is_no_longer_in_the_fast_run`,
+  `::test_the_fast_run_time_is_read_from_the_latest_runs_not_the_whole_window`).
 - **aisland's own fast run is PARALLEL — `-n 4` in `addopts`, `pytest-xdist` in `dev`** (user pick 3, 2026-10-28,
   over moving tests to the slow run: by the report's rule even every never-failed test moved left it over budget).
   Measured under load: 790 s in one process, 490 s over six workers, every test passing; the time is git, uv and
