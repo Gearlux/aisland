@@ -7,7 +7,8 @@ commands and rules into `.agents/`. Nothing outside the new folder is changed.
 It shows, and asserts:
 
 - the folder is a git repository holding `.gitignore`, `.env`, `mypy.ini` and `AGENTS.md`;
-- `AGENTS.md` imports aisland's rules, which sit in `.agents/aisland/AGENTS.md`;
+- `AGENTS.md` imports the rules of the workspace's harness sets (`.agents/rules.md`), and that file imports aisland's,
+  which sit in `.agents/aisland/AGENTS.md`;
 - the aliases are in the repository's LOCAL config, not your global one;
 - a second `init` of the same folder writes over nothing it already has.
 
@@ -43,7 +44,10 @@ def main() -> None:
         for name in (".gitignore", ".env", "mypy.ini", "AGENTS.md"):
             assert (workspace / name).is_file(), f"init wrote {name}"
         assert (workspace / ".agents" / "aisland" / "AGENTS.md").is_file(), "aisland's rules are in .agents/"
-        assert "@.agents/aisland/AGENTS.md" in (workspace / "AGENTS.md").read_text(), "AGENTS.md imports them"
+        imported_by_workspace = (workspace / "AGENTS.md").read_text()
+        imported_by_rules = (workspace / ".agents" / "rules.md").read_text()
+        assert "@.agents/rules.md" in imported_by_workspace, "AGENTS.md imports the rules"
+        assert "@.agents/aisland/AGENTS.md" in imported_by_rules, "which import aisland's"
 
         local = _run("git", "config", "--local", "--get-regexp", r"^alias\.", cwd=workspace).stdout
         aliases = sorted(

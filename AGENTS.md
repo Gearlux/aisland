@@ -409,7 +409,10 @@ start-time port pre-flight naming the PID is the only signal). All service state
 - An example in `examples/` is a page's runnable twin, named on its page (`::test_every_example_is_shown_on_a_page`),
   and touches only a temporary folder: from a checkout aisland works on the workspace it is checked out in whatever
   the current folder, so a command that changes a workspace (`setup`, `configure … set`, `clean`) has no example
-  (`TASKS.md`). Each asserts what its page shows and runs in CI's Verify Examples.
+  (`TASKS.md`). Each asserts what its page shows and runs in CI's Verify Examples and in the test run
+  (`tests/test_examples.py::test_an_example_runs_as_written`, each in a process and folder of its own; an example
+  measured at a minute or more joins `SLOW_EXAMPLES` and runs in the slow leg), so one that no longer matches the code
+  fails there, not only after a push.
 
 ## Supervisor and services
 
