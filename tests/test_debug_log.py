@@ -21,7 +21,8 @@ from click.testing import CliRunner
 
 from aisland import cli, gitcmd, gitmodules, locations
 from aisland import pyproject as pyproject_toml
-from aisland.services import docker
+from aisland.cli import _base as cli_base
+from aisland.services import docker, jenkins_jobs
 from aisland.services.jenkins import JenkinsService
 
 
@@ -79,7 +80,7 @@ def test_the_run_takes_its_handler_off_and_puts_the_level_back(monkeypatch: pyte
     for _ in range(2):  # a second run in one process adds no second handler
         result = CliRunner().invoke(cli.main, ["--debug", "probe"])
         assert result.stderr.count("aisland: gitcmd: ") == 1
-    assert cli._debug_log not in logger.handlers
+    assert cli_base._debug_log not in logger.handlers
     assert logger.level == logging.INFO
 
 
@@ -96,9 +97,9 @@ def test_a_plain_run_leaves_a_level_set_from_outside_alone(
 
 def test_a_record_that_cannot_be_written_is_handed_to_logging(monkeypatch: pytest.MonkeyPatch) -> None:
     handled: List[logging.LogRecord] = []
-    monkeypatch.setattr(cli._debug_log, "handleError", handled.append)
+    monkeypatch.setattr(cli_base._debug_log, "handleError", handled.append)
     record = logging.LogRecord("aisland.x", logging.DEBUG, __file__, 1, "%d needs a number", ("text",), None)
-    cli._debug_log.emit(record)
+    cli_base._debug_log.emit(record)
     assert handled == [record]
 
 
@@ -279,7 +280,7 @@ def test_the_env_keys_jenkins_reads_are_said_in_the_debug_log_only(
     service.service_data_dir = tmp_path / "jenkins"
     service.service_data_dir.mkdir()
     (service.service_data_dir / "config.xml").write_text("<?xml version='1.1' encoding='UTF-8'?>\n<hudson/>\n")
-    service.setup_global_properties()
+    jenkins_jobs.setup_global_properties(service.service_data_dir)
     assert "key(s) from" not in capsys.readouterr().out
     assert f"read 2 key(s) from {workspace / '.env'}" in debug_log.messages
 

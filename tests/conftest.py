@@ -23,7 +23,7 @@ def released_packages(monkeypatch: pytest.MonkeyPatch) -> Iterator[Set[str]]:
     """
     released: Set[str] = set()
     monkeypatch.setattr(
-        "aisland.services.jenkins.released_on_pypi",
+        "aisland.ci_scaffold.released_on_pypi",
         lambda distribution, owner: distribution in released,
         raising=False,
     )
@@ -115,6 +115,6 @@ def quiet_debug_log() -> Iterator[None]:
     run that stops while its options are parsed never ends, and its handler would print every later test's debug
     records (``tests/test_debug_log.py``)."""
     yield
-    cli = sys.modules.get("aisland.cli")  # a test that never imported the CLI never turned the log on
-    if cli is not None:
-        cli._quiet_debug_log(logging.NOTSET)
+    base = sys.modules.get("aisland.cli._base")  # a test that never imported the CLI never turned the log on
+    if base is not None:
+        base._quiet_debug_log(logging.NOTSET)

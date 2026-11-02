@@ -74,7 +74,6 @@ def workspace(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     (site / "acme_plugin.py").write_text(MODULE)
     monkeypatch.syspath_prepend(str(site))
     monkeypatch.delitem(sys.modules, "acme_plugin", raising=False)
-    monkeypatch.setattr(cli, "get_workspace_root", lambda: root)
     monkeypatch.setattr(locations, "workspace_root", lambda: root)
     monkeypatch.setattr("aisland.supervisor._workspace_root", lambda: root)
     monkeypatch.setattr(registry, "ENTRIES", ())
@@ -202,7 +201,7 @@ def test_a_project_not_installed_offers_no_service(tmp_path: Path, monkeypatch: 
     root = tmp_path / "ws"
     (root / "acme").mkdir(parents=True)
     (root / "acme" / "pyproject.toml").write_text(textwrap.dedent(PROJECT))
-    monkeypatch.setattr(cli, "get_workspace_root", lambda: root)
+    monkeypatch.setattr(locations, "workspace_root", lambda: root)
     monkeypatch.setattr(registry, "ENTRIES", ())
     assert "No such command 'acme-db'" in _run("acme-db", "start").output
 
@@ -221,7 +220,7 @@ def test_aislands_own_fiftyone_is_gone(tmp_path: Path, monkeypatch: pytest.Monke
     """FiftyOne is curaitor's service now: without curaitor in the workspace, there is none."""
     root = tmp_path / "ws"
     root.mkdir()
-    monkeypatch.setattr(cli, "get_workspace_root", lambda: root)
+    monkeypatch.setattr(locations, "workspace_root", lambda: root)
     assert "fiftyone" not in [entry.name for entry in registry.ENTRIES]
     assert "No such command 'fiftyone'" in _run("fiftyone", "start").output
 

@@ -7,8 +7,8 @@ from pathlib import Path
 
 import pytest
 
-from aisland.services import jenkins as jenkins_mod
-from aisland.services.jenkins import discover_github_projects, is_private_repo
+from aisland import ci_scaffold
+from aisland.ci_scaffold import discover_github_projects, is_private_repo
 from aisland.sources import GitHubRepository
 
 
@@ -106,14 +106,14 @@ class TestIsPrivateRepo:
         def fake_run(*args, **kwargs):  # type: ignore[no-untyped-def]
             return subprocess.CompletedProcess(args=args[0], returncode=0, stdout="true\n", stderr="")
 
-        monkeypatch.setattr(jenkins_mod.subprocess, "run", fake_run)
+        monkeypatch.setattr(ci_scaffold.subprocess, "run", fake_run)
         assert is_private_repo(GitHubRepository("acme", "navigaitor")) is True
 
     def test_returns_false_when_gh_says_false(self, monkeypatch: pytest.MonkeyPatch) -> None:
         def fake_run(*args, **kwargs):  # type: ignore[no-untyped-def]
             return subprocess.CompletedProcess(args=args[0], returncode=0, stdout="false\n", stderr="")
 
-        monkeypatch.setattr(jenkins_mod.subprocess, "run", fake_run)
+        monkeypatch.setattr(ci_scaffold.subprocess, "run", fake_run)
         assert is_private_repo(GitHubRepository("acme", "purifai")) is False
 
     def test_returns_true_when_gh_missing(self, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -122,7 +122,7 @@ class TestIsPrivateRepo:
         def fake_run(*args, **kwargs):  # type: ignore[no-untyped-def]
             raise FileNotFoundError("gh not installed")
 
-        monkeypatch.setattr(jenkins_mod.subprocess, "run", fake_run)
+        monkeypatch.setattr(ci_scaffold.subprocess, "run", fake_run)
         assert is_private_repo(GitHubRepository("acme", "anything")) is True
 
     def test_returns_true_on_subprocess_error(self, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -131,7 +131,7 @@ class TestIsPrivateRepo:
         def fake_run(*args, **kwargs):  # type: ignore[no-untyped-def]
             raise subprocess.CalledProcessError(returncode=1, cmd=args[0])
 
-        monkeypatch.setattr(jenkins_mod.subprocess, "run", fake_run)
+        monkeypatch.setattr(ci_scaffold.subprocess, "run", fake_run)
         assert is_private_repo(GitHubRepository("acme", "nonexistent")) is True
 
     def test_returns_true_on_timeout(self, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -140,7 +140,7 @@ class TestIsPrivateRepo:
         def fake_run(*args, **kwargs):  # type: ignore[no-untyped-def]
             raise subprocess.TimeoutExpired(cmd=args[0], timeout=5)
 
-        monkeypatch.setattr(jenkins_mod.subprocess, "run", fake_run)
+        monkeypatch.setattr(ci_scaffold.subprocess, "run", fake_run)
         assert is_private_repo(GitHubRepository("acme", "slow")) is True
 
     def test_result_is_cached(self, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -151,7 +151,7 @@ class TestIsPrivateRepo:
             call_count["n"] += 1
             return subprocess.CompletedProcess(args=args[0], returncode=0, stdout="true\n", stderr="")
 
-        monkeypatch.setattr(jenkins_mod.subprocess, "run", fake_run)
+        monkeypatch.setattr(ci_scaffold.subprocess, "run", fake_run)
         is_private_repo(GitHubRepository("acme", "xx"))
         is_private_repo(GitHubRepository("acme", "xx"))
         is_private_repo(GitHubRepository("acme", "xx"))

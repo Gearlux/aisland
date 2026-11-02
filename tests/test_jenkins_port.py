@@ -89,7 +89,7 @@ def test_the_swiftbar_menu_links_the_running_jenkins(on_9081: None) -> None:
 
 
 def test_the_cli_starts_jenkins_on_the_default_port(monkeypatch: pytest.MonkeyPatch) -> None:
-    from aisland.cli import jenkins_start
+    from aisland.cli.services import jenkins_start
 
     port = next(param for param in jenkins_start.params if param.name == "port")
     assert port.default == jenkins.JenkinsService.DEFAULT_PORT

@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import pytest
 
-from aisland.services.jenkins import pyproject_to_workspace_dir
+from aisland.services.jenkins_jobs import pyproject_to_workspace_dir
 
 
 def test_pyproject_to_workspace_dir_identity() -> None:

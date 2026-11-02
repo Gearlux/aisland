@@ -19,7 +19,7 @@ import git_filter_repo
 import pytest
 from click.testing import CliRunner
 
-from aisland import filter_repo
+from aisland import filter_repo, locations
 from aisland import wheels_prune as wp
 from aisland.cli import main
 
@@ -586,7 +586,7 @@ def test_reset_names_a_tag_that_differs_from_origins_and_leaves_it(tmp_path: Pat
 
 
 def _cli(root: Path, monkeypatch: pytest.MonkeyPatch, *args: str) -> str:
-    monkeypatch.setattr("aisland.cli.get_workspace_root", lambda: root)
+    monkeypatch.setattr(locations, "workspace_root", lambda: root)
     result = CliRunner().invoke(main, ["wheels", *args])
     assert result.exit_code == 0, result.output
     return result.output
@@ -607,7 +607,7 @@ def test_the_commands_print_the_reports_and_their_json(
 @pytest.mark.slow
 def test_a_refusal_is_one_error_line_and_exit_1(setup: Setup, monkeypatch: pytest.MonkeyPatch) -> None:
     (setup.repo / "code.py").write_text("changed\n")
-    monkeypatch.setattr("aisland.cli.get_workspace_root", lambda: setup.root)
+    monkeypatch.setattr(locations, "workspace_root", lambda: setup.root)
     result = CliRunner().invoke(main, ["wheels", "prune", "models", "--apply"])
     assert result.exit_code == 1
     assert result.output.startswith("Error: models has changes no commit holds: M code.py")

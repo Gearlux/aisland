@@ -24,8 +24,11 @@ import click
 import pytest
 from click.testing import CliRunner
 
+from aisland import locations
 from aisland import wheels as w
+from aisland import wheels_check, wheels_files
 from aisland import wheels_install as wi
+from aisland import wheels_report
 from aisland.cli import main
 
 
@@ -121,7 +124,7 @@ def _wheel(path: Path, files: Dict[str, str], *, requires: Sequence[str] = (), v
     }
     with zipfile.ZipFile(path, "w") as archive:
         for name, text in members.items():
-            archive.writestr(zipfile.ZipInfo(name, date_time=w._ZIP_TIME), text)
+            archive.writestr(zipfile.ZipInfo(name, date_time=wheels_files.ZIP_TIME), text)
     return path
 
 
@@ -273,7 +276,7 @@ class TestWheelModules:
             tmp_path / "lib-0.1.0-py3-none-any.whl",
             {"lib/__init__.py": "", "lib/sub/__init__.py": "", "lib/sub/x.py": "", "helper.py": ""},
         )
-        assert w.wheel_modules(wheel) == ["helper", "lib"]
+        assert wheels_check.wheel_modules(wheel) == ["helper", "lib"]
 
     def test_a_child_under_a_shim_is_imported_by_its_dotted_name(self, tmp_path: Path) -> None:
         """A wheel that still carries the shim (a child without the build step)."""
@@ -281,31 +284,31 @@ class TestWheelModules:
             tmp_path / "child-0.1.0-py3-none-any.whl",
             {"raidar/__init__.py": _SHIM, "raidar/ultralytics/__init__.py": "X = 1\n"},
         )
-        assert w.wheel_modules(wheel) == ["raidar.ultralytics"]
+        assert wheels_check.wheel_modules(wheel) == ["raidar.ultralytics"]
 
     def test_a_child_without_its_parents_init_is_imported_by_its_dotted_name(self, tmp_path: Path) -> None:
         """raidar-ultralytics's wheel: the build step left the shim out."""
         wheel = _wheel(tmp_path / "ultralytics-0.1.0-py3-none-any.whl", {"raidar/ultralytics/__init__.py": ""})
-        assert w.wheel_modules(wheel) == ["raidar.ultralytics"]
+        assert wheels_check.wheel_modules(wheel) == ["raidar.ultralytics"]
 
     def test_a_package_inside_a_plain_folder_of_a_package_is_not_a_second_root(self, tmp_path: Path) -> None:
         wheel = _wheel(
             tmp_path / "lib-0.1.0-py3-none-any.whl",
             {"lib/__init__.py": "", "lib/assets/nested/__init__.py": ""},
         )
-        assert w.wheel_modules(wheel) == ["lib"]
+        assert wheels_check.wheel_modules(wheel) == ["lib"]
 
     def test_an_init_that_does_more_than_extend_its_path_is_a_real_package(self, tmp_path: Path) -> None:
         wheel = _wheel(
             tmp_path / "lib-0.1.0-py3-none-any.whl",
             {"lib/__init__.py": _SHIM + "VERSION = 1\n", "lib/sub/__init__.py": ""},
         )
-        assert w.wheel_modules(wheel) == ["lib"]
+        assert wheels_check.wheel_modules(wheel) == ["lib"]
 
     def test_an_init_python_cannot_parse_is_still_a_package_to_import(self, tmp_path: Path) -> None:
         """Importing it is what reports the error."""
         wheel = _wheel(tmp_path / "lib-0.1.0-py3-none-any.whl", {"lib/__init__.py": "def (:\n"})
-        assert w.wheel_modules(wheel) == ["lib"]
+        assert wheels_check.wheel_modules(wheel) == ["lib"]
 
 
 class TestWheelDifferences:
@@ -319,7 +322,7 @@ class TestWheelDifferences:
         local = _wheel(
             tmp_path / "b" / "lib-0.2.0-py3-none-any.whl", files, requires=["click", "numpy"], version="0.2.0"
         )
-        assert w.wheel_differences(published, local) == []
+        assert wheels_check.wheel_differences(published, local) == []
 
     def test_changed_added_and_removed_files_and_dependencies_are_named(self, tmp_path: Path) -> None:
         (tmp_path / "a").mkdir()
@@ -334,7 +337,7 @@ class TestWheelDifferences:
             {"lib/__init__.py": "X = 2\n", "lib/new.py": "", "lib/same.py": ""},
             requires=["click>=8"],
         )
-        assert w.wheel_differences(published, local) == [
+        assert wheels_check.wheel_differences(published, local) == [
             "lib/__init__.py",
             "lib/gone.py",
             "lib/new.py",
@@ -352,7 +355,7 @@ class TestWheelDifferences:
             tmp_path / "b" / "lib-0.1.0-py3-none-any.whl",
             {"lib/__init__.py": "", "lib-0.1.0.dist-info/entry_points.txt": "[console_scripts]\nlib = b\n"},
         )
-        assert w.wheel_differences(published, local) == ["(its entry points)"]
+        assert wheels_check.wheel_differences(published, local) == ["(its entry points)"]
 
 
 # --- refusals --------------------------------------------------------------------------------
@@ -481,10 +484,12 @@ class TestRefusals:
 # --- the report ------------------------------------------------------------------------------
 
 
-def _report(**overrides: Any) -> w.WheelsReport:
+def _report(**overrides: Any) -> wheels_report.WheelsReport:
     built = [
-        w.BuiltWheel("torpaido", "torpaido", "0.1.0", "dev/main", "38ba9a9", "torpaido-0.1.0-py3-none-any.whl"),
-        w.BuiltWheel(
+        wheels_report.BuiltWheel(
+            "torpaido", "torpaido", "0.1.0", "dev/main", "38ba9a9", "torpaido-0.1.0-py3-none-any.whl"
+        ),
+        wheels_report.BuiltWheel(
             "raidar-ultralytics",
             "raidar-ultralytics",
             "0.1.0",
@@ -494,19 +499,19 @@ def _report(**overrides: Any) -> w.WheelsReport:
         ),
     ]
     published = [
-        w.PublishedDependency("confluid", "confluid", "0.4.0", "0.4.0", ["confluid/a.py", "confluid/b.py"]),
-        w.PublishedDependency("loggair", "loggair", "0.2.0", "0.2.0", []),
-        w.PublishedDependency(
+        wheels_report.PublishedDependency("confluid", "confluid", "0.4.0", "0.4.0", ["confluid/a.py", "confluid/b.py"]),
+        wheels_report.PublishedDependency("loggair", "loggair", "0.2.0", "0.2.0", []),
+        wheels_report.PublishedDependency(
             "recordstream",
             "recordstream",
             "0.1.0a2",
             "0.1.0a3",
             ["recordstream/draws.py", "recordstream/x.py", "recordstream/y.py", "recordstream/z.py"],
         ),
-        w.PublishedDependency("matrainer", "matrainer", "0.1.0a1", None, [], note="no checkout here"),
+        wheels_report.PublishedDependency("matrainer", "matrainer", "0.1.0a1", None, [], note="no checkout here"),
     ]
     failures = [
-        w.ImportFailure(
+        wheels_report.ImportFailure(
             "raidar.ultralytics",
             "ModuleNotFoundError: No module named 'recordstream.draws'",
             "recordstream.draws",
@@ -526,7 +531,7 @@ def _report(**overrides: Any) -> w.WheelsReport:
         packages=["torpaido", "navigaitor", "raidar.ultralytics"],
     )
     values.update(overrides)
-    return w.WheelsReport(**values)
+    return wheels_report.WheelsReport(**values)
 
 
 class TestReport:
@@ -535,7 +540,7 @@ class TestReport:
         assert report.ok is False
         assert report.release_first == ["recordstream"]
         assert report.behind_only == ["confluid"]
-        text = w.render_report(report)
+        text = wheels_report.render_report(report)
         assert "navigaitor needs 2 workspace projects that are not on PyPI" in text
         assert "navigaitor/wheels (3.4 MB)" in text
         assert "raidar-ultralytics  0.1.0  dev/main d63b739" in text
@@ -556,11 +561,11 @@ class TestReport:
 
     def test_all_imported_and_nothing_behind_says_so(self) -> None:
         report = _report(
-            published=[w.PublishedDependency("loggair", "loggair", "0.2.0", "0.2.0", [])],
+            published=[wheels_report.PublishedDependency("loggair", "loggair", "0.2.0", "0.2.0", [])],
             import_failures=[],
         )
         assert report.ok is True
-        text = w.render_report(report)
+        text = wheels_report.render_report(report)
         assert "all 2 modules imported" in text
         assert text.rstrip().endswith("PyPI is up to date for navigaitor.")
 
@@ -568,23 +573,27 @@ class TestReport:
         error = "× No solution found when resolving dependencies:\n╰─▶ Because only confluid<=0.4.0 is available"
         report = _report(install_error=error, import_failures=[], imported=[])
         assert report.ok is False
-        text = w.render_report(report)
+        text = wheels_report.render_report(report)
         assert "Installing navigaitor in an empty venv failed:\n    × No solution found" in text
         assert "Behind: confluid, recordstream" in text
         nothing_behind = _report(install_error=error, import_failures=[], imported=[], published=[])
-        assert w.render_report(nothing_behind).rstrip().endswith("Because only confluid<=0.4.0 is available")
+        assert (
+            wheels_report.render_report(nothing_behind).rstrip().endswith("Because only confluid<=0.4.0 is available")
+        )
 
     def test_nothing_to_build_and_nothing_from_pypi(self) -> None:
-        text = w.render_report(_report(built=[], published=[], import_failures=[], wheels_bytes=0))
+        text = wheels_report.render_report(_report(built=[], published=[], import_failures=[], wheels_bytes=0))
         assert "navigaitor needs no workspace project that is not on PyPI" in text
         assert "It takes no workspace project from PyPI." in text
 
     def test_one_of_each_is_written_in_the_singular(self) -> None:
-        text = w.render_report(
+        text = wheels_report.render_report(
             _report(
                 built=_report().built[:1],
                 wheels_bytes=465_000,
-                published=[w.PublishedDependency("loggair", "loggair", "0.2.0", "0.2.0", ["loggair/core.py"])],
+                published=[
+                    wheels_report.PublishedDependency("loggair", "loggair", "0.2.0", "0.2.0", ["loggair/core.py"])
+                ],
                 import_failures=[],
                 imported=["navigaitor"],
                 packages=["navigaitor"],
@@ -598,22 +607,26 @@ class TestReport:
         assert text.rstrip().endswith("Behind, nothing breaks: loggair")
 
     def test_a_failure_no_published_project_explains_is_said_so(self) -> None:
-        failure = w.ImportFailure("navigaitor", "ModuleNotFoundError: No module named 'torch'", "torch", None)
+        failure = wheels_report.ImportFailure(
+            "navigaitor", "ModuleNotFoundError: No module named 'torch'", "torch", None
+        )
         report = _report(import_failures=[failure])
         assert report.release_first == []
-        text = w.render_report(report)
+        text = wheels_report.render_report(report)
         assert "navigaitor  ModuleNotFoundError: No module named 'torch'\n" in text
         assert "navigaitor does not import, and no project it takes from PyPI is the cause." in text
 
     def test_a_module_missing_what_no_workspace_project_ships_is_listed_and_breaks_nothing(self) -> None:
-        warning = w.ImportFailure("navigaitor.ops", "ModuleNotFoundError: No module named 'pycrate'", "pycrate", None)
+        warning = wheels_report.ImportFailure(
+            "navigaitor.ops", "ModuleNotFoundError: No module named 'pycrate'", "pycrate", None
+        )
         report = _report(
-            published=[w.PublishedDependency("loggair", "loggair", "0.2.0", "0.2.0", [])],
+            published=[wheels_report.PublishedDependency("loggair", "loggair", "0.2.0", "0.2.0", [])],
             import_failures=[],
             import_warnings=[warning],
         )
         assert report.ok is True
-        text = w.render_report(report)
+        text = wheels_report.render_report(report)
         assert "  2 modules imported\n" in text
         assert "all 2" not in text
         assert (
@@ -623,7 +636,7 @@ class TestReport:
         assert text.rstrip().endswith("PyPI is up to date for navigaitor.")
 
     def test_a_wheel_built_with_uncommitted_changes_is_listed_with_its_files(self) -> None:
-        dirty = w.BuiltWheel(
+        dirty = wheels_report.BuiltWheel(
             "torpaido",
             "torpaido",
             "0.1.0",
@@ -632,7 +645,7 @@ class TestReport:
             "torpaido-0.1.0-py3-none-any.whl",
             uncommitted=[" M torpaido/a.py", "?? torpaido/new.py"],
         )
-        text = w.render_report(_report(built=[dirty], import_failures=[]))
+        text = wheels_report.render_report(_report(built=[dirty], import_failures=[]))
         assert "  torpaido  0.1.0  dev/main 38ba9a9+uncommitted" in text
         assert (
             "Built with changes no commit holds (--force); no commit reproduces these wheels:\n"
@@ -640,11 +653,11 @@ class TestReport:
             "     M torpaido/a.py\n"
             "    ?? torpaido/new.py\n"
         ) in text
-        assert "no commit holds" not in w.render_report(_report(import_failures=[]))
+        assert "no commit holds" not in wheels_report.render_report(_report(import_failures=[]))
 
     def test_a_name_clash_is_reported(self) -> None:
         clash = "purifai: PyPI's purifai 0.1.3 is another project's — pip takes it over this wheel (0.1.0)"
-        assert clash in w.render_report(_report(name_clashes=[clash]))
+        assert clash in wheels_report.render_report(_report(name_clashes=[clash]))
 
     def test_the_json_form_carries_every_field_and_the_verdicts(self) -> None:
         data = json.loads(json.dumps(_report().to_dict()))
@@ -667,10 +680,10 @@ class TestReport:
 
 class TestReadme:
     def test_the_readme_names_its_generator_each_wheels_commit_and_the_install_command(self) -> None:
-        text = w.render_readme("navigaitor", "unpublished", _report().built)
+        text = wheels_files.render_readme("navigaitor", "unpublished", _report().built)
         assert "AUTO-GENERATED FILE — DO NOT EDIT BY HAND" in text
         assert "Generated by: aisland wheels build navigaitor" in text
-        assert "Source: aisland/aisland/wheels.py (render_readme)" in text
+        assert "Source: aisland/aisland/wheels_files.py (render_readme)" in text
         assert "To regenerate: aisland wheels build navigaitor" in text
         assert "    python wheels/install.py\n" in text
         assert "    python wheels/install.py --reinstall\n" in text
@@ -678,12 +691,14 @@ class TestReadme:
 
     def test_the_readme_holds_no_date_so_an_unchanged_rebuild_changes_no_file(self) -> None:
         built = _report().built
-        assert w.render_readme("navigaitor", "all", built) == w.render_readme("navigaitor", "all", built)
+        assert wheels_files.render_readme("navigaitor", "all", built) == wheels_files.render_readme(
+            "navigaitor", "all", built
+        )
 
     def test_with_all_the_readme_names_the_scope_and_which_wheels_are_needed(self) -> None:
         built = [
             *_report().built,
-            w.BuiltWheel(
+            wheels_report.BuiltWheel(
                 "raidar",
                 "raidar",
                 "0.2.0",
@@ -694,7 +709,7 @@ class TestReadme:
                 on_pypi="0.2.0",
             ),
         ]
-        text = w.render_readme("navigaitor", "all", built)
+        text = wheels_files.render_readme("navigaitor", "all", built)
         assert "To regenerate: aisland wheels build navigaitor --all" in text
         assert "| raidar-0.2.0-py3-none-any.whl | raidar | dev/main | 9f8e7d6 | no |" in text
 
@@ -703,9 +718,9 @@ class TestWheelsYaml:
     """`wheels.yaml`: what install.py reads; `install:` is the user's, kept across reruns."""
 
     @staticmethod
-    def _built() -> List[w.BuiltWheel]:
+    def _built() -> List[wheels_report.BuiltWheel]:
         return [
-            w.BuiltWheel(
+            wheels_report.BuiltWheel(
                 "confluid",
                 "confluid",
                 "0.4.0",
@@ -714,7 +729,7 @@ class TestWheelsYaml:
                 "confluid-0.4.0-py3-none-any.whl",
                 on_pypi="0.4.0",
             ),
-            w.BuiltWheel(
+            wheels_report.BuiltWheel(
                 "raidar",
                 "raidar",
                 "0.2.0",
@@ -727,8 +742,8 @@ class TestWheelsYaml:
         ]
 
     def test_each_wheel_its_commit_whether_it_is_needed_and_install_defaulting_to_needed(self, tmp_path: Path) -> None:
-        not_built = [w.NotBuilt("loggair", "no checkout here — taken from PyPI 0.2.0")]
-        text = w.render_wheels_yaml("navigaitor", "all", self._built(), not_built, {})
+        not_built = [wheels_report.NotBuilt("loggair", "no checkout here — taken from PyPI 0.2.0")]
+        text = wheels_files.render_wheels_yaml("navigaitor", "all", self._built(), not_built, {})
         assert "# To regenerate: aisland wheels build navigaitor --all" in text
         assert "# AUTO-GENERATED FILE — edit only the `install:` values (a rerun keeps them)" in text
         assert "DO NOT EDIT" not in text
@@ -746,7 +761,9 @@ class TestWheelsYaml:
         ]
 
     def test_an_install_the_user_set_is_kept(self) -> None:
-        text = w.render_wheels_yaml("app", "all", self._built(), [], {"raidar": True, "confluid": False, "gone": True})
+        text = wheels_files.render_wheels_yaml(
+            "app", "all", self._built(), [], {"raidar": True, "confluid": False, "gone": True}
+        )
         assert (
             '    project: "confluid"\n    commit: "dev/main 1a2b3c4"\n    needed: true\n    on_pypi: "0.4.0"\n    install: false\n'
             in text
@@ -755,25 +772,29 @@ class TestWheelsYaml:
         assert "gone" not in text
 
     def test_no_wheel_and_nothing_left_out_are_empty_lists(self) -> None:
-        text = w.render_wheels_yaml("app", "unpublished", [], [], {})
+        text = wheels_files.render_wheels_yaml("app", "unpublished", [], [], {})
         assert text.endswith('project: "app"\nwheels: []\nnot_built: []\n')
 
     def test_the_choices_are_read_back_from_the_file_and_a_missing_file_has_none(self, tmp_path: Path) -> None:
-        assert w.read_install_choices(tmp_path / "wheels.yaml") == {}
-        (tmp_path / "wheels.yaml").write_text(w.render_wheels_yaml("app", "all", self._built(), [], {"raidar": True}))
-        assert w.read_install_choices(tmp_path / "wheels.yaml") == {"confluid": True, "raidar": True}
+        assert wheels_files.read_install_choices(tmp_path / "wheels.yaml") == {}
+        (tmp_path / "wheels.yaml").write_text(
+            wheels_files.render_wheels_yaml("app", "all", self._built(), [], {"raidar": True})
+        )
+        assert wheels_files.read_install_choices(tmp_path / "wheels.yaml") == {"confluid": True, "raidar": True}
 
     def test_an_install_that_is_not_true_or_false_is_refused_at_its_line(self, tmp_path: Path) -> None:
-        text = w.render_wheels_yaml("app", "all", self._built(), [], {}).replace("install: false", "install: maybe")
+        text = wheels_files.render_wheels_yaml("app", "all", self._built(), [], {}).replace(
+            "install: false", "install: maybe"
+        )
         (tmp_path / "wheels.yaml").write_text(text)
         line = text.splitlines().index("    install: maybe") + 1
         with pytest.raises(click.ClickException, match=rf"wheels\.yaml:{line}: `install:` must be true or false"):
-            w.read_install_choices(tmp_path / "wheels.yaml")
+            wheels_files.read_install_choices(tmp_path / "wheels.yaml")
 
 
 class TestTheInstallScript:
     def test_the_script_is_the_template_under_a_header_naming_its_command(self) -> None:
-        script = w.render_install_script("navigaitor", "needed")
+        script = wheels_files.render_install_script("navigaitor", "needed")
         template = Path(wi.__file__).read_text()
         header = script.split("# =========================================================================\n")
         assert "# Generated by: aisland wheels build navigaitor --include-published\n" in header[1]
@@ -787,17 +808,17 @@ class TestTheInstallScript:
     @pytest.mark.parametrize("include_project", [False, True])
     @pytest.mark.parametrize("scope", ["unpublished", "needed", "all"])
     def test_each_files_regenerate_line_is_a_command_the_cli_accepts(
-        self, scope: w.WheelsScope, include_project: bool
+        self, scope: wheels_report.WheelsScope, include_project: bool
     ) -> None:
         """Parsed with the REAL `wheels` command (as the Jenkins scaffold's pin does), never string-matched."""
-        from aisland.cli import wheels_build
+        from aisland.cli.wheels import wheels_build
 
         built = TestWheelsYaml._built()
         own = _own_wheel() if include_project else None
         files = {
-            "README.md": w.render_readme("navigaitor", scope, built, own),
-            "wheels.yaml": w.render_wheels_yaml("navigaitor", scope, built, [], {}, own),
-            "install.py": w.render_install_script("navigaitor", scope, include_project),
+            "README.md": wheels_files.render_readme("navigaitor", scope, built, own),
+            "wheels.yaml": wheels_files.render_wheels_yaml("navigaitor", scope, built, [], {}, own),
+            "install.py": wheels_files.render_install_script("navigaitor", scope, include_project),
         }
         expected = {"unpublished": (False, False), "needed": (True, False), "all": (False, True)}[scope]
         for name, text in files.items():
@@ -810,16 +831,20 @@ class TestTheInstallScript:
             assert context.params["include_project"] is include_project, name
 
 
-def _own_wheel() -> w.BuiltWheel:
+def _own_wheel() -> wheels_report.BuiltWheel:
     """The target's own wheel, as `--include-project` builds it."""
-    return w.BuiltWheel("navigaitor", "navigaitor", "0.5.0", "dev/main", "abcdef0", "navigaitor-0.5.0-py3-none-any.whl")
+    return wheels_report.BuiltWheel(
+        "navigaitor", "navigaitor", "0.5.0", "dev/main", "abcdef0", "navigaitor-0.5.0-py3-none-any.whl"
+    )
 
 
 class TestTheProjectsOwnWheelInTheFiles:
     """`--include-project` in the generated files: the wheel listed last, installed in place of the folder."""
 
     def test_wheels_yaml_lists_it_last_installed_and_says_what_that_means(self, tmp_path: Path) -> None:
-        text = w.render_wheels_yaml("navigaitor", "unpublished", TestWheelsYaml._built(), [], {}, _own_wheel())
+        text = wheels_files.render_wheels_yaml(
+            "navigaitor", "unpublished", TestWheelsYaml._built(), [], {}, _own_wheel()
+        )
         assert "# To regenerate: aisland wheels build navigaitor --include-project\n" in text
         assert (
             "# The last wheel is navigaitor's own: while its `install:` is true, it is\n"
@@ -831,14 +856,14 @@ class TestTheProjectsOwnWheelInTheFiles:
         assert project == "navigaitor"
 
     def test_a_kept_install_false_for_the_own_wheel_stays(self) -> None:
-        text = w.render_wheels_yaml("navigaitor", "unpublished", [], [], {"navigaitor": False}, _own_wheel())
+        text = wheels_files.render_wheels_yaml("navigaitor", "unpublished", [], [], {"navigaitor": False}, _own_wheel())
         assert text.endswith(
             '    project: "navigaitor"\n    commit: "dev/main abcdef0"\n    needed: true\n    on_pypi: null\n'
             "    install: false\nnot_built: []\n"
         )
 
     def test_the_readme_lists_it_and_says_it_installs_in_place_of_the_folder(self) -> None:
-        text = w.render_readme("navigaitor", "unpublished", [], _own_wheel())
+        text = wheels_files.render_readme("navigaitor", "unpublished", [], _own_wheel())
         assert "| navigaitor-0.5.0-py3-none-any.whl | navigaitor | dev/main | abcdef0 | yes |" in text
         assert "navigaitor's own wheel is here too." in text
         assert "Install navigaitor from its own folder, editable" not in text
@@ -846,25 +871,24 @@ class TestTheProjectsOwnWheelInTheFiles:
 
     def test_without_it_every_file_is_what_it_was(self) -> None:
         built = TestWheelsYaml._built()
-        assert w.render_readme("app", "all", built, None) == w.render_readme("app", "all", built)
-        assert w.render_wheels_yaml("app", "all", built, [], {}, None) == w.render_wheels_yaml(
+        assert wheels_files.render_readme("app", "all", built, None) == wheels_files.render_readme("app", "all", built)
+        assert wheels_files.render_wheels_yaml("app", "all", built, [], {}, None) == wheels_files.render_wheels_yaml(
             "app", "all", built, [], {}
         )
-        assert "# To regenerate: aisland wheels build app --all\n" in w.render_install_script("app", "all")
-        assert "Install app from its own folder, editable" in w.render_readme("app", "all", built)
+        assert "# To regenerate: aisland wheels build app --all\n" in wheels_files.render_install_script("app", "all")
+        assert "Install app from its own folder, editable" in wheels_files.render_readme("app", "all", built)
 
 
 def _complete(monkeypatch: pytest.MonkeyPatch, root: Optional[Path], line: str) -> List[str]:
     """What bash's TAB offers for `line` (the word being completed is its last, possibly empty), asked the way
     the generated completion script asks: `_AISLAND_COMPLETE=bash_complete` with COMP_WORDS/COMP_CWORD."""
-    from aisland import cli
 
     def _root() -> Path:
         if root is None:
             raise RuntimeError("no workspace here")
         return root
 
-    monkeypatch.setattr(cli, "get_workspace_root", _root)
+    monkeypatch.setattr(locations, "workspace_root", _root)
     words = line.split(" ")
     env = {"_AISLAND_COMPLETE": "bash_complete", "COMP_WORDS": line, "COMP_CWORD": str(len(words) - 1)}
     result = CliRunner().invoke(main, [], env=env, prog_name="aisland")
@@ -963,7 +987,7 @@ class TestCli:
             include_project: bool,
             bundle: bool,
             extra: Optional[str],
-        ) -> w.WheelsReport:
+        ) -> wheels_report.WheelsReport:
             asked.append(scope)
             return _report(import_failures=[])
 
@@ -976,7 +1000,7 @@ class TestCli:
     def test_force_is_handed_to_the_run(self, monkeypatch: pytest.MonkeyPatch, flags: List[str], force: bool) -> None:
         asked: List[bool] = []
 
-        def _vendor(root: Path, project: str, **kwargs: Any) -> w.WheelsReport:
+        def _vendor(root: Path, project: str, **kwargs: Any) -> wheels_report.WheelsReport:
             asked.append(kwargs["force"])
             return _report(import_failures=[])
 
@@ -991,7 +1015,7 @@ class TestCli:
     ) -> None:
         asked: List[bool] = []
 
-        def _vendor(root: Path, project: str, **kwargs: Any) -> w.WheelsReport:
+        def _vendor(root: Path, project: str, **kwargs: Any) -> wheels_report.WheelsReport:
             asked.append(kwargs["check"])
             return _report(import_failures=[])
 
@@ -1006,7 +1030,7 @@ class TestCli:
     ) -> None:
         asked: List[bool] = []
 
-        def _vendor(root: Path, project: str, **kwargs: Any) -> w.WheelsReport:
+        def _vendor(root: Path, project: str, **kwargs: Any) -> wheels_report.WheelsReport:
             asked.append(kwargs["include_project"])
             return _report(import_failures=[])
 
@@ -1162,7 +1186,7 @@ class TestTheRunWithFakedBuilds:
         assert (root / "app" / "wheels" / "libx-0.1.0-py3-none-any.whl").is_file()
         for name, content in checked_files.items():
             assert (root / "app" / "wheels" / name).read_bytes() == content, name
-        text = w.render_report(report)
+        text = wheels_report.render_report(report)
         assert "It takes 2 workspace projects from PyPI, not compared (--no-check): gone 1.0, pubdep 0.1.0" in text
         assert (
             "Not checked (--no-check): app was not installed in an empty venv, so nothing says these wheels import."
@@ -1185,7 +1209,7 @@ class TestTheRunWithFakedBuilds:
         assert [(n.project, n.reason) for n in report.not_built] == [("gone", "no checkout here — taken from PyPI 1.0")]
         assert [(p.project, p.note) for p in report.published] == [("gone", "no checkout here")]
         assert installs == [("app", "libx", "pubdep")]
-        text = w.render_report(report)
+        text = wheels_report.render_report(report)
         assert "app needs 3 workspace projects; 2 are built from this checkout into app/wheels" in text
         assert "  pubdep  0.1.0  dev/main" in text and "on PyPI 0.1.0" in text
         assert "Not built: gone (no checkout here — taken from PyPI 1.0)" in text
@@ -1216,7 +1240,7 @@ class TestTheRunWithFakedBuilds:
             ("other", False, False),
             ("pubdep", True, True),
         ]
-        text = w.render_report(report)
+        text = wheels_report.render_report(report)
         assert "Every workspace project with a checkout here is built into app/wheels" in text
         assert "app needs 3 workspace projects:" in text
         assert "not needed" in text
@@ -1266,7 +1290,9 @@ class TestTheRunWithFakedBuilds:
         yaml_text = (root / "app" / "wheels" / "wheels.yaml").read_text()
         assert f'    commit: "dev/main {lib_sha}+uncommitted"\n' in yaml_text
         assert f"| lib | dev/main | {lib_sha}+uncommitted |" in (root / "app" / "wheels" / "README.md").read_text()
-        assert "  lib\n     M lib/__init__.py\n     D lib/gone.py\n    ?? lib/new.py\n" in w.render_report(report)
+        assert "  lib\n     M lib/__init__.py\n     D lib/gone.py\n    ?? lib/new.py\n" in wheels_report.render_report(
+            report
+        )
 
     def test_include_project_builds_the_projects_own_wheel_once_and_checks_that_wheel(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
@@ -1300,7 +1326,7 @@ class TestTheRunWithFakedBuilds:
         project, entries = wi.read_wheels(folder / "wheels.yaml")
         assert (project, [(e.project, e.install) for e in entries]) == ("app", [("libx", True), ("app", True)])
         assert "To regenerate: aisland wheels build app --include-project\n" in (folder / "install.py").read_text()
-        text = w.render_report(report)
+        text = wheels_report.render_report(report)
         assert "app needs 1 workspace project that is not on PyPI. Its wheel is in app/wheels" in text
         assert (
             f"app's own wheel (--include-project), installed in place of its folder:\n  app  0.5.0  dev/main {app_sha}\n"
@@ -1318,7 +1344,7 @@ class TestTheRunWithFakedBuilds:
 
         assert report.project_wheel is None
         assert sorted(p.name for p in (root / "app" / "wheels").glob("*.whl")) == ["libx-0.1.0-py3-none-any.whl"]
-        assert "own wheel" not in w.render_report(report)
+        assert "own wheel" not in wheels_report.render_report(report)
 
     @pytest.mark.slow
     def test_include_project_refuses_the_project_dirty_and_force_builds_it_as_it_is(
@@ -1337,8 +1363,8 @@ class TestTheRunWithFakedBuilds:
 
         own = report.project_wheel
         assert own is not None and own.commit.endswith("+uncommitted") and own.uncommitted == ["?? app/new.py"]
-        assert "Built with changes no commit holds (--force)" in w.render_report(report)
-        assert "  app\n    ?? app/new.py\n" in w.render_report(report)
+        assert "Built with changes no commit holds (--force)" in wheels_report.render_report(report)
+        assert "  app\n    ?? app/new.py\n" in wheels_report.render_report(report)
 
     def test_a_rerun_keeps_the_install_the_user_chose(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
         root = self._scoped_workspace(tmp_path, monkeypatch)
@@ -1434,7 +1460,7 @@ class TestTheRunWithFakedBuilds:
         assert report.release_first == ["libx"]
         assert report.behind == ["libx", "libz"]
         assert report.ok is False
-        text = w.render_report(report)
+        text = wheels_report.render_report(report)
         assert (
             "app.cli  TypeError: LiquifyApp.command() got an unexpected keyword argument 'config_files'  (libx)" in text
         )
@@ -1548,12 +1574,12 @@ class TestOwner:
 
     def test_the_longest_prefix_wins(self) -> None:
         owners = {"raidar": "raidar", "raidar.ultralytics": "raidar-ultralytics"}
-        assert w._owner("raidar.ultralytics.models", owners) == "raidar-ultralytics"
-        assert w._owner("raidar.other", owners) == "raidar"
+        assert wheels_check.owner_of("raidar.ultralytics.models", owners) == "raidar-ultralytics"
+        assert wheels_check.owner_of("raidar.other", owners) == "raidar"
 
     def test_a_module_nobody_ships_or_no_module_has_no_owner(self) -> None:
-        assert w._owner("torch", {"raidar": "raidar"}) is None
-        assert w._owner(None, {"raidar": "raidar"}) is None
+        assert wheels_check.owner_of("torch", {"raidar": "raidar"}) is None
+        assert wheels_check.owner_of(None, {"raidar": "raidar"}) is None
 
 
 # --- the empty venv, with uv replaced by a script ---------------------------------------------
@@ -1589,13 +1615,15 @@ def _target_with_wheels(tmp_path: Path) -> Tuple[Path, Path]:
     folder = target / "wheels"
     folder.mkdir(parents=True)
     built = [
-        w.BuiltWheel("libx", "libx", "0.1.0", "dev/main", "1111111", "libx-0.1.0-py3-none-any.whl"),
-        w.BuiltWheel("other", "other", "0.1.0", "dev/main", "2222222", "other-0.1.0-py3-none-any.whl", needed=False),
+        wheels_report.BuiltWheel("libx", "libx", "0.1.0", "dev/main", "1111111", "libx-0.1.0-py3-none-any.whl"),
+        wheels_report.BuiltWheel(
+            "other", "other", "0.1.0", "dev/main", "2222222", "other-0.1.0-py3-none-any.whl", needed=False
+        ),
     ]
     for b in built:
         (folder / b.wheel).write_text("")
-    (folder / "wheels.yaml").write_text(w.render_wheels_yaml("app", "all", built, [], {"other": True}))
-    (folder / "install.py").write_text(w.render_install_script("app", "all"))
+    (folder / "wheels.yaml").write_text(wheels_files.render_wheels_yaml("app", "all", built, [], {"other": True}))
+    (folder / "install.py").write_text(wheels_files.render_install_script("app", "all"))
     return target, folder
 
 
@@ -1603,14 +1631,14 @@ class TestInstallAndImport:
     def test_a_venv_that_cannot_be_made_is_the_install_error(self, tmp_path: Path) -> None:
         target, folder = _target_with_wheels(tmp_path)
         uv = _fake_uv(tmp_path, venv=2)
-        error, failures, imported = w.install_and_import(str(uv), target, folder, ["app"], tmp_path)
+        error, failures, imported = wheels_check.install_and_import(str(uv), target, folder, ["app"], tmp_path)
         assert error == "creating the venv failed:\nvenv: no interpreter"
         assert failures == {} and imported == []
 
     def test_the_shipped_script_installs_the_needed_wheels_with_uv_into_the_venv(self, tmp_path: Path) -> None:
         target, folder = _target_with_wheels(tmp_path)
         uv = _fake_uv(tmp_path)
-        w.install_and_import(str(uv), target, folder, ["app"], tmp_path)
+        wheels_check.install_and_import(str(uv), target, folder, ["app"], tmp_path)
         install_line = (tmp_path / "uv.log").read_text().splitlines()[1]
         assert install_line.startswith(
             f"pip install --python {sys.executable} --quiet --find-links {folder} -e {target} "
@@ -1620,27 +1648,27 @@ class TestInstallAndImport:
     def test_uvs_resolution_error_is_the_install_error(self, tmp_path: Path) -> None:
         target, folder = _target_with_wheels(tmp_path)
         uv = _fake_uv(tmp_path, install=1)
-        error, _, _ = w.install_and_import(str(uv), target, folder, ["app"], tmp_path)
+        error, _, _ = wheels_check.install_and_import(str(uv), target, folder, ["app"], tmp_path)
         assert error is not None and error.endswith("× No solution found when resolving dependencies")
 
     def test_an_import_run_that_dies_without_a_result_says_so(self, tmp_path: Path) -> None:
         target, folder = _target_with_wheels(tmp_path)
         uv = _fake_uv(tmp_path)
-        error, _, _ = w.install_and_import(str(uv), target, folder, ["app"], tmp_path)
+        error, _, _ = wheels_check.install_and_import(str(uv), target, folder, ["app"], tmp_path)
         assert error == "the import run ended without a result (exit 3):\nboom"
 
     def test_the_targets_own_uv_toml_configures_the_install(self, tmp_path: Path) -> None:
         target, folder = _target_with_wheels(tmp_path)
         (target / "uv.toml").write_text('extra-index-url = ["https://private.example/simple"]\n')
         uv = _fake_uv(tmp_path)
-        w.install_and_import(str(uv), target, folder, ["app"], tmp_path)
+        wheels_check.install_and_import(str(uv), target, folder, ["app"], tmp_path)
         install_line = (tmp_path / "uv.log").read_text().splitlines()[1]
         assert f"--config-file {target / 'uv.toml'}" in install_line
 
     def test_without_a_uv_toml_no_configuration_is_named(self, tmp_path: Path) -> None:
         target, folder = _target_with_wheels(tmp_path)
         uv = _fake_uv(tmp_path)
-        w.install_and_import(str(uv), target, folder, ["app"], tmp_path)
+        wheels_check.install_and_import(str(uv), target, folder, ["app"], tmp_path)
         assert "--config-file" not in (tmp_path / "uv.log").read_text()
 
 
@@ -1670,7 +1698,7 @@ def offline_uv(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     _repackaged_wheel(pypi, "PyYAML")
     monkeypatch.setenv("UV_OFFLINE", "1")
     monkeypatch.setenv("UV_CACHE_DIR", str(tmp_path / "uv-cache"))
-    monkeypatch.setattr(w, "_PYPI_INDEX_ARGS", ("--no-index", "--find-links", str(pypi)))
+    monkeypatch.setattr(wheels_check, "PYPI_INDEX_ARGS", ("--no-index", "--find-links", str(pypi)))
     monkeypatch.setattr(w, "_uv", lambda root: str(Path(sys.executable).with_name("uv")))
     return pypi
 
@@ -1796,7 +1824,7 @@ class TestEndToEnd:
 
         assert [(b.project, b.on_pypi) for b in report.built] == [("libx", None), ("pubdep", "1.0")]
         assert report.published == [] and report.not_built == []
-        assert report.ok, w.render_report(report)
+        assert report.ok, wheels_report.render_report(report)
         assert report.imported == ["app", "app.core", "app.labelling", "libx", "pubdep", "pubdep.newer"]
         assert "    python wheels/install.py\n" in (ws / "app" / "wheels" / "README.md").read_text()
 
@@ -1817,7 +1845,7 @@ class TestEndToEnd:
         assert not [n for n in names if "deleted_long_ago" in n]
         assert [(b.project, b.uncommitted) for b in report.built] == [("libx", ["?? libx/fresh.py"])]
         assert report.built[0].commit.endswith("+uncommitted")
-        assert report.ok, w.render_report(report)
+        assert report.ok, wheels_report.render_report(report)
         assert "app.fresh" in report.imported
 
     def test_all_ships_a_project_the_target_does_not_need_without_installing_it(
@@ -1828,7 +1856,7 @@ class TestEndToEnd:
         report = w.vendor_wheels(ws, "app", scope="all")
 
         assert [(b.project, b.needed) for b in report.built] == [("libx", True), ("pubdep", True), ("unrelated", False)]
-        assert report.ok, w.render_report(report)
+        assert report.ok, wheels_report.render_report(report)
         assert "unrelated" not in report.imported
 
     def test_include_project_ships_the_project_as_a_wheel_that_installs_from_a_folder_of_no_project(
@@ -1840,7 +1868,7 @@ class TestEndToEnd:
 
         report = w.vendor_wheels(ws, "app", include_project=True, make_zip=True)
 
-        assert report.ok, w.render_report(report)
+        assert report.ok, wheels_report.render_report(report)
         assert report.project_wheel is not None and report.project_wheel.wheel == "app-0.1.0-py3-none-any.whl"
         assert report.imported == ["app", "app.core", "app.labelling", "libx"]
         assert report.zip_standalone

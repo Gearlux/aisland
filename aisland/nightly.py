@@ -29,7 +29,8 @@ from typing import Any, Dict, List, Optional, Protocol, Tuple
 from aisland.errors import AislandError
 from aisland.paths import DATA_DIR
 from aisland.projects import get_workspace_name
-from aisland.services.jenkins import NIGHTLY_CRON, JenkinsService
+from aisland.services.jenkins import JenkinsService
+from aisland.services.jenkins_jobs import NIGHTLY_CRON
 
 #: One report per check, `<date>.md`; git-ignored like all of `aisland/data/`.
 NIGHTLY_DIR = DATA_DIR / "nightly"
@@ -41,8 +42,8 @@ NOTIFICATION_LIMIT = 200
 GATE_LINES = 5
 #: A quality gate's offending lines in a console: black, isort, flake8 (`path:line:col: CODE`), mypy.
 _GATE_LINE = re.compile(r"^(would reformat |ERROR: .*(sorted|formatted)|\S+:\d+:\d+: [A-Z]+\d+ |\S+:\d+: error: )")
-#: The line a stage past its time limit writes (`Jenkinsfile.local`'s `limited` helper: `jenkins.TIMED_OUT_MESSAGE`,
-#: the limits in `jenkins.STAGE_LIMITS`), as the `error` step prints it at the end of the console. pytest wrote no
+#: The line a stage past its time limit writes (`Jenkinsfile.local`'s `limited` helper: `ci_scaffold.TIMED_OUT_MESSAGE`,
+#: the limits in `ci_scaffold.STAGE_LIMITS`), as the `error` step prints it at the end of the console. pytest wrote no
 #: report then — its files are removed before the call — so this line is what the morning says.
 _TIMED_OUT = re.compile(r"^ERROR: (?P<stage>.+?) timed out after (?P<minutes>\d+) min\b")
 

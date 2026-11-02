@@ -21,7 +21,7 @@ import click.testing
 import pytest
 from click.testing import CliRunner
 
-from aisland import cli, env_example, manager
+from aisland import cli, env_example, locations, manager
 
 LIB = """\
 # lib: where the library finds its data
@@ -73,7 +73,7 @@ def root(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
         code='import os\nos.environ.get("DATA_ROOT")\nos.getenv("LIB_CACHE")\n',
         example=LIB_EXAMPLE,
     )
-    monkeypatch.setattr(cli, "get_workspace_root", lambda: workspace)
+    monkeypatch.setattr(locations, "workspace_root", lambda: workspace)
     return workspace
 
 
@@ -241,7 +241,7 @@ def test_one_project_and_one_variable_are_said_in_the_singular(tmp_path: Path, m
     workspace = tmp_path / "acme"
     workspace.mkdir()
     _project(workspace, "lib", "# lib: x\n\n# LIB_CACHE=   a cache\n", example="# lib: x\n\n# LIB_CACHE=   a cache\n")
-    monkeypatch.setattr(cli, "get_workspace_root", lambda: workspace)
+    monkeypatch.setattr(locations, "workspace_root", lambda: workspace)
     assert _run("env-example").output == (
         "==> Wrote env.complete (1 variable from 1 project)\n==> Wrote env.example (1 variable from 1 project)\n"
     )
@@ -262,7 +262,7 @@ def test_a_second_heading_gets_a_blank_line_above_it(tmp_path: Path, monkeypatch
     workspace = tmp_path / "acme"
     workspace.mkdir()
     _project(workspace, "lib", "# lib: x\n\n# -- a\n# A_ONE=1  one\n\n# -- b\n# B_TWO=2  two\n")
-    monkeypatch.setattr(cli, "get_workspace_root", lambda: workspace)
+    monkeypatch.setattr(locations, "workspace_root", lambda: workspace)
     assert _run("env-example").exit_code == 0
     assert (
         (workspace / env_example.COMPLETE)

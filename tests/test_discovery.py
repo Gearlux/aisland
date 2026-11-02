@@ -22,7 +22,7 @@ from typing import Dict
 import pytest
 from click.testing import CliRunner
 
-from aisland import cli, discovery
+from aisland import cli, discovery, locations
 
 MATRAINER = """\
 [project]
@@ -298,7 +298,7 @@ def test_an_entry_point_of_a_package_outside_the_workspace_is_not_loaded(
 @pytest.fixture
 def shown(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     root = _workspace(tmp_path, {"matrainer": MATRAINER, "sonair": SONAIR, "acme": PLUGIN_PROJECT})
-    monkeypatch.setattr(cli, "get_workspace_root", lambda: root)
+    monkeypatch.setattr(locations, "workspace_root", lambda: root)
     return root
 
 
@@ -459,7 +459,7 @@ def test_workspace_show_says_when_nothing_is_declared_and_names_undefined_select
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     root = _workspace(tmp_path, {"sonair": SONAIR})
-    monkeypatch.setattr(cli, "get_workspace_root", lambda: root)
+    monkeypatch.setattr(locations, "workspace_root", lambda: root)
     result = CliRunner().invoke(cli.main, ["workspace", "show"])
     assert result.output.splitlines() == [
         "Declared by the projects: nothing",
@@ -469,7 +469,7 @@ def test_workspace_show_says_when_nothing_is_declared_and_names_undefined_select
 
 def test_a_service_without_a_port_shows_so(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     root = _workspace(tmp_path, {"p": _EXTRAS + '[tool.aisland.service.db]\ncommand = ["db"]\n'})
-    monkeypatch.setattr(cli, "get_workspace_root", lambda: root)
+    monkeypatch.setattr(locations, "workspace_root", lambda: root)
     result = CliRunner().invoke(cli.main, ["workspace", "show"])
     assert result.output.splitlines() == ["Declared by the projects:", "  service  db  p  no port"]
 

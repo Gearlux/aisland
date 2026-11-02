@@ -12,7 +12,7 @@ from pathlib import Path
 import pytest
 from click.testing import CliRunner
 
-from aisland import ci_templates, cli, locations, workspace_check, workspace_file
+from aisland import ci_scaffold, ci_templates, cli, locations, workspace_check, workspace_file
 from aisland.services.jenkins import JenkinsService
 
 #: A company's Jenkinsfile: a shared library, a pod agent, a private index — and a Groovy list of maps, which Jinja's
@@ -74,7 +74,7 @@ def ws(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
 
 
 def _scaffold(project: str = "models") -> None:
-    JenkinsService().scaffold_pipelines(project_name=project, force=True)
+    ci_scaffold.scaffold(project, force=True, jenkins_url=JenkinsService().url())
 
 
 # --- aisland's own set -------------------------------------------------------------------------------------------

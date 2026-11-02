@@ -81,7 +81,7 @@ def installs(monkeypatch: pytest.MonkeyPatch) -> Dict[str, List[object]]:
 
 
 def _run(root: Path, monkeypatch: pytest.MonkeyPatch, *args: str) -> Result:
-    monkeypatch.setattr(cli, "get_workspace_root", lambda: root)
+    monkeypatch.setattr(locations, "workspace_root", lambda: root)
     return CliRunner().invoke(cli.main, ["workspace", "provision", *args])
 
 
@@ -138,7 +138,7 @@ def test_a_bad_declaration_stops_the_install_before_anything_is_installed(
 
 def test_workspace_show_lists_the_tools(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     root = _workspace(tmp_path, {"editor": EDITOR})
-    monkeypatch.setattr(cli, "get_workspace_root", lambda: root)
+    monkeypatch.setattr(locations, "workspace_root", lambda: root)
     result = CliRunner().invoke(cli.main, ["workspace", "show", "--json"])
     assert result.exit_code == 0, result.output
     assert {"project": "editor", "kind": "brew", "name": "node"} in [

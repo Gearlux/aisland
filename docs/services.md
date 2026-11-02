@@ -266,7 +266,7 @@ Cancelling nested steps due to timeout
 Sending interrupt signal to process
 After 20s process did not stop
 ...
-ERROR: Slow Tests timed out after 60 min - its limit in Jenkinsfile.local (STAGE_LIMITS in aisland/services/jenkins.py)
+ERROR: Slow Tests timed out after 60 min - its limit in Jenkinsfile.local (STAGE_LIMITS in aisland/ci_scaffold.py)
 Finished: FAILURE
 ```
 

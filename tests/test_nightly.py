@@ -15,8 +15,11 @@ import pytest
 from click.testing import CliRunner
 
 from aisland import nightly, projects
+from aisland.ci_scaffold import TIMED_OUT_MESSAGE
 from aisland.cli import main
-from aisland.services.jenkins import NIGHTLY_CHECK_CRON, TIMED_OUT_MESSAGE, JenkinsService
+from aisland.services import jenkins_jobs
+from aisland.services.jenkins import JenkinsService
+from aisland.services.jenkins_jobs import NIGHTLY_CHECK_CRON
 
 TIMER = "hudson.triggers.TimerTrigger$TimerTriggerCause"
 USER = "hudson.model.Cause$UserIdCause"
@@ -315,7 +318,7 @@ def test_the_check_job_runs_the_report_on_weekday_mornings(tmp_path: Path, monke
     monkeypatch.setattr(projects, "get_workspace_name", lambda: "ws")
     svc = JenkinsService()
     svc.service_data_dir = tmp_path / "jenkins"
-    svc._create_nightly_check_job()
+    jenkins_jobs._create_nightly_check_job(svc.service_data_dir)
     config = (svc.service_data_dir / "jobs" / "ws.nightly-check" / "config.xml").read_text()
     assert NIGHTLY_CHECK_CRON == "30 9 * * 1-5"
     assert f"cron('{NIGHTLY_CHECK_CRON}')" in config

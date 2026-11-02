@@ -30,11 +30,22 @@ imports no project's code. [test-stats-workspace] the test-run record is written
 service tools take any service of the workspace. [manager-split] `aisland setup` runs steps that each live in a
 module of their own. [workspace-format] `workspace.toml` says its format, and a key no part of aisland reads is named. [ci-templates] the CI
 files are rendered from a template set the workspace chooses. [file-readers] a project's `pyproject.toml` and
-`.gitmodules` each have one reader. [debug-log] a diagnostic is a debug record `--debug` shows, never output.
+`.gitmodules` each have one reader. [debug-log] a diagnostic is a debug record `--debug` shows, never output. [module-split] the CLI is a package of one
+module per command group, CI-file generation and Jenkins' jobs are modules apart from the service, and a run of
+`aisland wheels build` is a short driver over its phases.
 
 ## Current state
 
-The workspace's dev-infrastructure CLI, `aisland` (click, `aisland/cli.py`):
+The workspace's dev-infrastructure CLI, `aisland` (click, the `aisland/cli/` package):
+- `cli/`: `__init__.py` adds every command group to `main`; `_base.py` holds `main`, the classes every group derives
+  from (`_Command`, `_Group`, `_WorkspaceGroup`), the groups of the services a project brings, `--debug`'s log and the
+  completers several groups share; each command group is a module of its own — `workspace.py` (with
+  `configure.py` and `editor.py` added to it), `toplevel.py` (`setup`, `check`, `doctor`, `clean`, `backups`,
+  `tests`, `completion`, `mcp`, `notebooks`), `wheels.py`, `services.py` (`services`, `docker`, `jenkins`,
+  `swiftbar`, `supervisor`), `tunnel.py` [module-split]. A new command goes into its group's module; a new group into
+  a module of its own, added in `__init__.py`. A command module defines its group with `click.group(cls=_Group)` /
+  `click.command(cls=_Command)` — a `cls` left out builds a plain click class without the empty-word completion.
+  `python -m aisland.cli` (`__main__.py`) is how `aisland-mcp` runs a command.
 - `errors.py`: `AislandError`, the root of every exception aisland defines (a `click.ClickException`, so the CLI
   prints it as one `Error:` line) [errors-root]. `downloads.py`: `download(url, target)`, every file aisland fetches,
   with a time limit.
@@ -157,12 +168,20 @@ The workspace's dev-infrastructure CLI, `aisland` (click, `aisland/cli.py`):
   `wheels_prune.py`: `aisland wheels prune <project> [--apply]` strips the committed wheel versions no branch or tag
   holds from the history and force-pushes origin; `aisland wheels reset <project>` brings another clone onto it, in
   any state (`filter_repo.py`: git-filter-repo run with a config reader of `--null`).
+  `vendor_wheels` is a driver over the run's phases [module-split]: `_plan` (a frozen `WheelsPlan`: what the target
+  needs, what PyPI has, what the scope builds), `_choose_extra`, `_build_all`, `_write_folder`, `_check` (or
+  `_unchecked` under `--no-check`), `_commit_or_note`; every refusal comes before the first build, in that order. The
+  run's other parts are modules of their own: `wheels_report.py` (the report's shapes, `render_report`,
+  `regenerate_command`, `provenance_header`), `wheels_files.py` (`README.md`, `wheels.yaml`, `install.py`, the
+  `.gitignore`, the zip) and `wheels_check.py` (what a wheel holds, the empty-venv install and imports, the blame of a
+  failed import). A name the run patches in a test is patched where it is CALLED: `wheels.build_wheel`,
+  `wheels.install_and_import`, but `wheels_check.PYPI_INDEX_ARGS`, which both modules read from there.
 - `nightly.py`: `aisland tests nightly`, the morning report of the orchestrator's nightly runs
   (`aisland/data/nightly/<date>.md`, a desktop notification, exit 1 on a bad night), run by the
   `<workspace>.nightly-check` Jenkins job.
 - `tunnel.py`: `aisland tunnel` — a VS Code Remote Tunnel to the machine aisland runs on. One
   detached process with a pidfile, NOT a `BaseService` (the remote box has no process-compose) and
-  not in `aisland services start`; workspace-free in `cli.py`'s `_WORKSPACE_FREE`, because the box it is for
+  not in `aisland services start`; workspace-free in `cli/_base.py`'s `_WORKSPACE_FREE`, because the box it is for
   has no workspace. State is PER MACHINE, `~/.aisland/tunnel` (`AISLAND_TUNNEL_HOME` overrides it,
   for a `$HOME` that does not persist) — never derived from the working directory, which made
   `start` in one folder and `status` in another disagree. `code tunnel` is passed NO account option
@@ -182,7 +201,12 @@ The workspace's dev-infrastructure CLI, `aisland` (click, `aisland/cli.py`):
   control protocol is the VS Code CLI's: `tests/fake_devtunnel.py` speaks it and changes with it. The user page is
   `docs/tunnel.md` (the README keeps three commands and its absolute link), its twin `examples/01_tunnel_terminal.py`;
   an error the page quotes is the code's, word for word (`tests/test_tunnel_docs.py`).
-- `services/`: `jenkins` (incl. `aisland jenkins scaffold`) and `swiftbar` run under the supervisor;
+- `ci_scaffold.py`: `aisland jenkins scaffold` — a project's facts (`project_facts`: extras, internal dependencies,
+  the slow marker, Node folders, the limits) rendered by `ci_templates` and written, each Jenkinsfile linted by the
+  running Jenkins first; `STAGE_LIMITS`, `GH_ACTIONS` and `TIMED_OUT_MESSAGE` live here [module-split].
+- `services/`: `jenkins` (the service: WAR, Java, plugins, credentials, launch; the jobs it seeds —
+  `aisland jenkins init|remove`, the orchestrator, the nightly check — are `services/jenkins_jobs.py`, functions of the
+  Jenkins home [module-split]) and `swiftbar` run under the supervisor;
   `docker` (Colima) runs on its own; `registry.py` lists them, `declared.py` and `plugin.py` run the ones a project
   brings (FiftyOne is curaitor's; MLflow, Aim and ClearML are matrainer's, `matrainer/services/` — MLflow since
   2026-10-28, started when named like every service a project brings; Label Studio is annotaide's,
@@ -215,7 +239,7 @@ start-time port pre-flight naming the PID is the only signal). All service state
   the command is raised as a `click.ClickException` — one `Error:` line on stderr. A failure the command goes on past
   (a project that fails to install while setup installs the others, a service that does not start beside the others,
   a Jenkins step) is `failures.report(...)`-ed: its line goes to stderr, the command finishes, and
-  `cli._WorkspaceGroup.invoke` turns the run into exit 1, also over a command's own `SystemExit(0)`; a non-zero code
+  `cli._base._WorkspaceGroup.invoke` turns the run into exit 1, also over a command's own `SystemExit(0)`; a non-zero code
   of the command's own is kept. Never `click.echo("Error…")` and return: a script, CI or the MCP server's `aisland`
   call reads the exit status (`tests/test_errors_exit_one.py`) [failures].
 - **A warning goes to stderr, through `failures.warn` — never `click.echo("  - Warning: …")`.** It fails nothing; it
@@ -225,7 +249,7 @@ start-time port pre-flight naming the PID is the only signal). All service state
   `AislandError` (`errors.py`) — never `click.ClickException` itself, never `SystemExit` (the harness scripts and
   `aisland-mcp`'s `main` are their own entry points) — and an exception class aisland defines derives from it AND the
   builtin it stands for (`DeclarationError(AislandError, ValueError)`, `ReleaseProbeError(AislandError,
-  ConnectionError)`). `cli._WorkspaceGroup.invoke` turns an `OSError` or `CalledProcessError` that reaches it into one
+  ConnectionError)`). `cli._base._WorkspaceGroup.invoke` turns an `OSError` or `CalledProcessError` that reaches it into one
   `Error: <it> (run `aisland --debug …` for the traceback)` line; `aisland --debug` re-raises it and prints the
   traceback of aisland's own refusals too; any other exception is a bug and keeps its traceback. An `except` names
   what can fail there (`OSError`, `ET.ParseError`, `tomllib.TOMLDecodeError`), never `Exception` — except around a
@@ -240,7 +264,7 @@ start-time port pre-flight naming the PID is the only signal). All service state
   `click.echo` (user request 2026-10-30).** [debug-log] A module that reports aisland's own mechanics no user acts on
   (a cached download reused, a digest that matched, a step with nothing to do, which file was read, which command
   ran, the workspace root and why) logs it at debug with the standard library's `logging` — never loguru or loggair,
-  which aisland does not depend on. `aisland --debug` (`cli._show_debug_log`, the option's callback, so the group's
+  which aisland does not depend on. `aisland --debug` (`cli._base._show_debug_log`, the option's callback, so the group's
   own decisions are logged too) puts ONE handler on the `aisland` logger for the run — `aisland: <module>: <message>`
   on stderr — and takes it off when the run ends, the level put back; without it nothing below WARNING shows and the
   output is unchanged. `click.echo` keeps the command's result, the progress a person watches (`==>` steps, `[OK]
@@ -272,7 +296,7 @@ start-time port pre-flight naming the PID is the only signal). All service state
   read the cwd or `AISLAND_WORKSPACE` in checkout mode, and never find a path by counting folders up
   from a module (`parents[N]`): ask `locations`/`get_workspace_root()`. (`tests/test_locations.py`,
   `tests/test_packaging.py::test_from_the_wheel_the_workspace_is_where_it_runs_and_the_state_goes_into_it`)
-  - Importing never raises; outside a workspace the CLI's group (`cli._WorkspaceGroup.parse_args`)
+  - Importing never raises; outside a workspace the CLI's group (`cli._base._WorkspaceGroup.parse_args`)
     refuses every command but `workspace`, `wheels`, `tunnel`, `doctor` (it checks the machine and its Python),
     `notebooks` (a git filter on stdin) and `--help`, before anything is written
     (`::test_a_workspace_command_is_refused_and_writes_nothing`,
@@ -451,19 +475,19 @@ start-time port pre-flight naming the PID is the only signal). All service state
   unnamed → `status`/`info` every service, the others the `by_default` ones, `stop`/`reset` last-started first (the
   container engine last). A name no service has is refused before anything is done. There are no top-level
   `aisland start|stop|restart|status|info|reset`; a new service is one `Entry` and never a hand-written list in
-  `cli.py`. (`tests/test_services_command.py`)
+  `aisland/cli/`. (`tests/test_services_command.py`)
 - **`aisland services` asks process-compose as little as it can.** Each question is a client process (0.2-0.4 s on a
   loaded machine): `list_processes` and `get_ports` ask their own question alone (a failed one already means no
   server — no `project state` first), and `registry.status`/`info` run inside `supervisor.snapshot()`, where ONE
   `process list` answers every service. Nothing outlives the block, so `wait_for` still sees each new answer.
   (`tests/test_supervisor_snapshot.py`) The services the projects bring are worked out ONCE per CLI run
-  (`cli._WorkspaceGroup._declared`, in `ctx.meta`: `--help` asks every group for its help), and `discovery.installed`
+  (`cli._base._WorkspaceGroup._declared`, in `ctx.meta`: `--help` asks every group for its help), and `discovery.installed`
   scans the installed entry points once for every plugin — each scan reads every distribution's metadata
   (`tests/test_plugin_services.py::test_one_help_finds_the_projects_services_once`,
   `::test_loading_reads_the_installed_entry_points_once`). **Listing the services imports no project's code (user
   request 2026-10-29).** [lazy-plugins] A plugin service's `Entry` loads its class on first use (`registry._Plugin`:
   `make`, `details` → its `options` and `reset_question`), and its group builds its commands on first use
-  (`cli._ServiceGroup`), so `aisland --help` reads declarations and metadata only (0.65 s → 0.24 s);
+  (`cli._base._ServiceGroup`), so `aisland --help` reads declarations and metadata only (0.65 s → 0.24 s);
   `registry.entries` — what `aisland services …` acts on — still loads and checks every class first, so a broken one
   is refused before anything runs (`::test_help_lists_a_projects_service_without_importing_its_code`,
   `::test_a_plugin_that_cannot_be_imported_is_listed_and_fails_when_used`).
@@ -471,7 +495,7 @@ start-time port pre-flight naming the PID is the only signal). All service state
   `[tool.aisland.service.<name>]` (`command`, `port`, `ready`, `needs`) becomes a `services/declared.py`
   `DeclaredService` — the command under the supervisor, probed only with both `port` and `ready` — appended to the
   list after aisland's own (`registry.declared`), started only when named, offered only while every `needs` choice is
-  in that selection's effective choice. It gets `aisland <name> …` from `cli._WorkspaceGroup.get_command`, after
+  in that selection's effective choice. It gets `aisland <name> …` from `cli._base._WorkspaceGroup.get_command`, after
   aisland's own commands; its help, declared or implemented, names the project that brings it (`Entry.project`:
   `Manage labelstudio, a service annotaide brings.`), and `tests/test_docs.py`'s no-workspace-names rule reads
   aisland's own help without them. A name of an aisland service or command is a `DeclarationError` naming the line; the
@@ -605,7 +629,7 @@ Root `AGENTS.md` "Two Test Runs" (user ruling 2026-10-05). [test-stats]
 - A project that registers `slow` sets `addopts = "-m 'not slow'"`
   (`tests/test_workspace_fast_run_default.py::test_the_real_workspace_runs_the_fast_run_by_default`).
 - aisland's own pytest settings live in `[tool.pytest.ini_options]` alone, never a `pytest.ini`: pytest reads a
-  `pytest.ini` INSTEAD of the table, while the scaffold (`jenkins.registers_slow_marker`) reads the table, so with
+  `pytest.ini` INSTEAD of the table, while the scaffold (`ci_scaffold.registers_slow_marker`) reads the table, so with
   both the CI files split a run pytest never splits. A test moves to aisland's slow leg only when
   `aisland tests report aisland` lists it
   (`tests/test_workspace_fast_run_default.py::test_aislands_own_pytest_reads_the_table_that_registers_slow`).
@@ -928,8 +952,8 @@ User rulings 2026-10-23. [frameworks] (`tests/test_selection.py`)
 A bare `::` pin in this section is in `tests/test_jenkins_scaffold.py`.
 
 - **The files come from a TEMPLATE SET (user picks 2026-10-30: Jinja2 in the core install, a set from a folder or a
-  package's entry point, before 0.1.0).** [ci-templates] `scaffold_pipelines` works out the project's FACTS
-  (`ci_templates.Facts`) and renders every file of the chosen set (`ci_templates.render`); it writes no file text of
+  package's entry point, before 0.1.0).** [ci-templates] `ci_scaffold.scaffold` works out the project's FACTS
+  (`ci_scaffold.project_facts` → `ci_templates.Facts`) and renders every file of the chosen set (`ci_templates.render`); it writes no file text of
   its own. aisland's set is `aisland/templates/ci/` — `template.toml`'s `[files]` names the three files, the `_*.jinja`
   pieces are included — and every rule of this section is now a rule of those templates and the facts. Delimiters
   `<[ ]>`, `<% %>`, `<# #>` (never Jinja's braces: `[[…]]` Groovy lists, `${{ }}` and `[[ ]]` shell tests appear in CI
@@ -956,7 +980,7 @@ A bare `::` pin in this section is in `tests/test_jenkins_scaffold.py`.
   they come from the wheels it commits, through the extra `aisland wheels build --extra` writes
   (`wheels_extra.remembered_extra`), added to the install line; a dependency no wheel of that extra holds — or no
   such extra — refuses the scaffold, naming the dependencies and `aisland wheels build <project> --extra <name>
-  --commit`, before any file is written (`jenkins._unreleased_from_wheels`). A released dependency needs nothing.
+  --commit`, before any file is written (`ci_scaffold._unreleased_from_wheels`). A released dependency needs nothing.
   (`tests/test_github_owner.py::test_a_project_off_github_installs_its_unreleased_dependencies_from_its_wheels_extra`
   and its neighbours)
 - **`Jenkinsfile.local` installs nothing (user instruction 2026-09-13).** `Initialize` only
@@ -985,7 +1009,7 @@ A bare `::` pin in this section is in `tests/test_jenkins_scaffold.py`.
   `ci.yml` keep the slow leg on every push. The orchestrator passes
   `SLOW_TESTS: slowTests()` — true for its timer's run (`TimerTrigger$TimerTriggerCause`) or a
   tick on its own `SLOW_TESTS` — to the projects with the marker only. Jenkins drops a parameter
-  a job does not define, so a seeded job (`local_job_config`) and the orchestrator define it
+  a job does not define, so a seeded job (`jenkins_jobs.local_job_config`) and the orchestrator define it
   before their first run. (`tests/test_jenkins_scaffold.py::TestTheSlowMarkerSplitsTheTestInvocations`,
   `tests/test_orchestrator_executor.py::test_the_nightly_run_asks_for_the_slow_tests_and_a_manual_one_does_not`,
   `::test_a_seeded_local_job_accepts_the_slow_switch_before_its_first_run`)
@@ -1023,7 +1047,7 @@ A bare `::` pin in this section is in `tests/test_jenkins_scaffold.py`.
   `ci.yml`); `Jenkinsfile.local` fetches nothing. (`tests/test_playwright_browser.py`,
   `::TestAPlaywrightDevDependencyInstallsItsBrowser`) [playwright]
 - **A `package.json` with a `test` script is a Node test run CI runs (user pick 2026-10-31).** [node-tests]
-  `jenkins.node_test_folders` reads the `package.json` files git sees in the project (tracked, or untracked and not
+  `ci_scaffold.node_test_folders` reads the `package.json` files git sees in the project (tracked, or untracked and not
   ignored; a walk skipping `node_modules` and hidden folders outside git) and keeps each folder whose `scripts.test`
   is a non-empty string — the fact `node_tests`, last in `Facts` and defaulted. Each gets, in a Node Tests stage after
   the unit tests: `npm ci` (else `npm install`) and `npm test` in `Jenkinsfile` and in `ci.yml`'s `node-tests` job
@@ -1090,8 +1114,8 @@ A bare `::` pin in this section is in `tests/test_jenkins_scaffold.py`.
     (`$SHELL`'s name, else bash), never liquifai's (`tests/test_completion.py::test_without_liquifai_the_other_clis_are_still_installed`
     and its neighbours).
 - **An empty word after an aisland command with nothing left to fill offers its options** (user request
-  2026-10-21; click by itself waits for a `-`). `cli._Command.shell_complete` completes `""` as `"-"`; every
-  group is a `cli._Group` (`command_class = _Command`, `group_class = _Group`), so a command added with
+  2026-10-21; click by itself waits for a `-`). `cli._base._Command.shell_complete` completes `""` as `"-"`; every
+  group is a `cli._base._Group` (`command_class = _Command`, `group_class = _Group`), so a command added with
   `@<group>.command` gets it without a `cls=`. A group still offers its commands only; an argument still to
   fill comes first. A new group class derives from `_Group`, never `click.Group`
   (`tests/test_cli_option_completion.py`).
@@ -1269,15 +1293,15 @@ User choice 2026-10-08: an aisland command, only the named project's closure, bo
   the folder ships in its wheel. The message names the project's own package folders in the `include` setuptools
   recommends (`your_package` when it has none); that advice, pasted in, makes the build pass
   (`tests/test_wheels_folder_discovery.py`).
-- TAB after `wheels build` / `wheels zip` / the short form `wheels` offers the projects (`cli._complete_projects`:
+- TAB after `wheels build` / `wheels zip` / the short form `wheels` offers the projects (`cli.wheels._complete_projects`:
   checked out here; `zip` only those with a `wheels.yaml`; the group's commands first). It reads folders and
   `pyproject.toml` only and an unreadable workspace offers nothing (`tests/test_wheels.py::TestShellCompletion`).
 - Tests reach no network: the end-to-end tests run the real uv with `UV_OFFLINE=1`, a fresh
-  cache, and `_PYPI_INDEX_ARGS` pointed at a local folder holding this interpreter's setuptools and
+  cache, and `wheels_check.PYPI_INDEX_ARGS` pointed at a local folder holding this interpreter's setuptools and
   PyYAML, repackaged (`offline_uv`); the pip tests run with `PIP_CONFIG_FILE=/dev/null` against a
   local PEP 503 index.
 - A wheel a test writes by hand (`tests/test_wheels.py::_wheel`) gives every member one fixed time
-  (`wheels._ZIP_TIME`), as a real build stamps its commit's: a member stamped by the clock makes two
+  (`wheels_files.ZIP_TIME`), as a real build stamps its commit's: a member stamped by the clock makes two
   builds two seconds apart differ, and a test comparing reruns then fails only some of the time
   (`tests/test_wheels_zip.py::TestGit::test_a_rerun_after_the_clock_moved_commits_nothing`).
 

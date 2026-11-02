@@ -24,7 +24,7 @@ import click
 import pytest
 from click.testing import CliRunner, Result
 
-from aisland import cli, configure
+from aisland import cli, configure, locations
 from aisland import selection as s
 from aisland import workspace_file
 from aisland.discovery import DeclarationError
@@ -68,8 +68,7 @@ def workspace(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     )
     _project(tmp_path, "models", ["dev", "keras", "torch"], {"framework": ["keras", "torch"]})
     _project(tmp_path, "plain", ["dev"])
-    monkeypatch.setattr(cli, "get_workspace_root", lambda: tmp_path)
-    monkeypatch.setattr("aisland.projects.get_workspace_root", lambda: tmp_path)
+    monkeypatch.setattr(locations, "workspace_root", lambda: tmp_path)
     return tmp_path
 
 
@@ -551,7 +550,7 @@ def test_a_failed_install_is_the_exit_code(workspace: Path, monkeypatch: pytest.
 
 def test_a_bad_declaration_is_one_error_line(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     _project(tmp_path, "trainer", ["torch"], {"framework": ["torch", "mlx"]}, {"framework": QUESTION})
-    monkeypatch.setattr(cli, "get_workspace_root", lambda: tmp_path)
+    monkeypatch.setattr(locations, "workspace_root", lambda: tmp_path)
     result = _run("framework")
     assert result.exit_code == 1
     assert result.output.startswith(f"Error: {tmp_path / 'trainer' / 'pyproject.toml'}:")
@@ -603,10 +602,11 @@ def test_adding_an_extra_to_an_unset_selection_keeps_the_dev_extras_it_installs(
 
 
 def _ci_install_line(workspace: Path, monkeypatch: pytest.MonkeyPatch, project: str) -> str:
+    from aisland import ci_scaffold
     from aisland.services.jenkins import JenkinsService
 
-    monkeypatch.setattr("aisland.services.jenkins.is_private_repo", lambda repository: False)
-    JenkinsService().scaffold_pipelines(project_name=project, force=True)
+    monkeypatch.setattr("aisland.ci_scaffold.is_private_repo", lambda repository: False)
+    ci_scaffold.scaffold(project, force=True, jenkins_url=JenkinsService().url())
     text = (workspace / project / ".github" / "workflows" / "ci.yml").read_text()
     return next(line.strip() for line in text.splitlines() if '-e ".[' in line)
 

@@ -17,8 +17,9 @@ from typing import Any, List
 
 import pytest
 
-from aisland import locations
-from aisland.services.jenkins import STAGE_LIMITS, TIMED_OUT_MESSAGE, JenkinsService
+from aisland import ci_scaffold, locations
+from aisland.ci_scaffold import STAGE_LIMITS, TIMED_OUT_MESSAGE
+from aisland.services.jenkins import JenkinsService
 
 
 def _make_pyproject(dir_: Path, name: str) -> None:
@@ -47,18 +48,17 @@ def test_scaffold_all_projects_includes_aisland(monkeypatch: pytest.MonkeyPatch,
     # actually generating files (the file-writing path is exercised
     # end-to-end by ad-hoc CLI runs).
     visited: List[str] = []
-    original = JenkinsService.scaffold_pipelines
+    original = ci_scaffold.scaffold
 
-    def _spy(self: JenkinsService, project_name: Any = None, force: bool = False) -> None:
+    def _spy(project_name: Any, force: bool, jenkins_url: str) -> None:
         if project_name is None:
             # Fall through to the real "iterate all projects" branch.
-            return original(self, project_name=None, force=force)
+            return original(None, force, jenkins_url)
         visited.append(project_name)
 
-    monkeypatch.setattr(JenkinsService, "scaffold_pipelines", _spy)
+    monkeypatch.setattr(ci_scaffold, "scaffold", _spy)
 
-    svc = JenkinsService()
-    svc.scaffold_pipelines(project_name=None)
+    ci_scaffold.scaffold(None, force=False, jenkins_url=JenkinsService().url())
 
     assert "aisland" in visited, "aisland must not be filtered out of the all-projects loop"
     assert {"aisland", "matrainer", "traidwind"} <= set(visited)
@@ -74,9 +74,8 @@ def test_scaffold_emits_directory_example_runner(monkeypatch: pytest.MonkeyPatch
 
     monkeypatch.setattr(locations, "workspace_root", lambda: tmp_path)
 
-    svc = JenkinsService()
     # The Jenkins linter is unreachable in tests -> warn-and-skip, files still written.
-    svc.scaffold_pipelines(project_name="proj", force=True)
+    ci_scaffold.scaffold("proj", force=True, jenkins_url=JenkinsService().url())
 
     generated = {
         "Jenkinsfile": tmp_path / "proj" / "Jenkinsfile",
@@ -100,10 +99,10 @@ def test_the_regenerate_header_is_a_command_the_cli_accepts(monkeypatch: pytest.
     """
     _make_pyproject(tmp_path / "proj", "proj")
 
-    from aisland.cli import jenkins_scaffold
+    from aisland.cli.services import jenkins_scaffold
 
     monkeypatch.setattr(locations, "workspace_root", lambda: tmp_path)
-    JenkinsService().scaffold_pipelines(project_name="proj", force=True)
+    ci_scaffold.scaffold("proj", force=True, jenkins_url=JenkinsService().url())
 
     generated = [
         tmp_path / "proj" / "Jenkinsfile",
@@ -161,7 +160,7 @@ def _scaffolded(monkeypatch: pytest.MonkeyPatch, tmp_path: Path, make: Any) -> d
     make(tmp_path / "proj", "proj")
     (tmp_path / ".gitmodules").write_text("", encoding="utf-8")
     monkeypatch.setattr(locations, "workspace_root", lambda: tmp_path)
-    JenkinsService().scaffold_pipelines(project_name="proj", force=True)
+    ci_scaffold.scaffold("proj", force=True, jenkins_url=JenkinsService().url())
     return {
         "Jenkinsfile": (tmp_path / "proj" / "Jenkinsfile").read_text(encoding="utf-8"),
         "Jenkinsfile.local": (tmp_path / "proj" / "Jenkinsfile.local").read_text(encoding="utf-8"),
@@ -291,8 +290,8 @@ def _scaffold_app(monkeypatch: pytest.MonkeyPatch, tmp_path: Path, projects: dic
 
     _make_gearlux_workspace(tmp_path, projects)
     monkeypatch.setattr(locations, "workspace_root", lambda: tmp_path)
-    monkeypatch.setattr("aisland.services.jenkins.is_private_repo", lambda repository: False)
-    JenkinsService().scaffold_pipelines(project_name="app", force=True)
+    monkeypatch.setattr("aisland.ci_scaffold.is_private_repo", lambda repository: False)
+    ci_scaffold.scaffold("app", force=True, jenkins_url=JenkinsService().url())
     return {
         "Jenkinsfile": (tmp_path / "app" / "Jenkinsfile").read_text(encoding="utf-8"),
         "ci.yml": (tmp_path / "app" / ".github" / "workflows" / "ci.yml").read_text(encoding="utf-8"),
@@ -583,13 +582,13 @@ class TestTheWorkflowActionsRunOnNode24:
             },
         )
         monkeypatch.setattr(locations, "workspace_root", lambda: tmp_path)
-        monkeypatch.setattr("aisland.services.jenkins.is_private_repo", lambda repository: True)
+        monkeypatch.setattr("aisland.ci_scaffold.is_private_repo", lambda repository: True)
         _with_node_tests(tmp_path / "app")
-        JenkinsService().scaffold_pipelines(project_name="app", force=True)
+        ci_scaffold.scaffold("app", force=True, jenkins_url=JenkinsService().url())
         return (tmp_path / "app" / ".github" / "workflows" / "ci.yml").read_text(encoding="utf-8")
 
     def test_every_uses_line_comes_from_the_one_table(self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
-        from aisland.services.jenkins import GH_ACTIONS
+        from aisland.ci_scaffold import GH_ACTIONS
 
         ci = self._every_job(monkeypatch, tmp_path)
         used = {line.split("uses:", 1)[1].strip() for line in ci.splitlines() if "uses:" in line}
@@ -597,7 +596,7 @@ class TestTheWorkflowActionsRunOnNode24:
         assert "slow-tests:" in ci and "node-tests:" in ci and "create-github-app-token" in ci  # every optional path
 
     def test_the_table_names_the_node24_majors(self) -> None:
-        from aisland.services.jenkins import GH_ACTIONS
+        from aisland.ci_scaffold import GH_ACTIONS
 
         assert GH_ACTIONS == {
             "checkout": "actions/checkout@v7",
@@ -689,7 +688,7 @@ class TestALongStageHasATimeLimit:
         quality gates run tools, not the project's code, and get none, as in Jenkins."""
         import yaml
 
-        from aisland.services.jenkins import RUNNER_LIMIT_FACTOR, STAGE_LIMITS
+        from aisland.ci_scaffold import RUNNER_LIMIT_FACTOR, STAGE_LIMITS
 
         files = _scaffolded(monkeypatch, tmp_path, _make_pyproject_with_slow_marker_and_node_tests)
         jobs = yaml.safe_load(files["ci.yml"])["jobs"]
@@ -802,7 +801,7 @@ class TestWhichFoldersHoldNodeTests:
             (root / rel).write_text(text, encoding="utf-8")
 
     def test_outside_git_the_folders_are_walked_and_only_a_test_script_counts(self, tmp_path: Path) -> None:
-        from aisland.services.jenkins import node_test_folders
+        from aisland.ci_scaffold import node_test_folders
 
         self._write(
             tmp_path,
@@ -821,7 +820,7 @@ class TestWhichFoldersHoldNodeTests:
         assert node_test_folders(tmp_path) == [".", "web"]
 
     def test_in_git_an_ignored_folder_is_no_source_and_an_untracked_one_is(self, tmp_path: Path) -> None:
-        from aisland.services.jenkins import node_test_folders
+        from aisland.ci_scaffold import node_test_folders
 
         subprocess.run(["git", "init", "-q", str(tmp_path)], check=True)
         self._write(
@@ -838,6 +837,6 @@ class TestWhichFoldersHoldNodeTests:
         assert node_test_folders(tmp_path) == ["frontend", "tools"]
 
     def test_a_folder_with_none_has_none(self, tmp_path: Path) -> None:
-        from aisland.services.jenkins import node_test_folders
+        from aisland.ci_scaffold import node_test_folders
 
         assert node_test_folders(tmp_path) == []

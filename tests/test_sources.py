@@ -21,7 +21,7 @@ from typing import Any, Callable, Dict, List, Set
 import click
 import pytest
 
-from aisland import locations
+from aisland import ci_scaffold, locations
 from aisland import sources as s
 from aisland import workspace_file
 from aisland.errors import AislandError
@@ -537,7 +537,7 @@ def ci_workspace(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
 
     monkeypatch.setattr(locations, "workspace_root", lambda: tmp_path)
     # Keep the scaffolder off the network: `gh api` would otherwise decide the token step.
-    monkeypatch.setattr("aisland.services.jenkins.is_private_repo", lambda repository: False)
+    monkeypatch.setattr("aisland.ci_scaffold.is_private_repo", lambda repository: False)
     return tmp_path
 
 
@@ -557,7 +557,7 @@ class TestScaffoldAsksPypiNotTheSource:
     THIS machine's checkout; it never reaches a runner."""
 
     def test_an_unreleased_dep_is_installed_from_github_main(self, ci_workspace: Path) -> None:
-        JenkinsService().scaffold_pipelines(project_name="confluid", force=True)
+        ci_scaffold.scaffold("confluid", force=True, jenkins_url=JenkinsService().url())
         files = _generated(ci_workspace, "confluid")
         assert "git+https://github.com/Gearlux/loggair.git@main" in files["Jenkinsfile"]
         assert "git+https://github.com/Gearlux/loggair.git@main" in files["ci.yml"]
@@ -567,7 +567,7 @@ class TestScaffoldAsksPypiNotTheSource:
     ) -> None:
         """`.[dev]` resolves it from PyPI. Jenkinsfile.local is not included — it installs nothing."""
         released_packages.add("loggair")
-        JenkinsService().scaffold_pipelines(project_name="confluid", force=True)
+        ci_scaffold.scaffold("confluid", force=True, jenkins_url=JenkinsService().url())
         files = _generated(ci_workspace, "confluid")
         for name in ("Jenkinsfile", "ci.yml"):
             assert "Gearlux/loggair.git" not in files[name], f"{name} still installs loggair from git"
@@ -582,14 +582,14 @@ class TestScaffoldAsksPypiNotTheSource:
         released_packages.add("loggair")
         s.write_committed_sources(ci_workspace, {"loggair": s.ProjectSource(kind="local", ref="dev/main")})
         assert (ci_workspace / "loggair" / "pyproject.toml").exists()
-        JenkinsService().scaffold_pipelines(project_name="confluid", force=True)
+        ci_scaffold.scaffold("confluid", force=True, jenkins_url=JenkinsService().url())
         assert "Gearlux/loggair.git" not in _generated(ci_workspace, "confluid")["ci.yml"]
 
     def test_a_pypi_sourced_dep_with_no_final_release_comes_from_github(self, ci_workspace: Path) -> None:
         """`source set … pypi` accepts a pre-release-only name (recordstream 0.1.0a1); the
         scaffolder does not count that as released, so the runner builds from GitHub `main`."""
         s.write_committed_sources(ci_workspace, {"loggair": s.ProjectSource(kind="pypi", distribution="loggair")})
-        JenkinsService().scaffold_pipelines(project_name="confluid", force=True)
+        ci_scaffold.scaffold("confluid", force=True, jenkins_url=JenkinsService().url())
         assert "git+https://github.com/Gearlux/loggair.git@main" in _generated(ci_workspace, "confluid")["ci.yml"]
 
     def test_no_source_setting_changes_a_ci_file(self, ci_workspace: Path, released_packages: Set[str]) -> None:
@@ -606,7 +606,7 @@ class TestScaffoldAsksPypiNotTheSource:
                 s.ProjectSource(kind="pypi", distribution="loggair"),
             ):
                 s.write_committed_sources(ci_workspace, {} if source is None else {"loggair": source})
-                JenkinsService().scaffold_pipelines(project_name="confluid", force=True)
+                ci_scaffold.scaffold("confluid", force=True, jenkins_url=JenkinsService().url())
                 rendered.append(_generated(ci_workspace, "confluid"))
             assert all(r == rendered[0] for r in rendered), f"released={released}"
 
@@ -620,10 +620,10 @@ class TestScaffoldAsksPypiNotTheSource:
         # Detached == the directory is gone, exactly as `apply_source` leaves it.
         shutil.rmtree(ci_workspace / "loggair")
 
-        from aisland.services.jenkins import discover_github_projects
+        from aisland.ci_scaffold import discover_github_projects
 
         assert "loggair" in discover_github_projects(ci_workspace)
-        JenkinsService().scaffold_pipelines(project_name="confluid", force=True)
+        ci_scaffold.scaffold("confluid", force=True, jenkins_url=JenkinsService().url())
         assert "git+https://github.com/Gearlux/loggair.git@main" in _generated(ci_workspace, "confluid")["ci.yml"]
 
     def test_a_released_dep_is_dropped_when_its_directory_is_gone(
@@ -632,7 +632,7 @@ class TestScaffoldAsksPypiNotTheSource:
         released_packages.add("loggair")
         s.write_committed_sources(ci_workspace, {"loggair": s.ProjectSource(kind="pypi", distribution="loggair")})
         shutil.rmtree(ci_workspace / "loggair")
-        JenkinsService().scaffold_pipelines(project_name="confluid", force=True)
+        ci_scaffold.scaffold("confluid", force=True, jenkins_url=JenkinsService().url())
         assert "Gearlux/loggair.git" not in _generated(ci_workspace, "confluid")["ci.yml"]
 
     def test_an_unreachable_pypi_stops_the_scaffold_and_names_the_package(
@@ -644,9 +644,9 @@ class TestScaffoldAsksPypiNotTheSource:
         def _unreachable(distribution: str, owner: str) -> bool:
             raise s.ReleaseProbeError(distribution, "could not reach PyPI (offline)")
 
-        monkeypatch.setattr("aisland.services.jenkins.released_on_pypi", _unreachable)
+        monkeypatch.setattr("aisland.ci_scaffold.released_on_pypi", _unreachable)
         with pytest.raises(click.ClickException, match="loggair.*could not reach PyPI"):
-            JenkinsService().scaffold_pipelines(project_name="confluid", force=True)
+            ci_scaffold.scaffold("confluid", force=True, jenkins_url=JenkinsService().url())
         assert not (ci_workspace / "confluid" / ".github" / "workflows" / "ci.yml").exists()
 
 

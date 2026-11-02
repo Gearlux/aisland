@@ -204,7 +204,7 @@ def test_a_project_on_a_package_source_stays_empty_whatever_its_choice(
 
 @pytest.fixture
 def at(ws: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
-    monkeypatch.setattr(cli, "get_workspace_root", lambda: ws)
+    monkeypatch.setattr(locations, "workspace_root", lambda: ws)
     return ws
 
 

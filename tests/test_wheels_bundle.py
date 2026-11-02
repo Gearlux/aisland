@@ -24,6 +24,7 @@ from packaging.requirements import Requirement
 
 from aisland import wheels as w
 from aisland import wheels_bundle as wb
+from aisland import wheels_files, wheels_report
 from aisland.cli import main
 
 from . import test_wheels
@@ -150,7 +151,7 @@ def _part(folder: Path, name: str, files: Dict[str, str], dist_info: Optional[Di
 
 
 def _merge(folder: Path, parts: Sequence[wb.BundlePart], metadata: str = "Metadata-Version: 2.1\n") -> Path:
-    return wb.merge_wheels(parts, "app-bundle", "0.5.0", metadata, folder / "out", w._ZIP_TIME)
+    return wb.merge_wheels(parts, "app-bundle", "0.5.0", metadata, folder / "out", wheels_files.ZIP_TIME)
 
 
 def _members(wheel: Path) -> Dict[str, bytes]:
@@ -369,9 +370,9 @@ class TestTheRunWithABundle:
         assert report.bundle.bytes == bundle.stat().st_size
         assert installs == [("app_bundle-0.5.0-py3-none-any.whl", ("app", "libx", "pubdep"))]
         assert report.ok
-        text = w.render_report(report)
+        text = wheels_report.render_report(report)
         assert (
-            f"Bundle: app/wheels/bundle/app_bundle-0.5.0-py3-none-any.whl ({w.human_size(report.bundle.bytes)}) — 3 projects "
+            f"Bundle: app/wheels/bundle/app_bundle-0.5.0-py3-none-any.whl ({wheels_report.human_size(report.bundle.bytes)}) — 3 projects "
             "in one wheel (app, libx, pubdep); install it with: pip install app_bundle-0.5.0-py3-none-any.whl\n"
             "  Installed alone in an empty venv (it + PyPI): all 3 modules imported\n" in text
         )
@@ -392,7 +393,7 @@ class TestTheRunWithABundle:
 
         assert {p.name: p.read_bytes() for p in folder.iterdir() if p.is_file()} == with_bundle
         assert not (folder / "bundle").exists(), "a bundle of older commits must not sit beside the new wheels"
-        assert report.bundle is None and "Bundle:" not in w.render_report(report)
+        assert report.bundle is None and "Bundle:" not in wheels_report.render_report(report)
 
     @pytest.mark.slow
     def test_the_zip_leaves_the_bundle_out(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -435,7 +436,10 @@ class TestTheRunWithABundle:
         assert installs == [] and bundle_installs == []
         assert report.bundle is not None and (root / report.bundle.wheel).is_file()
         assert report.ok
-        assert "  Not checked (--no-check): the bundle was not installed in an empty venv." in w.render_report(report)
+        assert (
+            "  Not checked (--no-check): the bundle was not installed in an empty venv."
+            in wheels_report.render_report(report)
+        )
 
     @pytest.mark.slow
     def test_a_bundle_that_does_not_install_fails_the_run_and_is_not_committed(
@@ -451,7 +455,7 @@ class TestTheRunWithABundle:
         assert report.commit_note == "not committed: the install check failed"
         assert (
             "  Installing the bundle alone in an empty venv failed:\n"
-            "    × No solution found when resolving dependencies\n" in w.render_report(report)
+            "    × No solution found when resolving dependencies\n" in wheels_report.render_report(report)
         )
 
     @pytest.mark.slow
@@ -467,7 +471,7 @@ class TestTheRunWithABundle:
 
         assert [(f.module, f.distribution) for f in report.bundle_import_failures] == [("libx", "libx")]
         assert not report.ok
-        text = w.render_report(report)
+        text = wheels_report.render_report(report)
         assert "  Installed alone in an empty venv (it + PyPI); these did not import:\n" in text
         assert "    libx  ModuleNotFoundError: No module named 'libx'\n    1 other module imported\n" in text
 
@@ -494,7 +498,7 @@ def _git_sha(path: Path) -> str:
 
 class TestTheReportAndTheCli:
     def test_a_bundle_import_failure_alone_makes_the_run_fail(self) -> None:
-        failure = w.ImportFailure("libx", "ModuleNotFoundError: No module named 'libx'", "libx", "libx")
+        failure = wheels_report.ImportFailure("libx", "ModuleNotFoundError: No module named 'libx'", "libx", "libx")
         assert not _report(import_failures=[], bundle_import_failures=[failure]).ok
         assert not _report(import_failures=[], bundle_install_error="boom").ok
         assert _report(import_failures=[]).ok
@@ -503,7 +507,7 @@ class TestTheReportAndTheCli:
     def test_bundle_is_handed_to_the_run(self, monkeypatch: pytest.MonkeyPatch, flags: List[str], bundle: bool) -> None:
         asked: List[bool] = []
 
-        def _vendor(root: Path, project: str, **kwargs: Any) -> w.WheelsReport:
+        def _vendor(root: Path, project: str, **kwargs: Any) -> wheels_report.WheelsReport:
             asked.append(kwargs["bundle"])
             return _report(import_failures=[])
 
@@ -515,11 +519,11 @@ class TestTheReportAndTheCli:
     @pytest.mark.parametrize("include_project", [False, True])
     @pytest.mark.parametrize("scope", ["unpublished", "needed", "all"])
     def test_the_bundles_regenerate_line_is_a_command_the_cli_accepts(
-        self, scope: w.WheelsScope, include_project: bool
+        self, scope: wheels_report.WheelsScope, include_project: bool
     ) -> None:
-        from aisland.cli import wheels_build
+        from aisland.cli.wheels import wheels_build
 
-        argv = w.bundle_command("navigaitor", scope, include_project).split()
+        argv = wheels_report.bundle_command("navigaitor", scope, include_project).split()
         assert argv[:3] == ["aisland", "wheels", "build"]
         context = wheels_build.make_context("build", argv[3:])
         assert context.params["bundle"] is True
@@ -545,7 +549,7 @@ class TestEndToEnd:
 
         report = w.vendor_wheels(ws, "app", bundle=True)
 
-        assert report.ok, w.render_report(report)
+        assert report.ok, wheels_report.render_report(report)
         assert report.bundle is not None and report.bundle.projects == ["app", "libx"]
         assert report.bundle_imported == ["app", "app.cli", "app.core", "app.labelling", "libx"]
         venv = tmp_path / "plain-env"

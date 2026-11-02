@@ -26,7 +26,7 @@ def repo(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     monkeypatch.setattr(manager, "BASE_DIR", root / "aisland")
     monkeypatch.setattr(locations, "FROM_CHECKOUT", True)  # the layout above is a checkout's
     monkeypatch.setattr(editor_files, "_loggair_log_dir", lambda workspace_root: None)
-    monkeypatch.setattr(cli, "get_workspace_root", lambda: root)
+    monkeypatch.setattr(locations, "workspace_root", lambda: root)
     return root
 
 

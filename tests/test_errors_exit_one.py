@@ -108,10 +108,13 @@ def test_no_library_module_raises_clicks_own_exception_or_exits() -> None:
     hits = [
         f"{path.relative_to(package)}:{number}"
         for path in package.rglob("*.py")
-        # main() of the MCP server is its own entry point; harness/ holds scripts a workspace runs, not aisland's code
+        # main() of the MCP server is its own entry point; harness/ holds scripts a workspace runs, not aisland's code;
+        # the CLI (aisland/cli/) is where a command's exit status is decided
         if path.name != "server.py" and "harness" not in path.relative_to(package).parts
         for number, line in enumerate(path.read_text().splitlines(), start=1)
-        if "raise click.ClickException(" in line or "raise SystemExit(" in line and path.name != "cli.py"
+        if "raise click.ClickException(" in line
+        or "raise SystemExit(" in line
+        and path.relative_to(package).parts[0] != "cli"
     ]
     assert hits == []
 

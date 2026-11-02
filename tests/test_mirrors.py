@@ -27,6 +27,7 @@ from typing import Dict, List
 import pytest
 from click.testing import CliRunner
 
+from aisland import locations
 from aisland import mirrors as m
 from aisland.cli import main as cli_main
 from aisland.workspace_file import FILE_NAME
@@ -456,7 +457,7 @@ class TestCli:
     @pytest.fixture(autouse=True)
     def _root(self, ws: Workspace, monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.setattr(m, "get_workspace_root", lambda: ws.root)
-        monkeypatch.setattr("aisland.cli.get_workspace_root", lambda: ws.root)
+        monkeypatch.setattr(locations, "workspace_root", lambda: ws.root)
 
     @staticmethod
     def _set(runner: CliRunner, ws: Workspace) -> None:

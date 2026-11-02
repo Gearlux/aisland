@@ -65,7 +65,7 @@ def ws(tmp_path: Path) -> Path:
 
 def _run(ws: Path, monkeypatch: pytest.MonkeyPatch, *args: str, cwd: Optional[Path] = None) -> Result:
     """The command run from the workspace (or ``cwd``), as a person runs it: from a wheel, the folder decides."""
-    monkeypatch.setattr(cli, "get_workspace_root", lambda: ws)
+    monkeypatch.setattr(locations, "workspace_root", lambda: ws)
     monkeypatch.chdir(cwd or ws)
     return CliRunner().invoke(cli.main, ["workspace", "test-stats", *args])
 

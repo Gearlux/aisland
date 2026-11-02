@@ -19,7 +19,7 @@ from typing import Callable, List, Tuple
 import click
 import pytest
 
-from aisland.services import jenkins as jenkins_module
+from aisland.services import jenkins_jobs
 from aisland.services.jenkins import JenkinsService
 
 #: ``run(running=..., local=..., config_appears=...)`` → (what init_pipelines did, in order; what it printed).
@@ -27,7 +27,7 @@ InitRun = Callable[..., Tuple[List[str], str]]
 
 
 class _Clock:
-    """The jenkins module's ``time``: ``sleep`` advances the clock and records a wait, and makes config.xml appear
+    """The jenkins_jobs module's ``time``: ``sleep`` advances the clock and records a wait, and makes config.xml appear
     on the first one when told to — what a warm-starting Jenkins does a moment after its launch."""
 
     def __init__(self, config: Path, appears: bool, calls: List[str]) -> None:
@@ -50,7 +50,7 @@ def recorded_init(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytes
     (workspace / "app").mkdir(parents=True)
     (workspace / "app" / "Jenkinsfile").write_text("pipeline {}\n")
     (workspace / "app" / "Jenkinsfile.local").write_text("pipeline {}\n")
-    monkeypatch.setattr(jenkins_module, "get_workspace_root", lambda: workspace)
+    monkeypatch.setattr(jenkins_jobs, "get_workspace_root", lambda: workspace)
     monkeypatch.setattr(click, "confirm", lambda *a, **k: False)
 
     def run(*, running: bool, local: bool = True, config_appears: bool = True) -> Tuple[List[str], str]:
@@ -70,16 +70,19 @@ def recorded_init(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytes
         monkeypatch.setattr(svc, "is_running", lambda: running)
         monkeypatch.setattr(svc, "launch", lambda port=9080, background=False: calls.append(f"launch ({_state()})"))
         monkeypatch.setattr(svc, "stop", lambda: calls.append(f"stop ({_state()})"))
-        monkeypatch.setattr(svc, "setup_dashboard_view", lambda name=None: calls.append("setup_dashboard_view"))
-        monkeypatch.setattr(svc, "setup_global_properties", lambda: calls.append("setup_global_properties"))
-        monkeypatch.setattr(svc, "_create_orchestrator_job", lambda local, names: calls.append("orchestrator job"))
-        monkeypatch.setattr(svc, "_create_nightly_check_job", lambda: calls.append("nightly-check job"))
-        monkeypatch.setattr(svc, "local_job_config", lambda *a: "<flow-definition/>")
-        monkeypatch.setattr(svc, "_get_git_remote", lambda path: "git@github.com:Gearlux/app.git")
-        monkeypatch.setattr(svc, "_find_credentials", lambda url: "github")
-        monkeypatch.setattr(jenkins_module, "time", _Clock(config, config_appears, calls))
+        jobs = jenkins_jobs
+        monkeypatch.setattr(jobs, "setup_dashboard_view", lambda home, name=None: calls.append("setup_dashboard_view"))
+        monkeypatch.setattr(jobs, "setup_global_properties", lambda home: calls.append("setup_global_properties"))
+        monkeypatch.setattr(
+            jobs, "_create_orchestrator_job", lambda home, local, names: calls.append("orchestrator job")
+        )
+        monkeypatch.setattr(jobs, "_create_nightly_check_job", lambda home: calls.append("nightly-check job"))
+        monkeypatch.setattr(jobs, "local_job_config", lambda *a: "<flow-definition/>")
+        monkeypatch.setattr(jobs, "_get_git_remote", lambda path: "git@github.com:Gearlux/app.git")
+        monkeypatch.setattr(jobs, "_find_credentials", lambda home, url: "github")
+        monkeypatch.setattr(jobs, "time", _Clock(config, config_appears, calls))
         capsys.readouterr()
-        svc.init_pipelines(local=local)
+        jenkins_jobs.init_pipelines(svc, local=local)
         captured = capsys.readouterr()
         return calls, captured.out + captured.err  # a warning is on stderr
 
@@ -123,7 +126,7 @@ def test_a_config_xml_that_never_appears_is_waited_for_90_seconds_then_named(rec
         "setup_global_properties",
         "launch (config.xml absent)",
     ]
-    assert jenkins_module.time.time() >= 90  # type: ignore[attr-defined]  # the fake clock: it waited the 90 s
+    assert jenkins_jobs.time.time() >= 90  # type: ignore[attr-defined]  # the fake clock: it waited the 90 s
 
 
 def test_only_a_local_init_seeds_the_nightly_check_job(recorded_init: InitRun) -> None:

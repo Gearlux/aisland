@@ -14,7 +14,7 @@ source     directory                         ``.venv``
 
 **No CI file reads a source.** A runner installs a RELEASED dependency from PyPI and an
 unreleased one from GitHub ``main`` (:func:`released_on_pypi`, asked by
-:meth:`aisland.services.jenkins.JenkinsService.scaffold_pipelines`) — user ruling 2026-09-26:
+:func:`aisland.ci_scaffold.project_facts`) — user ruling 2026-09-26:
 "it should always point to released packages, and to GitHub for non-released ones". So
 ``aisland workspace configure source set`` / ``unset`` never regenerate a CI file.
 

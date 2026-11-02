@@ -23,7 +23,8 @@ import click
 import pytest
 from click.testing import CliRunner, Result
 
-from aisland import activation, cli, local_workspace, tracking, workspace_file
+from aisland import activation, cli, local_workspace, locations, tracking, workspace_file
+from aisland.cli import workspace as cli_workspace
 
 _AUTHOR = {"GIT_AUTHOR_NAME": "t", "GIT_AUTHOR_EMAIL": "t@t", "GIT_COMMITTER_NAME": "t", "GIT_COMMITTER_EMAIL": "t@t"}
 
@@ -99,7 +100,7 @@ def _status(root: Path) -> List[str]:
 
 
 def _run(ws: Path, monkeypatch: pytest.MonkeyPatch, *args: str) -> Result:
-    monkeypatch.setattr(cli, "get_workspace_root", lambda: ws)
+    monkeypatch.setattr(locations, "workspace_root", lambda: ws)
     return CliRunner().invoke(cli.main, ["workspace", *args])
 
 
@@ -472,8 +473,8 @@ def test_status_without_submodules_gives_the_choice_for_the_projects_to_come(
 
 @pytest.mark.slow
 def test_every_track_command_completes_the_submodules(ws: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr(cli, "get_workspace_root", lambda: ws)
-    track = cli.workspace_group.commands["track"]
+    monkeypatch.setattr(locations, "workspace_root", lambda: ws)
+    track = cli_workspace.workspace_group.commands["track"]
     assert isinstance(track, click.Group)
     for name in ("set", "unset", "status"):
         command = track.commands[name]

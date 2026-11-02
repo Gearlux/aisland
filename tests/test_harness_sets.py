@@ -13,6 +13,7 @@ import pytest
 from click.testing import CliRunner
 
 from aisland import cli, harness, workspace_check, workspace_file
+from aisland.cli import workspace as cli_workspace
 
 
 def _write(path: Path, text: str) -> Path:
@@ -310,7 +311,7 @@ def test_the_rules_index_says_where_it_comes_from_and_how_to_write_it_again(root
 
 @pytest.fixture
 def at_root(root: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
-    monkeypatch.setattr(cli, "_configure_root", lambda: root)
+    monkeypatch.setattr(cli_workspace, "_configure_root", lambda: root)
     return root
 
 

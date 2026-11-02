@@ -50,7 +50,9 @@ from typing import Dict, List, Optional, Sequence, Set, Tuple
 
 from aisland import gitcmd
 from aisland.errors import AislandError
-from aisland.wheels import WHEELS_DIR, find_target, human_size, workspace_projects
+from aisland.wheels import find_target, workspace_projects
+from aisland.wheels_files import WHEELS_DIR
+from aisland.wheels_report import human_size
 
 #: Where origin keeps the record of every prune: a chain of commits, one per prune, never a branch or a tag.
 PRUNE_REF = "refs/wheels-prune/map"

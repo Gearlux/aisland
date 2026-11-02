@@ -39,7 +39,6 @@ def _workspace(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, pyproject: str =
     (root / "notes").mkdir(parents=True)
     (root / "notes" / "pyproject.toml").write_text(textwrap.dedent(pyproject))
     subprocess.run(["git", "init", "-q"], cwd=root, check=True)
-    monkeypatch.setattr(cli, "get_workspace_root", lambda: root)
     monkeypatch.setattr(locations, "workspace_root", lambda: root)
     monkeypatch.setattr(registry, "ENTRIES", ())  # aisland's own services stay out of these tests
     return root

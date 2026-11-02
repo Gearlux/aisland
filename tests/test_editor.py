@@ -18,7 +18,7 @@ import click
 import pytest
 from click.testing import CliRunner
 
-from aisland import cli, editor, editor_files
+from aisland import cli, editor, editor_files, locations
 from aisland.css_colors import NAMED_COLORS
 
 # --- fixtures -----------------------------------------------------------------------------
@@ -92,7 +92,7 @@ def repo(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     root.mkdir()
     subprocess.run(["git", "init", "-q", str(root)], check=True)
     monkeypatch.setattr(editor_files, "_loggair_log_dir", lambda workspace_root: None)
-    monkeypatch.setattr(cli, "get_workspace_root", lambda: root)
+    monkeypatch.setattr(locations, "workspace_root", lambda: root)
     return root
 
 
@@ -333,7 +333,7 @@ def test_a_workspace_that_is_no_git_repository_cannot_keep_a_choice(
 ) -> None:
     root = tmp_path / "plain"
     root.mkdir()
-    monkeypatch.setattr(cli, "get_workspace_root", lambda: root)
+    monkeypatch.setattr(locations, "workspace_root", lambda: root)
     monkeypatch.setattr(editor_files, "_loggair_log_dir", lambda workspace_root: None)
     monkeypatch.setenv("GIT_CEILING_DIRECTORIES", str(tmp_path))
     result = _run("theme", "set", "Solarized Dark")

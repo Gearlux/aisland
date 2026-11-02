@@ -23,7 +23,7 @@ from mcp.client.stdio import StdioServerParameters, stdio_client
 from mcp.server.lowlevel.server import NotificationOptions
 from mcp.server.mcpserver.exceptions import ToolError
 
-from aisland import cli, doctor, editor, editor_files, mcp_config, projects, pytest_stats, server
+from aisland import cli, doctor, editor, editor_files, locations, mcp_config, projects, pytest_stats, server
 from aisland import sources as sources_mod
 from aisland import supervisor
 from aisland import tunnel as tunnel_mod
@@ -76,7 +76,7 @@ def tracked(repo: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
         '[project."models"]\nurl = "https://example.invalid/models.git"\ntrack = false\n\n'
         '[project."tools"]\nurl = "https://example.invalid/tools.git"\n'
     )
-    monkeypatch.setattr(cli, "get_workspace_root", lambda: repo)
+    monkeypatch.setattr(locations, "workspace_root", lambda: repo)
     return repo
 
 

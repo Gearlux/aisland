@@ -15,7 +15,8 @@ from typing import Sequence
 import pytest
 
 from aisland import locations, projects
-from aisland.services.jenkins import NIGHTLY_CRON, JenkinsService
+from aisland.services import jenkins_jobs
+from aisland.services.jenkins_jobs import NIGHTLY_CRON
 
 
 def _orchestrator_script(monkeypatch: pytest.MonkeyPatch, tmp_path: Path, local: bool, slow: Sequence[str] = ()) -> str:
@@ -37,11 +38,10 @@ def _orchestrator_script(monkeypatch: pytest.MonkeyPatch, tmp_path: Path, local:
             {"name": "app_b", "dependencies": ["libcore>=0.1.0"]},
         ],
     )
-    svc = JenkinsService()
-    svc.service_data_dir = tmp_path / "jenkins"
-    svc._create_orchestrator_job(local=local, initialized_projects=["libcore", "app_a", "app_b"])
+    home = tmp_path / "jenkins"
+    jenkins_jobs._create_orchestrator_job(home, local=local, initialized_projects=["libcore", "app_a", "app_b"])
     job = "ws.local" if local else "ws"
-    return (svc.service_data_dir / "jobs" / job / "config.xml").read_text(encoding="utf-8")
+    return (home / "jobs" / job / "config.xml").read_text(encoding="utf-8")
 
 
 @pytest.mark.parametrize("local", [True, False])
@@ -126,12 +126,12 @@ def test_a_seeded_local_job_accepts_the_slow_switch_before_its_first_run(tmp_pat
     """Jenkins drops a parameter the job does not define yet; a pipeline's `parameters` are defined by its first run.
     So the seeded job carries SLOW_TESTS from the start, or the first nightly run would run the fast tests only."""
     script = "pipeline {\n    parameters {\n        booleanParam(name: 'SLOW_TESTS', defaultValue: false)\n    }\n}"
-    config = JenkinsService.local_job_config("p", script, tmp_path / "p")
+    config = jenkins_jobs.local_job_config("p", script, tmp_path / "p")
     definition = config[config.index("<hudson.model.BooleanParameterDefinition>") :]
     assert "<name>SLOW_TESTS</name>" in definition and "<defaultValue>false</defaultValue>" in definition
     assert f"<customWorkspace>{(tmp_path / 'p').absolute()}</customWorkspace>" in config
 
 
 def test_a_seeded_job_without_the_switch_defines_no_parameter(tmp_path: Path) -> None:
-    config = JenkinsService.local_job_config("p", "pipeline {\n}", tmp_path / "p")
+    config = jenkins_jobs.local_job_config("p", "pipeline {\n}", tmp_path / "p")
     assert "ParametersDefinitionProperty" not in config

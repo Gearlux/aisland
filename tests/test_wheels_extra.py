@@ -20,6 +20,7 @@ from click.testing import CliRunner
 
 from aisland import wheels as w
 from aisland import wheels_extra as we
+from aisland import wheels_report
 from aisland.cli import main
 
 from . import test_wheels
@@ -294,7 +295,7 @@ class TestTheBuildRun:
         readme = (folder / "README.md").read_text()
         assert "    uv pip install -e ./app[wheels]\n" in readme
         assert "    python wheels/install.py\n" in readme
-        assert w.render_report(report).endswith(
+        assert wheels_report.render_report(report).endswith(
             "\nThe extra wheels (1 wheel) written into app/pyproject.toml; install it with: "
             "uv pip install -e ./app[wheels]\n"
         )
@@ -308,7 +309,7 @@ class TestTheBuildRun:
         report = w.vendor_wheels(root, "app", extra="wheels")
 
         assert report.extra_changed is False
-        assert "The extra wheels (1 wheel) unchanged in app/pyproject.toml" in w.render_report(report)
+        assert "The extra wheels (1 wheel) unchanged in app/pyproject.toml" in wheels_report.render_report(report)
 
     def test_without_the_option_the_pyproject_and_every_file_are_what_they_were(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
@@ -320,7 +321,7 @@ class TestTheBuildRun:
         report = w.vendor_wheels(root, "app")
 
         assert (root / "app" / "pyproject.toml").read_bytes() == pyproject
-        assert report.extra is None and "The extra" not in w.render_report(report)
+        assert report.extra is None and "The extra" not in wheels_report.render_report(report)
         assert "uv pip install" not in (root / "app" / "wheels" / "README.md").read_text()
         assert "To regenerate: aisland wheels build app\n" in (root / "app" / "wheels" / "install.py").read_text()
 
@@ -369,7 +370,7 @@ class TestTheBuildRun:
         )
 
     def test_the_bundle_command_carries_the_extra(self) -> None:
-        assert w.bundle_command("app", "all", True, "wheels") == (
+        assert wheels_report.bundle_command("app", "all", True, "wheels") == (
             "aisland wheels build app --all --include-project --extra wheels --bundle"
         )
 
@@ -399,7 +400,7 @@ class TestTheBuildRemembersTheExtra:
             "libx": [{"path": "wheels/libx-0.2.0-py3-none-any.whl", "extra": "wheels"}]
         }
         assert (report.extra, report.extra_changed, report.extra_remembered) == ("wheels", True, True)
-        assert w.render_report(report).endswith(
+        assert wheels_report.render_report(report).endswith(
             "\nThe extra wheels (1 wheel) written into app/pyproject.toml, which holds its generated block; install it "
             "with: uv pip install -e ./app[wheels]\n"
         )
@@ -418,7 +419,7 @@ class TestTheBuildRemembersTheExtra:
 
         assert (root / "app" / "pyproject.toml").read_bytes() == before
         assert (report.extra, report.extra_left) == (None, "wheels")
-        text = w.render_report(report)
+        text = wheels_report.render_report(report)
         assert (
             "The extra wheels in app/pyproject.toml was left as it is: --include-project builds app's own wheel. "
             "Pass --extra wheels to write it for these wheels." in text
@@ -475,12 +476,12 @@ class TestCli:
     ) -> None:
         seen: List[dict] = []
 
-        def _run(root: Path, project: str, **kwargs: object) -> w.WheelsReport:
+        def _run(root: Path, project: str, **kwargs: object) -> wheels_report.WheelsReport:
             seen.append(kwargs)
             return test_wheels._report(import_failures=[])
 
         monkeypatch.setattr(w, "vendor_wheels", _run)
-        argv = w.regenerate_command("app", "all", True, "wheels").split()[1:]
+        argv = wheels_report.regenerate_command("app", "all", True, "wheels").split()[1:]
 
         result = CliRunner().invoke(main, argv)
 
