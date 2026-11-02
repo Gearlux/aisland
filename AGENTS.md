@@ -107,7 +107,7 @@ The workspace's dev-infrastructure CLI, `aisland` (click, `aisland/cli.py`):
 - `recording.py`: `aisland workspace test-stats on|off [PROJECT…] [--machine-only]` — whether the pytest plugin
   records a project's runs; see "Test-run statistics".
 - `tracking.py`: `aisland workspace track set|unset|status [PROJECT…]` (user choice 2026-10-23: two writes,
-  no project = every submodule; not a `configure` plugin; user choice 2026-11-02: one group, `unset` writes `track = false` and removes no setting) — whether the root records a project's commits. Committed:
+  no project = every submodule; not a `configure` plugin; one group, `unset` writes `track = false` and removes no setting) — whether the root records a project's commits. Committed:
   the project's `track = false` in `workspace.toml`, written as `ignore = all` in `.gitmodules`; this machine:
   `aisland.track.<project>.track`, written as git's `submodule.<name>.ignore` (`all`/`none`) in `.git/config`, which
   git reads first — aisland's key because `submodule deinit` drops git's section, and `apply` (every
@@ -124,7 +124,12 @@ The workspace's dev-infrastructure CLI, `aisland` (click, `aisland/cli.py`):
   on no branch is never moved (`tests/test_tracking.py::test_a_tracked_project_on_no_branch_is_left_on_its_commit`,
   `tests/test_git_pull_push_all.py::test_an_untracked_submodule_on_no_branch_is_put_on_its_branch_and_pulled`). Only submodules: a
   workspace without them, and a name that is no submodule's, are refused before anything changes. `init
-  --untracked` is `track unset` for every project. (`tests/test_tracking.py`,
+  --untracked` is `track unset` for every project. **`track` alone changes nothing** (a group: its help, exit 2;
+  it recorded every project before there was a subcommand) and **`track status` only reads** (`tracking.status`: whose
+  choice it is, and from git's `ignore` whether `git: applied`, `not applied` or `yours`): with no project it says the
+  workspace's choice and lists only the projects that differ from it or that git does not agree with, counting two or
+  more alike (`status_lines`); `--json` gives every row (`tests/test_tracking.py::test_status_changes_nothing`,
+  `::test_track_alone_changes_nothing_and_names_its_commands`). (`tests/test_tracking.py`,
   `tests/test_workspace_init.py::test_untracked_hides_a_projects_new_commits_and_writes_it_down`)
 - `env_example.py`: `aisland workspace env-example [--missing]` (both files; also setup's step 5b and `init`'s `.env` seed) and
   `aisland workspace env-test [PROJECT…]` [env-example]; see "Generated and committed workspace files".
@@ -703,7 +708,7 @@ Root `AGENTS.md` "Two Test Runs" (user ruling 2026-10-05). [test-stats]
 - **aisland's MCP server is aisland's own, never navigaitor's (user ruling 2026-10-21).** [mcp-server] `aisland-mcp`
   (`server.py`, the `[mcp]` extra — never a base dependency; `mcp>=2.0,<3`, since it drops the SDK's resources and prompts handlers through a private attribute, `tests/test_packaging.py::test_the_mcp_sdk_is_held_below_its_next_major_version`) serves a CHOSEN set of tools (user choice 2026-10-21):
   reading `doctor`, `tests_report`, `editor_themes`, `editor_colors`, `sources`, `services_status`, `tunnel_list`,
-  `tunnel_status`; changing (`destructive_hint=False`) `editor_set_theme`, `editor_set_color`, `editor_unset`,
+  `tunnel_status`, `track_status` (`aisland workspace track status --json`; `track set|unset` stay commands); changing (`destructive_hint=False`) `editor_set_theme`, `editor_set_color`, `editor_unset`,
   `tunnel_start|stop` (`aisland tunnel start|stop --json` run as the command, its JSON answered unchanged; user pick
   2026-10-30, moved here from navigaitor; `tests/test_server_tunnel.py`) and `service_start|stop|restart` for ANY service of the workspace (user choice 2026-10-29, replacing jenkins and mlflow
   only) [mcp-services]: `name` is a string in the schema, checked when the tool runs against `registry.entries`

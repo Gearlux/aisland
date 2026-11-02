@@ -39,6 +39,7 @@ READ_ONLY = {
     "services_status",
     "tunnel_list",
     "tunnel_status",
+    "track_status",
 }
 CHANGING = {
     "editor_set_theme",
@@ -61,6 +62,22 @@ def repo(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     monkeypatch.setattr(editor_files, "_loggair_log_dir", lambda workspace_root: None)
     monkeypatch.setattr(server, "get_workspace_root", lambda: root)
     return root
+
+
+@pytest.fixture
+def tracked(repo: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
+    """`repo` with the projects `models` (its own `track = false`, hidden from the root) and `tools` (the default),
+    as `.gitmodules` lists them and `workspace.toml` describes them; the command pointed at it too."""
+    (repo / ".gitmodules").write_text(
+        '[submodule "models"]\n\tpath = models\n\turl = https://example.invalid/models.git\n\tignore = all\n'
+        '[submodule "tools"]\n\tpath = tools\n\turl = https://example.invalid/tools.git\n'
+    )
+    (repo / "workspace.toml").write_text(
+        '[project."models"]\nurl = "https://example.invalid/models.git"\ntrack = false\n\n'
+        '[project."tools"]\nurl = "https://example.invalid/tools.git"\n'
+    )
+    monkeypatch.setattr(cli, "get_workspace_root", lambda: repo)
+    return repo
 
 
 def _server() -> "server.MCPServer":
@@ -238,6 +255,36 @@ def test_services_status_lists_every_supervised_process(monkeypatch: pytest.Monk
 def test_services_status_without_a_supervisor_lists_nothing(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(supervisor, "list_processes", lambda: {})
     assert _call("services_status") == {"services": []}
+
+
+def test_track_status_is_what_the_command_prints_with_json(tracked: Path) -> None:
+    printed = CliRunner().invoke(cli.main, ["workspace", "track", "status", "--json"])
+    assert printed.exit_code == 0, printed.output
+    answer = _call("track_status")
+    assert answer == json.loads(printed.output)
+    assert answer["default_tracked"] is True
+    assert [(row["project"], row["tracked"], row["source"], row["git"]) for row in answer["projects"]] == [
+        ("models", False, "project", "applied"),
+        ("tools", True, "default", "applied"),
+    ]
+
+
+def test_track_status_of_named_projects_answers_those_alone(tracked: Path) -> None:
+    assert [row["project"] for row in _call("track_status", {"projects": ["tools"]})["projects"]] == ["tools"]
+    assert [row["project"] for row in _call("track_status", {"projects": ["tools", "models"]})["projects"]] == [
+        "tools",
+        "models",
+    ]
+
+
+def test_track_status_of_an_unknown_project_is_refused_in_the_commands_words(tracked: Path) -> None:
+    assert "'nothing' is no submodule of the workspace (the submodules: models, tools)" in _error(
+        "track_status", {"projects": ["nothing"]}
+    )
+
+
+def test_track_status_without_submodules_lists_no_project(repo: Path) -> None:
+    assert _call("track_status") == {"default_tracked": True, "projects": []}
 
 
 def test_the_reading_tools_change_nothing(vscode: Dict[str, Path], repo: Path) -> None:  # noqa: F811

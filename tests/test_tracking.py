@@ -347,7 +347,9 @@ def test_status_lists_a_single_plain_project_instead_of_counting_it(ws: Path, mo
     ]
 
 
-def test_status_of_named_projects_is_one_line_each_in_the_order_named(ws: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_status_of_named_projects_is_one_line_each_in_the_order_named(
+    ws: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     _run(ws, monkeypatch, "track", "unset", "models")
     assert _says(ws, monkeypatch, "models") == [
         "models: untracked (its own track = false in workspace.toml; git: applied)"

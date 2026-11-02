@@ -124,6 +124,7 @@ needs — in its own `pyproject.toml`, under `[tool.aisland]`. It never imports 
 | see which of the projects' variables this machine's `.env` lacks | `aisland workspace env-example --missing` | [workspace](https://github.com/Gearlux/aisland/blob/main/docs/workspace.md#the-machines-environment-envcomplete-envexample-and-env) |
 | choose where a project comes from | `aisland workspace configure source set <project> local\|github\|pypi` | [sources](https://github.com/Gearlux/aisland/blob/main/docs/sources.md) |
 | choose the extras the projects install | `aisland workspace configure extras set <names…>` | [selections](https://github.com/Gearlux/aisland/blob/main/docs/selections.md) |
+| choose whether the root records a project's commits, and see what is set | `aisland workspace track set\|unset [<project>]`, `aisland workspace track status` | [workspace](https://github.com/Gearlux/aisland/blob/main/docs/workspace.md) |
 | pull, push or tag every project | `git pull-all`, `git push-all`, `git tag-all <tag>` | [git](https://github.com/Gearlux/aisland/blob/main/docs/git.md) |
 | run the local services | `aisland services start [NAME…]` | [services](https://github.com/Gearlux/aisland/blob/main/docs/services.md) |
 | check the environment | `aisland doctor` | [doctor](https://github.com/Gearlux/aisland/blob/main/docs/doctor.md) |

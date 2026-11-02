@@ -396,11 +396,11 @@ def workspace_track() -> None:
     """Whether the root records the projects' commits: set it, unset it, or see what is set.
 
     \b
-    aisland workspace track unset                      every project: the root records none of their commits
+    aisland workspace track unset                     every project: the root records none of their commits
     aisland workspace track unset models              one project
     aisland workspace track set models                record its commits again
     aisland workspace track unset --machine-only      this machine only (.git/config); nothing to commit
-    aisland workspace track status                     which projects, whose choice, whether git agrees
+    aisland workspace track status                    which projects, whose choice, whether git agrees
     """
 
 

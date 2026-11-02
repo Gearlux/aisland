@@ -7,8 +7,8 @@ serves the ML libraries, aisland the workspace it runs in (user ruling 2026-10-2
 The tools are a chosen set, never the whole CLI (user choice 2026-10-21):
 
 * reading — ``doctor``, ``tests_report``, ``editor_themes``, ``editor_colors``, ``sources``, ``services_status``,
-  ``tunnel_list``, ``tunnel_status``: each the data its command prints with ``--json`` (or would), from the same
-  function;
+  ``tunnel_list``, ``tunnel_status``, ``track_status``: each the data its command prints with ``--json`` (or would),
+  from the same function;
 * changing this machine, never destroying — ``editor_set_theme``, ``editor_set_color``, ``editor_unset`` (the
   workspace window's theme and colours, :mod:`aisland.editor`), ``service_start``/``stop``/``restart`` for any
   service of the workspace and ``tunnel_start``/``tunnel_stop`` (the remote tunnel to this machine), each run as the
@@ -37,7 +37,7 @@ import click
 
 from aisland import cli, doctor, editor, editor_files, pytest_stats
 from aisland import sources as sources_mod
-from aisland import supervisor
+from aisland import supervisor, tracking
 from aisland import tunnel as tunnel_mod
 from aisland.errors import AislandError
 from aisland.projects import get_workspace_root
@@ -70,8 +70,9 @@ Read first: `doctor` (what is broken and the command that fixes it), `services_s
 `editor_colors` list the choices, `editor_set_theme` / `editor_set_color` / `editor_unset` apply them.
 `service_start` / `service_stop` / `service_restart` take any service of the workspace by name. `tunnel_status` and
 `tunnel_list` read the tunnel and the workspaces opened through it; `tunnel_start` / `tunnel_stop` bring it up or down
-(a sign-in still pending is answered with the code to hand the user). Setup, cleaning and resets are commands the
-person runs themselves (`aisland setup`, `aisland clean <project>`).
+(a sign-in still pending is answered with the code to hand the user). `track_status` says which projects the root
+repository records the commits of; `aisland workspace track set|unset` change it, as commands the person runs.
+Setup, cleaning and resets are commands the person runs themselves (`aisland setup`, `aisland clean <project>`).
 """
 
 
@@ -259,6 +260,15 @@ def tool_tunnel_status() -> Dict[str, object]:
     return tunnel_mod.status()
 
 
+def tool_track_status(projects: Optional[List[str]] = None) -> Dict[str, object]:
+    """Whether the root repository records each project's commits (`aisland workspace track status --json`): per
+    project `tracked`, whose choice that is (`source`: this machine's, the project's own `track`, the workspace's or the
+    default) and why in words (`reason`), and whether git's `ignore` agrees (`git`: `applied`, `not applied` — `aisland
+    setup` writes it — or `yours`, a setting aisland leaves alone). `projects` names some; an unknown one is refused,
+    listing the submodules. Changing it is the command `aisland workspace track set|unset`."""
+    return tracking.status_json(get_workspace_root(), projects or [])
+
+
 def _tunnel_command(args: List[str]) -> Dict[str, object]:
     """Run ``aisland tunnel ARGS --json`` and answer the JSON it printed, unchanged; its refusal in its own words."""
     line = ["tunnel", *args, "--json"]
@@ -323,6 +333,7 @@ _READING = (
     tool_services_status,
     tool_tunnel_list,
     tool_tunnel_status,
+    tool_track_status,
 )
 _CHANGING = (
     tool_editor_set_theme,
