@@ -27,7 +27,7 @@ uv venv --seed .venv && .venv/bin/pip install aisland
     vscode-init-bash.sh       written
     workspace.toml            the projects, how to start another machine from them
     git aliases               pull-all, push-all, … in the local git config
-    .agents/                  aisland's commands and agent rules (`.claude/commands` links to them)
+    .agents/                  harness: aisland (6 commands, 1 script, rules) (`.claude/commands` links to its commands)
     AGENTS.md                 written (imports the rules; CLAUDE.md and GEMINI.md link to it)
 Next:
     cd /Users/you/work/acme
@@ -219,7 +219,7 @@ say how to start on a machine that has no aisland yet:
 # ...
 #   1. A virtual environment with pip and aisland in it. ...
 #        uv venv --seed --prompt acme .venv
-#        uv pip install --python .venv/bin/python aisland
+#        .venv/bin/pip install aisland
 #      --seed puts pip in it: `aisland setup` installs uv into the venv with that pip and stops
 #      without it. A venv made without --seed gets it with:
 #        uv pip install --python .venv/bin/python pip
@@ -311,7 +311,7 @@ $ .venv/bin/aisland workspace init . --from workspace.toml
 [1/2] models  done in 3.1 s
 [2/2] tools   cloning git@github.com:acme/tools.git …
 [2/2] tools   done in 2.8 s
-      writing the starting files, workspace.toml, the git aliases and the agent rules …
+      writing the starting files, the git aliases and the agent rules …
 ==> Created workspace acme in /home/you/acme
 ```
 
@@ -338,8 +338,8 @@ How aisland finds its workspace depends on how it is installed:
 
 | installed | the workspace | where aisland keeps its state (`data/`, `bin/`, `tools/`: service data, downloaded tools) |
 |---|---|---|
-| **from a wheel** — `pip install aisland`, `uv tool install aisland`: what PyPI gives you | the first that applies, starting where you run it: (1) the folder `AISLAND_WORKSPACE` names; (2) the nearest folder at or above it holding `.gitmodules`; (3) the folder itself, when it holds projects; (4) inside a project, the project's parent; (5) a git repository with no project yet | `<workspace>/.aisland/` |
-| **from a checkout** — a clone of aisland's own repository installed editable (`pip install -e`), as aisland is developed | the workspace the checkout sits in, wherever you run it; `AISLAND_WORKSPACE` is ignored | `<workspace>/aisland/` |
+| **from a wheel** — `pip install aisland`, `uv tool install aisland`: what PyPI gives you; and a clone of aisland no workspace lists (yours in `~/code`, CI's), installed editable or not | the first that applies, starting where you run it: (1) the folder `AISLAND_WORKSPACE` names; (2) the nearest folder at or above it holding `.gitmodules`; (3) the folder itself, when it holds projects; (4) inside a project, the project's parent; (5) a git repository with no project yet | `<workspace>/.aisland/` |
+| **from a checkout** — a clone of aisland's own repository installed editable (`pip install -e`), which a workspace lists as one of its projects (its `.gitmodules` or `workspace.toml`), as aisland is developed | the workspace that lists the checkout, wherever you run it; `AISLAND_WORKSPACE` is ignored | `<workspace>/aisland/` |
 
 From a wheel, outside a workspace, a command is refused before it writes anything; only
 `aisland workspace …`, `aisland wheels …`, `aisland tunnel …`, `aisland doctor`, `aisland notebooks clean` and

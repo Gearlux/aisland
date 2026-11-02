@@ -40,6 +40,7 @@ def shipped(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     _write(folder / "commands" / "list-actions.md", "---\ndescription: list\n---\nlist v1\n")
     _write(folder / "scripts" / "stage_hunks.py", "# stage v1\n")
     _write(folder / "AGENTS.md", "# rules v1\n")
+    _write(folder / "harness.toml", 'rules = "AGENTS.md"\ncommands = ["commands/*.md"]\nscripts = ["scripts/*.py"]\n')
     monkeypatch.setattr(harness, "HARNESS_DIR", folder)
     return folder
 
@@ -109,7 +110,7 @@ def test_a_claude_commands_folder_of_the_users_own_is_left_and_named(root: Path,
     assert (root / ".claude" / "commands").is_dir() and not (root / ".claude" / "commands").is_symlink()
     assert (
         ".claude/commands is a folder of its own — move its files into .agents/workflows and delete it, "
-        "so Claude finds aisland's commands" in report
+        "so Claude finds the harness's commands" in report
     )
 
 
@@ -158,7 +159,7 @@ def test_a_project_with_a_claude_commands_folder_of_its_own_keeps_it_and_is_name
     assert not (project / ".claude" / "commands").is_symlink()
     assert (
         "models/.claude/commands is a folder of its own — move its files into .agents/workflows and delete it, "
-        "so Claude finds aisland's commands" in report
+        "so Claude finds the harness's commands" in report
     )
 
 
@@ -233,6 +234,11 @@ def test_the_record_of_the_copies_holds_their_fingerprints(root: Path, shipped: 
     }
 
 
+def test_the_record_holds_each_link_too_so_a_dropped_one_is_found(root: Path, shipped: Path) -> None:
+    harness.install_harness(root, link=True)
+    assert json.loads((root / harness.RECORD).read_text()) == {name: "link" for name in TARGETS}
+
+
 # --- switching between a checkout and a wheel ------------------------------------------------------------------
 
 
@@ -246,7 +252,7 @@ def test_a_wheels_unedited_copies_become_links_from_a_checkout(root: Path, shipp
     harness.install_harness(root, link=False)
     assert harness.install_harness(root, link=True) == []
     assert (root / ".agents/workflows/ship.md").is_symlink()
-    assert not (root / harness.RECORD).exists()
+    assert set(json.loads((root / harness.RECORD).read_text()).values()) == {"link"}
 
 
 def test_an_edited_copy_is_kept_from_a_checkout_too(root: Path, shipped: Path) -> None:
@@ -275,7 +281,7 @@ def test_an_unedited_copy_of_a_command_aisland_dropped_is_removed_an_edited_one_
     report = harness.install_harness(root, link=False)
     assert not (root / ".agents/workflows/list-actions.md").exists()
     assert (root / ".agents/workflows/ship.md").read_text() == "my own ship\n"
-    assert report == ["kept your edited .agents/workflows/ship.md — aisland no longer ships it"]
+    assert report == ["kept your edited .agents/workflows/ship.md — no harness set of the workspace ships it any more"]
 
 
 # --- the workspace's own AGENTS.md ----------------------------------------------------------------------------
@@ -284,8 +290,9 @@ def test_an_unedited_copy_of_a_command_aisland_dropped_is_removed_an_edited_one_
 def test_a_workspace_without_agents_md_gets_one_importing_the_rules(root: Path, shipped: Path) -> None:
     harness.install_harness(root, link=False)
     text = (root / "AGENTS.md").read_text()
-    assert text.splitlines()[0] == "@.agents/aisland/AGENTS.md"
+    assert text.splitlines()[0] == "@.agents/rules.md"
     assert (root / text.splitlines()[0][1:]).is_file()  # the import names a file that exists
+    assert "@.agents/aisland/AGENTS.md" in (root / ".agents/rules.md").read_text().splitlines()
     assert os.readlink(root / "CLAUDE.md") == "AGENTS.md"
     assert os.readlink(root / "GEMINI.md") == "AGENTS.md"
 
@@ -295,15 +302,13 @@ def test_an_agents_md_without_the_import_is_left_and_named(root: Path, shipped: 
     report = harness.install_harness(root, link=False)
     assert (root / "AGENTS.md").read_text() == "# our rules\n"
     assert not os.path.lexists(root / "CLAUDE.md")
-    assert report == [
-        'AGENTS.md does not import the aisland rules — add "@.agents/aisland/AGENTS.md" as its first line'
-    ]
+    assert report == ['AGENTS.md does not import the harness\'s rules — add "@.agents/rules.md" as its first line']
 
 
 def test_an_agents_md_with_the_import_is_left_and_says_nothing(root: Path, shipped: Path) -> None:
-    _write(root / "AGENTS.md", "@.agents/aisland/AGENTS.md\n\n# our rules\n")
+    _write(root / "AGENTS.md", "@.agents/rules.md\n\n# our rules\n")
     assert harness.install_harness(root, link=False) == []
-    assert (root / "AGENTS.md").read_text() == "@.agents/aisland/AGENTS.md\n\n# our rules\n"
+    assert (root / "AGENTS.md").read_text() == "@.agents/rules.md\n\n# our rules\n"
 
 
 def test_a_claude_md_of_its_own_is_kept(root: Path, shipped: Path) -> None:
@@ -326,6 +331,7 @@ def test_the_installed_files_are_ignored_and_the_users_own_are_not(root: Path, s
     for name in TARGETS:
         assert _ignored(root, name), name
     assert _ignored(root, harness.RECORD)
+    assert _ignored(root, harness.RULES_INDEX)
     assert not _ignored(root, ".agents/workflows/mine.md")
     assert not _ignored(root, "AGENTS.md")
 
@@ -478,7 +484,7 @@ def test_setup_installs_the_harness_before_provisioning(
     with pytest.raises(_Stop):
         manager.setup_workspace(non_interactive=True)
     assert (tmp_path / ".agents/workflows/ship.md").is_file()
-    assert (tmp_path / "AGENTS.md").read_text().startswith("@.agents/aisland/AGENTS.md\n")
+    assert (tmp_path / "AGENTS.md").read_text().startswith("@.agents/rules.md\n")
 
 
 def test_setup_prints_what_the_harness_reports(
@@ -493,6 +499,6 @@ def test_setup_prints_what_the_harness_reports(
     with pytest.raises(_Stop):
         manager.setup_workspace(non_interactive=True)
     assert (
-        '  - AGENTS.md does not import the aisland rules — add "@.agents/aisland/AGENTS.md" as its first line'
+        '  - AGENTS.md does not import the harness\'s rules — add "@.agents/rules.md" as its first line'
         in capsys.readouterr().out.splitlines()
     )

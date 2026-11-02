@@ -11,7 +11,7 @@ from __future__ import annotations
 
 import os
 from pathlib import Path
-from typing import Callable, Iterator
+from typing import Callable, Dict, Iterator
 
 import click
 import pytest
@@ -27,8 +27,68 @@ WORKSPACE = AISLAND_PROJECT.parent
 # --- from a checkout: every path as before ----------------------------------------------------------------------
 
 
+@needs_workspace
 def test_this_checkout_is_recognised_as_one() -> None:
+    """aisland checked out in the workspace that lists it; a clone of its own (CI's) is no checkout."""
     assert locations.FROM_CHECKOUT is True
+
+
+def _clone(tmp_path: Path, where: str = "aisland") -> Path:
+    """A checkout of aisland at ``tmp_path/where``: its pyproject.toml beside the package, its own TASKS.md."""
+    checkout = tmp_path / where
+    (checkout / "aisland").mkdir(parents=True)
+    (checkout / "pyproject.toml").write_text('[project]\nname = "aisland"\n')
+    (checkout / "TASKS.md").write_text("aisland's backlog\n")
+    return checkout
+
+
+@pytest.mark.parametrize(
+    "files, where, listed",
+    [
+        ({}, "aisland", False),
+        ({"TASKS.md": "", ".git/HEAD": ""}, "aisland", False),
+        ({".gitmodules": '[submodule "lib"]\n\tpath = lib\n'}, "aisland", False),
+        ({".gitmodules": '[submodule "aisland"]\n\tpath = aisland\n\turl = u\n'}, "aisland", True),
+        ({".gitmodules": '[submodule "x"]\n\tpath = tools/aisland\n'}, "tools/aisland", True),
+        ({"workspace.toml": '[project."aisland"]\nurl = "u"\n'}, "aisland", True),
+        ({"workspace.toml": '[project."aisland"]\npath = "ais"\n'}, "ais", True),
+        ({"workspace.toml": "not toml ["}, "aisland", False),
+    ],
+    ids=[
+        "a clone of its own",
+        "a repository above that lists nothing",
+        "a superproject listing other projects",
+        "a submodule of the workspace",
+        "a submodule at a nested path",
+        "a project of workspace.toml",
+        "a project of workspace.toml in a folder of its own name",
+        "a workspace.toml aisland cannot read",
+    ],
+)
+def test_a_checkout_runs_as_one_only_where_a_workspace_lists_it(
+    tmp_path: Path, files: Dict[str, str], where: str, listed: bool
+) -> None:
+    """A contributor's clone of aisland, kept anywhere, works like a wheel: on the workspace it is run in."""
+    for name, text in files.items():
+        (tmp_path / name).parent.mkdir(parents=True, exist_ok=True)
+        (tmp_path / name).write_text(text)
+    checkout = _clone(tmp_path, where)
+    assert locations.listing_workspace(checkout) == (tmp_path if listed else None)
+    assert locations.runs_as_checkout(checkout) is listed
+
+
+def test_a_folder_without_aislands_pyproject_is_no_checkout(tmp_path: Path) -> None:
+    (tmp_path / ".gitmodules").write_text('[submodule "aisland"]\n\tpath = aisland\n')
+    (tmp_path / "aisland" / "aisland").mkdir(parents=True)
+    assert not locations.runs_as_checkout(tmp_path / "aisland")
+
+
+def test_a_checkout_s_workspace_is_the_one_that_lists_it_not_its_own_backlog(tmp_path: Path) -> None:
+    """A workspace listing aisland in workspace.toml alone holds no .gitmodules or TASKS.md: the clone's own TASKS.md
+    must not make the clone the workspace."""
+    (tmp_path / "workspace.toml").write_text('[project."aisland"]\nurl = "u"\n')
+    checkout = _clone(tmp_path)
+    assert locations.checkout_workspace_root(checkout / "aisland" / "manager.py") == tmp_path
 
 
 @needs_workspace
@@ -108,8 +168,8 @@ def test_from_a_wheel_a_folder_is_an_aisland_workspace_by_its_file_or_the_variab
         (code / marker).unlink()
 
 
-def test_from_a_checkout_its_workspace_is_always_one(tmp_path: Path) -> None:
-    assert locations.FROM_CHECKOUT
+def test_from_a_checkout_its_workspace_is_always_one(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(locations, "FROM_CHECKOUT", True)
     assert locations.is_workspace(tmp_path, {})
 
 

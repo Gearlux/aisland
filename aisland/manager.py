@@ -64,8 +64,12 @@ def _run_installs(workspace_root: Path, uv_cmd: str, projects: List[dict]) -> Tu
 
 def _copy_packaged_bashrc(target: Path) -> None:
     """From a wheel: put the packaged ``project.bashrc`` at ``target`` (``<workspace>/.aisland/``), replacing an older
-    copy. The copy is aisland's (its header says so), and its place there makes the workspace its parent folder."""
+    copy. The copy is aisland's (its header says so), and its place there makes the workspace its parent folder. A
+    clone of aisland no workspace lists, installed editable, works like a wheel but carries no packaged copy: its own
+    file, beside the package, is the one copied."""
     packaged = locations.PACKAGE_DIR / "project.bashrc"
+    if not packaged.is_file():
+        packaged = locations.CHECKOUT_DIR / "project.bashrc"
     text = packaged.read_text()
     if target.exists() and target.read_text() == text:
         return

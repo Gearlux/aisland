@@ -4347,3 +4347,91 @@ aisland workspace configure source --json | python -m json.tool   # the warning 
 ### What you may change
 
 Add a command to `_WORKSPACE_FREE` when it reads no workspace. Never print a warning on stdout.
+
+## A workspace combines harness sets
+
+*2026-11-02* (extends "Every workspace gets aisland's agent commands and rules")
+
+### Context
+
+Every workspace got aisland's own commands and rules, with no way to drop them, bring a team's own, or use the
+harness another project already keeps (its `AGENTS.md`, its `.claude/commands`, its Cursor rules). A workspace's own
+rules could only be appended below the import line of aisland's.
+
+### Decision
+
+- `workspace.toml` lists **harness sets** in order (`[harness] sets`), aisland's own when it lists none: `"aisland"`,
+  a project of the workspace (the folder its `[tool.aisland] harness` names, else the project itself), a folder of the
+  workspace, a name an installed package registers (`aisland.harnesses`, shaped like `aisland.ci_templates`), or
+  `{ git = <url>, ref = <ref> }` — cloned into the state folder, fetched again only when the url or ref changes.
+- A set says what it brings in `harness.toml` (`rules`, `commands`, `scripts`, `[files]`); a folder without one is
+  read where agents read (`AGENTS.md`/`CLAUDE.md`, `.claude/commands/*.md` that is a real folder — the link aisland
+  makes is the workspace's, never the set's —, `.cursor/rules/*`, `.github/copilot-instructions.md`). aisland's own
+  set has a `harness.toml` too, so `aisland workspace harness export` gives a set that works on its own.
+- Each set's rules land in `.agents/<set>/AGENTS.md`; `.agents/rules.md` imports them in the list's order, and the
+  workspace's `AGENTS.md` imports that one file — adding or dropping a set never touches it. aisland's own rules stay
+  in `.agents/aisland/AGENTS.md`, so an `AGENTS.md` importing them still works; setup names the new line.
+- Two sets placing one file are **refused** before anything is installed, naming both and the line; `exclude` on an
+  entry leaves a file out, and an `exclude` that names nothing is refused. No set wins by its place in the list: a
+  silently replaced `/ship` would be a surprise, and a precedence rule is one more thing to learn.
+- The record (`.agents/installed.json`) holds each copy's fingerprint and each link, so the files of a dropped set
+  are found and taken away; an edited copy is kept and named, as before.
+
+### Consequences
+
+A workspace with no `[harness]` installs what it did, plus `.agents/rules.md`. A git set makes setup use the network
+the first time and when its ref changes, and an unreachable host stops setup naming the line. The commands aisland
+ships cite aisland's rules; a workspace that drops aisland's rules keeps those commands at its own risk.
+
+### Example
+
+```toml
+[harness]
+sets = [{ set = "aisland", exclude = ["commands/ship.md"] }, "models", { git = "https://github.com/acme/rules", ref = "v2" }]
+```
+
+```text
+$ aisland workspace harness install
+==> Harness: aisland (5 commands, 1 script, rules), models (1 command, rules), rules (rules)
+```
+
+### What you may change
+
+The usual places read for a set without `harness.toml`, as agents add theirs. Never a precedence between sets, and
+never an edit of the workspace's own `AGENTS.md`.
+
+## A checkout of aisland is one only where a workspace lists it
+
+*2026-11-02* (narrows "From a checkout everything is found from aisland's place")
+
+### Context
+
+`FROM_CHECKOUT` was true for any folder holding aisland's `pyproject.toml` beside the package — every clone. A
+contributor's clone in `~/code/aisland`, installed editable, then took itself as the workspace (its own `TASKS.md`)
+and ignored the folder it ran in and `AISLAND_WORKSPACE`. Measured on such a clone, run from a workspace `acme`
+beside it: `aisland workspace show` and `services status` worked on the clone, and `aisland setup` refused with
+`Virtual environment not found at …/aisland/.venv. Run aisland/setup.sh first.`
+
+### Decision
+
+A checkout runs as one only when a workspace above it lists it (`locations.listing_workspace`): the nearest folder,
+up to five above, whose `.gitmodules` has a submodule at the checkout's path or whose `workspace.toml` has a project
+in it. Its workspace is that folder. Any other clone works like a wheel. Read with the standard library only: the
+pytest plugin imports the module.
+
+### Consequences
+
+acme is unchanged (its `.gitmodules` lists `aisland`). A contributor's clone works on the workspace it is run in.
+GitHub CI, which checks aisland out alone, now runs aisland's tests in wheel mode: a test of checkout mode sets
+`FROM_CHECKOUT` itself or carries `needs_workspace`.
+
+### Example
+
+```text
+~/code/aisland   (clone, pip install -e)      ~/work/acme   (a workspace)
+$ cd ~/work/acme && aisland workspace show    # before: worked on ~/code/aisland; now: on ~/work/acme
+```
+
+### What you may change
+
+How far above the checkout to look. Never make a `TASKS.md` or a repository above a checkout count as listing it.

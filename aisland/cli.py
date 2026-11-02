@@ -669,6 +669,65 @@ def workspace_provision_install() -> None:
     provision.install(_configure_root())
 
 
+@workspace_group.group("harness", cls=_Group, invoke_without_command=True)
+@click.option("--json", "as_json", is_flag=True, help="Print the sets as one JSON object.")
+@click.pass_context
+def workspace_harness(ctx: click.Context, as_json: bool) -> None:
+    """The agent harness sets the workspace combines — each one's commands, scripts, rules and other files, in the
+    order workspace.toml lists them (aisland's own when it lists none). `install` installs them, as `aisland setup`
+    does; `export` copies aisland's set to start one of your own.
+
+    \b
+    [harness]
+    sets = ["aisland", "models", { git = "https://github.com/acme/agent-rules", ref = "v2" }]
+    """
+    from aisland import harness
+
+    if ctx.invoked_subcommand is not None:
+        return
+    rows = harness.rows(_configure_root())
+    if as_json:
+        click.echo(json.dumps({"sets": rows}, indent=2))
+        return
+    if not rows:
+        click.echo("No harness sets: workspace.toml lists none ([harness] sets = []).")
+        return
+    for row in rows:
+        click.echo(f"{row['set']}  ({row['kind']}, {row['folder']})")
+        click.echo(f"    rules  {row['rules'] or '-'}")
+        for place in row["files"]:
+            click.echo(f"    {place}")
+
+
+@workspace_harness.command("install")
+def workspace_harness_install() -> None:
+    """Install the harness sets into the workspace, as `aisland setup` does."""
+    from aisland import harness
+
+    root = _configure_root()
+    notes = harness.install_harness(root)
+    click.echo(f"==> Harness: {harness.summary(harness.sets(root))}")
+    for line in notes:
+        click.echo(f"  - {line}")
+
+
+@workspace_harness.command("export")
+@click.argument("folder", type=click.Path(file_okay=False, path_type=Path))
+def workspace_harness_export(folder: Path) -> None:
+    """Copy aisland's own harness set into FOLDER (new or empty), to start a set of your own from it.
+
+    \b
+    aisland workspace harness export agents
+    """
+    from aisland import harness
+
+    copied = harness.export(folder)
+    click.echo(f"==> Copied aisland's harness set into {folder} ({len(copied)} files)")
+    click.echo(
+        f'  - List it in workspace.toml: [harness] sets = ["{folder.name}"] (keep "aisland" to keep aisland\'s too)'
+    )
+
+
 @workspace_group.group("mirror")
 def workspace_mirror() -> None:
     """The mirror plugin's action: copy each project to its mirror (set it with `aisland workspace configure mirror`)."""

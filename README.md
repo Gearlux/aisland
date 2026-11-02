@@ -60,7 +60,7 @@ uv venv --seed .venv && .venv/bin/pip install aisland
     vscode-init-bash.sh       written
     workspace.toml            the projects, how to start another machine from them
     git aliases               pull-all, push-all, … in the local git config
-    .agents/                  aisland's commands and agent rules (`.claude/commands` links to them)
+    .agents/                  harness: aisland (6 commands, 1 script, rules) (`.claude/commands` links to its commands)
     AGENTS.md                 written (imports the rules; CLAUDE.md and GEMINI.md link to it)
 ```
 

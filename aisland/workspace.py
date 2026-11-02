@@ -38,6 +38,8 @@ import click
 from aisland import env_example, local_workspace, locations, tracking, workspace_file
 from aisland.errors import AislandError
 from aisland.harness import install_harness
+from aisland.harness import sets as harness_sets
+from aisland.harness import summary as harness_summary
 from aisland.manager import install_git_aliases
 from aisland.projects import get_workspace_name
 
@@ -349,7 +351,7 @@ def _build(
         if path not in already
     ]
 
-    _say(f"{_INDENT}writing the starting files, workspace.toml, the git aliases and the agent rules …")
+    _say(f"{_INDENT}writing the starting files, the git aliases and the agent rules …")
     rows += _write_starting_files(root, rewrite)
 
     if from_file is not None:
@@ -363,7 +365,9 @@ def _build(
 
     had_agents_md = (root / "AGENTS.md").exists()
     notes = install_harness(root)
-    rows.append(_row(".agents/", "aisland's commands and agent rules (`.claude/commands` links to them)"))
+    rows.append(
+        _row(".agents/", f"harness: {harness_summary(harness_sets(root))} (`.claude/commands` links to its commands)")
+    )
     if not had_agents_md:
         rows.append(_row("AGENTS.md", "written (imports the rules; CLAUDE.md and GEMINI.md link to it)"))
     rows += [_row("", note) for note in notes]

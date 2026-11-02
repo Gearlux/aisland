@@ -30,6 +30,7 @@ def test_a_test_that_points_the_root_at_its_folder_gets_its_folder(
     assert projects.get_workspace_root() == tmp_path
 
 
+@needs_workspace
 @pytest.mark.real_workspace
 def test_a_test_marked_real_workspace_gets_the_checkouts_workspace() -> None:
     assert locations.workspace_root() == locations.checkout_workspace_root()

@@ -609,6 +609,16 @@ class TestTheWorkflowActionsRunOnNode24:
         }
 
 
+@pytest.mark.parametrize("make", [_make_pyproject, _make_pyproject_with_slow_marker], ids=["plain", "slow marker"])
+def test_every_coverage_run_measures_branches(monkeypatch: pytest.MonkeyPatch, tmp_path: Path, make: Any) -> None:
+    """Workspace rule "Keep Branch Coverage On": each file's coverage run measures branches, not lines only."""
+    files = _scaffolded(monkeypatch, tmp_path, make)
+    for name in ("Jenkinsfile", "Jenkinsfile.local", "ci.yml"):
+        runs = [line for line in files[name].splitlines() if "--cov=" in line]
+        assert runs, name
+        assert all("--cov-branch" in line for line in runs), (name, runs)
+
+
 class TestALongStageHasATimeLimit:
     """A stage that runs the project's code gets a time limit in `Jenkinsfile.local` (user choice 2026-10-15): past
     it the stage FAILS naming itself and the limit, so one hung test never holds the nightly orchestrator again

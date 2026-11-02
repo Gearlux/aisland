@@ -114,7 +114,7 @@ def test_a_new_workspace_gets_the_agent_commands_and_rules(tmp_path: Path) -> No
     root = tmp_path / "acme"
     assert (root / ".agents" / "workflows" / "commit-session.md").is_file()
     assert (root / ".claude" / "commands" / "ship.md").is_file()
-    assert (root / "AGENTS.md").read_text().splitlines()[0] == "@.agents/aisland/AGENTS.md"
+    assert (root / "AGENTS.md").read_text().splitlines()[0] == "@.agents/rules.md"
     assert (root / "CLAUDE.md").resolve() == (root / "AGENTS.md").resolve()
     assert "    AGENTS.md                 written (imports the rules; CLAUDE.md and GEMINI.md link to it)" in (
         result.output.splitlines()
@@ -126,7 +126,7 @@ def test_an_agents_md_of_its_own_is_kept_and_its_missing_import_named(tmp_path: 
     result = _init(tmp_path)
     assert (tmp_path / "acme" / "AGENTS.md").read_text() == "# ours\n"
     assert (
-        '                              AGENTS.md does not import the aisland rules — add "@.agents/aisland/AGENTS.md" '
+        '                              AGENTS.md does not import the harness\'s rules — add "@.agents/rules.md" '
         "as its first line" in result.output.splitlines()
     )
 
@@ -363,9 +363,12 @@ def test_init_without_a_file_writes_one_listing_the_added_projects(tmp_path: Pat
     assert (project.path, project.url) == ("tools", str(tools))
 
 
-def test_a_new_workspace_without_projects_has_no_file(tmp_path: Path) -> None:
-    assert _init(tmp_path).exit_code == 0
+def test_a_new_workspace_without_projects_has_no_file_and_says_none(tmp_path: Path) -> None:
+    """`workspace.toml` lists the projects: with none there is no file, and the output names none."""
+    result = _init(tmp_path)
+    assert result.exit_code == 0, result.output
     assert not (tmp_path / "acme" / "workspace.toml").exists()
+    assert "workspace.toml" not in result.stdout + result.stderr
 
 
 @pytest.mark.parametrize(
@@ -611,7 +614,7 @@ def test_each_project_is_said_as_its_clone_starts_and_ends(tmp_path: Path) -> No
         "[1/2] models  done in T s",
         f"[2/2] tools   cloning {tools} …",
         "[2/2] tools   done in T s",
-        "      writing the starting files, workspace.toml, the git aliases and the agent rules …",
+        "      writing the starting files, the git aliases and the agent rules …",
     ]
 
 

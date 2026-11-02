@@ -3,11 +3,12 @@
 aisland is installed one of two ways, and each has its own rule:
 
 * **From a checkout** — editable, the package at ``<workspace>/aisland/aisland/``, ``aisland/pyproject.toml``
-  beside it. Every path follows the package's own location: the workspace is found from it and the state lives in
+  beside it, and a workspace above that lists the checkout as one of its projects (:func:`listing_workspace`).
+  Every path follows the package's own location: the workspace is the one that lists it and the state lives in
   ``<workspace>/aisland/`` (``data/``, ``bin/``, ``tools/``). The folder you run aisland in and ``AISLAND_WORKSPACE``
   change nothing — this is how aisland worked before it could be installed from a wheel.
 * **From a wheel** — the package in ``site-packages``, where the package's location says nothing about any
-  workspace. The workspace is ``AISLAND_WORKSPACE`` when set, else the one the folder you run aisland in belongs to
+  workspace; and so is a clone of aisland no workspace lists (a contributor's, CI's), installed editable or not. The workspace is ``AISLAND_WORKSPACE`` when set, else the one the folder you run aisland in belongs to
   (:func:`find_workspace`: a superproject, a folder of projects, a project's parent, a fresh repository); the
   state lives in ``<workspace>/.aisland/``.
 
@@ -18,6 +19,8 @@ command (:func:`workspace_found`, :func:`missing_workspace_message`) before anyt
 
 import logging
 import os
+import re
+import tomllib
 from pathlib import Path
 from typing import Dict, List, Literal, Mapping, Optional, Tuple
 
@@ -27,8 +30,52 @@ logger = logging.getLogger(__name__)
 PACKAGE_DIR = Path(__file__).parent.absolute()
 #: The folder holding the package: the aisland checkout, or ``site-packages``.
 CHECKOUT_DIR = PACKAGE_DIR.parent
-#: True when aisland runs from its checkout: its ``pyproject.toml`` sits beside the package (no wheel carries one).
-FROM_CHECKOUT = (CHECKOUT_DIR / "pyproject.toml").is_file()
+#: How far above a checkout the workspace listing it is looked for.
+_LISTING_DEPTH = 5
+_GITMODULES_PATH = re.compile(r"^\s*path\s*=\s*(.+?)\s*$", re.MULTILINE)
+
+
+def _lists(folder: Path, relative: str) -> bool:
+    """Whether ``folder``'s ``.gitmodules`` has a submodule at ``relative``, or its ``workspace.toml`` a project in it.
+    A file that cannot be read lists nothing."""
+    try:
+        gitmodules = (folder / ".gitmodules").read_text(encoding="utf-8")
+    except (OSError, UnicodeDecodeError):
+        gitmodules = ""
+    if relative in (match.strip().strip('"') for match in _GITMODULES_PATH.findall(gitmodules)):
+        return True
+    try:
+        projects = tomllib.loads((folder / "workspace.toml").read_text(encoding="utf-8")).get("project", {})
+    except (OSError, UnicodeDecodeError, tomllib.TOMLDecodeError):
+        return False
+    return isinstance(projects, dict) and any(
+        isinstance(table, dict) and table.get("path", name) == relative for name, table in projects.items()
+    )
+
+
+def listing_workspace(checkout: Path) -> Optional[Path]:
+    """The workspace that lists ``checkout`` as one of its projects — the nearest folder above it whose
+    ``.gitmodules`` has a submodule at its path, or whose ``workspace.toml`` has a project in it — or None for a
+    clone of its own. A ``TASKS.md`` or a repository above it lists nothing: a contributor's clone in ``~/code`` is no
+    workspace's project."""
+    for folder in checkout.parents[:_LISTING_DEPTH]:
+        if _lists(folder, checkout.relative_to(folder).as_posix()):
+            return folder
+    return None
+
+
+def runs_as_checkout(checkout: Path) -> bool:
+    """Whether aisland at ``checkout`` runs as a checkout: its ``pyproject.toml`` beside the package (no wheel carries
+    one) and a workspace that lists it. Any other clone works like a wheel, on the workspace it is run in."""
+    try:
+        beside = (checkout / "pyproject.toml").is_file()
+    except OSError:
+        return False
+    return beside and listing_workspace(checkout) is not None
+
+
+#: True when aisland runs from its checkout in the workspace that lists it (:func:`runs_as_checkout`).
+FROM_CHECKOUT = runs_as_checkout(CHECKOUT_DIR)
 #: Names the workspace when aisland runs from a wheel; ignored from a checkout.
 WORKSPACE_ENV = "AISLAND_WORKSPACE"
 #: The workspace folder that holds the state when aisland runs from a wheel.
@@ -58,6 +105,10 @@ def checkout_workspace_root(package_file: Optional[Path] = None) -> Path:
     `TASKS.md` — never the innermost — so a nested project can't win.
     """
     start = (package_file or PACKAGE_DIR / "manager.py").resolve()
+    # 0. The workspace that lists the checkout (the one that makes it run as a checkout at all).
+    listed = listing_workspace(start.parent.parent)
+    if listed is not None:
+        return _said(listed, f"from the checkout: {listed} lists it as a project")
     # start itself is a file; its parents are the candidate directories.
     chain: List[Path] = list(start.parents)[:6]
 

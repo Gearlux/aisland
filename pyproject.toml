@@ -44,7 +44,9 @@ requires-python = ">=3.12"
 # only the machine you connect FROM needs it, so it stays out of the base install.
 connect = ["msgpack>=1.2"]
 # `aisland-mcp`, the MCP server (aisland/server.py): only a machine whose AI client calls aisland's tools needs it.
-mcp = ["mcp>=2.0"]
+# Below 3: the server drops the SDK's resources and prompts handlers through a private attribute, which a next major
+# version may move (tests/test_packaging.py::test_the_mcp_sdk_is_held_below_its_next_major_version).
+mcp = ["mcp>=2.0,<3"]
 # `aisland wheels prune --apply` and `aisland wheels reset` rewrite history with git-filter-repo
 # (aisland/wheels_prune.py, run as `python -m aisland.filter_repo`, which reads a multi-line config value);
 # only a clone that rewrites needs it.
@@ -53,7 +55,7 @@ prune = ["git-filter-repo>=2.47"]
 # `<name>[connect]`, so the line never depends on the distribution's name.
 dev = [
     "msgpack>=1.2",
-    "mcp>=2.0",
+    "mcp>=2.0,<3",
     "git-filter-repo>=2.47",
     # `aisland completion install` hands liquifai apps to liquifai (aisland/completion.py), and its tests stub that.
     "liquifai>=0.3.1",
@@ -107,7 +109,7 @@ include = ["aisland*"]
 # into every workspace (aisland/harness.py: the commands, their helper script, the generic rules — `harness/` is no
 # Python package, so its script is data too). setup.py adds project.bashrc.
 [tool.setuptools.package-data]
-aisland = ["py.typed", "code-workspace.json", "git/*.sh", "templates/*", "templates/ci/*", "harness/*.md", "harness/commands/*.md", "harness/scripts/*.py"]
+aisland = ["py.typed", "code-workspace.json", "git/*.sh", "templates/*", "templates/ci/*", "harness/*.md", "harness/*.toml", "harness/commands/*.md", "harness/scripts/*.py"]
 
 [tool.black]
 line-length = 120
@@ -117,6 +119,11 @@ extend-exclude = 'data/'
 profile = "black"
 line_length = 120
 skip_glob = ["data/*"]
+
+# Every coverage run of aisland measures branches (workspace rule "Keep Branch Coverage On"); CI's runs also pass
+# --cov-branch, from the templates.
+[tool.coverage.run]
+branch = true
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

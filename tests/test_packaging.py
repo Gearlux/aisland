@@ -23,6 +23,7 @@ from typing import Any, Dict, List, Optional, Tuple
 
 import pytest
 import yaml
+from packaging.requirements import Requirement
 
 from aisland import editor_files
 
@@ -77,6 +78,7 @@ def test_the_package_holds_the_templates_and_the_git_scripts() -> None:
         "aisland/harness/commands/pull-all.md",
         "aisland/harness/commands/push-all.md",
         "aisland/harness/commands/ship.md",
+        "aisland/harness/harness.toml",
         "aisland/py.typed",
         "aisland/templates/ci/Jenkinsfile.jinja",
         "aisland/templates/ci/Jenkinsfile.local.jinja",
@@ -206,6 +208,15 @@ def test_the_release_names_its_author_and_where_it_lives(release_metadata: Messa
         "Issues": "https://github.com/Gearlux/aisland/issues",
         "Changelog": "https://github.com/Gearlux/aisland/blob/main/CHANGELOG.md",
     }
+
+
+def test_the_mcp_sdk_is_held_below_its_next_major_version() -> None:
+    """`aisland-mcp` drops the SDK's resources and prompts handlers through a private attribute (`server.py`): a
+    3.x SDK may move it, so neither the `mcp` extra nor `dev` admits one."""
+    extras = tomllib.loads((PROJECT / "pyproject.toml").read_text(encoding="utf-8"))["project"]["optional-dependencies"]
+    for extra in ("mcp", "dev"):
+        [spec] = [Requirement(r).specifier for r in extras[extra] if Requirement(r).name == "mcp"]
+        assert spec.contains("2.9") and not spec.contains("3.0"), (extra, str(spec))
 
 
 def test_the_development_status_follows_the_version() -> None:

@@ -34,10 +34,12 @@ from aisland.errors import AislandError
 #: The file, at the workspace root.
 FILE_NAME = "workspace.toml"
 
-#: The sections the file has: the workspace's own choices, its CI template set, and its projects.
-_SECTIONS = ("workspace", "ci", "project")
+#: The sections the file has: the workspace's own choices, its CI template set, its harness sets, and its projects.
+_SECTIONS = ("workspace", "ci", "harness", "project")
 #: The section naming the CI template set and its variables (:mod:`aisland.ci_templates`).
 CI_SECTION = "ci"
+#: The section listing the agent harness sets the workspace combines (:mod:`aisland.harness`).
+HARNESS_SECTION = "harness"
 
 #: The ``[workspace]`` key naming the workspace (else its origin's repository, else its folder:
 #: :func:`aisland.projects.get_workspace_name`); no selection may take it.
@@ -73,12 +75,13 @@ class Project:
 
 @dataclass
 class WorkspaceFile:
-    """The file's sections: ``[workspace]`` (``settings``), ``[ci]`` (the CI template set, ``ci``) and the projects,
-    in the file's order."""
+    """The file's sections: ``[workspace]`` (``settings``), ``[ci]`` (the CI template set, ``ci``), ``[harness]``
+    (the agent harness sets, ``harness``) and the projects, in the file's order."""
 
     settings: Dict[str, Any] = field(default_factory=dict)  # Any: TOML values, each reader's to check
     projects: Dict[str, Project] = field(default_factory=dict)
     ci: Dict[str, Any] = field(default_factory=dict)  # Any: TOML values, ci_templates' to check
+    harness: Dict[str, Any] = field(default_factory=dict)  # Any: TOML values, harness' to check
 
 
 # --- reading -------------------------------------------------------------------------------------------------------
@@ -113,7 +116,7 @@ def read(path: Path) -> WorkspaceFile:
                 "with path, url and branch"
             )
         raise FileError(
-            f'{where}: [{key}] is no section of {FILE_NAME} — it has [workspace], [ci] and [project."<name>"]'
+            f'{where}: [{key}] is no section of {FILE_NAME} — it has [workspace], [ci], [harness] and [project."<name>"]'
         )
     projects: Dict[str, Project] = {}
     for name, table in data.get("project", {}).items():
@@ -143,7 +146,10 @@ def read(path: Path) -> WorkspaceFile:
     ci = data.get(CI_SECTION, {})
     if not isinstance(ci, dict):
         raise FileError(f"{Where(path, _top_line(text, CI_SECTION))}: [{CI_SECTION}] must be a table")
-    return WorkspaceFile(settings, projects, dict(ci))
+    harness = data.get(HARNESS_SECTION, {})
+    if not isinstance(harness, dict):
+        raise FileError(f"{Where(path, _top_line(text, HARNESS_SECTION))}: [{HARNESS_SECTION}] must be a table")
+    return WorkspaceFile(settings, projects, dict(ci), dict(harness))
 
 
 def _check_format(path: Path, text: str, value: object) -> None:
@@ -206,11 +212,11 @@ def _header(name: str) -> str:
 #   1. A virtual environment with pip and aisland in it. aisland finds it at .venv in this folder;
 #      --prompt names it, so the shell shows ({name}) once it is activated. With uv:
 #        uv venv --seed --prompt {name} .venv
-#        uv pip install --python .venv/bin/python aisland
+#        .venv/bin/pip install aisland
 #      --seed puts pip in it: `aisland setup` installs uv into the venv with that pip and stops
 #      without it. A venv made without --seed gets it with:
 #        uv pip install --python .venv/bin/python pip
-#      or with pip:
+#      or without uv:
 #        python3 -m venv --prompt {name} .venv
 #        .venv/bin/pip install aisland
 #
@@ -221,8 +227,6 @@ def _header(name: str) -> str:
 #
 #      From a wheel instead of PyPI, name the file in place of aisland:
 #        .venv/bin/pip install ./aisland-{__version__}-py3-none-any.whl
-#      or with uv:
-#        uv pip install --python .venv/bin/python ./aisland-{__version__}-py3-none-any.whl
 #      (built in a checkout of aisland with: uv build --wheel aisland -o dist)
 #
 #   2. The workspace: each project below cloned on its branch, the starting files, the git aliases:
@@ -267,6 +271,10 @@ def render(workspace: WorkspaceFile, name: str) -> str:
                 lines.append(f"[{CI_SECTION}.{_key(key)}]")
                 lines += [f"{_key(name)} = {_value(item)}" for name, item in table.items()]
                 lines.append("")
+    if workspace.harness:
+        lines.append(f"[{HARNESS_SECTION}]")
+        lines += [f"{_key(key)} = {_value(value)}" for key, value in workspace.harness.items()]
+        lines.append("")
     for project in workspace.projects.values():
         lines.append(f"[project.{json.dumps(project.name)}]")
         if project.path != project.name:
@@ -283,7 +291,7 @@ def render(workspace: WorkspaceFile, name: str) -> str:
 def write(root: Path, workspace: WorkspaceFile) -> Optional[Path]:
     """Write ``workspace`` to ``<root>/workspace.toml``; with nothing in it, remove the file and return None."""
     path = root / FILE_NAME
-    if not workspace.settings and not workspace.projects and not workspace.ci:
+    if not workspace.settings and not workspace.projects and not workspace.ci and not workspace.harness:
         path.unlink(missing_ok=True)
         return None
     path.write_text(render(workspace, workspace.settings.get(NAME_KEY) or root.name))

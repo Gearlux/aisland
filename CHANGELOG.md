@@ -81,6 +81,11 @@ The first release on PyPI: `pip install aisland`.
   names its click scripts in `[tool.aisland] click-commands`.
 - **`aisland tunnel`** opens a VS Code Remote Tunnel to a remote machine, and `aisland tunnel connect` (the
   `[connect]` extra) a terminal on it over that tunnel.
+- **The agent harness**: `aisland setup` installs the commands, helper scripts and rules every AI coding session
+  in the workspace reads, from the harness sets `workspace.toml`'s `[harness] sets` lists — aisland's own, a
+  project's, a folder of the workspace, an installed package's, a git repository at a pinned ref — combined in order,
+  `.agents/rules.md` importing every set's rules. Two sets placing one file are refused; `exclude` leaves a file out.
+  **`aisland workspace harness`** lists them, `install` installs them, `export` starts a set of your own.
 - **`aisland mcp claude|gemini`** writes the client file (`.mcp.json`, `.gemini/settings.json`) that lists the
   workspace's MCP servers, and **`aisland notebooks clean`** is a git filter that clears notebook outputs before they
   are committed.

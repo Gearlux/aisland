@@ -13,7 +13,7 @@ import click.testing
 import pytest
 from click.testing import CliRunner
 
-from aisland import cli, editor_files, manager
+from aisland import cli, editor_files, locations, manager
 
 
 @pytest.fixture
@@ -24,6 +24,7 @@ def repo(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     (root / "aisland" / "project.bashrc").write_text("# aisland's copy\n")
     subprocess.run(["git", "init", "-q", str(root)], check=True)
     monkeypatch.setattr(manager, "BASE_DIR", root / "aisland")
+    monkeypatch.setattr(locations, "FROM_CHECKOUT", True)  # the layout above is a checkout's
     monkeypatch.setattr(editor_files, "_loggair_log_dir", lambda workspace_root: None)
     monkeypatch.setattr(cli, "get_workspace_root", lambda: root)
     return root

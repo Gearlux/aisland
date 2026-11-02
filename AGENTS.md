@@ -16,7 +16,7 @@ installed outside the workspace gets its unpublished dependencies as wheels · [
 is push-only, fast-forward-only, and copies the primary · [wheel-mode] from a checkout everything
 is found from aisland's place, from a wheel from where it runs · [folders-as-submodules] a folder of
 projects is a workspace, its subfolders read as submodules · [workspace-file] a workspace is written down in a
-file a machine without aisland reads · [harness] every workspace gets aisland's agent commands and rules · [editor] the editor's theme and colours are a per-machine choice laid over the
+file a machine without aisland reads · [harness] every workspace gets aisland's agent commands and rules · [harness-sets] a workspace combines harness sets · [editor] the editor's theme and colours are a per-machine choice laid over the
 generated workspace file · [declarations] a project declares what it brings, aisland finds it in two stages and the project never imports aisland · [mcp-server] aisland's tools are its own server, a chosen set · [aliases] a link to a folder of the workspace is a short name, never a project ·
 [tunnel-terminal] a terminal on the remote machine rides the VS Code tunnel it already runs · [local-workspace] a root
 repository no one shares tracks only the projects, and an untracked project's commits are never recorded. · [github-owner] a project is the
@@ -251,9 +251,15 @@ start-time port pre-flight naming the PID is the only signal). All service state
 
 ## Workspace root and paths
 
-- **From a checkout aisland works as it always did (user ruling 2026-10-19).** [wheel-mode] `locations.FROM_CHECKOUT`
-  (aisland's `pyproject.toml` beside the package, which no wheel carries) selects the rule: from a
-  checkout the root and the state follow the package's location, and the folder you run in and
+- **From a checkout aisland works as it always did (user ruling 2026-10-19), and a checkout is one only where a
+  workspace lists it (user pick 2026-11-02, option 2).** [wheel-mode] `locations.FROM_CHECKOUT`
+  (`runs_as_checkout`: aisland's `pyproject.toml` beside the package, which no wheel carries, AND
+  `listing_workspace` — the nearest folder above, up to five, whose `.gitmodules` has a submodule at the checkout's
+  path or whose `workspace.toml` has a project in it) selects the rule. A clone no workspace lists — a contributor's
+  in `~/code`, GitHub CI's checkout of aisland alone — works like a wheel: the folder it runs in and
+  `AISLAND_WORKSPACE` decide; a `TASKS.md` or `.git` above it lists nothing (`tests/test_locations.py::test_a_checkout_runs_as_one_only_where_a_workspace_lists_it`).
+  From a checkout the root is the listing workspace (`checkout_workspace_root`'s first step) and the state
+  follows the package's location, and the folder you run in and
   `AISLAND_WORKSPACE` change nothing; from a wheel the root is `AISLAND_WORKSPACE`, else
   `locations.find_workspace` (first hit upwards: `.gitmodules`; the start folder when it holds
   projects; a project's parent; a `.git` folder — the subfolder rule only at the start, or a home
@@ -695,7 +701,7 @@ Root `AGENTS.md` "Two Test Runs" (user ruling 2026-10-05). [test-stats]
   cwd). MCP discovery matches a `<pkg>.server:main` whose module imports `mcp.server`, never a
   class name.
 - **aisland's MCP server is aisland's own, never navigaitor's (user ruling 2026-10-21).** [mcp-server] `aisland-mcp`
-  (`server.py`, the `[mcp]` extra — never a base dependency) serves a CHOSEN set of tools (user choice 2026-10-21):
+  (`server.py`, the `[mcp]` extra — never a base dependency; `mcp>=2.0,<3`, since it drops the SDK's resources and prompts handlers through a private attribute, `tests/test_packaging.py::test_the_mcp_sdk_is_held_below_its_next_major_version`) serves a CHOSEN set of tools (user choice 2026-10-21):
   reading `doctor`, `tests_report`, `editor_themes`, `editor_colors`, `sources`, `services_status`, `tunnel_list`,
   `tunnel_status`; changing (`destructive_hint=False`) `editor_set_theme`, `editor_set_color`, `editor_unset`,
   `tunnel_start|stop` (`aisland tunnel start|stop --json` run as the command, its JSON answered unchanged; user pick
@@ -997,6 +1003,8 @@ A bare `::` pin in this section is in `tests/test_jenkins_scaffold.py`.
 - Every `uses:` in `ci.yml` comes from `GH_ACTIONS` (moving major tags on node24; `setup-uv`
   stays `@v7`). The hand-written `*/.github/workflows/release.yml` are bumped in the same
   change. (`::TestTheWorkflowActionsRunOnNode24`)
+- Every coverage run of the three templates passes `--cov-branch` (workspace rule "Keep Branch Coverage On"), and aisland's own `pyproject.toml` sets `[tool.coverage.run] branch = true`
+  (`::test_every_coverage_run_measures_branches`).
 - A registered `slow` marker splits the test run in all three templates (exit 5 tolerated);
   an unmarked project's output is byte-identical. (`::TestTheSlowMarkerSplitsTheTestInvocations`)
 - `playwright` in a `dev` extra: setup and the runner files fetch chromium (`--with-deps` in
@@ -1020,15 +1028,28 @@ A bare `::` pin in this section is in `tests/test_jenkins_scaffold.py`.
 
 ## The agent harness (`harness.py`, `harness/`)
 
-[harness] (`tests/test_harness.py`, `tests/test_packaging.py`)
+[harness] [harness-sets] (`tests/test_harness.py`, `tests/test_harness_sets.py`, `tests/test_packaging.py`)
+- **A workspace combines harness sets (user picks 2026-11-02: 1b 2a 3a 4a).** [harness-sets] `workspace.toml`
+  `[harness] sets`, in order, `["aisland"]` when absent, `[]` installs nothing: `"aisland"`, a workspace project (its
+  `[tool.aisland] harness` folder, else the project itself), a workspace folder, an `aisland.harnesses` entry point
+  name, `{ git, ref, name?, exclude? }` (cloned into `harness.clones_dir()`, fetched again only when url or ref
+  changes; no ref, an unreachable url or a missing ref is refused naming the line). A set's `harness.toml` (`rules`,
+  `commands`, `scripts`, `[files]`) says what it brings; without one the usual places are read
+  (`harness._usual_places`: `AGENTS.md`/`CLAUDE.md`, `.claude/commands/*.md` — never the link aisland makes —,
+  `.cursor/rules/*`, `.github/copilot-instructions.md`). Rules land in `.agents/<set>/AGENTS.md`, `.agents/rules.md`
+  imports them in order, and the workspace `AGENTS.md` imports `@.agents/rules.md` (never edited: setup names the
+  line). Two sets placing one path are REFUSED before anything is installed, naming both — never a precedence by
+  position; `exclude` leaves a file out and one naming nothing is refused. `aisland workspace harness [--json] |
+  install | export <folder>` lists, installs, copies aisland's set (`harness/harness.toml` included). A new place an
+  agent reads joins `_usual_places`; a new `harness.toml` key joins `_SET_KEYS` and `docs/stability.md`.
 - `harness/` holds ONLY what every aisland workspace shares: no workspace's project names, private names or domain
   rules (`::test_the_harness_names_no_project_of_the_workspace_it_was_written_in`). A workspace's own rule goes in its
   `AGENTS.md` below the import line, never here.
 - A command cites a rule as `aisland rules → "<bold heading>"`, and `harness/AGENTS.md` must hold that heading
   (`::test_every_section_a_command_cites_is_in_the_rules`): rename a rule and its citations together.
 - From a checkout, links; from a wheel, copies (`locations.FROM_CHECKOUT`). A copy is replaced only while its
-  fingerprint is the one `installed.json` recorded, or it equals aisland's; anything else is kept and named — never
-  overwritten, never deleted. A file in `.agents/` aisland does not ship is never touched, and an existing workspace
+  fingerprint is the one `.agents/installed.json` recorded (it records each link too, so a dropped set's files are
+  found), or it equals its source; anything else is kept and named — never overwritten, never deleted. A file in `.agents/` aisland does not ship is never touched, and an existing workspace
   `AGENTS.md` is never edited (`::test_an_edited_copy_is_kept_and_named`,
   `::test_a_command_of_the_users_own_is_never_touched`, `::test_an_agents_md_without_the_import_is_left_and_named`).
 - Every installed file is ignored by its own path, never by its folder, so a workspace's own command stays

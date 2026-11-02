@@ -63,8 +63,10 @@ def ws(tmp_path: Path) -> Path:
     return root
 
 
-def _run(ws: Path, monkeypatch: pytest.MonkeyPatch, *args: str) -> Result:
+def _run(ws: Path, monkeypatch: pytest.MonkeyPatch, *args: str, cwd: Optional[Path] = None) -> Result:
+    """The command run from the workspace (or ``cwd``), as a person runs it: from a wheel, the folder decides."""
     monkeypatch.setattr(cli, "get_workspace_root", lambda: ws)
+    monkeypatch.chdir(cwd or ws)
     return CliRunner().invoke(cli.main, ["workspace", "test-stats", *args])
 
 
@@ -210,7 +212,7 @@ def test_outside_an_aisland_workspace_the_switch_is_refused_and_writes_nothing(
     _git(code / "app", "init", "-q")
     monkeypatch.setattr(locations, "FROM_CHECKOUT", False)
     for args in (["off"], ["off", "--machine-only"]):
-        result = _run(code, monkeypatch, *args)
+        result = _run(code, monkeypatch, *args, cwd=code / "app")
         assert result.exit_code == 1
         assert f"Error: {code} is no aisland workspace (it holds no workspace.toml or .gitmodules)" in result.output
     assert sorted(path.name for path in code.iterdir()) == ["app"]

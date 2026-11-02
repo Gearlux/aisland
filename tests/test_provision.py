@@ -23,7 +23,7 @@ from typing import Any
 import click
 import pytest
 
-from aisland import installers, manager
+from aisland import installers, locations, manager
 
 
 def _current_arch() -> str:
@@ -362,6 +362,30 @@ def test_registry_pins_wellformed_sha256_for_every_tool() -> None:
 # ---------------------------------------------------------------------------
 
 
+def test_a_clone_no_workspace_lists_copies_its_own_shell_init(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    """An editable clone of aisland kept outside any workspace works like a wheel, but no wheel put a copy in its
+    package: setup copies the clone's own `project.bashrc`, beside the package."""
+    clone = tmp_path / "code" / "aisland"
+    (clone / "aisland").mkdir(parents=True)
+    (clone / "project.bashrc").write_text("# the clone's shell init\n")
+    workspace = tmp_path / "acme"
+    workspace.mkdir()
+    monkeypatch.setattr(locations, "FROM_CHECKOUT", False)
+    monkeypatch.setattr(locations, "PACKAGE_DIR", clone / "aisland")
+    monkeypatch.setattr(locations, "CHECKOUT_DIR", clone)
+    monkeypatch.setattr(manager, "BASE_DIR", workspace / ".aisland")
+    manager.link_project_bashrc(workspace)
+    assert (workspace / "project.bashrc").read_text() == "# the clone's shell init\n"
+    assert os.readlink(workspace / "project.bashrc") == ".aisland/project.bashrc"
+
+
+@pytest.fixture
+def from_a_checkout(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The tests below lay out a checkout (``<workspace>/aisland/project.bashrc``): aisland runs as one there."""
+    monkeypatch.setattr(locations, "FROM_CHECKOUT", True)
+
+
+@pytest.mark.usefixtures("from_a_checkout")
 def test_link_project_bashrc_creates_symlink(monkeypatch: pytest.MonkeyPatch, tmp_path: Path, capsys: Any) -> None:
     """First-time setup: workspace gains a relative symlink to aisland/project.bashrc."""
     workspace = tmp_path / "ws"
@@ -379,6 +403,7 @@ def test_link_project_bashrc_creates_symlink(monkeypatch: pytest.MonkeyPatch, tm
     assert link.resolve() == target.resolve()
 
 
+@pytest.mark.usefixtures("from_a_checkout")
 def test_link_project_bashrc_idempotent(monkeypatch: pytest.MonkeyPatch, tmp_path: Path, capsys: Any) -> None:
     """Re-running setup with the correct symlink in place is a no-op (no log noise)."""
     workspace = tmp_path / "ws"
@@ -394,6 +419,7 @@ def test_link_project_bashrc_idempotent(monkeypatch: pytest.MonkeyPatch, tmp_pat
     assert capsys.readouterr().out == ""
 
 
+@pytest.mark.usefixtures("from_a_checkout")
 def test_link_project_bashrc_refuses_to_clobber_real_file(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path, capsys: Any
 ) -> None:
@@ -414,6 +440,7 @@ def test_link_project_bashrc_refuses_to_clobber_real_file(
     assert "exists as a regular file" in capsys.readouterr().err
 
 
+@pytest.mark.usefixtures("from_a_checkout")
 def test_link_project_bashrc_replaces_stale_symlink(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     """A symlink pointing somewhere else gets repointed to aisland/project.bashrc."""
     workspace = tmp_path / "ws"

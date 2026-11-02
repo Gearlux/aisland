@@ -114,7 +114,7 @@ def test_the_old_workspace_file_is_refused_naming_its_line(tmp_path: Path) -> No
 def test_a_section_the_file_has_not_is_refused_naming_its_line(tmp_path: Path) -> None:
     path = _file(tmp_path, '[workspace]\n\n[sources.models]\nsource = "local"\n')
     assert _refusal(path) == (
-        f'{path}:3: [sources] is no section of workspace.toml — it has [workspace], [ci] and [project."<name>"]'
+        f'{path}:3: [sources] is no section of workspace.toml — it has [workspace], [ci], [harness] and [project."<name>"]'
     )
 
 
@@ -216,7 +216,18 @@ def test_the_how_to_makes_a_venv_with_pip_and_says_how_to_add_it_to_one_without(
     uv_venv = [line for line in lines if line.lstrip("# ").startswith("uv venv")]
     assert uv_venv == [f"#        uv venv --seed --prompt {tmp_path.name} .venv"]
     assert "#        uv pip install --python .venv/bin/python pip" in lines
-    assert f"#        uv pip install --python .venv/bin/python ./aisland-{__version__}-py3-none-any.whl" in lines
+
+
+def test_the_how_to_installs_aisland_with_the_venvs_own_pip_as_the_readme_and_init_do(tmp_path: Path) -> None:
+    """One spelling everywhere a person reads it: `.venv/bin/pip install aisland` (the README, `init`'s Next lines)."""
+    written = workspace_file.write(tmp_path, workspace_file.WorkspaceFile(settings={"framework": ["torch"]}))
+    assert written is not None
+    lines = written.read_text().splitlines()
+    after_venv = lines[lines.index(f"#        uv venv --seed --prompt {tmp_path.name} .venv") + 1]
+    assert after_venv == "#        .venv/bin/pip install aisland"
+    assert f"#        .venv/bin/pip install ./aisland-{__version__}-py3-none-any.whl" in lines
+    installs = [line for line in lines if "install" in line and "aisland" in line and "#        " in line]
+    assert all(".venv/bin/pip install" in line for line in installs), installs
 
 
 def test_a_workspace_with_nothing_to_write_has_no_file(tmp_path: Path) -> None:
