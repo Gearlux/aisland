@@ -418,7 +418,7 @@ start-time port pre-flight naming the PID is the only signal). All service state
 
 ## User docs (`README.md`, `docs/`)
 
-- **The README is the PyPI page: a quickstart of about 170 lines** — install, a first workspace with its output,
+- **The README is the PyPI page: a quickstart of about 200 lines** (at most `README_MAX_LINES`, 250) — install, a first workspace with its output,
   configure, a common-tasks table and an index of every page — and each topic is a `docs/<topic>.md` (user choice
   2026-10-25: the old 2,280-line README split into fifteen pages). A new topic adds its page and its README index row
   in one change; a feature section never grows back into the README (`tests/test_docs.py::test_the_readme_is_a_short_quickstart`,

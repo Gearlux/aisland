@@ -14,7 +14,7 @@ import urllib.parse
 import urllib.request
 import xml.etree.ElementTree as ET
 from pathlib import Path
-from typing import Any, Dict, Set
+from typing import Any, Dict, Optional, Set, Tuple
 
 import click
 
@@ -68,25 +68,20 @@ class JenkinsService(BaseService):
             return sorted(jars)[-1]
         return BIN_DIR / "jenkins-plugin-manager.jar"
 
-    def _get_latest_manager_info(self) -> Dict[str, Any]:  # Any: GitHub's release JSON
-        """Fetch the latest release info from GitHub API."""
+    def _get_latest_manager_info(self) -> Tuple[Dict[str, Any], Optional[str]]:  # Any: GitHub's release JSON
+        """The plugin manager's latest release from GitHub's API, and why there is none when it cannot be read. Whether
+        that fails the run is :meth:`setup`'s question: a manager downloaded before still serves."""
         api_url = f"https://api.github.com/repos/{self.REPO}/releases/latest"
         headers = {"User-Agent": "aisland"}
         try:
             req = urllib.request.Request(api_url, headers=headers)
             with urllib.request.urlopen(req, timeout=TIMEOUT) as response:
                 data = json.loads(response.read().decode())
-                if not isinstance(data, dict):
-                    return {}
-                return data
-        except (OSError, ValueError):  # no answer, or no JSON
-            # Silence this error if we already have a jar file, as we can still proceed.
-            if not self.manager_jar.exists():
-                click.echo(
-                    "  - Error fetching latest Jenkins Plugin Manager info from GitHub API.",
-                    err=True,
-                )
-            return {}
+        except (OSError, ValueError) as error:  # no answer, or no JSON
+            return {}, f"GitHub's API did not answer ({error})"
+        if not isinstance(data, dict):
+            return {}, "GitHub's API answered no release"
+        return data, None
 
     def ensure_war(self) -> bool:
         """Download the Jenkins WAR unless it is already in the bin dir; return whether it is there now."""
@@ -171,7 +166,9 @@ class JenkinsService(BaseService):
             return  # the download's failure is reported: the command exits 1 (aisland.failures)
 
         # Check for latest manager version
-        info = self._get_latest_manager_info()
+        info, unread = self._get_latest_manager_info()
+        if unread is not None and self.manager_jar.exists():
+            logger.debug("the plugin manager's latest release is not known (%s); %s serves", unread, self.manager_jar)
         if info:
             tag = info.get("tag_name", "")
             assets = info.get("assets", [])
@@ -197,9 +194,8 @@ class JenkinsService(BaseService):
                 self.manager_jar = latest_jar_path
 
         if not self.manager_jar.exists():
-            failures.report(
-                "  - Error: Plugin Manager could not be discovered or downloaded.",
-            )
+            cause = f": {unread}" if unread is not None else ""
+            failures.report(f"  - Error: Plugin Manager could not be discovered or downloaded{cause}.")
 
     def _are_plugins_installed(self) -> bool:
         """Check if all required plugins are present in the plugins directory."""

@@ -333,6 +333,48 @@ def test_a_jenkins_download_that_fails_is_reported(tmp_path: Path, monkeypatch: 
     assert failures.reported() == 1
 
 
+def _plugin_manager_setup(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, *, downloaded_before: bool) -> None:
+    """`JenkinsService.setup` with its WAR in place and GitHub's API not answering."""
+    from aisland.services import jenkins
+
+    monkeypatch.setattr(jenkins, "BIN_DIR", tmp_path)
+    service = jenkins.JenkinsService()
+    service.war_file = tmp_path / "jenkins.war"
+    service.war_file.write_text("")
+    service.manager_jar = tmp_path / "jenkins-plugin-manager-2.15.0.jar"
+    if downloaded_before:
+        service.manager_jar.write_text("")
+
+    def _no_answer(request: object, timeout: float = 0) -> None:
+        raise OSError("network unreachable")
+
+    monkeypatch.setattr(jenkins.urllib.request, "urlopen", _no_answer)
+    service.setup()
+
+
+def test_a_plugin_manager_github_cannot_name_is_one_reported_line_with_its_cause(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """No plugin manager downloaded before and GitHub's API not answering: ONE reported line, so the run exits 1,
+    saying why — never a second `Error` line echoed beside it."""
+    _plugin_manager_setup(tmp_path, monkeypatch, downloaded_before=False)
+    err = capsys.readouterr().err
+    assert failures.reported() == 1
+    assert err.count("Error") == 1, err
+    assert (
+        "Plugin Manager could not be discovered or downloaded: GitHub's API did not answer (network unreachable)."
+        in err
+    )
+
+
+def test_a_plugin_manager_downloaded_before_serves_when_github_does_not_answer(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    _plugin_manager_setup(tmp_path, monkeypatch, downloaded_before=True)
+    assert failures.reported() == 0
+    assert capsys.readouterr().err == ""
+
+
 def test_a_supervisor_that_does_not_stop_exits_1(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(supervisor, "is_server_running", lambda: True)
     monkeypatch.setattr(supervisor, "_run_client", lambda args: subprocess.CompletedProcess(args, 1, "", "socket gone"))
