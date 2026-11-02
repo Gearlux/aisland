@@ -4,7 +4,7 @@ import os
 import subprocess
 import traceback
 from pathlib import Path
-from typing import Callable, Dict, List, Optional, Tuple, cast
+from typing import Callable, Dict, List, Optional, Sequence, Tuple, cast
 
 import click
 from click.shell_completion import CompletionItem
@@ -566,7 +566,7 @@ def _plugin_group(plugin: configure.Plugin) -> click.Group:
             callback=set_,
             help=f"Set PROJECT's {plugin.main.name}: {plugin.main.help}",
             params=[
-                click.Argument(["project"]),
+                click.Argument(["project"], shell_complete=_complete_workspace_projects),
                 click.Argument([plugin.main.name], type=choices),
                 *(click.Option([f"--{key.name}"], default=None, help=key.help) for key in plugin.options),
                 machine,
@@ -578,7 +578,7 @@ def _plugin_group(plugin: configure.Plugin) -> click.Group:
             "unset",
             callback=unset,
             help=f"Remove PROJECT's {plugin.name} settings (with --machine-only, this machine's only).",
-            params=[click.Argument(["project"]), machine],
+            params=[click.Argument(["project"], shell_complete=_complete_workspace_projects), machine],
         )
     )
     return group
@@ -601,11 +601,25 @@ def _selection_group(plugin: configure.SelectionPlugin) -> click.Group:
         for line in configure.table(rows) if rows else [f"No project offers a {axis.one}."]:
             click.echo(line)
 
+    def completing(offer: Callable[[Path], Sequence[str]]) -> Callable[..., List[CompletionItem]]:
+        """A completer of the names ``offer`` gives, those not typed yet that start with the word; nothing for a
+        workspace it cannot read."""
+
+        def complete(ctx: click.Context, param: click.Parameter, incomplete: str) -> List[CompletionItem]:
+            try:
+                offered = offer(get_workspace_root())
+            except Exception:  # a completion callback must never break the shell
+                return []
+            typed = set(ctx.params.get("names") or ())
+            return [CompletionItem(name) for name in offered if name.startswith(incomplete) and name not in typed]
+
+        return complete
+
     def set_(names: Tuple[str, ...], machine_only: bool) -> None:
         raise SystemExit(selection.set_selection(_configure_root(), axis, names, machine_only))
 
-    def unset(machine_only: bool) -> None:
-        raise SystemExit(selection.unset_selection(_configure_root(), axis, machine_only))
+    def unset(names: Tuple[str, ...], machine_only: bool) -> None:
+        raise SystemExit(selection.unset_selection(_configure_root(), axis, machine_only, names))
 
     machine = click.Option(
         ["--machine-only"], is_flag=True, help="Change this machine only (.git/config); commit nothing."
@@ -615,15 +629,30 @@ def _selection_group(plugin: configure.SelectionPlugin) -> click.Group:
             "set",
             callback=set_,
             help=f"Choose the {axis.one}s to install (the whole list) and reinstall the projects offering them.",
-            params=[click.Argument(["names"], nargs=-1), machine],
+            params=[
+                click.Argument(
+                    ["names"], nargs=-1, shell_complete=completing(lambda root: selection.available(root, axis))
+                ),
+                machine,
+            ],
         )
     )
     group.add_command(
         _Command(
             "unset",
             callback=unset,
-            help=f"Forget the {axis.name} choice (with --machine-only, this machine's only); setup asks again.",
-            params=[machine],
+            help=(
+                f"Forget the {axis.name} choice (with --machine-only, this machine's only); setup asks again. "
+                f"With NAME…, drop just those {axis.one}s from the choice and reinstall the projects offering them."
+            ),
+            params=[
+                click.Argument(
+                    ["names"],
+                    nargs=-1,
+                    shell_complete=completing(lambda root: selection.effective(root, axis.name) or []),
+                ),
+                machine,
+            ],
         )
     )
     return group

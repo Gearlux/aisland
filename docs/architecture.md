@@ -2962,7 +2962,8 @@ A selection is the projects': the one whose `[tool.aisland.selection.<name>]` ha
 asks `framework` and `tracker`), every project's `choices` are its menu, and discovery refuses a choice that is no
 extra, naming the file and the line. aisland keeps only `extras`. The choice is committed as `[workspace] <name> =
 [...]` in `workspace.toml` and chosen per machine as `aisland.<name>.selected`; each selection is a workspace-level
-plugin of `aisland workspace configure` (`set NAME… [--machine-only]`, `unset`), which reinstalls at once.
+plugin of `aisland workspace configure` (`set NAME… [--machine-only]`, `unset [NAME…] [--machine-only]`), which
+reinstalls at once.
 `config.toml`, `config.py`, `frameworks.py`, `aisland config`, `aisland framework|tracker`, setup's
 `--framework/--extra` and `--no-apply` are gone. A service whose backend is missing names `set` with the trackers
 already chosen plus its own: `set` takes the whole list, and the old message (`aisland tracker set mlflow`) would

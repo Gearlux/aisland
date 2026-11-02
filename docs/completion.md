@@ -17,6 +17,8 @@ source project.bashrc      # activates .venv AND exports .env AND loads completi
                            # (and tm [tmux new-session options]: a tmux session here, with this shell's environment)
 aisland <TAB>              # check docker doctor jenkins mcp services ...
 aisland wheels build models <TAB>   # --include-published --all --include-project --zip ... --help
+aisland workspace configure tracker unset <TAB>   # the trackers chosen here (`set <TAB>`: the ones on offer)
+aisland workspace configure source set <TAB>      # the workspace's projects (also `mirror`, `active`, `unset`)
 viewer exp<TAB>            # export export-workflow
 lib <TAB>                  # run
 ```

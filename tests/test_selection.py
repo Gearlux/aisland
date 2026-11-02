@@ -478,6 +478,68 @@ def test_unset_machine_only_falls_back_to_the_committed_choice(workspace: Path, 
     assert f"{workspace / 'models'}[dev,torch]" in [call[-1] for call in installs]
 
 
+def test_unset_with_names_drops_only_those_from_the_committed_choice(
+    workspace: Path, installs: List[List[str]]
+) -> None:
+    s.write_committed(workspace, "tracker", ["mlflow", "aim"])
+    result = _run("tracker", "unset", "aim")
+    assert result.exit_code == 0, result.output
+    assert s.read_committed(workspace, "tracker") == ["mlflow"]
+    assert "tracker = mlflow (in workspace.toml)" in result.output
+    assert [call[-1] for call in installs] == [f"{workspace / 'trainer'}[dev,mlflow]"]
+
+
+def test_unset_with_names_machine_only_narrows_this_machine_from_the_committed_choice(
+    workspace: Path, installs: List[List[str]]
+) -> None:
+    s.write_committed(workspace, "tracker", ["mlflow", "aim"])
+    result = _run("tracker", "unset", "aim", "--machine-only")
+    assert result.exit_code == 0, result.output
+    assert s.read_committed(workspace, "tracker") == ["mlflow", "aim"]
+    assert s.machine_choice(workspace, "tracker") == ["mlflow"]
+    assert "tracker = mlflow on this machine (nothing committed)" in result.output
+
+
+def test_unset_with_names_machine_only_drops_from_this_machines_own_choice(
+    workspace: Path, installs: List[List[str]]
+) -> None:
+    s.write_committed(workspace, "tracker", ["mlflow", "aim"])
+    s.set_machine_choice(workspace, "tracker", ["aim"])
+    assert _run("tracker", "unset", "aim", "--machine-only").exit_code == 0
+    assert s.machine_choice(workspace, "tracker") == []  # an empty choice is a choice: none, deliberately
+
+
+def test_unset_with_names_commits_and_says_a_machine_choice_still_wins(
+    workspace: Path, installs: List[List[str]]
+) -> None:
+    s.write_committed(workspace, "tracker", ["mlflow", "aim"])
+    s.set_machine_choice(workspace, "tracker", ["mlflow"])
+    result = _run("tracker", "unset", "aim")
+    assert s.read_committed(workspace, "tracker") == ["mlflow"]
+    assert "this machine's choice (mlflow) still wins here" in result.output
+
+
+@pytest.mark.parametrize("machine_only", [False, True])
+def test_unset_with_a_name_that_is_not_chosen_is_refused_and_changes_nothing(
+    workspace: Path, installs: List[List[str]], machine_only: bool
+) -> None:
+    s.write_committed(workspace, "tracker", ["mlflow"])
+    result = _run("tracker", "unset", "mlflow", "aim", *(["--machine-only"] if machine_only else []))
+    assert result.exit_code == 1
+    where = "on this machine" if machine_only else "in workspace.toml"
+    assert f"Error: tracker 'aim' is not chosen {where} (chosen: mlflow)" in result.output
+    assert s.read_committed(workspace, "tracker") == ["mlflow"]
+    assert s.machine_choice(workspace, "tracker") is None
+    assert installs == []
+
+
+def test_unset_with_names_where_nothing_is_chosen_is_refused(workspace: Path, installs: List[List[str]]) -> None:
+    result = _run("tracker", "unset", "aim")
+    assert result.exit_code == 1
+    assert "Error: no tracker is chosen in workspace.toml yet" in result.output
+    assert installs == []
+
+
 def test_a_failed_install_is_the_exit_code(workspace: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     def fail(cmd: List[str], **kw: object) -> int:
         raise subprocess.CalledProcessError(1, cmd)
@@ -592,3 +654,52 @@ def test_a_selection_called_name_is_refused_since_the_workspaces_name_has_that_k
         f"{pyproject}:{line}: a selection cannot be called 'name': workspace.toml's [workspace] name is the "
         "workspace's name"
     )
+
+
+# --- TAB in `aisland workspace configure` ---------------------------------------------------------------------------
+
+
+def _tab(monkeypatch: pytest.MonkeyPatch, root: Path, line: str) -> List[str]:
+    from tests.test_wheels import _complete
+
+    return _complete(monkeypatch, root, line)
+
+
+def test_tab_after_set_offers_the_choices_not_typed_yet(workspace: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    assert _tab(monkeypatch, workspace, "aisland workspace configure tracker set ") == ["aim", "mlflow"]
+    assert _tab(monkeypatch, workspace, "aisland workspace configure tracker set aim ") == ["mlflow"]
+    assert _tab(monkeypatch, workspace, "aisland workspace configure tracker set m") == ["mlflow"]
+    assert _tab(monkeypatch, workspace, "aisland workspace configure framework set ") == [
+        "keras",
+        "lightning",
+        "torch",
+    ]
+
+
+def test_tab_after_unset_offers_what_is_chosen_on_this_machine(
+    workspace: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    unset = "aisland workspace configure tracker unset "
+    assert _tab(monkeypatch, workspace, unset) == []  # nothing chosen yet
+    s.write_committed(workspace, "tracker", ["mlflow", "aim"])
+    assert _tab(monkeypatch, workspace, unset) == ["mlflow", "aim"]
+    assert _tab(monkeypatch, workspace, unset + "aim ") == ["mlflow"]
+    s.set_machine_choice(workspace, "tracker", ["mlflow"])  # this machine's choice wins
+    assert _tab(monkeypatch, workspace, unset) == ["mlflow"]
+
+
+def test_tab_after_unset_still_offers_its_options_on_a_dash(workspace: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    assert _tab(monkeypatch, workspace, "aisland workspace configure tracker unset -") == ["--machine-only", "--help"]
+
+
+def test_tab_offers_the_workspace_projects_to_every_set_and_unset_of_a_project_plugin(
+    workspace: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    projects = {
+        name: workspace_file.Project(name=name, path=name, url=f"https://example.com/{name}.git")
+        for name in ("models", "trainer", "plain")
+    }
+    workspace_file.write(workspace, workspace_file.WorkspaceFile(projects=projects))
+    for plugin, verb in (("source", "set"), ("source", "unset"), ("mirror", "unset"), ("active", "set")):
+        offered = _tab(monkeypatch, workspace, f"aisland workspace configure {plugin} {verb} mo")
+        assert offered == ["models"], (plugin, verb)

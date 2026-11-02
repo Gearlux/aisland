@@ -31,7 +31,16 @@ aisland workspace configure framework set keras --machine-only     # THIS machin
 aisland workspace configure framework unset --machine-only         # back to the committed choice
 aisland workspace configure framework unset                        # forget both; the next setup asks again
 aisland workspace configure tracker set mlflow tensorboard aim     # the same for every selection
+aisland workspace configure tracker unset aim --machine-only       # THIS machine without aim; nothing committed
+aisland workspace configure tracker unset aim                      # the committed choice without aim
 ```
+
+`unset` with names drops just those from the layer `set` would write — the committed list, or with `--machine-only`
+this machine's own (which starts from the committed list when the machine has none) — keeps the rest, and
+reinstalls like `set`. A name that layer does not choose is refused before anything changes. Without names, `unset`
+forgets the whole layer, as above.
+
+TAB completes the names: after `set` the choices not typed yet, after `unset` the ones chosen on this machine.
 
 `set` takes the **whole list** and reinstalls, at once and in dependency order, every project offering one of the
 selection's choices:

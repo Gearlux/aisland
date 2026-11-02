@@ -11,8 +11,8 @@ so a plugin writes no command of its own. A plugin's settings live in ``workspac
 ``.git/config`` as ``aisland.<plugin>.<project>.<key>`` (this machine); the plugin's functions read and write them.
 
 A SELECTION (:mod:`aisland.selection`: aisland's ``extras`` and each one a project declares) is a plugin too, of the
-whole workspace rather than of a project — ``set NAME… [--machine-only]`` and ``unset [--machine-only]``, committed
-as ``[workspace] <selection>`` and chosen here as ``aisland.<selection>.selected``.
+whole workspace rather than of a project — ``set NAME… [--machine-only]`` and ``unset [NAME…] [--machine-only]``,
+committed as ``[workspace] <selection>`` and chosen here as ``aisland.<selection>.selected``.
 """
 
 from __future__ import annotations

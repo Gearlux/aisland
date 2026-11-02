@@ -906,7 +906,11 @@ User rulings 2026-10-23. [frameworks] (`tests/test_selection.py`)
 - Unset ≠ empty: setup asks on unset (the selection's own question, no hint line), `-y` with nothing chosen takes
   everything, `--all` takes every extra; an answer is committed. `set` takes the WHOLE list and reinstalls the
   offering projects at once (no `--no-apply`); an unknown name is refused before anything is written; the exit code
-  is the number of failed installs. `setup` has no `--framework`/`--extra` (choose with `set` first).
+  is the number of failed installs. `setup` has no `--framework`/`--extra` (choose with `set` first). `unset NAME…`
+  drops just those names from the layer `set` writes (this machine's, which starts from the committed list, with
+  `--machine-only`) and refuses one that layer does not choose; no name forgets the whole layer. TAB completes `set`'s
+  menu and `unset`'s effective choice, and every project plugin's `PROJECT` from `workspace.toml`
+  (`tests/test_selection.py`: `test_unset_with_names_…`, `test_tab_…`).
 - **An extra a project marks in `[tool.aisland] manual-extras` is installed only when named (user choice
   2026-10-23).** A blank answer, `-y` and `--all` leave it out; the menu marks it `(only when named)`; one project
   marking a name is enough, since a selection is one name for every project. Discovery refuses a marked name that is

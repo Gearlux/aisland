@@ -42,6 +42,7 @@ from packaging.requirements import InvalidRequirement, Requirement
 from aisland import failures
 from aisland import pyproject as pyproject_toml
 from aisland import workspace_file
+from aisland.errors import AislandError
 from aisland.installers import ensure_uv_in_venv
 from aisland.projects import get_project_metadata
 
@@ -409,23 +410,33 @@ def set_selection(root: Path, axis: Axis, names: Sequence[str], machine_only: bo
             err=True,
         )
         return 1
-    chosen = list(dict.fromkeys(names))
+    _write_choice(root, axis, list(dict.fromkeys(names)), machine_only)
+    return apply_selection(root, axis)
+
+
+def _write_choice(root: Path, axis: Axis, chosen: Sequence[str], machine_only: bool) -> None:
+    """Record ``chosen`` as the whole choice of one layer — this machine's, or the committed one — and say so."""
     shown = ", ".join(chosen) or "(none)"
     if machine_only:
         set_machine_choice(root, axis.name, chosen)
         click.echo(f"==> {axis.name} = {shown} on this machine (nothing committed)")
-    else:
-        write_committed(root, axis.name, chosen)
-        click.echo(f"==> {axis.name} = {shown} (in {workspace_file.FILE_NAME})")
-        machine = machine_choice(root, axis.name)
-        if machine is not None:
-            click.echo(f"  - Note: this machine's choice ({', '.join(machine) or 'none'}) still wins here;")
-            click.echo(f"    drop it with: {_command(axis, 'unset', '--machine-only')}")
-    return apply_selection(root, axis)
+        return
+    write_committed(root, axis.name, chosen)
+    click.echo(f"==> {axis.name} = {shown} (in {workspace_file.FILE_NAME})")
+    machine = machine_choice(root, axis.name)
+    if machine is not None:
+        click.echo(f"  - Note: this machine's choice ({', '.join(machine) or 'none'}) still wins here;")
+        click.echo(f"    drop it with: {_command(axis, 'unset', '--machine-only')}")
 
 
-def unset_selection(root: Path, axis: Axis, machine_only: bool) -> int:
-    """Forget this machine's choice (``machine_only``) or both layers', and reinstall at what is left."""
+def unset_selection(root: Path, axis: Axis, machine_only: bool, names: Sequence[str] = ()) -> int:
+    """Forget this machine's choice (``machine_only``) or both layers', and reinstall at what is left.
+
+    With ``names``, forget only those: they are dropped from the layer ``set`` would write — this machine's choice
+    (which starts from the committed one when it has none) with ``machine_only``, else the committed one — and the
+    rest stays. A name that layer does not choose is refused before anything changes."""
+    if names:
+        return _drop_names(root, axis, names, machine_only)
     set_machine_choice(root, axis.name, None)
     if machine_only:
         click.echo(f"==> {axis.name}: this machine follows {workspace_file.FILE_NAME} again")
@@ -434,6 +445,19 @@ def unset_selection(root: Path, axis: Axis, machine_only: bool) -> int:
         click.echo(f"==> {axis.name}: nothing chosen; setup asks again")
     if effective(root, axis.name) is None:
         return 0
+    return apply_selection(root, axis)
+
+
+def _drop_names(root: Path, axis: Axis, names: Sequence[str], machine_only: bool) -> int:
+    """``unset NAME…``: the layer's choice without ``names``, and the offering projects reinstalled at it."""
+    base = effective(root, axis.name) if machine_only else read_committed(root, axis.name)
+    where = "on this machine" if machine_only else f"in {workspace_file.FILE_NAME}"
+    if base is None:
+        raise AislandError(f"no {axis.one} is chosen {where} yet")
+    missing = [name for name in names if name not in base]
+    if missing:
+        raise AislandError(f"{axis.one} {missing[0]!r} is not chosen {where} (chosen: {', '.join(base) or 'none'})")
+    _write_choice(root, axis, [name for name in base if name not in names], machine_only)
     return apply_selection(root, axis)
 
 
