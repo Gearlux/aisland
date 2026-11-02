@@ -1,4 +1,4 @@
-"""Whether the root records a project's commits: ``aisland workspace track|untrack [PROJECT…] [--machine-only]``.
+"""Whether the root records a project's commits: ``aisland workspace track set|unset|status [PROJECT…]``.
 
 A submodule's commits are recorded in the root, one commit per project, and every new commit of a project shows in
 the root's ``git status`` (`` M <project>``) until someone records it. An UNTRACKED project carries git's
@@ -17,8 +17,12 @@ An ``ignore`` value aisland does not write (``dirty``, ``untracked``) is the use
 
 An untracked project FOLLOWS ITS BRANCH instead of the commit the root recorded (user request 2026-10-23): one on no
 branch — what a clone's ``git submodule update`` leaves — is fetched and put on its branch by :func:`follow_branches`
-(``aisland setup``, ``untrack``) and by ``git pull-all``. The branch is ``.gitmodules``' ``branch`` (``.`` is the root's
-branch), else origin's default branch; the switch is never forced.
+(``aisland setup``, ``track unset``) and by ``git pull-all``. The branch is ``.gitmodules``' ``branch`` (``.`` is the
+root's branch), else origin's default branch; the switch is never forced.
+
+``track set`` records a project's commits, ``track unset`` stops recording them (each writes ``track = true|false``
+as above, never removes a setting), and ``track status`` reads the two layers and git back without changing any of
+them (:func:`status`).
 """
 
 from __future__ import annotations
@@ -26,7 +30,7 @@ from __future__ import annotations
 import dataclasses
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Dict, List, Optional, Sequence
+from typing import Dict, List, Literal, Optional, Sequence, Tuple
 
 from aisland import gitcmd, local_workspace, workspace_file
 from aisland.errors import AislandError
@@ -61,13 +65,13 @@ def submodule_projects(root: Path) -> List[str]:
     return list(_submodules(root))
 
 
-#: This machine's choice for every project without one of its own (`untrack --machine-only`, no project named).
+#: This machine's choice for every project without one of its own (`track unset --machine-only`, no project named).
 _MACHINE_DEFAULT_KEY = "aisland.track.default"
 
 
 def workspace_default(root: Path) -> bool:
     """Whether a project without a ``track`` of its own is tracked: ``[workspace] track`` in ``workspace.toml``, which
-    ``init --untracked`` and ``untrack`` with no project named write, else yes."""
+    ``init --untracked`` and ``track unset`` with no project named write, else yes."""
     return bool(workspace_file.load(root).settings.get(TRACK_KEY, True))
 
 
@@ -112,13 +116,18 @@ class Change:
         return f"{self.project}: untracked{where} (the root records none of its commits)"
 
 
-def _ignored(root: Path, name: str) -> bool:
-    """Whether git ignores the submodule ``name``'s commits here: ``.git/config`` first, then ``.gitmodules``."""
+def _ignore_value(root: Path, name: str) -> Optional[str]:
+    """git's ``ignore`` of the submodule ``name`` here: ``.git/config`` first, then ``.gitmodules``; ``None`` when unset."""
     key = f"submodule.{name}.ignore"
     value = _get(root, "--local", "--get", key)
     if value is None:
         value = _get(root, "-f", ".gitmodules", "--get", key)
-    return value == "all"
+    return value
+
+
+def _ignored(root: Path, name: str) -> bool:
+    """Whether git ignores the submodule ``name``'s commits here."""
+    return _ignore_value(root, name) == "all"
 
 
 def apply(root: Path) -> List[Change]:
@@ -251,8 +260,127 @@ def follow_branches(root: Path) -> List[str]:
     return lines
 
 
+#: Whose choice a project's is: this machine's own for it, this machine's for every project, the project's own
+#: ``track`` in ``workspace.toml``, the workspace's ``[workspace] track``, or none (tracked by default).
+Source = Literal["machine", "machine-default", "project", "workspace", "default"]
+
+#: Whether git agrees with the choice: its ``ignore`` is what :func:`apply` writes for it (``applied``), is not
+#: (``not applied``: ``aisland setup`` writes it), or is a value aisland does not write and leaves alone (``yours``).
+Git = Literal["applied", "not applied", "yours"]
+
+
+def _toml(value: bool) -> str:
+    return "true" if value else "false"
+
+
+@dataclass(frozen=True)
+class Status:
+    """One project's choice for ``track status``: is its root-recorded commit followed, whose choice that is, and whether
+    git's ``ignore`` (``ignore``, ``None`` when unset) agrees."""
+
+    project: str
+    tracked: bool
+    source: Source
+    reason: str
+    git: Git
+    ignore: Optional[str]
+
+    def line(self) -> str:
+        word = "tracked" if self.tracked else "untracked"
+        if self.git == "applied":
+            git = "applied"
+        elif self.git == "not applied":
+            git = "NOT applied — run `aisland setup`"
+        else:
+            git = f"ignore = {self.ignore}, yours, left alone"
+        return f"{self.project}: {word} ({self.reason}; git: {git})"
+
+
+def _workspace_reason(loaded: workspace_file.WorkspaceFile) -> str:
+    """Where the workspace's own choice comes from: its ``[workspace] track``, else the default."""
+    if TRACK_KEY in loaded.settings:
+        return f"[workspace] track = {_toml(bool(loaded.settings[TRACK_KEY]))} in workspace.toml"
+    return "the default: no track in workspace.toml"
+
+
+def _choice(
+    loaded: workspace_file.WorkspaceFile, project: str, own: Optional[bool], machine_default: Optional[bool]
+) -> Tuple[bool, Source, str]:
+    """``project``'s effective choice, whose it is and in words — in the order :func:`apply` weighs them."""
+    if own is not None:
+        return own, "machine", f"this machine's {_machine_key(project)} = {_toml(own)}"
+    if machine_default is not None:
+        return machine_default, "machine-default", f"this machine's {_MACHINE_DEFAULT_KEY} = {_toml(machine_default)}"
+    found = loaded.projects.get(project)
+    if found is not None and TRACK_KEY in found.others:
+        value = bool(found.others[TRACK_KEY])
+        return value, "project", f"its own track = {_toml(value)} in workspace.toml"
+    source: Source = "workspace" if TRACK_KEY in loaded.settings else "default"
+    return bool(loaded.settings.get(TRACK_KEY, True)), source, _workspace_reason(loaded)
+
+
+def status(root: Path, projects: Sequence[str] = ()) -> List[Status]:
+    """A :class:`Status` for each of ``projects`` in the order named — no project: every submodule, in
+    ``workspace.toml``'s order. Reads only; an unknown project is refused before anything is read."""
+    named = _named(root, projects)
+    submodules = _submodules(root)
+    loaded = workspace_file.load(root)
+    machine_default = _bool_key(root, _MACHINE_DEFAULT_KEY)
+    rows = []
+    for project in named or list(submodules):
+        tracked, source, reason = _choice(loaded, project, _bool_key(root, _machine_key(project)), machine_default)
+        ignore = _ignore_value(root, submodules[project])
+        git: Git
+        if ignore not in (None, *_OURS):
+            git = "yours"
+        elif (ignore == "all") == (not tracked):
+            git = "applied"
+        else:
+            git = "not applied"
+        rows.append(Status(project, tracked, source, reason, git, ignore))
+    return rows
+
+
+def status_lines(root: Path, projects: Sequence[str] = ()) -> List[str]:
+    """``aisland workspace track status``: the lines of a named project each, else the workspace's choice and the
+    projects that differ from it or that git does not yet agree with — the rest are counted, or, when none differs,
+    said once."""
+    rows = status(root, projects)
+    if projects:
+        return [row.line() for row in rows]
+    loaded = workspace_file.load(root)
+    tracked = bool(loaded.settings.get(TRACK_KEY, True))
+    word = "tracked" if tracked else "untracked"
+    reason = _workspace_reason(loaded)
+    plain = [row for row in rows if row.source in ("workspace", "default") and row.git == "applied"]
+    collapsed = plain if len(plain) > 1 else []
+    if collapsed and len(collapsed) == len(rows):
+        effect = "the root records their commits" if tracked else "the root records none of their commits"
+        return [
+            f"==> {word}: all {len(rows)} projects ({effect})",
+            f"  - from {reason}",
+            "  - this machine: no choice of its own",
+            f"  - git: {'no ignore' if tracked else 'ignore = all'}, applied for all {len(rows)}",
+        ]
+    lines = [f"==> the workspace default: {word} ({reason})"]
+    lines += [f"  - {row.line()}" for row in rows if row not in collapsed]
+    if not rows:
+        lines.append("  - no submodules yet")
+    elif collapsed:
+        lines.append(f"  - {len(collapsed)} more: {word}, as the workspace default says")
+    return lines
+
+
+def status_json(root: Path, projects: Sequence[str] = ()) -> Dict[str, object]:
+    """``aisland workspace track status --json``: the workspace's choice and every project's row."""
+    return {
+        "default_tracked": workspace_default(root),
+        "projects": [dataclasses.asdict(row) for row in status(root, projects)],
+    }
+
+
 def track_command(root: Path, projects: Sequence[str], track: bool, machine_only: bool) -> List[str]:
-    """``aisland workspace track|untrack``: the change and the report's lines; a local workspace commits it."""
+    """``aisland workspace track set|unset``: the change and the report's lines; a local workspace commits it."""
     _named(root, projects)
     word = "tracked" if track else "untracked"
     which = ", ".join(projects) if projects else "every project, and every one added later"

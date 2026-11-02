@@ -336,7 +336,7 @@ def workspace_group() -> None:
     "untracked",
     is_flag=True,
     help="The root records none of its projects' commits: `git status` never shows them, `git pull-all` never "
-    "records them (`aisland workspace track` undoes it).",
+    "records them (`aisland workspace track set` undoes it).",
 )
 def workspace_init(
     folder: Path,
@@ -359,7 +359,7 @@ def workspace_init(
 
     --local makes a new root repository that tracks only the projects (its .gitignore ignores everything; add a
     project later with `git submodule add -f <url>`, then `aisland setup`). --untracked makes the root record none of
-    the projects' commits: `aisland workspace untrack`, for every project.
+    the projects' commits: `aisland workspace track unset`, for every project.
     """
     workspace_mod.init_workspace(folder, add, from_file, rewrite, local, untracked)
 
@@ -385,15 +385,28 @@ _TRACK_ARGUMENTS = [
 
 
 def _with_track_arguments(command: Callable[..., None]) -> Callable[..., None]:
-    """``track`` and ``untrack`` take the same arguments."""
+    """``track set`` and ``track unset`` take the same arguments."""
     for decorator in reversed(_TRACK_ARGUMENTS):
         command = decorator(command)
     return command
 
 
-@workspace_group.command("untrack")
+@workspace_group.group("track", cls=_Group)
+def workspace_track() -> None:
+    """Whether the root records the projects' commits: set it, unset it, or see what is set.
+
+    \b
+    aisland workspace track unset                      every project: the root records none of their commits
+    aisland workspace track unset models              one project
+    aisland workspace track set models                record its commits again
+    aisland workspace track unset --machine-only      this machine only (.git/config); nothing to commit
+    aisland workspace track status                     which projects, whose choice, whether git agrees
+    """
+
+
+@workspace_track.command("unset")
 @_with_track_arguments
-def workspace_untrack(projects: Tuple[str, ...], machine_only: bool) -> None:
+def workspace_track_unset(projects: Tuple[str, ...], machine_only: bool) -> None:
     """Stop recording PROJECT's commits in the root (no PROJECT: every submodule).
 
     `git status` in the root no longer shows the project's new commits, `git add <project>` skips it and `git
@@ -403,15 +416,33 @@ def workspace_untrack(projects: Tuple[str, ...], machine_only: bool) -> None:
     _track(projects, False, machine_only)
 
 
-@workspace_group.command("track")
+@workspace_track.command("set")
 @_with_track_arguments
-def workspace_track(projects: Tuple[str, ...], machine_only: bool) -> None:
+def workspace_track_set(projects: Tuple[str, ...], machine_only: bool) -> None:
     """Record PROJECT's commits in the root again (no PROJECT: every submodule).
 
     A project whose commits moved meanwhile shows again in `git status` (` M <project>`), and the next `git pull-all`
     records it once origin has them. Without --machine-only it also drops this machine's own choice.
     """
     _track(projects, True, machine_only)
+
+
+@workspace_track.command("status")
+@click.argument("projects", nargs=-1, metavar="[PROJECT]...", shell_complete=_complete_submodules)
+@click.option("--json", "as_json", is_flag=True, help="Print the rows as one JSON object.")
+def workspace_track_status(projects: Tuple[str, ...], as_json: bool) -> None:
+    """Whether the root records PROJECT's commits, whose choice that is and whether git agrees (no PROJECT: every
+    submodule). Changes nothing.
+
+    With no PROJECT it says the workspace's choice and lists the projects that differ from it, or that git does not
+    yet agree with (`aisland setup` writes git's setting); the others are counted. With PROJECTs it gives a line each.
+    """
+    root = _configure_root()
+    if as_json:
+        click.echo(json.dumps(tracking.status_json(root, projects), indent=2))
+        return
+    for line in tracking.status_lines(root, projects):
+        click.echo(line)
 
 
 def _complete_workspace_projects(ctx: click.Context, param: click.Parameter, incomplete: str) -> List[CompletionItem]:

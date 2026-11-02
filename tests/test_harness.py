@@ -422,7 +422,7 @@ def test_push_all_pushes_each_repository_on_the_dev_branch_it_is_on() -> None:
 
 @pytest.mark.parametrize("command", ["commit-all", "commit-session"])
 def test_a_commit_command_reads_which_submodules_are_untracked_before_it_stages_a_pointer(command: str) -> None:
-    """In a workspace whose submodules are untracked (`aisland workspace untrack`), `git add <submodule>` fails with
+    """In a workspace whose submodules are untracked (`aisland workspace track unset`), `git add <submodule>` fails with
     `Skipping submodule due to ignore=all`: the command reads each submodule's `ignore` first, this machine's
     setting before `.gitmodules`, leaves an untracked one's pointer out, and says the root has nothing to record."""
     text = (harness.HARNESS_DIR / "commands" / f"{command}.md").read_text()

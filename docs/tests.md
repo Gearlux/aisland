@@ -43,7 +43,7 @@ cannot be written, pytest prints one line saying so and the run's result is unch
 
 ### Switching it off
 
-In a workspace, turn recording off with `aisland workspace test-stats`, the same way `aisland workspace untrack`
+In a workspace, turn recording off with `aisland workspace test-stats`, the same way `aisland workspace track unset`
 works: with no project named it covers every project, those added later included; without `--machine-only` it is
 written for everyone in `workspace.toml` (commit it), with it only in this machine's `.git/config`, which wins.
 

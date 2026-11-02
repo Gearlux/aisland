@@ -92,7 +92,7 @@ The workspace's dev-infrastructure CLI, `aisland` (click, `aisland/cli.py`):
   only the projects: `.gitignore` `/*`, `.gitmodules` and the projects committed, marked by `aisland.workspace.local`
   in `.git/config` (never a tracked file: the root is no one else's). `settle` commits `.gitmodules` and the
   projects' paths — nothing else staged — at init, after every `activation.reconcile` (setup, `configure active`)
-  and after `track|untrack`; a commit git refuses is said, never raised; an unmarked workspace is never touched; the
+  and after `track set|unset`; a commit git refuses is said, never raised; an unmarked workspace is never touched; the
   `active` plugin adds a project there with `-f`. (`tests/test_local_workspace.py`,
   `tests/test_workspace_init.py::test_a_local_workspace_tracks_only_its_projects_and_has_nothing_to_commit`)
 - `clones.py`: `aisland setup` adds a clone the workspace does not list as a submodule BY ITSELF, never asking (user
@@ -106,25 +106,25 @@ The workspace's dev-infrastructure CLI, `aisland` (click, `aisland/cli.py`):
   `tests/test_setup_installs_git_aliases.py::test_setup_adds_the_clones_the_workspace_does_not_list`)
 - `recording.py`: `aisland workspace test-stats on|off [PROJECT…] [--machine-only]` — whether the pytest plugin
   records a project's runs; see "Test-run statistics".
-- `tracking.py`: `aisland workspace track|untrack [PROJECT…] [--machine-only]` (user choice 2026-10-23: two commands,
-  no project = every submodule; not a `configure` plugin) — whether the root records a project's commits. Committed:
+- `tracking.py`: `aisland workspace track set|unset|status [PROJECT…]` (user choice 2026-10-23: two writes,
+  no project = every submodule; not a `configure` plugin; user choice 2026-11-02: one group, `unset` writes `track = false` and removes no setting) — whether the root records a project's commits. Committed:
   the project's `track = false` in `workspace.toml`, written as `ignore = all` in `.gitmodules`; this machine:
   `aisland.track.<project>.track`, written as git's `submodule.<name>.ignore` (`all`/`none`) in `.git/config`, which
   git reads first — aisland's key because `submodule deinit` drops git's section, and `apply` (every
-  `activation.reconcile`) writes it back. A committed `track|untrack` drops this machine's choice for those projects. **With no project named it is the
+  `activation.reconcile`) writes it back. A committed `track set|unset` drops this machine's choice for those projects. **With no project named it is the
   WORKSPACE's choice (user correction 2026-10-23):** `[workspace] track = false` (per machine `aisland.track.default`),
   which every project without a `track` of its own follows, those added later included — so `init --untracked`, or
-  one `untrack`, then only `aisland setup`; a project's own `track` is written only where it differs, and `untrack`
+  one `track unset`, then only `aisland setup`; a project's own `track` is written only where it differs, and `track unset`
   with no submodules yet is allowed (it records the choice).
   An `ignore` value aisland does not write (`dirty`, `untracked`) is the user's and left alone. **An untracked
   project follows its branch (user request 2026-10-23):** one on no branch is fetched and switched to its branch —
   `.gitmodules`' `branch` (`.` = the root's), else origin's default; its local branch, fast-forwarded only when
-  strictly behind, else a new one tracking origin's — by `follow_branches` (every `activation.reconcile`, `untrack`)
+  strictly behind, else a new one tracking origin's — by `follow_branches` (every `activation.reconcile`, `track unset`)
   and by `git pull-all` before it merges; never `-f`, a refused switch is said and the project left; a tracked project
   on no branch is never moved (`tests/test_tracking.py::test_a_tracked_project_on_no_branch_is_left_on_its_commit`,
   `tests/test_git_pull_push_all.py::test_an_untracked_submodule_on_no_branch_is_put_on_its_branch_and_pulled`). Only submodules: a
   workspace without them, and a name that is no submodule's, are refused before anything changes. `init
-  --untracked` is `untrack` for every project. (`tests/test_tracking.py`,
+  --untracked` is `track unset` for every project. (`tests/test_tracking.py`,
   `tests/test_workspace_init.py::test_untracked_hides_a_projects_new_commits_and_writes_it_down`)
 - `env_example.py`: `aisland workspace env-example [--missing]` (both files; also setup's step 5b and `init`'s `.env` seed) and
   `aisland workspace env-test [PROJECT…]` [env-example]; see "Generated and committed workspace files".
@@ -550,7 +550,7 @@ Root `AGENTS.md` "Two Test Runs" (user ruling 2026-10-05). [test-stats]
   its own — `pytest_configure` and the recorder's hooks catch `Exception` and print `aisland test stats: this run was
   not recorded (<error>)` (`::test_a_plugin_that_breaks_while_starting_costs_one_line_never_the_runs_result`,
   `::test_a_plugin_that_breaks_while_recording_costs_one_line_never_the_runs_result`).
-- **Recording can be turned off, never removed (user choice 2026-10-27: option B, shaped like `track|untrack`).**
+- **Recording can be turned off, never removed (user choice 2026-10-27: option B, shaped like `track set|unset`).**
   `aisland workspace test-stats on|off [PROJECT…] [--machine-only]` (`recording.py`): committed `[workspace]
   test-stats = false` (no project named: every project, those added later included) or a project's own
   `test-stats` where it differs; this machine `aisland.test-stats.default` / `aisland.test-stats.<project>.record`,

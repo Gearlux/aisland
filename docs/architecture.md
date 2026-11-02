@@ -2791,7 +2791,7 @@ aisland.source.loggair.branch dev/main
 
 ---
 
-## A root's two choices: a local repository (`--local`), projects it does not record (`untrack`)
+## A root's two choices: a local repository (`--local`), projects it does not record (`track unset`)
 
 *2026-10-23* [local-workspace]
 
@@ -2810,7 +2810,7 @@ the `active` choices, mirrors) and a `git pull-all` typed in the root.
 Two independent choices. `init --local` makes a new root that tracks only `.gitmodules` and the projects (`.gitignore`
 `/*`, marked `aisland.workspace.local` in `.git/config`, the first commit made by `local_workspace.settle`, which
 commits `.gitmodules` and the projects again whenever they change). Tracking is per project, git's own
-`ignore = all`: `aisland workspace untrack|track [PROJECT…] [--machine-only]` writes the committed choice to
+`ignore = all`: `aisland workspace track unset|set [PROJECT…] [--machine-only]` writes the committed choice to
 `workspace.toml` (`track = false`) and `.gitmodules`, or this machine's to `aisland.track.<project>.track` and
 `.git/config`; `init --untracked` untracks every project; `git pull-all` never records an untracked submodule. `init`
 in an existing repository sets it up in place instead of refusing it (`--from` and `--local` refused there).
@@ -2826,7 +2826,7 @@ in an existing repository sets it up in place instead of refusing it (`--from` a
 - `git submodule add` refuses a `--local` root's ignored path without `-f`; the `active` plugin passes it, a person
   types it.
 - An untracked project follows its branch: on no branch (a fresh clone's `git submodule update`), `aisland setup`,
-  `untrack` and `git pull-all` fetch it and switch it to `.gitmodules`' branch (`.` = the root's), else origin's
+  `track unset` and `git pull-all` fetch it and switch it to `.gitmodules`' branch (`.` = the root's), else origin's
   default — never forced. So a shared root's recorded commits stop mattering for its untracked projects: a new
   machine needs only the clone and `aisland setup`.
 
@@ -2838,7 +2838,7 @@ $ aisland workspace init . --untracked
     .git/                     kept (an existing repository)
     ...
     models                    untracked: the root records none of its commits
-$ aisland workspace track models --machine-only
+$ aisland workspace track set models --machine-only
 ==> tracked on this machine: models (nothing committed)
   - models: tracked on this machine
 ```
@@ -2865,7 +2865,7 @@ In a workspace of submodules, a repository cloned into its folder by hand was in
 `aisland setup` finds each clone `.gitmodules` does not list (a `.git` folder, an `origin`, a `pyproject.toml`) and runs
 `git submodule add -b <its branch> <its origin> <folder>`, which keeps the clone as it is — without asking (user ruling
 2026-10-23: a question about a project the workspace already lists in `workspace.toml` was the wrong default). The new project is tracked as the workspace says: `[workspace] track = false` in `workspace.toml` (`init --untracked`,
-`untrack` with no project named) untracks every project without a `track` of its own, those added later included —
+`track unset` with no project named) untracks every project without a `track` of its own, those added later included —
 a workspace-wide choice, never inferred from the other projects (user correction 2026-10-23: the first rule, "like the
 others", left a workspace made untracked with its new projects tracked).
 
@@ -3352,7 +3352,7 @@ none visible to aisland or its report.
 
 ### Decision
 
-`aisland workspace test-stats on|off [PROJECT…] [--machine-only]`, shaped like `track|untrack` (the user's choice over
+`aisland workspace test-stats on|off [PROJECT…] [--machine-only]`, shaped like `track set|unset` (the user's choice over
 a per-project `configure` plugin): no project named covers the whole workspace, those added later included; the
 committed layer is `workspace.toml` (`[workspace] test-stats = false`, a project's own value only where it differs),
 this machine's is `.git/config` (`aisland.test-stats.default`, `aisland.test-stats.<project>.record`) and wins. The

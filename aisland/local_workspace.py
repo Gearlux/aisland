@@ -8,7 +8,7 @@ records the projects' commits is a choice of its own (:mod:`aisland.tracking`, `
 The workspace is marked in this machine's ``.git/config`` (``aisland.workspace.local``) — the root is no repository
 anyone shares. :func:`settle` keeps a marked workspace committed after ``.gitmodules`` changes or a project is added,
 by hand (``git submodule add -f <url>``: ``/*`` makes git refuse the path without ``-f``), by the ``active`` plugin or
-by ``aisland workspace track|untrack``: ``.gitmodules`` and the new projects are committed — only those paths.
+by ``aisland workspace track set|unset``: ``.gitmodules`` and the new projects are committed — only those paths.
 """
 
 from __future__ import annotations

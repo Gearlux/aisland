@@ -17,7 +17,7 @@
 #   1. fetch the root and every submodule from origin, in parallel, before anything merges;
 #   2. merge origin/<branch> into each submodule that is on the root's branch or on a dev/* branch
 #      of its own (merged with origin's copy of THAT branch; the root records none of it) — an untracked one
-#      (`aisland workspace untrack`) on no branch is first put on the branch it follows;
+#      (`aisland workspace track unset`) on no branch is first put on the branch it follows;
 #      a repository whose origin history `aisland wheels prune` rewrote while this clone still holds
 #      the old one is not merged (the merge would bring the old history back) — it is listed with
 #      `aisland wheels reset <project>`;
@@ -297,7 +297,7 @@ submodule_name() {
             rest == p { sub(/^submodule\./, "", key); sub(/\.path$/, "", key); print key; exit }'
 }
 
-# Whether the submodule at path $1 is untracked (`aisland workspace untrack`): `submodule.<name>.ignore`
+# Whether the submodule at path $1 is untracked (`aisland workspace track unset`): `submodule.<name>.ignore`
 # is `all` in this machine's .git/config or, without one there, in .gitmodules.
 updates_ignored() {
     local name value

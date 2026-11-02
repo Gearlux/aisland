@@ -67,7 +67,7 @@ beta                   merged origin/dev/main (1 commit)
 root                   recorded submodule pointers: alpha, beta
 ```
 
-An untracked submodule (`aisland workspace untrack`: `ignore = all` in `.gitmodules` or this machine's
+An untracked submodule (`aisland workspace track unset`: `ignore = all` in `.gitmodules` or this machine's
 `.git/config`) is pulled the same way and never recorded.
 
 The merges are explicit (`git fetch` + `git merge`, never `git pull`), so the result does not depend on a machine's `pull.rebase` setting. The logic lives in [`git_pull_all.sh`](../aisland/git/git_pull_all.sh) (why it is shaped this way: [architecture.md](architecture.md), "`pull-all` settles a submodule pointer only to a commit holding both sides"). In Claude Code, `/pull-all` (one of the commands [harness.md](harness.md) describes) runs it and finishes the listed conflicts for you; `/push-all` runs `/pull-all`, pushes, and ends with `aisland workspace mirror sync` (see [Project Mirrors](sources.md#project-mirrors-aisland-workspace-configure-mirror)).

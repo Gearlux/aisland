@@ -101,36 +101,57 @@ $ .venv/bin/aisland setup
 ```
 
 It is tracked as the workspace says: untracked when `workspace.toml` has `[workspace] track = false` — written by
-`init --untracked` and by `aisland workspace untrack` with no project named — or this machine untracks every project,
+`init --untracked` and by `aisland workspace track unset` with no project named — or this machine untracks every project,
 tracked otherwise. A `--local` root commits it with `.gitmodules`; in a shared root they are left for you to commit.
 So in a `--local --untracked` workspace, a project you clone into the folder needs only `aisland setup`: it becomes an
 untracked submodule, listed in `workspace.toml` and in the editor's workspace file, and committed.
 
-### Track or untrack the projects: `aisland workspace track|untrack`
+### Track or untrack the projects: `aisland workspace track set|unset|status`
 
 ```bash
-aisland workspace untrack                      # every project: the root records none of their commits
-aisland workspace untrack models               # one project
-aisland workspace track models                 # record its commits again
-aisland workspace untrack --machine-only       # this machine only; nothing to commit
+aisland workspace track unset                  # every project: the root records none of their commits
+aisland workspace track unset models           # one project
+aisland workspace track set models             # record its commits again
+aisland workspace track unset --machine-only   # this machine only; nothing to commit
+aisland workspace track status                 # which projects, whose choice, whether git agrees
 ```
 
 ```text
-$ aisland workspace untrack models
+$ aisland workspace track unset models
 ==> untracked: models (in workspace.toml and .gitmodules — commit them)
   - models: untracked (the root records none of its commits)
 ```
+
+`aisland workspace track` alone changes nothing: it lists the three commands.
 
 The choice is written for everyone as `track = false` in the project's table of `workspace.toml` and `ignore = all`
 in `.gitmodules` (a `--local` root commits it itself), or with `--machine-only` in `.git/config` alone, where it wins
 over the committed one; `aisland setup` writes git's setting back from them. An untracked project is skipped by
 `git add <project>` and by the `/commit-all` agent command ([harness](harness.md)); the root keeps the commit it last recorded, so a `git submodule update`
 typed in the root would put the project back there, off its branch — `git pull-all` and `aisland setup` never do.
-`track` shows a project that moved meanwhile again (` M models`), and the next `git pull-all` records it once origin
+`track set` shows a project that moved meanwhile again (` M models`), and the next `git pull-all` records it once origin
 has those commits.
 
+`track status` changes nothing. With no project named it says the workspace's choice and lists the projects that differ
+from it — a `track` of their own in `workspace.toml`, or this machine's choice — or that git does not yet agree with;
+the others are counted:
+
+```text
+$ aisland workspace track status
+==> the workspace default: tracked (the default: no track in workspace.toml)
+  - models: untracked (its own track = false in workspace.toml; git: applied)
+  - tools: untracked (this machine's aisland.track.tools.track = false; git: applied)
+  - 2 more: tracked, as the workspace default says
+```
+
+When every project follows the workspace alike, it says so once (`==> untracked: all 31 projects …`). `track status
+models tools` gives one line for each project named, and `--json` prints every project's row as one JSON object.
+`git: NOT applied — run `aisland setup`` means `workspace.toml` and git's `ignore` disagree, so `git status` in the
+root still shows the project; `git: ignore = dirty, yours, left alone` is a setting of your own that aisland never
+rewrites.
+
 An untracked project follows its **branch**, not the commit the root recorded. A fresh clone's `git submodule update`
-leaves every project on that old commit and on no branch; `aisland setup`, `aisland workspace untrack` and
+leaves every project on that old commit and on no branch; `aisland setup`, `aisland workspace track unset` and
 `git pull-all` then fetch it and put it on its branch — `.gitmodules`' `branch` (`.` is the root's branch), else
 origin's default — at origin's newest commit (a local branch with commits of its own is switched to, then merged by
 `git pull-all`). So on a new machine `git clone --recurse-submodules <root>` and `aisland setup` put every untracked

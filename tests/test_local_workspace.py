@@ -3,7 +3,7 @@
 Its `.gitignore` ignores everything (`/*`), so only `.gitmodules` and the submodules are tracked. The workspace is
 marked in this machine's `.git/config` (`aisland.workspace.local`). `local_workspace.settle` keeps it so after
 `.gitmodules` changes or a project is added — by hand with `git submodule add -f`, by the `active` plugin, by
-`aisland workspace untrack`: `.gitmodules` and the new projects are committed, nothing else. Whether the root records a
+`aisland workspace track unset`: `.gitmodules` and the new projects are committed, nothing else. Whether the root records a
 project's commits is `aisland.tracking`'s (`tests/test_tracking.py`).
 """
 

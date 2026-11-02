@@ -70,7 +70,7 @@ The first release on PyPI: `pip install aisland`.
 - **`aisland workspace show`** lists what the projects declare to aisland — selections, services and code plugins.
   **`aisland workspace provision`** lists the system tools this machine needs, who needs each and whether it is
   installed; `provision install` installs them.
-- **`aisland workspace track|untrack [PROJECT…]`** chooses whether the root repository records a project's commits;
+- **`aisland workspace track set|unset|status [PROJECT…]`** chooses whether the root repository records a project's commits;
   **`aisland workspace code-workspace`** and **`aisland workspace bashrc`** run alone the two setup steps that write
   the VS Code workspace file and link `project.bashrc`.
 - **`aisland workspace theme|color`** sets this machine's VS Code theme and colours for the workspace window, kept

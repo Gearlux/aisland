@@ -10,7 +10,7 @@ care of this automatically"), with
 checkout and uncommitted edits); ``-f`` is passed only in a local root, whose ``.gitignore`` is ``/*``.
 
 The new project is tracked as the workspace says (:mod:`aisland.tracking`): untracked when ``workspace.toml`` has
-``[workspace] track = false`` (``init --untracked``, ``aisland workspace untrack``) or this machine untracks every
+``[workspace] track = false`` (``init --untracked``, ``aisland workspace track unset``) or this machine untracks every
 project, tracked otherwise. So in such a workspace a clone needs only ``aisland setup``: it becomes a submodule, is
 listed in ``workspace.toml``, untracked, in the editor's workspace file, and committed in a local root. A workspace without ``.gitmodules``
 that is no local root is a folder of clones, where each clone already is a project: it has none to add.

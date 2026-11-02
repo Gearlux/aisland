@@ -56,13 +56,22 @@ def test_info_names_the_running_port(on_9081: None, capsys: pytest.CaptureFixtur
 def test_the_safe_restart_asks_the_running_jenkins(
     on_9081: None, requested: List[str], monkeypatch: pytest.MonkeyPatch
 ) -> None:
+    """Nothing answers, so the restart falls back to stopping and launching Jenkins: recorded, never run — a launch
+    needs Jenkins' WAR, which a clone of aisland alone (GitHub CI's) has not downloaded, and this machine's Jenkins
+    is no test's to restart."""
     monkeypatch.setattr(JenkinsService, "is_running", lambda self: True)
+    fallback: List[str] = []
+    monkeypatch.setattr(JenkinsService, "stop", lambda self: fallback.append("stop"))
+    monkeypatch.setattr(
+        JenkinsService, "launch", lambda self, background=False: fallback.append(f"launch {background}")
+    )
     service = JenkinsService()
     (service.service_data_dir / "secrets").mkdir(parents=True)
     (service.service_data_dir / "secrets" / "initialAdminPassword").write_text("pw\n")
     service.safe_restart()
     local = [url for url in requested if "localhost" in url]
     assert local and all(url.startswith("http://localhost:9081/") for url in local)
+    assert fallback == ["stop", "launch True"]
 
 
 def test_the_nightly_report_links_the_running_jenkins(on_9081: None, monkeypatch: pytest.MonkeyPatch) -> None:
