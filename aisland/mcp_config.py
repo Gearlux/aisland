@@ -8,7 +8,7 @@ from typing import Dict, Optional
 
 import click
 
-from aisland import locations
+from aisland import failures, locations
 from aisland import pyproject as pyproject_toml
 from aisland.errors import AislandError
 from aisland.projects import discover_projects, get_workspace_root
@@ -66,7 +66,7 @@ def _warn_missing_commands(servers: Dict[str, dict]) -> None:
     for name, entry in sorted(servers.items()):
         command = Path(entry["command"])
         if not command.exists():
-            click.echo(
+            failures.warn(
                 f"  - Warning: {name}'s MCP command {command} is not installed — refresh the editable install"
                 f" (`uv pip install -e ./{name}`) so the console script exists."
             )
@@ -146,7 +146,7 @@ def no_venv(workspace_root: Path) -> click.ClickException:
 def _venv_bin_or_none(workspace_root: Path) -> Optional[Path]:
     venv_bin = workspace_root / ".venv" / "bin"
     if not venv_bin.exists():
-        raise AislandError(f"Virtual environment not found at {workspace_root / '.venv'}. Run aisland/setup.sh first.")
+        raise no_venv(workspace_root)
     return venv_bin
 
 

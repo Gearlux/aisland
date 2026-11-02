@@ -164,10 +164,9 @@ class BaseService:
             owner = supervisor.port_in_use(port)
             if owner is not None:
                 owner_hint = f"PID {owner}" if owner and owner > 0 else "an unknown process"
-                click.echo(
+                failures.warn(
                     f"  - Warning: port {port} is still in use by {owner_hint} — "
-                    f"orphaned {self.name} child processes may have survived; stop them manually.",
-                    err=True,
+                    f"orphaned {self.name} child processes may have survived; stop them manually."
                 )
 
     def status(self) -> None:

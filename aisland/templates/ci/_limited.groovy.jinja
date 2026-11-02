@@ -1,6 +1,9 @@
+<# Why it exists: a test ignoring SIGINT once held a local build, and with it the nightly orchestrator, for 109 min
+   (docs/architecture.md, [stage-limits]). Template comments only here: every project's file carries what is below,
+   a company's repository among them. -#>
 // A long stage's time limit, in minutes: past it the stage fails naming itself and the limit, so one hung test
-// never holds the nightly orchestrator (2026-10-15: annotaide.local #37 waited 109 min on a test ignoring SIGINT).
-// An abort by hand before the limit stays an abort. The limits: STAGE_LIMITS in aisland/services/jenkins.py.
+// never holds the nightly orchestrator. An abort by hand before the limit stays an abort. The limits: STAGE_LIMITS
+// in aisland/services/jenkins.py.
 def limited(String stage, int minutes, Closure body) {
     long started = System.currentTimeMillis()
     try {

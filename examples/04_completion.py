@@ -1,8 +1,8 @@
 """`aisland completion install --target-rc FILE` — the completion file it writes, and what it does when sourced.
 
 `aisland completion install` writes shell completion for every command-line tool of the workspace's virtual
-environment into one file a shell sources at start-up. Here the file is a temporary one, so your own shell's
-files are untouched.
+environment into one file a shell sources at start-up. It works on a workspace, so the example makes a throwaway
+one (`aisland workspace init`) and writes a temporary file: your own workspace and shell's files are untouched.
 
 It shows, and asserts:
 
@@ -28,11 +28,15 @@ AISLAND = str(Path(sys.executable).with_name("aisland"))
 
 def main() -> None:
     with tempfile.TemporaryDirectory() as scratch:
+        made = subprocess.run(
+            [AISLAND, "workspace", "init", "acme"], cwd=scratch, capture_output=True, text=True, timeout=300
+        )
+        assert made.returncode == 0, made.stdout + made.stderr
         rc = Path(scratch) / "completion.bash"
         for _ in range(2):
             result = subprocess.run(
                 [AISLAND, "completion", "install", "--target-rc", str(rc), "--shell", "bash"],
-                cwd=scratch,
+                cwd=Path(scratch) / "acme",
                 capture_output=True,
                 text=True,
                 timeout=600,

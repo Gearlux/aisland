@@ -32,6 +32,7 @@ from click.testing import CliRunner
 
 from aisland import locations, tunnel
 from aisland.cli import main
+from aisland.errors import AislandError
 
 
 @pytest.fixture(autouse=True)
@@ -178,6 +179,19 @@ def test_sign_in_state_is_read_from_the_output_not_the_exit_code(state: Path) ->
 
     with patch.object(tunnel.subprocess, "run", return_value=CompletedProcess([], 0, "user@example.invalid\n", "")):
         assert tunnel.signed_in() == "user@example.invalid"
+
+
+def test_a_cli_that_does_not_answer_whether_it_is_signed_in_is_refused_naming_it(
+    state: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """`tunnel status` and `tunnel start` (and their MCP tools) wait on this question: a CLI that hangs is named
+    after `ANSWER_SECONDS`, never waited on."""
+    state.mkdir(parents=True, exist_ok=True)
+    tunnel.cli_path().write_text("#!/bin/sh\nsleep 60\n")
+    tunnel.cli_path().chmod(0o755)
+    monkeypatch.setattr(tunnel, "ANSWER_SECONDS", 1)
+    with pytest.raises(AislandError, match=r"`code tunnel user show` did not answer within 1 s"):
+        tunnel.signed_in()
 
 
 def test_status_says_which_name_the_tunnel_registered(state: Path) -> None:
@@ -364,7 +378,7 @@ def test_the_group_runs_outside_a_workspace_while_other_commands_are_refused(
     runner = CliRunner()
 
     allowed = runner.invoke(main, ["tunnel", "status"])
-    refused = runner.invoke(main, ["doctor"])
+    refused = runner.invoke(main, ["services", "status"])
 
     assert allowed.exit_code == 0, allowed.output
     assert refused.exit_code != 0

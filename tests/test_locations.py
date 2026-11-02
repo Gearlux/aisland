@@ -11,12 +11,12 @@ from __future__ import annotations
 
 import os
 from pathlib import Path
-from typing import Iterator
+from typing import Callable, Iterator
 
 import click
 import pytest
 
-from aisland import locations, manager, paths, projects, pytest_stats, supervisor
+from aisland import locations, manager, mcp_config, paths, projects, pytest_stats, sources, supervisor
 from aisland.services import jenkins
 from tests.workspace_layout import needs_workspace
 
@@ -249,6 +249,32 @@ def test_setup_from_a_wheel_without_a_venv_says_how_to_make_one(
     monkeypatch.setattr(locations, "workspace_root", lambda: tmp_path)
     with pytest.raises(click.ClickException) as refused:
         manager.setup_workspace(non_interactive=True)
+    assert refused.value.message == (
+        f"Virtual environment not found at {tmp_path / '.venv'}. Create it and install aisland into it: "
+        "uv venv --seed .venv && .venv/bin/pip install aisland"
+    )
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        lambda root: sources.set_project_source("lib", "local", workspace_root=root),
+        lambda root: sources.apply_configured(workspace_root=root),
+        lambda root: mcp_config.generate_mcp_json(),
+        lambda root: mcp_config.generate_gemini_settings(),
+    ],
+    ids=["source set", "source apply", "mcp claude", "mcp gemini"],
+)
+def test_every_command_needing_the_venv_says_how_to_make_one_from_a_wheel(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, command: Callable[[Path], object]
+) -> None:
+    """A wheel install has no `aisland/setup.sh`: the refusal names the commands that make the venv."""
+    monkeypatch.setattr(locations, "FROM_CHECKOUT", False)
+    monkeypatch.setattr(locations, "workspace_root", lambda: tmp_path)
+    (tmp_path / "lib").mkdir()
+    (tmp_path / "lib" / "pyproject.toml").write_text('[project]\nname = "lib"\nversion = "0.1.0"\n')
+    with pytest.raises(click.ClickException) as refused:
+        command(tmp_path)
     assert refused.value.message == (
         f"Virtual environment not found at {tmp_path / '.venv'}. Create it and install aisland into it: "
         "uv venv --seed .venv && .venv/bin/pip install aisland"

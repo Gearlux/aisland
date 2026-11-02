@@ -39,6 +39,7 @@ from typing import Dict, List, Optional, Sequence, Set, Tuple
 import click
 from packaging.requirements import InvalidRequirement, Requirement
 
+from aisland import failures
 from aisland import pyproject as pyproject_toml
 from aisland import workspace_file
 from aisland.installers import ensure_uv_in_venv
@@ -302,7 +303,7 @@ def parse_selection(
         elif token in choices:
             name = token
         else:
-            click.echo(f"  - Warning: unknown {axis.one} {token!r}; ignoring.")
+            failures.warn(f"  - Warning: unknown {axis.one} {token!r}; ignoring.")
             continue
         if name not in chosen:
             chosen.append(name)
@@ -389,7 +390,7 @@ def apply_selection(root: Path, axis: Axis, uv_cmd: Optional[str] = None) -> int
             logger.debug("running %s pip install -e %s (in %s)", uv, target, root)
             subprocess.check_call([uv, "pip", "install", "-e", target], cwd=root)
         except subprocess.CalledProcessError as exc:
-            click.echo(f"  - Error: Failed to install {project['name']}: {exc}")
+            click.echo(f"  - Error: Failed to install {project['name']}: {exc}", err=True)
             failures += 1
     return failures
 

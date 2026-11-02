@@ -24,8 +24,6 @@ branch), else origin's default branch; the switch is never forced.
 from __future__ import annotations
 
 import dataclasses
-import os
-import subprocess
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Dict, List, Optional, Sequence
@@ -227,7 +225,6 @@ def follow_branches(root: Path) -> List[str]:
     edits in the way) is said and the project left; an unreachable origin only means the branch it already knows.
     A local branch strictly behind origin's is fast-forwarded to it. One line per project acted on."""
     lines = []
-    quiet = {**os.environ, "GIT_TERMINAL_PROMPT": "0"}
     for project, name in _submodules(root).items():
         path = next(p for p, n in local_workspace.submodule_names(root).items() if n == name)
         folder = root / path
@@ -235,7 +232,7 @@ def follow_branches(root: Path) -> List[str]:
             continue
         if gitcmd.git(folder, "branch", "--show-current").stdout.strip():
             continue
-        subprocess.run(["git", "fetch", "-q", "origin"], cwd=folder, capture_output=True, env=quiet)
+        gitcmd.fetch(folder, "-q", "origin")
         branch = _followed_branch(root, name, folder)
         if branch is None:
             lines.append(f"{project}: stays on no branch — .gitmodules names none and origin has no default")

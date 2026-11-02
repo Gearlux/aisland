@@ -166,7 +166,7 @@ class TestSetAndUnset:
     ) -> None:
         (ws.root / FILE_NAME).write_text('[project."alpha"]\nurl = "u"\n\n[project."beta"]\nurl = "v"\nmirror = 3\n')
         assert m.read_committed_mirrors(ws.root) == {}
-        assert f"{ws.root / FILE_NAME}:4: project 'beta' has a mirror that is no address" in capsys.readouterr().out
+        assert f"{ws.root / FILE_NAME}:4: project 'beta' has a mirror that is no address" in capsys.readouterr().err
 
     def test_the_remote_never_imports_the_mirrors_tags(self, ws: Workspace) -> None:
         m.set_mirror("alpha", ws.mirror_url(), workspace_root=ws.root)

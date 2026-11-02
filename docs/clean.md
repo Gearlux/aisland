@@ -116,10 +116,11 @@ root is left alone.
 | The workspace **root** repo is refused | Its ignored set *is* that `.venv` / `.env` / generated `uv.toml` + `pyrightconfig.json` |
 | A directory that is not its repository's root is refused | `git status` there reports the **enclosing** repo's ignored set |
 | A project with no checkout (`github` / `pypi` source) is refused | Nothing to clean; see `aisland workspace configure source` |
-| The backup store itself is never moved | Cleaning `aisland` matters here: its `.gitignore` ignores `data/` wholesale and the store lives at `data/backups`, so that one entry is split and everything *except* the store moves |
+| The backup store itself is never moved | It sits in `.aisland/data/backups` at the workspace root, which no project's clean reaches; when aisland runs from its own checkout, the store is `aisland/data/backups` inside that checkout, so cleaning it splits that one entry and moves everything *except* the store |
 
-Cleaning a project undoes work that has to be redone: `aisland clean aisland` takes away the
-provisioned `bin/` and every service's `data/` (re-run `aisland workspace provision install` / `aisland setup`),
-and cleaning any project removes caches that the next `pytest` / `mypy` run rebuilds slowly.
+Cleaning a project undoes work that has to be redone: it removes caches that the next `pytest` / `mypy` run
+rebuilds slowly, and a project's ignored build output. (When aisland runs from its own checkout, cleaning that
+checkout also takes away the tools aisland installed in its `bin/` and every service's `data/`: re-run
+`aisland workspace provision install` and `aisland setup`.)
 That is the point of the backup — `aisland backups restore <project>` puts it back, until the
 retention window closes.

@@ -308,6 +308,44 @@ def test_from_the_wheel_outside_a_workspace_a_command_is_refused_with_the_way_ou
     )
 
 
+def test_from_the_wheel_outside_a_workspace_the_doctor_checks_this_machine(installed: Path, tmp_path: Path) -> None:
+    """The doctor checks the machine and the Python it runs on, so it needs no workspace: a remote box that only
+    runs the tunnel has none."""
+    plain = tmp_path / "plain"
+    plain.mkdir()
+    result = _aisland(installed, plain, "doctor")
+    assert "No workspace here" not in result.stderr
+    assert result.stdout.startswith("Environment doctor"), result.stdout + result.stderr
+    assert result.stdout.strip().splitlines()[-1].endswith("checks passed.") or "checks failed." in result.stdout
+
+
+def test_from_the_wheel_outside_a_workspace_a_notebook_is_cleaned(installed: Path, tmp_path: Path) -> None:
+    """`aisland notebooks clean` is a git filter reading standard input: it runs in any repository."""
+    plain = tmp_path / "plain"
+    plain.mkdir()
+    notebook = {
+        "cells": [
+            {"cell_type": "code", "execution_count": 3, "metadata": {}, "outputs": [{"text": "4"}], "source": []}
+        ],
+        "metadata": {},
+        "nbformat": 4,
+        "nbformat_minor": 5,
+    }
+    environment = {k: v for k, v in os.environ.items() if k != "AISLAND_WORKSPACE"}
+    environment["PYTHONPATH"] = str(installed)
+    result = subprocess.run(
+        [sys.executable, "-P", "-c", "from aisland.cli import main; main()", "notebooks", "clean"],
+        cwd=plain,
+        env=environment,
+        input=json.dumps(notebook),
+        capture_output=True,
+        text=True,
+    )
+    assert result.returncode == 0, result.stderr
+    cell = json.loads(result.stdout)["cells"][0]
+    assert (cell["outputs"], cell["execution_count"]) == ([], None)
+
+
 def test_from_the_wheel_a_workspace_is_created_and_its_aliases_point_into_the_package(
     installed: Path, tmp_path: Path
 ) -> None:

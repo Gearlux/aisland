@@ -117,7 +117,7 @@ Fast-forward is guaranteed because main now contains current's tip plus the merg
 
 ## 3e. Mirrors (once, after the last project)
 
-After the last project — or after the failure that stopped the workflow, since it copies only what reached the primary — run `aisland workspace mirror sync` from the workspace root. It pushes each mirrored submodule's `dev/main`, `main`, every other branch checked out locally (as the primary has it) and tags to its second host (`aisland/README.md` → "Project Mirrors"); with no mirror configured it prints one line and does nothing. Its exit 1 (a branch or tag REFUSED, a host unreachable) changes no project's `STATUS`: it is reported below, never retried, never forced — the refusal line names the merge that fixes it, and that merge is the user's.
+After the last project — or after the failure that stopped the workflow, since it copies only what reached the primary — run `aisland workspace mirror sync` from the workspace root. It pushes each mirrored submodule's `dev/main`, `main`, every other branch checked out locally (as the primary has it) and tags to its second host (`aisland workspace configure mirror --help`; aisland's `docs/sources.md` → "Project Mirrors"); with no mirror configured it prints one line and does nothing. Its exit 1 (a branch or tag REFUSED, a host unreachable) changes no project's `STATUS`: it is reported below, never retried, never forced — the refusal line names the merge that fixes it, and that merge is the user's.
 
 ## 4. Final summary
 

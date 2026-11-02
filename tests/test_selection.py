@@ -390,7 +390,7 @@ def test_an_answer_is_names_or_numbers(answer: str) -> None:
 def test_a_blank_answer_is_everything_and_an_unknown_name_is_dropped(capsys: pytest.CaptureFixture[str]) -> None:
     assert s.parse_selection("", ["a", "b"], s.EXTRAS) == ["a", "b"]
     assert s.parse_selection("a zz a", ["a", "b"], s.EXTRAS) == ["a"]
-    assert "unknown extra 'zz'" in capsys.readouterr().out
+    assert "unknown extra 'zz'" in capsys.readouterr().err
 
 
 # --- aisland workspace configure <selection> ----------------------------------------------------------------------

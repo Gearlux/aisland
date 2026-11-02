@@ -338,11 +338,12 @@ How aisland finds its workspace depends on how it is installed:
 
 | installed | the workspace | where aisland keeps its state (`data/`, `bin/`, `tools/`: service data, downloaded tools) |
 |---|---|---|
-| a checkout of aisland, installed editable | the workspace the checkout is in, wherever you run it | `<workspace>/aisland/` |
-| from a wheel | `AISLAND_WORKSPACE` when set, else the nearest folder above where you run it that holds `.gitmodules`; the folder you run it in when it holds projects; from inside a project, the project's parent; a git repository with no project yet | `<workspace>/.aisland/` |
+| **from a wheel** — `pip install aisland`, `uv tool install aisland`: what PyPI gives you | the first that applies, starting where you run it: (1) the folder `AISLAND_WORKSPACE` names; (2) the nearest folder at or above it holding `.gitmodules`; (3) the folder itself, when it holds projects; (4) inside a project, the project's parent; (5) a git repository with no project yet | `<workspace>/.aisland/` |
+| **from a checkout** — a clone of aisland's own repository installed editable (`pip install -e`), as aisland is developed | the workspace the checkout sits in, wherever you run it; `AISLAND_WORKSPACE` is ignored | `<workspace>/aisland/` |
 
 From a wheel, outside a workspace, a command is refused before it writes anything; only
-`aisland workspace …`, `aisland wheels …`, `aisland tunnel …` and `--help` run anywhere:
+`aisland workspace …`, `aisland wheels …`, `aisland tunnel …`, `aisland doctor`, `aisland notebooks clean` and
+`--help` run anywhere:
 
 ```text
 $ aisland services
@@ -525,6 +526,10 @@ $ aisland workspace configure active
 From the activated set, setup **generates `uv.toml` in the workspace folder**: a base that drops the GUI
 `opencv-python` build (uv's `override-dependencies` with a marker that is never true) and pins headless opencv to one
 range every project shares, merged with each *activated* project's own `uv.toml` (union of `extra-index-url`, etc.).
+`lightning` is dropped the same way, but only in a workspace where a project names `pytorch-lightning` (the two
+conflict). The opencv lines are in every workspace's file, whatever its projects: `import cv2` is the headless build, so a
+window (`cv2.imshow`) does not open. Both builds install the same `cv2/` files with different native libraries, and
+a venv holding both breaks `import cv2`; `aisland doctor`'s `opencv` check names that state and its fix.
 The file is **gitignored and regenerated** on every setup, so a private index (a company package index named in
 `tools/uv.toml`) lands in it **only on a machine that activates that project** — a machine that skips it never tries
 to contact the unreachable index.

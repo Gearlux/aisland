@@ -10,6 +10,7 @@ from typing import Dict, List
 import click
 from packaging.requirements import InvalidRequirement, Requirement
 
+from aisland import failures
 from aisland import pyproject as pyproject_toml
 
 # Workspace-wide uv settings that are no single project's concern. Merged into the generated
@@ -111,7 +112,7 @@ def _emit_uv_toml(data: pyproject_toml.Table) -> str:
                 lines.append(f'    "{item}",')
             lines.append("]")
         else:
-            click.echo(f"  - Warning: skipping uv.toml key {key!r} (unsupported type {type(value).__name__})")
+            failures.warn(f"  - Warning: skipping uv.toml key {key!r} (unsupported type {type(value).__name__})")
     return header + "\n".join(lines) + "\n"
 
 
@@ -141,7 +142,7 @@ def write_root_uv_toml(workspace_root: Path, activated: List[dict]) -> None:
                 _merge_uv(merged, tomllib.load(f))
             n_merged += 1
         except (OSError, tomllib.TOMLDecodeError) as e:
-            click.echo(f"  - Warning: failed to read {uv_file}: {e}")
+            failures.warn(f"  - Warning: failed to read {uv_file}: {e}")
     # Each activated project's `aisland wheels` folder (its `wheels.yaml` marks it) is a find-links path, written
     # relative to this file, which uv resolves against the file's own folder from anywhere below it: the wheels of
     # what PyPI lacks reach every install run in the workspace, setup's included. uv prefers a find-links wheel over

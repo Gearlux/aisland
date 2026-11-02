@@ -62,11 +62,12 @@ from typing import Any, Dict, List, Literal, NamedTuple, Optional, Tuple, TypedD
 import click
 from packaging.version import InvalidVersion, Version
 
-from aisland import failures, locations
+from aisland import failures, gitcmd, locations
 from aisland import pyproject as pyproject_toml
 from aisland import workspace_file
 from aisland.errors import AislandError
 from aisland.installers import ensure_uv_in_venv
+from aisland.mcp_config import no_venv
 from aisland.projects import get_workspace_root, set_submodule_active, submodule_active_map
 from aisland.selection import editable_target
 
@@ -164,7 +165,7 @@ def read_committed_sources(workspace_root: Path) -> Dict[str, ProjectSource]:
             continue
         kind = str(project.others["source"]).strip().lower()
         if kind not in SOURCE_KINDS:
-            click.echo(
+            failures.warn(
                 f"  - Warning: {project.where}: project {name!r} has source {kind!r}; "
                 f"expected one of {', '.join(SOURCE_KINDS)}"
             )
@@ -230,7 +231,7 @@ def local_override(workspace_root: Path, project: str) -> Optional[ProjectSource
     if not kind:
         return None
     if kind not in SOURCE_KINDS:
-        click.echo(
+        failures.warn(
             f"  - Warning: ignoring aisland.source.{project}.source = {kind!r}; expected one of {', '.join(SOURCE_KINDS)}"
         )
         return None
@@ -423,7 +424,7 @@ def apply_source(workspace_root: Path, project: str, source: ProjectSource, uv_c
             if not _run(["git", "submodule", "update", "--init", rel], workspace_root):
                 return False
         # Non-fatal: an offline machine can still switch to a branch it already has.
-        _run(["git", "fetch", "--quiet", "origin"], path, quiet=True)
+        gitcmd.fetch(path, "--quiet", "origin")
         # No ``-f``: a switch that would discard uncommitted work refuses, protecting it. The
         # bare ref relies on git's DWIM (--guess) to create a tracking branch from origin/<ref>.
         if not _run(["git", "switch", source.ref], path):
@@ -743,7 +744,7 @@ def _remote_ref_exists(workspace_root: Path, project: str, ref: str) -> bool:
     except subprocess.TimeoutExpired:
         probe = subprocess.CompletedProcess([], 1)
     if probe.returncode != 0:
-        click.echo(f"  - Warning: could not reach {project}'s remote to verify '{ref}'; continuing.")
+        failures.warn(f"  - Warning: could not reach {project}'s remote to verify '{ref}'; continuing.")
         return True
     return bool(probe.stdout.strip())
 
@@ -781,7 +782,7 @@ def set_project_source(
 
     venv_bin = root / ".venv" / "bin"
     if not venv_bin.exists():
-        raise AislandError(f"no virtual environment at {root / '.venv'}. Run aisland/setup.sh first.")
+        raise no_venv(root)
 
     original = read_committed_sources(root)
     previous_override = local_override(root, project)
@@ -800,7 +801,7 @@ def set_project_source(
                 f"aisland workspace configure source set {project} github"
             )
         if published is None:
-            click.echo(f"  - Warning: {detail}; continuing without verifying '{distribution}'.")
+            failures.warn(f"  - Warning: {detail}; continuing without verifying '{distribution}'.")
         else:
             click.echo(f"  - Verified {distribution} {detail} on PyPI (published from github.com/{owner}).")
         source = ProjectSource(kind="pypi", version=version, distribution=distribution)
@@ -892,7 +893,7 @@ def apply_configured(project: Optional[str] = None, workspace_root: Optional[Pat
     root = workspace_root or get_workspace_root()
     venv_bin = root / ".venv" / "bin"
     if not venv_bin.exists():
-        raise AislandError(f"no virtual environment at {root / '.venv'}. Run aisland/setup.sh first.")
+        raise no_venv(root)
     uv_cmd = ensure_uv_in_venv(venv_bin)
 
     if project is None:

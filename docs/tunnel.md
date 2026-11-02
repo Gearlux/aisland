@@ -15,9 +15,17 @@ tunnel. Nothing is exposed through the ingress and nothing listens on the box.
 ## On the remote machine: start the tunnel
 
 The machine needs no workspace and no checkout of its own: `pip install aisland` there is enough
-(its three dependencies come from the index). For a box with no index, download the wheels on a
-machine that has one (`python -m pip wheel aisland -w dist`), copy the `dist` folder over and
-`pip install --no-index --find-links dist aisland` there. Then:
+(its dependencies come from the index). For a box with no index, download the wheels on a
+machine that has one, for the box's platform and Python — a Linux box on x86-64 with Python 3.12 here; two of the
+packages it installs (PyYAML, MarkupSafe) ship compiled wheels, so the downloading machine's own would not
+install there:
+
+```bash
+python -m pip download aisland -d dist --only-binary=:all: --platform manylinux2014_x86_64 --python-version 3.12
+```
+
+Copy the `dist` folder over and run `pip install --no-index --find-links dist aisland` there
+(`--platform manylinux2014_aarch64` for an ARM box). Then:
 
 ```bash
 aisland tunnel start                              # name: $WORKSPACE, else this machine's hostname
@@ -31,6 +39,10 @@ The first start signs in — a code to enter in a browser — and keeps the acco
 no interaction; `aisland tunnel login --provider microsoft` picks the other account. The sign-in
 happens before the tunnel is spawned, because `code tunnel` takes no account options and asks
 interactively when it has none, which a detached process cannot answer.
+
+`aisland tunnel start` runs `code tunnel --accept-server-license-terms`: starting it accepts the
+VS Code Server licence (`code.visualstudio.com/license/server`) for you, as the detached process could not
+answer that question either.
 
 The tunnel keeps everything in `~/.aisland/tunnel` on that machine — the CLI binary, the log, the
 pidfile, the account and the remembered workspaces — so every command finds the same tunnel wherever

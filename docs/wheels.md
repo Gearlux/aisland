@@ -162,9 +162,10 @@ Behind, nothing breaks: lib, tools, models
 - **Not imported, missing what no workspace project ships**: a module below a package that
   imported, missing something no workspace project ships — most often an optional extra's
   dependency, which the empty venv does not install. It is listed and does not change the exit
-  status. Only a `ModuleNotFoundError` is listed here: any other error of such a module (say a
-  `TypeError` because PyPI's release of a dependency lacks a keyword) is a break once a project
-  is behind, printed with that project's name in parentheses and under "Release first".
+  status. Any other error of such a module (an `ImportError` it raises itself, say) is listed here too while every
+  published project is up to date; once a project is behind, it is a break instead — a `TypeError` because PyPI's
+  release of a dependency lacks a keyword, say — printed with that project's name in parentheses and under
+  "Release first". A `ModuleNotFoundError` of what no workspace project ships is listed here either way.
 - **`--no-check`**: both checks are skipped, and the report puts two lines in their place:
   ```text
   It takes 4 workspace projects from PyPI, not compared (--no-check): lib 0.4.1, tools 0.3.1, viewer 0.2.1, models 0.1.0a3
@@ -213,7 +214,7 @@ generic installer that reads it. `install:` is yours: set it to choose what inst
     install: true
 ```
 
-From the project's own folder (the folder's `README.md` says the same). With `--include-project`,
+Run it from the project's own folder (the `README.md` in `wheels/` says the same). With `--include-project`,
 `wheels.yaml` lists the project's own wheel last, `install: true`: the script installs it in place of
 `-e <project>`, and from any folder; set that `install:` to false to install the folder, editable,
 again. `--no-project` leaves out both.

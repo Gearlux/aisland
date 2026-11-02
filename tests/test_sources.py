@@ -174,7 +174,7 @@ class TestCommittedSources:
             '[project."loggair"]\nsource = "svn"\n\n[project."confluid"]\nsource = "local"\n'
         )
         assert set(s.read_committed_sources(tmp_path)) == {"confluid"}
-        assert f"{tmp_path / 'workspace.toml'}:1: project 'loggair' has source 'svn'" in capsys.readouterr().out
+        assert f"{tmp_path / 'workspace.toml'}:1: project 'loggair' has source 'svn'" in capsys.readouterr().err
 
 
 # --- layering -----------------------------------------------------------------------------
@@ -280,6 +280,11 @@ class _Recorder:
             raise subprocess.CalledProcessError(1, cmd)
         return 0
 
+    def fetch(self, repo: Path, *args: str) -> "subprocess.CompletedProcess[str]":
+        """Stands in for ``gitcmd.fetch``, the best-effort fetch before a switch: recorded, never failing."""
+        self.calls.append(["git", "fetch", *args])
+        return subprocess.CompletedProcess(["git", "fetch", *args], 0, "", "")
+
     def flat(self) -> List[str]:
         return [" ".join(c) for c in self.calls]
 
@@ -305,6 +310,7 @@ def _fake_capture(*, status: str, head: str, recorded: str) -> Callable[[List[st
 def recorder(monkeypatch: pytest.MonkeyPatch) -> _Recorder:
     rec = _Recorder()
     monkeypatch.setattr(s.subprocess, "check_call", rec.check_call)
+    monkeypatch.setattr(s.gitcmd, "fetch", rec.fetch)
     monkeypatch.setattr(s, "set_submodule_active", lambda *a, **k: None)
     monkeypatch.setattr(s, "submodule_active_map", lambda root: [("loggair", "loggair", True)])
     monkeypatch.setattr(s, "remote_url", lambda root, project: "https://github.com/Gearlux/loggair.git")

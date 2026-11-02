@@ -80,7 +80,8 @@ def recorded_init(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytes
         monkeypatch.setattr(jenkins_module, "time", _Clock(config, config_appears, calls))
         capsys.readouterr()
         svc.init_pipelines(local=local)
-        return calls, capsys.readouterr().out
+        captured = capsys.readouterr()
+        return calls, captured.out + captured.err  # a warning is on stderr
 
     return run
 

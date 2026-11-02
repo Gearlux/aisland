@@ -669,9 +669,8 @@ class JenkinsService(BaseService):
         config_file = self.service_data_dir / "credentials.xml"
         if not config_file.exists():
             if expected_id:
-                click.echo(
-                    f"  - Warning: credentials.xml missing. You MUST add your Git credential with ID '{expected_id}'.",
-                    err=True,
+                failures.warn(
+                    f"  - Warning: credentials.xml missing. You MUST add your Git credential with ID '{expected_id}'."
                 )
             return expected_id or ""
 
@@ -688,10 +687,9 @@ class JenkinsService(BaseService):
 
             if expected_id:
                 if expected_id not in cred_ids:
-                    click.echo(
+                    failures.warn(
                         f"  - Warning: Credential with ID '{expected_id}' not found in credentials.xml! "
-                        f"You MUST name your Jenkins credential exactly '{expected_id}'.",
-                        err=True,
+                        f"You MUST name your Jenkins credential exactly '{expected_id}'."
                     )
                 return expected_id
 
@@ -1449,7 +1447,7 @@ pipeline {{
                     click.echo(f"  - Seeded local job (embedded script): {project}")
                     continue
                 else:
-                    click.echo(f"  - Warning: {jenkinsfile_path} not found for {project}. Skipping.")
+                    failures.warn(f"  - Warning: {jenkinsfile_path} not found for {project}. Skipping.")
                     continue
 
             # Standard Multibranch Pipeline for remote jobs
@@ -1536,7 +1534,7 @@ pipeline {{
             while not config_file.exists() and time.time() < deadline:
                 time.sleep(1)
             if not config_file.exists():
-                click.echo("  - Warning: config.xml did not appear within 90s.")
+                failures.warn("  - Warning: config.xml did not appear within 90s.")
         self.stop()
 
         self.setup_dashboard_view()

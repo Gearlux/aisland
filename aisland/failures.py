@@ -5,7 +5,8 @@ line, exit 1. Some failures must not end the command: ``aisland setup`` installs
 ``aisland services start`` starts the others when one does not come up, a Jenkins step that fails leaves the next one
 to run. Such a failure is :func:`report`-ed: its line goes to stderr, the command carries on, and the CLI's group
 (``cli._WorkspaceGroup.invoke``) turns a run that reported any into exit 1 — so a script, CI or an MCP client sees
-the failure the user reads. Standard library and click only: everything else imports it.
+the failure the user reads. A :func:`warn`-ing goes to stderr too and fails nothing. Standard library and click
+only: everything else imports it.
 """
 
 from __future__ import annotations
@@ -20,6 +21,12 @@ def report(message: str) -> None:
     global _reported
     click.echo(message, err=True)
     _reported += 1
+
+
+def warn(message: str) -> None:
+    """Print ``message`` (a ``Warning:`` line) to stderr; the run is not failed. Never stdout: a command's output
+    is what a script reads (``--json``), and a warning in it would break the reading."""
+    click.echo(message, err=True)
 
 
 def reported() -> int:

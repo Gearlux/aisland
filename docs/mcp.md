@@ -47,7 +47,14 @@ pip install 'aisland[mcp]'
 When aisland is itself one of the workspace's projects (a checkout in the workspace folder),
 `aisland setup` (or `aisland mcp claude`) lists it as `aisland` in `.mcp.json`, like any other
 project's server. When aisland is installed from PyPI there is no project to discover: add the
-command `aisland-mcp` to your client's server list yourself.
+command `aisland-mcp` to your client's server list yourself. It works on the workspace the folder it starts in
+belongs to; a client that starts servers elsewhere (its own folder, your home folder) needs the workspace named in
+the entry's environment:
+
+```json
+{"mcpServers": {"aisland": {"command": "/Users/you/work/acme/.venv/bin/aisland-mcp",
+                            "env": {"AISLAND_WORKSPACE": "/Users/you/work/acme"}}}}
+```
 
 | tool | what it does |
 | --- | --- |

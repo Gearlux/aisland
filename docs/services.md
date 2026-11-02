@@ -84,8 +84,7 @@ single-binary, native-process orchestrator with docker-compose semantics. The
   gitignored; `aisland/data/` when aisland runs from a checkout, as in every path below)
   records which services should run. `start` enables a service's
   entry and applies the document; `stop` disables it. The supervisor server
-  runs detached on a unix socket in `.aisland/data/` (TCP on Windows — port
-  configurable via `AISLAND_SUPERVISOR_PORT`, default 9089), so multiple
+  runs detached on a unix socket in `.aisland/data/`, so multiple
   workspace checkouts never collide.
 - **Readiness, not just liveness**: every service carries an HTTP readiness
   probe (Jenkins `/login`, a project's service the path it declares).
@@ -258,6 +257,7 @@ none. Waiting for an executor is not counted: the node is held before the first 
 | Slow Tests | 60 min |
 | Verify Examples | 15 min |
 | Verify Notebooks | 15 min |
+| Node Tests | 10 min |
 
 A timed-out stage ends the build's console with the line the morning report quotes:
 
@@ -266,7 +266,7 @@ Cancelling nested steps due to timeout
 Sending interrupt signal to process
 After 20s process did not stop
 ...
-ERROR: Slow Tests timed out after 60 min - its limit in Jenkinsfile.local
+ERROR: Slow Tests timed out after 60 min - its limit in Jenkinsfile.local (STAGE_LIMITS in aisland/services/jenkins.py)
 Finished: FAILURE
 ```
 
@@ -275,7 +275,7 @@ limit stays an abort. The process the stage was waiting on may outlive it: Jenki
 and goes on without it. A pytest killed this way writes no report, and each pytest step removes
 the previous build's report and coverage files before it runs, so Jenkins never records
 yesterday's tests for a build that ran out of time. The GitHub workflow `ci.yml` gives each of those jobs three
-times its stage's limit (unit tests 45, slow tests 180, examples and notebooks 45 minutes), since a GitHub runner is
+times its stage's limit (unit tests 45, slow tests 180, examples and notebooks 45, Node tests 30 minutes), since a GitHub runner is
 slower than a local machine; past it GitHub fails the job. The push `Jenkinsfile` carries no
 limit.
 

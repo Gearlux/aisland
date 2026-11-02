@@ -1,7 +1,9 @@
 # The environment doctor
 
 `aisland doctor` checks the shared virtual environment, Docker, Java and other tools for known, recurring
-skews and prints the command that fixes each.
+skews — two parts of the environment out of step, such as two packages installed at versions that do not work
+together, or a setting left behind by a tool since removed — and prints the command that fixes each. It checks the machine and the Python it runs on, so it runs anywhere,
+in a workspace or not. A probe that does not finish within two minutes is named, never waited on.
 
 [`examples/03_doctor.py`](../examples/03_doctor.py) runs the doctor and checks its report: one line per check and an
 exit status of 0 exactly when every check passed.

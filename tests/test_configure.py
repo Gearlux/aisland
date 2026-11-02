@@ -15,7 +15,7 @@ from typing import Any, Dict, List, Optional
 import pytest
 from click.testing import CliRunner, Result
 
-from aisland import cli, configure
+from aisland import cli, configure, locations
 from aisland import sources as s
 
 
@@ -192,3 +192,16 @@ def test_the_source_group_is_gone(command: List[str]) -> None:
     result = CliRunner().invoke(cli.main, command)
     assert result.exit_code == 2
     assert "No such command 'source'" in result.output
+
+
+def test_a_warning_goes_to_stderr_and_leaves_the_json_whole(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """A script reads `--json` from stdout: a warning about a setting it cannot use goes to stderr."""
+    (tmp_path / "workspace.toml").write_text('[workspace]\nformat = 1\n\n[project."lib"]\nsource = "pypy"\n')
+    (tmp_path / "lib").mkdir()
+    (tmp_path / "lib" / "pyproject.toml").write_text('[project]\nname = "lib"\nversion = "0.1.0"\n')
+    monkeypatch.setattr(cli, "get_workspace_root", lambda: tmp_path)
+    monkeypatch.setattr(locations, "workspace_root", lambda: tmp_path)
+    result = _run("source", "--json")
+    assert result.exit_code == 0, result.output
+    json.loads(result.stdout)
+    assert "has source 'pypy'; expected one of local, github, pypi" in result.stderr

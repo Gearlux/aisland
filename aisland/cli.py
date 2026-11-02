@@ -43,9 +43,10 @@ from aisland.services.docker import docker_service
 from aisland.services.jenkins import JenkinsService
 from aisland.services.swiftbar import SwiftBarService
 
-#: The commands that run outside a workspace: creating one, installing a project's wheels elsewhere, and the
-#: tunnel — which exists to be run on a remote box that has no workspace at all.
-_WORKSPACE_FREE = {"workspace", "wheels", "tunnel"}
+#: The commands that run outside a workspace: creating one, installing a project's wheels elsewhere, the tunnel —
+#: which exists to be run on a remote box that has no workspace at all —, the doctor, which checks the machine and
+#: the Python it runs on, and the notebook cleaner, a git filter reading standard input in any repository.
+_WORKSPACE_FREE = {"workspace", "wheels", "tunnel", "doctor", "notebooks"}
 
 
 class _Command(click.Command):
@@ -997,7 +998,7 @@ def doctor() -> None:
 @click.option("--dry-run", is_flag=True, help="Show what would be moved and swept; change nothing.")
 @click.option("-y", "--yes", is_flag=True, help="Skip the confirmation prompt.")
 def clean(project: str, keep_days: int, dry_run: bool, yes: bool) -> None:
-    """Move PROJECT's git-ignored content into a dated backup under aisland/data/backups.
+    """Move PROJECT's git-ignored content into a dated backup under .aisland/data/backups.
 
     Reclaims the disk a checkout accumulates (`.venv/`, `build/`, caches, run dirs) without
     the irreversibility of `git clean -Xdf`: everything is renamed into the backup store and
@@ -1019,7 +1020,8 @@ def backups() -> None:
     """Inspect and restore the backups `aisland clean` takes.
 
     A separate group from `clean` on purpose: `aisland clean <project>` acts on a project's
-    working tree, while these act on the STORE under `aisland/data/backups`. Keeping the
+    working tree, while these act on the STORE under `.aisland/data/backups` (`aisland/data/backups` from a
+    checkout). Keeping the
     destructive verb one word long also keeps it from ever being typed by accident.
     """
     pass
@@ -1125,7 +1127,7 @@ def tests() -> None:
 def tests_report(project: str, days: int, as_json: bool) -> None:
     """PROJECT's fast run against its 5-minute budget, its slowest tests, the tests that failed, and what to move.
 
-    Reads the local runs (`aisland/data/test-stats/PROJECT/`) and the local Jenkins builds'
+    Reads the local runs (`.aisland/data/test-stats/PROJECT/`, `aisland/data/…` from a checkout) and the local Jenkins builds'
     JUnit results. A fast run over budget lists the never-failed tests to mark `slow`; a slow
     test that failed is listed for the fast run.
 
@@ -1803,7 +1805,7 @@ def completion_install(target_rc: Optional[Path], shell: Optional[str], no_prune
     """Install completion for every workspace CLI — liquifai apps, click apps, argparse apps.
 
     Idempotent: every block is marker-delimited and rewritten in place, so re-run this after
-    installing a new project rather than re-running the whole of setup.sh.
+    installing a new project rather than re-running the whole of `aisland setup`.
     """
     from aisland.completion import install_completions, is_sourced_by, shell_snippet, verify_click_completion
 

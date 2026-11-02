@@ -198,7 +198,7 @@ def install_userspace_tool(name: str) -> None:
             return
         logger.debug("verified %s (sha256 OK)", tarball.name)
     else:
-        click.echo(
+        failures.warn(
             f"  - Warning: no pinned sha256 for {name}/{arch}; installing UNVERIFIED. "
             f"Add a digest to USERSPACE_TOOLS['{name}']['sha256']['{arch}']."
         )
@@ -235,7 +235,7 @@ def install_userspace_tool(name: str) -> None:
         src = tool_bin_dir / binary
         dst = BIN_DIR / binary
         if not src.exists():
-            click.echo(f"  - Warning: {src} missing in extracted tarball; skipping.")
+            failures.warn(f"  - Warning: {src} missing in extracted tarball; skipping.")
             continue
         if dst.is_symlink() or dst.exists():
             # Replace stale symlinks; refuse to clobber real files.
@@ -269,7 +269,7 @@ def offer_shell_switch(required_pkgs: set) -> None:
     candidates = [Path("/opt/homebrew/bin/bash"), Path("/usr/local/bin/bash")]
     new_bash = next((str(p) for p in candidates if p.exists()), None)
     if not new_bash:
-        click.echo("  - Warning: Homebrew bash not found on disk; skipping shell-switch offer.")
+        failures.warn("  - Warning: Homebrew bash not found on disk; skipping shell-switch offer.")
         return
 
     current_shell = os.environ.get("SHELL", "")
@@ -332,8 +332,7 @@ def ensure_uv_in_venv(venv_bin: Path) -> str:
     if not pip_path.exists():
         # A venv made by `uv venv` without `--seed` has no pip (setup.sh seeds one with ensurepip).
         remedy = "Re-run aisland/setup.sh." if locations.FROM_CHECKOUT else "Recreate it with `uv venv --seed .venv`."
-        click.echo(f"  - Error: {pip_path} not found. Cannot bootstrap uv; the venv is broken. {remedy}")
-        raise AislandError("Workspace venv missing pip")
+        raise AislandError(f"{pip_path} not found. Cannot bootstrap uv; the venv is broken. {remedy}")
 
     click.echo(f"==> Bootstrapping uv into {venv_bin}...")
     logger.debug("running %s install --quiet --upgrade uv", pip_path)

@@ -21,8 +21,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Dict, List, Literal, Optional, Sequence, Tuple, get_args
 
-import click
-
+from aisland import failures
 from aisland.css_colors import NAMED_COLORS
 from aisland.errors import AislandError
 
@@ -301,7 +300,7 @@ def read_choice(workspace_root: Path) -> EditorChoice:
             elif field == "theme" and value:
                 values[field] = value
         except EditorChoiceError as error:
-            click.echo(f"  - Warning: ignoring {key}: {error.message}")
+            failures.warn(f"  - Warning: ignoring {key}: {error.message}")
     return EditorChoice(**values)
 
 

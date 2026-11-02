@@ -1,6 +1,8 @@
 # Jenkins Setup Workflow
 
 This document describes the end-to-end workflow for setting up and managing a local Jenkins CI/CD environment using the `aisland` tool.
+The Java Jenkins runs on, the nightly run and each stage's time limit are on [services](services.md#manage-jenkins);
+the files the jobs run, on [ci](ci.md).
 
 ## Starting Jenkins
 
@@ -42,11 +44,29 @@ Once credentials are in place, use the `init` command. This single command handl
 ```bash
 aisland jenkins init
 ```
-This command performs the following automated workflow:
-1. **Plugin Audit:** Checks if all required plugins are installed.
-2. **Plugin Setup:** If missing, it downloads them using the Jenkins Plugin Manager.
-3. **Safe Restart:** If Jenkins is already running and plugins/jobs were added, it issues a Safe Restart directly to the Jenkins API so your jobs load gracefully. If Jenkins is not running, it starts it.
-4. **Pipeline Seeding:** Discovers all projects in the workspace containing a `Jenkinsfile`, determines their Git remote, and automatically links any GitHub repository to the `aisland-github` credential. It creates a **Multibranch Pipeline** job for each project.
+This command performs the following steps:
+1. **Plugins:** checks that every required plugin is installed and downloads the missing ones with the Jenkins
+   Plugin Manager.
+2. **Pipelines:** finds every project of the workspace with a `Jenkinsfile`, determines its Git remote, links a
+   GitHub repository to the `aisland-github` credential and writes a **Multibranch Pipeline** job for it, then the
+   orchestrator job that builds them all.
+3. **Restart:** Jenkins must be stopped while its `config.xml` is edited — a running Jenkins writes its own copy over
+   the changes. A stopped Jenkins is first started once, so that it writes `config.xml`; then Jenkins is **stopped**,
+   the dashboard view and the workspace's global properties are written, and Jenkins is started again in the
+   background. A Jenkins that was running is restarted the same way: builds running at that moment stop.
+
+`aisland jenkins init --local` seeds `<project>.local` jobs instead, each with its `Jenkinsfile.local` embedded: the
+pipeline runs on this machine's checkout and workspace `.venv`, with nothing fetched from Git. It also seeds the
+nightly orchestrator and the job that reports its nightly runs (`aisland tests nightly`). Before the restart it asks
+two questions, for a Jenkins only you reach:
+
+```text
+Reduce Jenkins security for faster local access? (Disables CSRF, allows anonymous read) [y/N]:
+Disable Jenkins security entirely? (No login required, most fast/unsecure) [y/N]:
+```
+
+The second is asked only after a yes to the first; a no to it keeps the login, allowing anonymous read and turning
+CSRF protection off.
 
 #### Initialize a Single Project:
 ```bash
@@ -62,7 +82,12 @@ aisland jenkins init models
 | `aisland jenkins start` | Starts the Jenkins server (use `--background` or `-b` for detached mode). |
 | `aisland jenkins stop` | Stops the running Jenkins server. |
 | `aisland jenkins status` | Shows if Jenkins is running, its PID, and the Initial Admin Password. |
-| `aisland jenkins init [PROJECT]` | Creates Multibranch Pipeline jobs for projects in the workspace. |
+| `aisland jenkins restart` | Stops and starts Jenkins (`--port`, `--background`). |
+| `aisland jenkins info` | Shows its URL, `JENKINS_HOME` and the initial admin password. |
+| `aisland jenkins init [PROJECT]` | Creates Multibranch Pipeline jobs for projects in the workspace, then restarts Jenkins. |
+| `aisland jenkins init --local [PROJECT]` | Creates `<project>.local` jobs that run `Jenkinsfile.local` on this machine's checkout. |
+| `aisland jenkins scaffold [PROJECT]` | Writes a project's `Jenkinsfile`, `Jenkinsfile.local` and GitHub Actions `ci.yml` ([ci](ci.md)). |
+| `aisland jenkins templates` | Shows the template set `scaffold` writes from, and copies aisland's to start your own ([ci](ci.md)). |
 | `aisland jenkins remove [PROJECT]` | Removes a specific project pipeline or all pipelines from Jenkins. |
 | `aisland jenkins reset` | Stops Jenkins and wipes ALL data, including jobs, logs, and configurations. |
 | `aisland jenkins reset --project PROJECT` | Removes the pipeline and build data for a specific project. |

@@ -267,6 +267,37 @@ def test_a_stats_folder_that_cannot_be_written_costs_one_line_never_the_runs_res
     result.stdout.fnmatch_lines(["aisland test stats: this run was not recorded (*"])
 
 
+def test_a_plugin_that_breaks_while_starting_costs_one_line_never_the_runs_result(
+    pytester: pytest.Pytester, project: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """The plugin loads in every pytest run of the environment: an error of its own, whatever it is, is no error of
+    the project's tests."""
+
+    def broken(root: Path, folder: str) -> bool:
+        raise RuntimeError("the switch could not be read")
+
+    monkeypatch.setattr(pytest_stats, "records", broken)
+    result = _run(pytester)
+    assert result.ret == pytest.ExitCode.TESTS_FAILED
+    result.assert_outcomes(passed=3, failed=1, errors=1, skipped=1, deselected=1)
+    said = result.stderr.str() + capsys.readouterr().err
+    assert "aisland test stats: this run was not recorded (RuntimeError: the switch could not be read)" in said
+    assert not (pytester.path / "stats").exists()
+
+
+def test_a_plugin_that_breaks_while_recording_costs_one_line_never_the_runs_result(
+    pytester: pytest.Pytester, project: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    def broken(folder: Path) -> str:
+        raise RuntimeError("no commit")
+
+    monkeypatch.setattr(pytest_stats, "_commit", broken)
+    result = _run(pytester)
+    assert result.ret == pytest.ExitCode.TESTS_FAILED
+    result.assert_outcomes(passed=3, failed=1, errors=1, skipped=1, deselected=1)
+    result.stdout.fnmatch_lines(["aisland test stats: this run was not recorded (RuntimeError: no commit)"])
+
+
 def test_the_junit_address_is_the_one_pytests_own_junit_report_writes(pytester: pytest.Pytester, project: Path) -> None:
     """CI's records are JUnit files; a local nodeid must land on the same test as CI's classname and name."""
     _run(pytester, "-m", "", "--junitxml=report.xml")

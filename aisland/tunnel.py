@@ -99,6 +99,8 @@ _SIGNIN_CODE = re.compile(r"\b([A-Z0-9]{4,5}-[A-Z0-9]{4,5})\b")
 #: How long :func:`start` waits for the log to say which of the two happened.
 START_TIMEOUT_S = 45.0
 _POLL_INTERVAL_S = 0.2
+#: Seconds the VS Code CLI may take to say which account it holds.
+ANSWER_SECONDS = 30
 
 
 # --------------------------------------------------------------------------------------------------
@@ -315,12 +317,21 @@ def signed_in() -> Optional[str]:
     """The account the CLI holds, or None when it holds none.
 
     ``code tunnel user show`` prints ``not logged in`` and exits **0** either way, so the answer is
-    in its output, not its status — reading the status alone reports every machine as signed in.
+    in its output, not its status — reading the status alone reports every machine as signed in. A CLI
+    that has not answered after :data:`ANSWER_SECONDS` is refused naming the command: `status`, `start`
+    and their MCP tools wait on this question.
     """
     binary = cli_path()
     if not binary.exists():
         return None
-    completed = subprocess.run([str(binary), "tunnel", "user", "show"], capture_output=True, text=True)
+    try:
+        completed = subprocess.run(
+            [str(binary), "tunnel", "user", "show"], capture_output=True, text=True, timeout=ANSWER_SECONDS
+        )
+    except subprocess.TimeoutExpired as late:
+        raise AislandError(
+            f"`code tunnel user show` did not answer within {ANSWER_SECONDS} s ({binary}); run it yourself to see why"
+        ) from late
     text = (completed.stdout or "").strip()
     if completed.returncode != 0 or not text or "not logged in" in text.lower():
         return None

@@ -2,8 +2,9 @@
 
 How a workspace shell gets tab-completion for `aisland` and the other command-line tools of the workspace, and how `aisland completion install` keeps it current. `viewer`, `lib` and `viewer-export` below stand for command-line tools of your own projects.
 
-[`examples/04_completion.py`](../examples/04_completion.py) writes the completion file into a temporary file and checks
-that a non-interactive shell sourcing it runs no program.
+[`examples/04_completion.py`](../examples/04_completion.py) makes a throwaway workspace, writes its completion file
+into a temporary file and checks that a non-interactive shell sourcing it runs no program. The command works on a
+workspace: it writes completion for the tools of the workspace's virtual environment.
 
 ## Shell completion
 
@@ -52,7 +53,9 @@ it again whenever you add a project or a command-line tool.
 ```
 
 **Three families, because the workspace has three kinds of CLI**, and a CLI that is none of
-them silently gets no completion at all:
+them silently gets no completion at all. A *liquifai app* is a command-line tool built with
+[liquifai](https://pypi.org/project/liquifai/), a framework that makes a CLI and its completion from one definition;
+an app registers itself in the `liquifai.apps` entry-point group.
 
 | Family | Who | Mechanism |
 |---|---|---|

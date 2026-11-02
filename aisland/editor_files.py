@@ -11,7 +11,7 @@ from typing import Any, Dict, List, Optional
 
 import click
 
-from aisland import editor, git_exclude, locations, supervisor
+from aisland import editor, failures, git_exclude, locations, supervisor
 from aisland.paths import SERVICES_DIR
 from aisland.projects import dependency_order, discover_projects, get_project_metadata, get_workspace_name
 
@@ -111,7 +111,7 @@ def sync_mypy_path(workspace_root: Path, projects: List[dict]) -> None:
     """
     ini = workspace_root / "mypy.ini"
     if not ini.exists():
-        click.echo("  - Warning: no mypy.ini at the workspace root; skipping mypy_path sync.")
+        failures.warn("  - Warning: no mypy.ini at the workspace root; skipping mypy_path sync.")
         return
 
     lines = ini.read_text().splitlines()
@@ -120,7 +120,7 @@ def sync_mypy_path(workspace_root: Path, projects: List[dict]) -> None:
         None,
     )
     if line_no is None:
-        click.echo("  - Warning: mypy.ini has no 'mypy_path =' line; skipping mypy_path sync.")
+        failures.warn("  - Warning: mypy.ini has no 'mypy_path =' line; skipping mypy_path sync.")
         return
 
     key, _, value = lines[line_no].partition("=")

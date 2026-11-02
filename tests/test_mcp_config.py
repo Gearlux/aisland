@@ -91,7 +91,7 @@ class TestTheTwoClientFiles:
         venv_bin.mkdir(parents=True)
         (venv_bin / "modern-mcp").write_text("#!/bin/sh\n")
         write_mcp_json(fake_workspace, venv_bin)
-        out = capsys.readouterr().out
+        out = capsys.readouterr().err
         assert "legacy's MCP command" in out and "uv pip install -e ./legacy" in out
         assert "modern's MCP command" not in out
         assert set(json.loads((fake_workspace / ".mcp.json").read_text())["mcpServers"]) == {"modern", "legacy"}
@@ -164,7 +164,7 @@ class TestTheServersGetTheWorkspaceEnvironment:
         self, with_bashrc: Path, capsys: pytest.CaptureFixture[str]
     ) -> None:
         write_mcp_json(with_bashrc, with_bashrc / ".venv" / "bin")
-        assert "modern's MCP command" in capsys.readouterr().out
+        assert "modern's MCP command" in capsys.readouterr().err
 
     @needs_workspace
     def test_the_real_shell_init_prints_nothing_and_gives_the_server_the_workspace_root(self, tmp_path: Path) -> None:

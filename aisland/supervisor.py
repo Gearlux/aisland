@@ -40,7 +40,7 @@ from typing import Any, Dict, Iterator, List, NotRequired, Optional, Tuple, Type
 import click
 import yaml
 
-from aisland import locations
+from aisland import failures, locations
 from aisland.errors import AislandError
 
 # Mirrors manager.py's path constants. Kept local (not imported) because
@@ -301,7 +301,7 @@ def load_config() -> Dict[str, Any]:  # Any: the YAML document process-compose r
             if isinstance(data, dict) and isinstance(data.get("processes"), dict):
                 return data
         except yaml.YAMLError as e:
-            click.echo(f"  - Warning: {CONFIG_FILE} is unreadable ({e}); regenerating.")
+            failures.warn(f"  - Warning: {CONFIG_FILE} is unreadable ({e}); regenerating.")
     return {"version": "0.5", "processes": {}}
 
 

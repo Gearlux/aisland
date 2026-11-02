@@ -26,6 +26,7 @@ import json
 import os
 import statistics
 import subprocess
+import sys
 import time
 import tomllib
 import xml.etree.ElementTree as ET
@@ -87,10 +88,25 @@ _COMPLETE_EXITS = (0, 1)
 # --------------------------------------------------------------------------
 
 
+#: The one line a run gets when the plugin could not record it.
+_NOT_RECORDED = "aisland test stats: this run was not recorded ({})"
+
+
 def pytest_configure(config: "pytest.Config") -> None:
     """Start recording when this run is a workspace project's own: pytest's rootdir is `<workspace>/<project>` and
     the workspace is an aisland one (`locations.is_workspace`) — a repository of its own gets nothing written beside
-    it."""
+    it.
+
+    Any error of the plugin's own is one line on stderr, never the run's: the plugin loads in every pytest run of
+    the environment, whatever the project (the reason for the broad ``except``).
+    """
+    try:
+        _start_recording(config)
+    except Exception as error:  # any: never the run's error (see the docstring)
+        sys.stderr.write(_NOT_RECORDED.format(f"{type(error).__name__}: {error}") + "\n")
+
+
+def _start_recording(config: "pytest.Config") -> None:
     if hasattr(config, "workerinput"):  # an xdist worker: its controller records the run
         return
     # A Jenkins build: the local Jenkins builds IN the project folder (`customWorkspace`) with the workspace `.venv`,
@@ -237,8 +253,16 @@ class _Recorder:
         self._started = time.monotonic()
         self._at = datetime.now().astimezone()
         self._tests: Dict[str, _Result] = {}
+        #: Why this run is not recorded, once something of the plugin's own failed; the run itself goes on.
+        self._failed: Optional[str] = None
 
     def pytest_runtest_logreport(self, report: "pytest.TestReport") -> None:
+        try:
+            self._note(report)
+        except Exception as error:  # any: never the run's error (pytest_configure)
+            self._failed = self._failed or f"{type(error).__name__}: {error}"
+
+    def _note(self, report: "pytest.TestReport") -> None:
         result = self._tests.setdefault(report.nodeid, _Result(slow="slow" in report.keywords))
         result.seconds += report.duration
         outcome = _phase_outcome(report)
@@ -246,6 +270,20 @@ class _Recorder:
             result.outcome = outcome
 
     def pytest_sessionfinish(self, session: "pytest.Session", exitstatus: int) -> None:
+        try:
+            if self._failed is None:
+                self._write(exitstatus)
+        except Exception as error:  # any: never the run's error (pytest_configure)
+            self._failed = f"{type(error).__name__}: {error}"
+        if self._failed is not None:
+            self._say(self._failed)
+
+    def _say(self, why: str) -> None:
+        reporter = self._config.pluginmanager.get_plugin("terminalreporter")
+        if reporter is not None:
+            reporter.write_line(_NOT_RECORDED.format(why))
+
+    def _write(self, exitstatus: int) -> None:
         if not self._tests:  # `--collect-only`, or nothing selected: no run to record
             return
         run_id = f"{self._at:%Y%m%dT%H%M%S}-{os.getpid()}"
@@ -276,9 +314,7 @@ class _Recorder:
         try:
             _append(self._folder, self._at.date(), lines)
         except OSError as error:
-            reporter = self._config.pluginmanager.get_plugin("terminalreporter")
-            if reporter is not None:
-                reporter.write_line(f"aisland test stats: this run was not recorded ({error})")
+            self._failed = str(error)
 
 
 def _commit(folder: Path) -> str:

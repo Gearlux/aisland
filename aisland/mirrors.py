@@ -48,7 +48,6 @@ Only submodules are mirrored (user choice 2026-10-16); the root repository is no
 
 from __future__ import annotations
 
-import os
 import re
 import subprocess
 from dataclasses import dataclass, field
@@ -58,7 +57,7 @@ from urllib.parse import urlparse
 
 import click
 
-from aisland import workspace_file
+from aisland import failures, gitcmd, workspace_file
 from aisland.projects import get_workspace_root, submodule_active_map
 
 #: The project's setting this module owns in its ``[project."<name>"]`` table of ``workspace.toml``, and the last part
@@ -124,7 +123,7 @@ def read_committed_mirrors(workspace_root: Path) -> Dict[str, str]:
         if url is None:
             continue
         if not isinstance(url, str) or not url.strip():
-            click.echo(f"  - Warning: {project.where}: project {name!r} has a mirror that is no address; ignored")
+            failures.warn(f"  - Warning: {project.where}: project {name!r} has a mirror that is no address; ignored")
             continue
         result[name] = url.strip()
     return result
@@ -184,9 +183,12 @@ def mirrored_projects(workspace_root: Path) -> List[str]:
 
 
 def _git(repo: Path, *args: str, network: bool = False) -> "subprocess.CompletedProcess[str]":
-    """Run git in ``repo``. A network call never prompts: missing credentials fail at once."""
-    env = {**os.environ, "GIT_TERMINAL_PROMPT": "0"} if network else None
-    return subprocess.run(["git", *args], cwd=str(repo), text=True, capture_output=True, env=env)
+    """Run git in ``repo``. A network call never prompts (missing credentials fail at once) and gives up on a remote
+    that stops sending — but has no overall limit, unlike ``gitcmd.git``: a first push to a mirror may be large."""
+    if not network:
+        return subprocess.run(["git", *args], cwd=str(repo), text=True, capture_output=True)
+    command = ["git", *gitcmd.network_options(), *args]
+    return subprocess.run(command, cwd=str(repo), text=True, capture_output=True, env=gitcmd.network_env())
 
 
 def _git_out(repo: Path, *args: str) -> str:
@@ -287,7 +289,7 @@ def apply_mirror(workspace_root: Path, project: str, committed: Optional[Dict[st
         return
     foreign = _foreign_remote(path, url)
     if foreign:
-        click.echo(f"  - Warning: {project} already has a remote named `{MIRROR_REMOTE}` ({foreign}); left as it is")
+        failures.warn(f"  - Warning: {project} already has a remote named `{MIRROR_REMOTE}` ({foreign}); left as it is")
         return
     _ensure_remote(path, url)
 

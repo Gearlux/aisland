@@ -93,23 +93,23 @@ recorded:
   local runs.
 
 ```bash
-aisland tests report aisland                  # the last 30 days
+aisland tests report models                   # the last 30 days
 aisland tests report models --days 90
-aisland tests report tools --json            # the same report as data
+aisland tests report models --json            # the same report as data
 pytest -p no:aisland_test_stats               # one run left out of the record
 ```
 
 ```text
-aisland - the last 30 days: 2 local runs, 3 Jenkins builds
-Fast run: 1m 00s (median of 1 whole run; last 1m 00s) - budget 5m 00s, within
+models - the last 30 days: 4 local runs, 0 Jenkins builds
+Fast run: 1m 00s (median of 4 whole runs; last 1m 00s) - budget 5m 00s, within
 
 Slowest fast-run tests:
-       1.8 s  0 of 4 failed  tests/test_doctor.py::TestReporting::test_every_registered_check_returns_a_result
-       1.7 s  0 of 4 failed  tests/test_setup_git_aliases.py::test_rerun_is_idempotent
-       ...
+       1.8 s  0 of 4 failed  tests/test_train.py::test_a_checkpoint_resumes_where_it_stopped
+       1.7 s  0 of 4 failed  tests/test_export.py::test_the_exported_model_predicts_as_the_trained_one
+       0.4 s  2 of 4 failed  tests/test_data.py::test_a_corrupt_record_is_skipped_and_named
 
 Tests that failed:
-    2 of 4    last 2026-09-12  fast  tests/test_workspace_dependency_specs.py::test_the_real_workspace_has_no_unsatisfiable_internal_specs
+    2 of 4    last 2026-10-29  fast  tests/test_data.py::test_a_corrupt_record_is_skipped_and_named
 ```
 
 A fast run over 5 minutes adds a list headed `Move to the slow run (never failed, slowest

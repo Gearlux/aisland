@@ -1,12 +1,15 @@
 """``gitcmd.git``: output captured as text, ``network`` and ``check`` behave as documented."""
 
+import socket
 import subprocess
+import threading
+import time
 from pathlib import Path
-from typing import Any, Dict
+from typing import Any, Callable, Dict, Iterator, List
 
 import pytest
 
-from aisland import gitcmd
+from aisland import gitcmd, mirrors, wheels_prune
 from aisland.errors import AislandError
 
 
@@ -37,3 +40,74 @@ def test_network_never_prompts_and_has_a_default_time_limit(tmp_path: Path, monk
     assert seen["timeout"] == 5
     gitcmd.git(tmp_path, "status")
     assert (seen["env"], seen["timeout"]) == (None, None)
+
+
+# --- a remote that stops answering ------------------------------------------------------------------------------
+
+
+@pytest.fixture
+def silent_remote() -> Iterator[str]:
+    """An HTTP remote that accepts every connection and never sends a byte: without a guard, git waits forever."""
+    server = socket.socket()
+    server.bind(("127.0.0.1", 0))
+    server.listen(8)
+    held: List[socket.socket] = []
+
+    def accept() -> None:
+        while True:
+            try:
+                connection, _ = server.accept()
+            except OSError:  # the fixture closed the socket
+                return
+            held.append(connection)
+
+    threading.Thread(target=accept, daemon=True).start()
+    yield f"http://127.0.0.1:{server.getsockname()[1]}/repo.git"
+    server.close()
+    for connection in held:
+        connection.close()
+
+
+def _gitcmd_git(repo: Path, url: str) -> "subprocess.CompletedProcess[str]":
+    return gitcmd.git(repo, "ls-remote", url, network=True)
+
+
+def _gitcmd_fetch(repo: Path, url: str) -> "subprocess.CompletedProcess[str]":
+    return gitcmd.fetch(repo, "--quiet", url)
+
+
+def _mirrors_git(repo: Path, url: str) -> "subprocess.CompletedProcess[str]":
+    return mirrors._git(repo, "ls-remote", url, network=True)
+
+
+def _wheels_prune_run(repo: Path, url: str) -> "subprocess.CompletedProcess[str]":
+    return wheels_prune._run(repo, "ls-remote", url, network=True)
+
+
+@pytest.mark.parametrize("call", [_gitcmd_git, _gitcmd_fetch, _mirrors_git, _wheels_prune_run])
+def test_every_network_call_gives_up_on_a_remote_that_stops_sending(
+    tmp_path: Path, silent_remote: str, monkeypatch: pytest.MonkeyPatch, call: Callable[[Path, str], Any]
+) -> None:
+    """A transfer may take long (no overall limit on a push or a fetch); a remote that sends nothing for
+    `STALL_SECONDS` is given up."""
+    subprocess.run(["git", "init", "-q", str(tmp_path)], check=True)
+    monkeypatch.setattr(gitcmd, "STALL_SECONDS", 2)
+    started = time.monotonic()
+    done = call(tmp_path, silent_remote)
+    assert time.monotonic() - started < 30
+    assert done.returncode != 0
+    assert "too slow" in done.stderr
+
+
+def test_a_fetch_never_prompts_and_has_no_overall_limit(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    seen: Dict[str, Any] = {}
+
+    def fake_run(cmd: Any, **kwargs: Any) -> "subprocess.CompletedProcess[str]":
+        seen.update(kwargs, cmd=cmd)
+        return subprocess.CompletedProcess(cmd, 0, "", "")
+
+    monkeypatch.setattr(gitcmd.subprocess, "run", fake_run)
+    gitcmd.fetch(tmp_path, "-q", "origin")
+    assert seen["env"]["GIT_TERMINAL_PROMPT"] == "0"
+    assert seen.get("timeout") is None
+    assert seen["cmd"][-3:] == ["fetch", "-q", "origin"]

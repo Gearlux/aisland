@@ -11,6 +11,7 @@ writes.
 
 from __future__ import annotations
 
+import dataclasses
 import re
 from pathlib import Path
 from typing import Dict, Iterator, List, Set, Tuple
@@ -18,7 +19,7 @@ from typing import Dict, Iterator, List, Set, Tuple
 import click
 import pytest
 
-from aisland import wheels_unzip
+from aisland import ci_templates, wheels_unzip
 from aisland.cli import main
 from aisland.services import registry
 
@@ -193,6 +194,31 @@ def test_a_commands_help_names_no_project_of_the_workspace(
     text = command.get_help(click.Context(command, info_name=words))
     hits = [line.strip() for line in text.splitlines() if _WORKSPACE_NAME.search(line)]
     assert hits == []
+
+
+@pytest.mark.parametrize(
+    "words, command", list(_commands(main)), ids=lambda value: value if isinstance(value, str) else ""
+)
+@pytest.mark.usefixtures("empty_workspace")
+def test_a_commands_help_names_only_what_a_wheel_install_has(
+    words: str, command: click.Command, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A pip user has no `setup.sh`, and aisland's state is in the workspace's `.aisland/`: a help that names a
+    folder of aisland's names the wheel's one too."""
+    monkeypatch.setattr(registry, "declared", lambda root, reserved=(): [])
+    text = " ".join(command.get_help(click.Context(command, info_name=words)).split())
+    assert "setup.sh" not in text
+    checkout_only = [hit for hit in re.findall(r"\S*aisland/data/\S*", text) if not hit.lstrip("`(").startswith(".")]
+    assert not checkout_only or ".aisland/data/" in text, checkout_only
+
+
+@pytest.mark.parametrize("page", ["ci.md", "stability.md"])
+def test_every_fact_a_ci_template_reads_is_on_the_pages(page: str) -> None:
+    """A template set's author reads the facts on `ci.md` and their promise on `stability.md`: a fact added to
+    `ci_templates.Facts` is on both."""
+    text = (DOCS / page).read_text(encoding="utf-8")
+    missing = [fact.name for fact in dataclasses.fields(ci_templates.Facts) if f"`{fact.name}`" not in text]
+    assert missing == []
 
 
 def test_the_wheel_zips_usage_names_no_project_of_the_workspace() -> None:

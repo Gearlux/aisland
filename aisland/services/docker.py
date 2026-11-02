@@ -262,7 +262,7 @@ class DockerService(BaseService):
             colima_socket = Path.home() / ".colima" / "docker.sock"
 
         if not colima_socket.exists():
-            click.echo(f"  - Warning: Colima socket not found at {colima_socket}")
+            failures.warn(f"  - Warning: Colima socket not found at {colima_socket}")
             return
 
         click.echo("Configuring Docker socket symlink...")

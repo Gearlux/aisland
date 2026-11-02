@@ -490,7 +490,7 @@ def test_a_hand_edited_value_that_cannot_be_read_is_ignored_with_a_warning(
     """`aisland setup` must still write the file: the value is skipped, never the run."""
     subprocess.run(["git", "config", "--local", f"aisland.editor.{key}", value], cwd=repo, check=True)
     editor_files.write_code_workspace(repo)
-    assert warning in capsys.readouterr().out
+    assert warning in capsys.readouterr().err
     assert "workbench.colorCustomizations" not in _settings(repo)
 
 

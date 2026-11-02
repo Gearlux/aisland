@@ -48,6 +48,7 @@ from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Dict, List, Optional, Sequence, Set, Tuple
 
+from aisland import gitcmd
 from aisland.errors import AislandError
 from aisland.wheels import WHEELS_DIR, find_target, human_size, workspace_projects
 
@@ -77,9 +78,6 @@ _HEAD_REF = "refs/wheels-prune/head"
 #: Holds a reset's changes no commit held (a ``git stash create`` commit) while the rewrite runs; never the user's
 #: stash, whose reflog git-filter-repo does not carry.
 _SET_ASIDE_REF = "refs/wheels-prune/set-aside"
-
-#: Every network call: a host asking for a password fails instead of waiting on a prompt no one sees.
-_NETWORK_ENV = {"GIT_TERMINAL_PROMPT": "0"}
 
 
 class PruneError(AislandError, RuntimeError):
@@ -169,9 +167,11 @@ class ResetReport:
 def _run(
     repo: Path, *args: str, network: bool = False, stdin: Optional[str] = None, env: Optional[Dict[str, str]] = None
 ) -> subprocess.CompletedProcess[str]:
-    full_env = {**os.environ, **(_NETWORK_ENV if network else {}), **(env or {})}
+    # A network call: a host asking for a password fails instead of waiting on a prompt no one sees, and a remote
+    # that stops sending is given up — with no overall limit, as a prune's fetches and its push may be large.
+    full_env = {**(gitcmd.network_env() if network else os.environ), **(env or {})}
     return subprocess.run(
-        ["git", "-C", str(repo), "-c", "core.quotePath=false", *args],
+        ["git", "-C", str(repo), "-c", "core.quotePath=false", *(gitcmd.network_options() if network else []), *args],
         capture_output=True,
         text=True,
         input=stdin,

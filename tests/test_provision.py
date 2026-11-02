@@ -56,7 +56,7 @@ def test_shell_switch_skipped_when_brew_bash_missing(monkeypatch: pytest.MonkeyP
     monkeypatch.setattr(platform, "system", lambda: "Darwin", raising=False)
     monkeypatch.setattr(Path, "exists", lambda self: False)
     installers.offer_shell_switch({"bash"})
-    out = capsys.readouterr().out
+    out = capsys.readouterr().err
     assert "Homebrew bash not found" in out
 
 
@@ -343,7 +343,7 @@ def test_userspace_install_warns_when_no_digest_pinned(
 
     installers.install_userspace_tool("node")
 
-    assert "UNVERIFIED" in capsys.readouterr().out
+    assert "UNVERIFIED" in capsys.readouterr().err
     assert (bin_dir / "node").is_symlink()
 
 
@@ -411,7 +411,7 @@ def test_link_project_bashrc_refuses_to_clobber_real_file(
 
     assert real_file.read_text() == "# USER's hand-edited bashrc\n"
     assert not real_file.is_symlink()
-    assert "exists as a regular file" in capsys.readouterr().out
+    assert "exists as a regular file" in capsys.readouterr().err
 
 
 def test_link_project_bashrc_replaces_stale_symlink(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:

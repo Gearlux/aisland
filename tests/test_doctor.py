@@ -7,6 +7,7 @@ a future refactor cannot silently turn a check into a no-op.
 """
 
 import json
+import os
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
@@ -440,6 +441,28 @@ class TestTunnelConnectCheck:
         assert result.ok
         assert "could not ask devtunnel" in result.detail
         assert "Unable to reach the tunnel service." in result.detail
+
+
+class TestAProbeThatHangsIsGivenUp:
+    """`aisland doctor` and the MCP server's `doctor` tool wait on every probe: one that never ends is named after
+    `PROBE_SECONDS`, never waited on."""
+
+    def test_an_import_that_never_ends_fails_naming_the_limit(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setattr(doctor, "PROBE_SECONDS", 1)
+        assert doctor._import_probe("import time; time.sleep(60)") == (False, "did not finish within 1 s")
+
+    def test_a_vm_that_never_answers_is_inconclusive_not_a_trust_failure(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        colima = tmp_path / "colima"
+        colima.write_text("#!/bin/sh\nsleep 60\n")
+        colima.chmod(0o755)
+        monkeypatch.setenv("PATH", f"{tmp_path}:{os.environ['PATH']}")
+        monkeypatch.setattr(doctor, "_colima_running", lambda: True)
+        monkeypatch.setattr(doctor, "PROBE_SECONDS", 1)
+        result = doctor.check_colima_vm_trust()
+        assert result.ok
+        assert "did not answer within 1 s" in result.detail
 
 
 class TestReporting:

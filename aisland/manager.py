@@ -89,7 +89,7 @@ def link_project_bashrc(workspace_root: Path) -> None:
         _copy_packaged_bashrc(target)
 
     if not target.exists():
-        click.echo(f"  - Warning: {target} not found; skipping project.bashrc symlink.")
+        failures.warn(f"  - Warning: {target} not found; skipping project.bashrc symlink.")
         return
 
     if link.is_symlink():
@@ -98,7 +98,7 @@ def link_project_bashrc(workspace_root: Path) -> None:
             return
         link.unlink()
     elif link.exists():
-        click.echo(
+        failures.warn(
             f"  - Warning: {link} exists as a regular file. Move or delete it manually so "
             f"`aisland setup` can symlink it to {target}."
         )

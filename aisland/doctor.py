@@ -115,6 +115,10 @@ class CheckResult:
     remedy: str = ""
 
 
+#: Seconds a probe the doctor runs in a process of its own may take: an import, the Colima VM's TLS request.
+PROBE_SECONDS = 120
+
+
 def _installed_version(distribution: str) -> Optional[str]:
     """Version of ``distribution`` in the running interpreter, or None if absent."""
     try:
@@ -128,13 +132,16 @@ def _import_probe(statement: str) -> Tuple[bool, str]:
 
     A subprocess because these probes import libraries that can abort the interpreter on a
     broken native bundle — a doctor that dies while diagnosing is worse than no doctor. It
-    also keeps heavy modules out of the CLI's own process.
+    also keeps heavy modules out of the CLI's own process. An import that has not finished after
+    :data:`PROBE_SECONDS` fails saying so: a hanging import is itself the breakage (a stale build
+    lock makes one wait forever), and the doctor — and the MCP tool that runs it — must answer.
     """
-    completed = subprocess.run(
-        [sys.executable, "-c", statement],
-        capture_output=True,
-        text=True,
-    )
+    try:
+        completed = subprocess.run(
+            [sys.executable, "-c", statement], capture_output=True, text=True, timeout=PROBE_SECONDS
+        )
+    except subprocess.TimeoutExpired:
+        return False, f"did not finish within {PROBE_SECONDS} s"
     if completed.returncode == 0:
         return True, completed.stdout.strip()
     error_lines = [ln for ln in (completed.stderr or "").strip().splitlines() if ln.strip()]
@@ -286,17 +293,22 @@ def _colima_running() -> bool:
     return DockerService().is_running()
 
 
-def _vm_curl_exit(url: str) -> int:
-    """Exit code of ``curl -sI <url>`` run INSIDE the Colima VM.
+def _vm_curl_exit(url: str) -> Optional[int]:
+    """Exit code of ``curl -sI <url>`` run INSIDE the Colima VM; None when the VM did not answer in time.
 
     In a subprocess for the same reason as :func:`_import_probe` — and inside the VM because
     that is where the docker daemon verifies TLS: the HOST succeeding proves nothing about the
-    VM's trust store, which is the thing that breaks.
+    VM's trust store, which is the thing that breaks. curl's own ``--max-time`` bounds the request,
+    :data:`PROBE_SECONDS` the ``colima ssh`` around it.
     """
-    completed = subprocess.run(
-        ["colima", "ssh", "--", "curl", "-sI", "-o", "/dev/null", "--max-time", "10", url],
-        capture_output=True,
-    )
+    try:
+        completed = subprocess.run(
+            ["colima", "ssh", "--", "curl", "-sI", "-o", "/dev/null", "--max-time", "10", url],
+            capture_output=True,
+            timeout=PROBE_SECONDS,
+        )
+    except subprocess.TimeoutExpired:
+        return None
     return completed.returncode
 
 
@@ -320,6 +332,8 @@ def check_colima_vm_trust() -> CheckResult:
         return CheckResult("colima-tls", True, "Colima is not running — VM trust store not probed")
 
     exit_code = _vm_curl_exit(_VM_TLS_PROBE_URL)
+    if exit_code is None:
+        return CheckResult("colima-tls", True, f"probe inconclusive — the VM did not answer within {PROBE_SECONDS} s")
     if exit_code == 60:
         return CheckResult(
             "colima-tls",

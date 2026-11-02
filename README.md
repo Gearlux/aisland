@@ -9,15 +9,21 @@ session in the workspace reads.
 ## Install
 
 ```bash
-pip install aisland
+uv tool install aisland    # or: pipx install aisland
 aisland --version          # which aisland runs: aisland, version <its version>
 ```
 
-aisland runs on macOS and Linux with Python 3.12 or newer, git, [uv](https://docs.astral.sh/uv/) and bash (the git aliases and the shell start-up
-file `project.bashrc` are bash). `aisland setup` installs the system tools your projects
-declare. aisland's own — process-compose for the services, Docker, Java for Jenkins — are installed the first time a
-command needs one, after asking you; without a terminal the command stops and prints the install line instead. Three
-extras add optional parts:
+`uv tool install` and `pipx install` give the `aisland` command an environment of its own; this one creates your
+workspaces, each of which then gets its own copy in its `.venv`. A plain `pip install aisland` works inside a
+virtual environment; the system Python of Homebrew or Debian refuses it (`externally-managed-environment`).
+
+aisland runs on macOS and Linux with Python 3.12 or newer, git, [uv](https://docs.astral.sh/uv/) and bash (the git
+aliases and the shell start-up file `project.bashrc` are bash), and on macOS [Homebrew](https://brew.sh), through which
+it installs tools. `aisland setup` installs the system tools your projects declare. aisland's own are installed the
+first time a command needs one, after asking you — on macOS through Homebrew: process-compose for the services, Colima
+and Docker, SwiftBar, act, and the Java Jenkins accepts; on Linux only process-compose, into aisland's own `bin/`
+folder, while Docker and Java are yours to install. Without a terminal the command stops and prints the install line
+instead. Three extras add optional parts:
 
 | Extra | Adds |
 |---|---|
@@ -115,7 +121,7 @@ needs — in its own `pyproject.toml`, under `[tool.aisland]`. It never imports 
 |---|---|---|
 | create a workspace, or set up an existing repository | `aisland workspace init <folder>` | [workspace](https://github.com/Gearlux/aisland/blob/main/docs/workspace.md) |
 | bring the workspace in line after a change | `aisland setup` | [workspace](https://github.com/Gearlux/aisland/blob/main/docs/workspace.md) |
-| start this machine's `.env` from the projects' variables | `aisland workspace env-example`, then `cp env.example .env` | [workspace](https://github.com/Gearlux/aisland/blob/main/docs/workspace.md#the-machines-environment-envcomplete-envexample-and-env) |
+| see which of the projects' variables this machine's `.env` lacks | `aisland workspace env-example --missing` | [workspace](https://github.com/Gearlux/aisland/blob/main/docs/workspace.md#the-machines-environment-envcomplete-envexample-and-env) |
 | choose where a project comes from | `aisland workspace configure source set <project> local\|github\|pypi` | [sources](https://github.com/Gearlux/aisland/blob/main/docs/sources.md) |
 | choose the extras the projects install | `aisland workspace configure extras set <names…>` | [selections](https://github.com/Gearlux/aisland/blob/main/docs/selections.md) |
 | pull, push or tag every project | `git pull-all`, `git push-all`, `git tag-all <tag>` | [git](https://github.com/Gearlux/aisland/blob/main/docs/git.md) |
@@ -157,7 +163,6 @@ None is needed; each changes one default. `env.complete` lists them with every v
 |---|---|
 | `AISLAND_WORKSPACE` | aisland installed from a wheel: the workspace it works on (default: the one the current folder belongs to) |
 | `AISLAND_TUNNEL_HOME` | where `aisland tunnel` keeps its state (default: `~/.aisland/tunnel`) |
-| `AISLAND_SUPERVISOR_PORT` | Windows: the supervisor's TCP port (default: 9089; Unix uses a socket) |
 | `WORKSPACE` | the name `aisland tunnel start` gives the tunnel when none is given (default: the machine's hostname) |
 | `DATA_ROOT`, `MODEL_ROOT`, `RUN_DIR` | the folders the `cdd`, `cdm` and `cdr` helpers of `project.bashrc` jump to (`cdd models` goes to `$DATA_ROOT/models`); set them in the workspace's `.env` |
 | `TORCH_EXTENSIONS_DIR` | the folder `aisland doctor` checks for a stale torch build lock (default: torch's own cache) |

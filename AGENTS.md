@@ -40,8 +40,15 @@ The workspace's dev-infrastructure CLI, `aisland` (click, `aisland/cli.py`):
   with a time limit.
 - `gitcmd.py`: `git(repo, *args, network=, timeout=, check=)`, the one helper that runs `git` and captures its text
   output (`network=True`: no credential prompt, 60 s default limit; `check=True`: an `AislandError` naming the command).
-  `wheels.py` (`git -C`), `mirrors.py` (no time limit on a push), `wheels_prune.py` (its own flags and stdin) and
+  `wheels.py` (`git -C`), `mirrors.py` (no overall limit on a push), `wheels_prune.py` (its own flags and stdin) and
   `workspace_file.py` (`git -C`, None on failure) keep helpers whose behaviour differs.
+  **Every git command that reaches a remote gives up on one that stops sending** — `gitcmd.network_options()`
+  (`http.lowSpeedLimit=1`, `http.lowSpeedTime=STALL_SECONDS`, 60) and `gitcmd.network_env()` (no prompt), in
+  `gitcmd.git(network=True)`, the helpers above and `gitcmd.fetch` (a best-effort fetch: the guard, no overall limit,
+  `tracking.follow_branches` and a local source's switch). A transfer may be long, so the guard is never an overall
+  limit; git has it over HTTP(S) only, ssh's `ServerAliveInterval` bounds SSH. A new remote call uses one of them,
+  never a bare `subprocess.run(["git", "fetch", …])` (`tests/test_gitcmd.py::test_every_network_call_gives_up_on_a_remote_that_stops_sending`,
+  against a local server that accepts and never answers).
 - `pyproject.py`: the one reader of a project's `pyproject.toml` [file-readers] — `read(path)` (`{}` for a missing,
   unreadable or broken file), `parse(text, path)` (a `PyprojectError(AislandError, ValueError)` `<file>: <tomllib's
   message>`; discovery re-raises its words as a `DeclarationError`), `load(path)` (tomllib's own errors), `name(path)`.
@@ -206,6 +213,9 @@ start-time port pre-flight naming the PID is the only signal). All service state
   `cli._WorkspaceGroup.invoke` turns the run into exit 1, also over a command's own `SystemExit(0)`; a non-zero code
   of the command's own is kept. Never `click.echo("Error…")` and return: a script, CI or the MCP server's `aisland`
   call reads the exit status (`tests/test_errors_exit_one.py`) [failures].
+- **A warning goes to stderr, through `failures.warn` — never `click.echo("  - Warning: …")`.** It fails nothing; it
+  stays off stdout, which is the command's output a script reads (`--json`)
+  (`tests/test_configure.py::test_a_warning_goes_to_stderr_and_leaves_the_json_whole`).
 - **One exception root, and `--debug` (user request 2026-10-29, release review).** [errors-root] Library code raises
   `AislandError` (`errors.py`) — never `click.ClickException` itself, never `SystemExit` (the harness scripts and
   `aisland-mcp`'s `main` are their own entry points) — and an exception class aisland defines derives from it AND the
@@ -214,8 +224,8 @@ start-time port pre-flight naming the PID is the only signal). All service state
   `Error: <it> (run `aisland --debug …` for the traceback)` line; `aisland --debug` re-raises it and prints the
   traceback of aisland's own refusals too; any other exception is a bug and keeps its traceback. An `except` names
   what can fail there (`OSError`, `ET.ParseError`, `tomllib.TOMLDecodeError`), never `Exception` — except around a
-  project's own code and a completion callback. Every download goes through `downloads.download` (a timeout, no
-  part file left), and a `git` network call sets `GIT_TERMINAL_PROMPT=0` and a timeout
+  project's own code, a completion callback and the pytest plugin's hooks (it loads in every pytest run). Every download goes through `downloads.download` (a timeout, no
+  part file left), and a `git` network call sets `GIT_TERMINAL_PROMPT=0` and gives up on a silent remote (`gitcmd.py`)
   (`tests/test_errors_exit_one.py::test_no_library_module_raises_clicks_own_exception_or_exits` and its neighbours,
   `tests/test_downloads.py`).
 
@@ -252,9 +262,12 @@ start-time port pre-flight naming the PID is the only signal). All service state
   from a module (`parents[N]`): ask `locations`/`get_workspace_root()`. (`tests/test_locations.py`,
   `tests/test_packaging.py::test_from_the_wheel_the_workspace_is_where_it_runs_and_the_state_goes_into_it`)
   - Importing never raises; outside a workspace the CLI's group (`cli._WorkspaceGroup.parse_args`)
-    refuses every command but `workspace`, `wheels` and `--help`, before anything is written
-    (`::test_a_workspace_command_is_refused_and_writes_nothing`). A new workspace-free command joins
-    `_WORKSPACE_FREE`.
+    refuses every command but `workspace`, `wheels`, `tunnel`, `doctor` (it checks the machine and its Python),
+    `notebooks` (a git filter on stdin) and `--help`, before anything is written
+    (`::test_a_workspace_command_is_refused_and_writes_nothing`,
+    `tests/test_packaging.py::test_from_the_wheel_outside_a_workspace_the_doctor_checks_this_machine`). A new
+    workspace-free command joins `_WORKSPACE_FREE`; `completion` stays out — it works on a workspace's venv, and its
+    example makes a throwaway workspace.
   - From a wheel, setup copies the packaged `project.bashrc` to `.aisland/` and links the root to it
     (`setup.py` puts it in the wheel; it stays at `aisland/project.bashrc` in the checkout, whose place
     defines the root); the file finds `bin/` beside itself. (`tests/test_project_bashrc.py`) `MANIFEST.in`
@@ -527,7 +540,10 @@ Root `AGENTS.md` "Two Test Runs" (user ruling 2026-10-05). [test-stats]
   the report reads; `::test_a_jenkins_build_is_left_to_jenkins_own_record`).
 - It never costs a run its result: standard library only (no `aisland.paths` import — it
   loads in every pytest start), one append per run, a failed write is one printed line
-  (`::test_a_stats_folder_that_cannot_be_written_costs_one_line_never_the_runs_result`).
+  (`::test_a_stats_folder_that_cannot_be_written_costs_one_line_never_the_runs_result`), and so is any other error of
+  its own — `pytest_configure` and the recorder's hooks catch `Exception` and print `aisland test stats: this run was
+  not recorded (<error>)` (`::test_a_plugin_that_breaks_while_starting_costs_one_line_never_the_runs_result`,
+  `::test_a_plugin_that_breaks_while_recording_costs_one_line_never_the_runs_result`).
 - **Recording can be turned off, never removed (user choice 2026-10-27: option B, shaped like `track|untrack`).**
   `aisland workspace test-stats on|off [PROJECT…] [--machine-only]` (`recording.py`): committed `[workspace]
   test-stats = false` (no project named: every project, those added later included) or a project's own
@@ -589,7 +605,9 @@ Root `AGENTS.md` "Two Test Runs" (user ruling 2026-10-05). [test-stats]
   [doctor]
   - Cheap, read-only, specific; a failure carries a copy-pasteable remedy
     (`tests/test_doctor.py::test_every_registered_check_returns_a_result`).
-  - Imports run out-of-process (`_import_probe`); `run_doctor()` exits 0/1.
+  - Imports run out-of-process (`_import_probe`); `run_doctor()` exits 0/1. Every probe in a process of its own has
+    a limit, `PROBE_SECONDS` (120): an import past it fails saying so (a hanging import is the breakage), the VM's
+    TLS probe is inconclusive; the MCP `doctor` tool must answer (`tests/test_doctor.py::TestAProbeThatHangsIsGivenUp`).
   - Each check names the invariant it mirrors (`opencv` ↔ `uv_config._ROOT_UV_BASE`).
   - A probe that cannot run passes with a note. Never boot a VM; VM state comes from
     `DockerService.is_running()`.
@@ -704,8 +722,12 @@ Root `AGENTS.md` "Two Test Runs" (user ruling 2026-10-05). [test-stats]
   secrets there. Without either, the plain command. (`tests/test_mcp_config.py::TestTheServersGetTheWorkspaceEnvironment`)
 - Root `mypy.ini` is committed; setup only APPENDS missing projects to `mypy_path` and never
   removes one. Never make it generated. (`tests/test_mypy_path_sync.py`)
-- Root `uv.toml` = `_ROOT_UV_BASE` (drops `lightning`, `opencv-python`; keeps
-  `opencv-python-headless>=4.12,<5`) + each ACTIVATED project's `uv.toml`. A private index
+- Root `uv.toml` = `_ROOT_UV_BASE` (drops `opencv-python`, keeps `opencv-python-headless>=4.12,<5`, in EVERY
+  workspace; `lightning` is dropped only where a project names `pytorch-lightning`, `_CONDITIONAL_OVERRIDES`) + each
+  ACTIVATED project's `uv.toml`. The opencv pair stays unconditional (release review 2026-11-01, kept by the user): no
+  project names opencv itself — it arrives through fastai, flax, kornia, roboflow, supervision (GUI) and torchsig,
+  fiftyone, albumentations, label-studio-sdk (headless) — so a condition on a project's own declaration would switch
+  it off in this workspace; the cost, no `cv2.imshow` anywhere, is on `docs/workspace.md`. A private index
   lives only in its project's `uv.toml`; never commit the root file or put an index in the
   base. (`tests/test_uv_activation.py`)
   - Each activated project's `wheels/` folder holding a `wheels.yaml` is a `find-links` path in it, relative to the

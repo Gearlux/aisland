@@ -4273,3 +4273,77 @@ ci.yml:            node-tests: ... - name: Node Tests (frontend)
 Rejected: a `[tool.aisland] node-tests = [...]` list. It would be a second place saying what `package.json` already
 says, and a folder added later would be untested until someone remembered the list.
 
+
+## A git command that reaches a remote gives up on one that stops sending
+
+*2026-11-01*
+
+### Context
+
+`gitcmd.git(network=True)` had a 60 s overall limit, but no caller used it: the mirror sync, the wheels prune, the
+fetch before an untracked project's branch switch and the fetch before a local source's switch each ran git on their
+own, without a limit. A remote that accepts the connection and then sends nothing (a stuck proxy, a VPN that dropped
+the route) left `git` waiting forever — measured against a local server that accepts and never answers: still
+waiting when killed. An overall limit is wrong for those calls: a first push to a mirror or a prune's force-push can
+take many minutes and is healthy.
+
+### Decision
+
+- One guard, in `gitcmd`: `network_options()` — `-c http.lowSpeedLimit=1 -c http.lowSpeedTime=STALL_SECONDS` (60) —
+  and `network_env()` — `GIT_TERMINAL_PROMPT=0`. git then gives up after 60 s without a byte (`Operation too slow.
+  Less than 1 bytes/sec transferred the last 60 seconds`), whatever the transfer's length.
+- `gitcmd.git(network=True)` adds it to its overall limit; the runners whose behaviour differs (`mirrors._git`,
+  `wheels_prune._run`) add it with no overall limit; `gitcmd.fetch` is the best-effort fetch with the guard alone.
+- git has such a setting over HTTP(S) only. Over SSH a silent server is bounded by ssh's own `ServerAliveInterval`;
+  aisland does not set `core.sshCommand`, which is the user's.
+- The doctor's probes and the tunnel's sign-in question got limits too (`doctor.PROBE_SECONDS`,
+  `tunnel.ANSWER_SECONDS`): the MCP server answers through them, and one hung probe stopped every tool.
+
+### Consequences
+
+A dead remote costs a minute and a named error instead of a hung `aisland setup`, `mirror sync` or MCP call. A
+transfer that is merely slow (more than one byte a second) is never cut.
+
+### Example
+
+```text
+$ git -c http.lowSpeedLimit=1 -c http.lowSpeedTime=3 ls-remote http://127.0.0.1:62698/x.git   # accepts, sends nothing
+fatal: unable to access 'http://127.0.0.1:62698/x.git/': Operation too slow. Less than 1 bytes/sec transferred the last 3 seconds
+```
+
+Without the two options the same command was still waiting when `timeout 8` killed it.
+
+### What you may change
+
+`STALL_SECONDS`, and which calls take an overall limit on top. Never a bare `subprocess.run(["git", "fetch", …])` for
+a remote, and never an overall limit on a push or a prune's fetch.
+
+## Warnings go to stderr, and the doctor and the notebook filter run outside a workspace
+
+*2026-11-01*
+
+### Context
+
+The release review ran aisland as a PyPI user would: from a wheel, outside a workspace. `aisland doctor` and
+`aisland notebooks clean` were refused there (`No workspace here`), though neither reads a workspace — so three of
+the five examples failed — and a warning about a setting printed to stdout broke `--json`: `aisland workspace configure
+source --json` started with `  - Warning: …workspace.toml:4: project 'lib' has source 'pypy'…`.
+
+### Decision
+
+- `doctor` and `notebooks` join `cli._WORKSPACE_FREE`; `completion` does not — it writes completion for a workspace's
+  venv — and its example makes a throwaway workspace.
+- `failures.warn` prints a warning on stderr and fails nothing; every `  - Warning:` line goes through it.
+- The pytest plugin's hooks catch any error of the plugin's own and print one line: the plugin loads in every pytest
+  run of the environment.
+
+### Example
+
+```bash
+cd ~/Downloads && aisland doctor              # Environment doctor — …/bin/python, one line per check
+aisland workspace configure source --json | python -m json.tool   # the warning on stderr, the JSON whole
+```
+
+### What you may change
+
+Add a command to `_WORKSPACE_FREE` when it reads no workspace. Never print a warning on stdout.

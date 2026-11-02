@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import subprocess
 import sys
 from pathlib import Path
@@ -647,6 +648,16 @@ class TestALongStageHasATimeLimit:
         assert TIMED_OUT_MESSAGE.startswith("${stage} timed out after ${minutes} min")
         # The provenance header stays the first thing in the file (root Generator Provenance rule).
         assert local.index("To regenerate:") < local.index("def limited(")
+
+    def test_the_helpers_comment_says_what_it_does_and_carries_no_history(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ) -> None:
+        """Every project's `Jenkinsfile.local` carries the helper — a company's repository among them: its comment
+        names no build, project or date."""
+        local = _scaffolded(monkeypatch, tmp_path, _make_pyproject)["Jenkinsfile.local"]
+        comment = local[local.index("// A long stage's time limit") : local.index("def limited(")]
+        assert "past it the stage fails naming itself and the limit" in comment
+        assert not re.search(r"\d{4}-\d{2}-\d{2}|#\d+|\.local\b", comment), comment
 
     def test_a_project_without_slow_tests_gets_no_slow_limit(
         self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
