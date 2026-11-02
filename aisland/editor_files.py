@@ -13,7 +13,13 @@ import click
 
 from aisland import editor, failures, git_exclude, locations, supervisor
 from aisland.paths import SERVICES_DIR
-from aisland.projects import dependency_order, discover_projects, get_project_metadata, get_workspace_name
+from aisland.projects import (
+    ProjectMetadata,
+    dependency_order,
+    discover_projects,
+    get_project_metadata,
+    get_workspace_name,
+)
 
 # Shared pyright exclude globs for the root and per-project configs below.
 _PYRIGHT_EXCLUDE = [
@@ -24,7 +30,7 @@ _PYRIGHT_EXCLUDE = [
 ]
 
 
-def write_pyrightconfig(workspace_root: Path, projects: List[dict]) -> None:
+def write_pyrightconfig(workspace_root: Path, projects: List[ProjectMetadata]) -> None:
     """Generate ``pyrightconfig.json`` at the workspace root AND inside every project.
 
     The mono-repo lays each project out as ``<proj>/<pkg>/`` and installs them
@@ -93,7 +99,7 @@ def write_pyrightconfig(workspace_root: Path, projects: List[dict]) -> None:
     click.echo(f"==> Wrote per-project pyrightconfig.json into {len(projects)} project dir(s)")
 
 
-def sync_mypy_path(workspace_root: Path, projects: List[dict]) -> None:
+def sync_mypy_path(workspace_root: Path, projects: List[ProjectMetadata]) -> None:
     """Append missing project dirs to the ``mypy_path`` line of the root mypy.ini.
 
     Unlike ``pyrightconfig.json``, the root ``mypy.ini`` is COMMITTED,

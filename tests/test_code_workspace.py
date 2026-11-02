@@ -259,7 +259,7 @@ def test_an_unchanged_file_is_not_rewritten(workspace: Path) -> None:
 @pytest.fixture
 def written(monkeypatch: pytest.MonkeyPatch) -> List[Path]:
     calls: List[Path] = []
-    monkeypatch.setattr(editor_files, "write_code_workspace", lambda root: calls.append(root))
+    monkeypatch.setattr(s, "write_code_workspace", lambda root: calls.append(root))
     monkeypatch.setattr(s, "ensure_uv_in_venv", lambda venv_bin: "uv")
     monkeypatch.setattr(s, "project_path", lambda root, project: root / project)
     monkeypatch.setattr(s, "known_projects", lambda root: ["loggair"])

@@ -3,7 +3,7 @@ folder and log, and its start, stop, status, info and reset."""
 
 import os
 import shutil
-from typing import Any, List, Optional
+from typing import Any, Dict, List, Optional
 
 import click
 
@@ -49,7 +49,7 @@ class BaseService:
     def start(
         self,
         cmd: List[str],
-        env: Optional[dict] = None,
+        env: Optional[Dict[str, str]] = None,
         background: bool = False,
         readiness: Optional[supervisor.Readiness] = None,
     ) -> None:

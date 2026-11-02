@@ -4,7 +4,7 @@ the workspace's projects ship, each started with the workspace's environment."""
 import json
 import shutil
 from pathlib import Path
-from typing import Dict, Optional
+from typing import Dict, List, Optional, Required, TypedDict
 
 import click
 
@@ -14,7 +14,14 @@ from aisland.errors import AislandError
 from aisland.projects import discover_projects, get_workspace_root
 
 
-def discover_mcp_servers(workspace_root: Path, venv_bin: Path) -> dict[str, dict]:
+class McpServer(TypedDict, total=False):
+    """One server of a client file: the command that starts it, and its arguments when bash starts it."""
+
+    command: Required[str]
+    args: List[str]
+
+
+def discover_mcp_servers(workspace_root: Path, venv_bin: Path) -> Dict[str, McpServer]:
     """Discover workspace MCP servers and how to launch them.
 
     A project is treated as an MCP server when its ``[project.scripts]`` declares
@@ -33,7 +40,7 @@ def discover_mcp_servers(workspace_root: Path, venv_bin: Path) -> dict[str, dict
     exactly why the client files (``.gemini/settings.json``, ``.mcp.json``) are
     gitignored and regenerated per machine instead of committed.
     """
-    servers: dict[str, dict] = {}
+    servers: Dict[str, McpServer] = {}
     for pyproject in discover_projects(workspace_root):
         data = pyproject_toml.read(pyproject)  # discovery reports a broken file; here it lists no server
         project = data.get("project", {})
@@ -57,7 +64,7 @@ def discover_mcp_servers(workspace_root: Path, venv_bin: Path) -> dict[str, dict
     return servers
 
 
-def _warn_missing_commands(servers: Dict[str, dict]) -> None:
+def _warn_missing_commands(servers: Dict[str, McpServer]) -> None:
     """Name every discovered server whose console script is NOT in the venv — the tell of an
     editable install that predates the project's ``[project.scripts]`` entry (measured
     2026-09-05: annotaide's ``annotaide-mcp`` was discovered and written, and did not exist,
@@ -77,7 +84,7 @@ def _warn_missing_commands(servers: Dict[str, dict]) -> None:
 _WITH_WORKSPACE_ENV = 'source "$0" >/dev/null; exec "$@"'
 
 
-def _with_workspace_env(workspace_root: Path, servers: Dict[str, dict]) -> Dict[str, dict]:
+def _with_workspace_env(workspace_root: Path, servers: Dict[str, McpServer]) -> Dict[str, McpServer]:
     """Each server started through bash sourcing ``<workspace>/project.bashrc`` first.
 
     A client starts a server with ITS OWN environment, never the workspace's ``.env`` (measured

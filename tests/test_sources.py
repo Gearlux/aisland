@@ -905,7 +905,7 @@ class TestSetALocalSource:
         (ci_workspace / ".venv" / "bin" / "uv").touch(mode=0o755)
         monkeypatch.setattr(s, "local_override", lambda root, name: None)
         monkeypatch.setattr(s, "set_local_override", lambda *a, **k: None)
-        monkeypatch.setattr("aisland.editor_files.write_code_workspace", lambda root: None)
+        monkeypatch.setattr("aisland.sources.write_code_workspace", lambda root: None)
         (ci_workspace / "workspace.toml").write_text('[project."loggair"]\nurl = "u"\nbranch = "dev/main"\n')
         return ci_workspace
 

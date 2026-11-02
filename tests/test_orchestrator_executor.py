@@ -14,7 +14,7 @@ from typing import Sequence
 
 import pytest
 
-from aisland import locations, projects
+from aisland import locations
 from aisland.services import jenkins_jobs
 from aisland.services.jenkins_jobs import NIGHTLY_CRON
 
@@ -28,9 +28,9 @@ def _orchestrator_script(monkeypatch: pytest.MonkeyPatch, tmp_path: Path, local:
         )
 
     monkeypatch.setattr(locations, "workspace_root", lambda: tmp_path)
-    monkeypatch.setattr(projects, "get_workspace_name", lambda: "ws")
+    monkeypatch.setattr(jenkins_jobs, "get_workspace_name", lambda: "ws")
     monkeypatch.setattr(
-        projects,
+        jenkins_jobs,
         "get_install_order",
         lambda root: [
             {"name": "libcore", "dependencies": []},

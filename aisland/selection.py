@@ -39,12 +39,12 @@ from typing import Dict, List, Optional, Sequence, Set, Tuple
 import click
 from packaging.requirements import InvalidRequirement, Requirement
 
-from aisland import failures
+from aisland import discovery, failures
 from aisland import pyproject as pyproject_toml
 from aisland import workspace_file
 from aisland.errors import AislandError
 from aisland.installers import ensure_uv_in_venv
-from aisland.projects import get_project_metadata
+from aisland.projects import discover_projects, get_install_order, get_project_metadata
 
 logger = logging.getLogger(__name__)
 
@@ -78,7 +78,6 @@ def axes(root: Path) -> Tuple[Axis, ...]:
 
     Raises :class:`aisland.discovery.DeclarationError`, naming the file and the line, for a declaration it cannot
     use (a choice that is no extra, a question asked twice)."""
-    from aisland import discovery
 
     found = discovery.discover(root)
     return (EXTRAS,) + tuple(Axis(name, selection.question) for name, selection in found.selections.items())
@@ -110,7 +109,6 @@ def declarations(root: Path, axis: Axis) -> Dict[str, List[str]]:
 
     Through :func:`aisland.projects.discover_projects`, so a project with an empty folder (a ``pypi`` source) drops
     out on its own."""
-    from aisland.projects import discover_projects
 
     out: Dict[str, List[str]] = {}
     for pyproject in discover_projects(root):
@@ -134,7 +132,6 @@ def manual(root: Path, axis: Axis) -> Set[str]:
     :data:`EXTRAS` has them."""
     if not axis.from_defined_extras:
         return set()
-    from aisland.projects import discover_projects
 
     out: Set[str] = set()
     for pyproject in discover_projects(root):
@@ -378,7 +375,6 @@ def apply_selection(root: Path, axis: Axis, uv_cmd: Optional[str] = None) -> int
     (``models[keras]`` requiring ``trainer[keras]``), and installed first it resolves against the sibling's OLD
     metadata. uv never uninstalls an extra no longer chosen — which packages "belonged" to it is unknowable, and a
     stale wheel costs disk, not correctness."""
-    from aisland.projects import get_install_order
 
     uv = uv_cmd or ensure_uv_in_venv(root / ".venv" / "bin")
     failures = 0

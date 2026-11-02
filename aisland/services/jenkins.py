@@ -14,6 +14,7 @@ import urllib.parse
 import urllib.request
 import xml.etree.ElementTree as ET
 from pathlib import Path
+from typing import Any, Dict, Set
 
 import click
 
@@ -67,7 +68,7 @@ class JenkinsService(BaseService):
             return sorted(jars)[-1]
         return BIN_DIR / "jenkins-plugin-manager.jar"
 
-    def _get_latest_manager_info(self) -> dict:
+    def _get_latest_manager_info(self) -> Dict[str, Any]:  # Any: GitHub's release JSON
         """Fetch the latest release info from GitHub API."""
         api_url = f"https://api.github.com/repos/{self.REPO}/releases/latest"
         headers = {"User-Agent": "aisland"}
@@ -150,7 +151,7 @@ class JenkinsService(BaseService):
             click.echo("  - Skipped: without the Jenkins WAR there is no asking which Java it runs on.")
             return
         choice = self.resolve_java()
-        installed: set = set()
+        installed: Set[str] = set()
         while choice.runtime is None:
             formula = choice.formula or newest_versioned_formula()
             if formula is None or formula in installed:

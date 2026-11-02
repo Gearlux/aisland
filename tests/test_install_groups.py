@@ -13,14 +13,15 @@ import pytest
 
 from aisland import manager as m
 from aisland import selection
-from aisland.projects import install_groups
+from aisland.projects import ProjectMetadata, install_groups
+from tests.records import project_metadata
 
 
-def _project(name: str, *deps: str) -> dict:
-    return {"name": name, "path": Path(f"/ws/{name}"), "dependencies": list(deps), "has_dev": False}
+def _project(name: str, *deps: str) -> ProjectMetadata:
+    return project_metadata(name, Path(f"/ws/{name}"), *deps)
 
 
-def _names(groups: List[List[dict]]) -> List[List[str]]:
+def _names(groups: List[List[ProjectMetadata]]) -> List[List[str]]:
     return [[p["name"] for p in g] for g in groups]
 
 

@@ -15,19 +15,38 @@ from typing import List, Tuple
 
 import click
 
-from aisland import failures, locations, provision, selection, workspace_check, workspace_file
+from aisland import (
+    activation,
+    clones,
+    env_example,
+    failures,
+    locations,
+    provision,
+    selection,
+    workspace_check,
+    workspace_file,
+)
 from aisland.editor_files import sync_mypy_path, write_code_workspace, write_pyrightconfig
 from aisland.harness import install_harness
 from aisland.installers import ensure_uv_in_venv
 from aisland.mcp_config import no_venv, write_gemini_settings, write_mcp_json
+from aisland.mirrors import apply_all as apply_mirrors
 from aisland.paths import BASE_DIR, SERVICES_DIR
-from aisland.projects import get_install_order, get_workspace_root, install_groups, internal_dependencies
+from aisland.projects import (
+    ProjectMetadata,
+    get_install_order,
+    get_workspace_root,
+    install_groups,
+    internal_dependencies,
+)
+from aisland.selection import PLAYWRIGHT_BROWSER, axes, browser_install_command, resolve_for_setup
+from aisland.sources import apply_all
 from aisland.uv_config import write_root_uv_toml
 
 logger = logging.getLogger(__name__)
 
 
-def _run_installs(workspace_root: Path, uv_cmd: str, projects: List[dict]) -> Tuple[List[str], List[str]]:
+def _run_installs(workspace_root: Path, uv_cmd: str, projects: List[ProjectMetadata]) -> Tuple[List[str], List[str]]:
     """Editable-install every project, one unit per :func:`install_groups` group.
 
     Returns ``(failed, skipped)``. A project whose dependency failed (or was itself skipped) is
@@ -116,7 +135,6 @@ def link_project_bashrc(workspace_root: Path) -> None:
 def write_generated_env_example(workspace_root: Path) -> None:
     """Setup's step: the workspace's ``env.complete`` and ``env.example`` (``aisland workspace env-example``); a
     project's malformed file is said and setup goes on."""
-    from aisland import env_example  # it reads the projects through this module: imported here, not at the top
 
     try:
         written = env_example.write(workspace_root)
@@ -156,7 +174,6 @@ def setup_workspace(non_interactive: bool = False, install_all: bool = False) ->
 
     # 0c'. A clone of the workspace's folder that .gitmodules does not list: added as a submodule, never asked about
     #      (aisland.clones), before workspace.toml, discovery and the installs read the projects.
-    from aisland import clones
 
     for line in clones.add_unlisted(workspace_root):
         click.echo(f"  - {line}")
@@ -175,7 +192,6 @@ def setup_workspace(non_interactive: bool = False, install_all: bool = False) ->
     #     check each project out or empty it as this machine has it — adding one the workspace does not have yet — so
     #     the install set (and discovery, push-all, `git submodule foreach`) matches. Before discovery, so an inactive
     #     checkout drops out.
-    from aisland import activation
 
     activation.resolve(workspace_root, non_interactive)
     activation.reconcile(workspace_root)
@@ -184,13 +200,11 @@ def setup_workspace(non_interactive: bool = False, install_all: bool = False) ->
     #     replace it with the published wheel (pypi, which empties its directory). Runs BEFORE
     #     discovery so a pypi-sourced project drops out of the editable-install loop below on
     #     its own, and its wheel is already installed when a consumer's `.[dev]` resolves it.
-    from aisland.sources import apply_all
 
     apply_all(workspace_root, uv_cmd)
 
     # 1d. Per-project mirrors — each checkout's `mirror` remote follows `[mirrors.*]` (and this
     #     machine's override); a remote whose mirror was unset elsewhere is removed. No network.
-    from aisland.mirrors import apply_all as apply_mirrors
 
     apply_mirrors(workspace_root)
 
@@ -211,7 +225,6 @@ def setup_workspace(non_interactive: bool = False, install_all: bool = False) ->
     #       cannot use (a choice that is no extra) stops setup here, naming its file and line, before anything is
     #       installed. Asks once when nothing is chosen; a recorded choice is used silently. `--all` is the extras
     #       selection's own: a framework or tracker is a machine's choice of one backend each.
-    from aisland.selection import PLAYWRIGHT_BROWSER, axes, browser_install_command, resolve_for_setup
 
     for axis in axes(workspace_root):
         selected, _just_chosen = resolve_for_setup(

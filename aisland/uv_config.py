@@ -12,6 +12,7 @@ from packaging.requirements import InvalidRequirement, Requirement
 
 from aisland import failures
 from aisland import pyproject as pyproject_toml
+from aisland.projects import ProjectMetadata
 
 # Workspace-wide uv settings that are no single project's concern. Merged into the generated
 # root uv.toml beneath every activated project's own uv.toml. The never-true marker
@@ -116,7 +117,7 @@ def _emit_uv_toml(data: pyproject_toml.Table) -> str:
     return header + "\n".join(lines) + "\n"
 
 
-def write_root_uv_toml(workspace_root: Path, activated: List[dict]) -> None:
+def write_root_uv_toml(workspace_root: Path, activated: List[ProjectMetadata]) -> None:
     """Generate ``<workspace>/uv.toml`` = workspace base merged with each activated project's uv.toml.
 
     Gitignored + regenerated on every setup (like ``pyrightconfig.json`` / ``.gemini/settings.json``)

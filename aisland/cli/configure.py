@@ -11,6 +11,7 @@ from click.shell_completion import CompletionItem
 
 from aisland import configure, locations, selection, workspace_check
 from aisland.cli._base import _Command, _complete_workspace_projects, _configure_root, _Group
+from aisland.errors import quiet_completion
 from aisland.projects import get_workspace_root
 
 
@@ -89,11 +90,9 @@ def _selection_group(plugin: configure.SelectionPlugin) -> click.Group:
         """A completer of the names ``offer`` gives, those not typed yet that start with the word; nothing for a
         workspace it cannot read."""
 
+        @quiet_completion
         def complete(ctx: click.Context, param: click.Parameter, incomplete: str) -> List[CompletionItem]:
-            try:
-                offered = offer(get_workspace_root())
-            except Exception:  # a completion callback must never break the shell
-                return []
+            offered = offer(get_workspace_root())
             typed = set(ctx.params.get("names") or ())
             return [CompletionItem(name) for name in offered if name.startswith(incomplete) and name not in typed]
 

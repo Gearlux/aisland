@@ -20,6 +20,8 @@ from typing import Dict, List, Optional
 import click
 
 from aisland import gitcmd, local_workspace, tracking, workspace_file
+from aisland.projects import submodule_active_map
+from aisland.sources import detached_projects
 
 #: The project's setting in ``workspace.toml`` and the last part of this machine's ``aisland.active.<project>.active``.
 ACTIVE_KEY = "active"
@@ -101,7 +103,6 @@ def _submodule_names(root: Path) -> Dict[str, str]:
 
 
 def _gitmodules(root: Path) -> List[tuple[str, str, bool]]:
-    from aisland.projects import submodule_active_map
 
     return submodule_active_map(root)
 
@@ -125,7 +126,6 @@ def reconcile(root: Path) -> List[str]:
 
 
 def _reconcile(root: Path) -> List[str]:
-    from aisland.sources import detached_projects
 
     listed = workspace_file.load(root)
     if not listed.projects:

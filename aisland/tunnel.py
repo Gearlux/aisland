@@ -47,15 +47,13 @@ import urllib.request
 from dataclasses import asdict, dataclass, replace
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Dict, List, Optional, Sequence, Tuple
+from typing import Any, Dict, List, Optional, Sequence, Tuple
 from urllib.parse import parse_qs, urlparse
 
 import click
+from click.shell_completion import CompletionItem
 
-from aisland.errors import AislandError
-
-if TYPE_CHECKING:
-    from click.shell_completion import CompletionItem
+from aisland.errors import AislandError, quiet_completion
 
 #: The relay the tunnel dials out to; also what the doctor check probes.
 RELAY_HOST = "global.rel.tunnels.api.visualstudio.com"
@@ -710,6 +708,7 @@ def resolve_target(target: Optional[str] = None, name: Optional[str] = None, ask
     return replace(candidate, name=_ask_name(candidate.name, stripped) if ask else stripped)
 
 
+@quiet_completion
 def complete_workspace(
     ctx: Optional[click.Context], param: Optional[click.Parameter], incomplete: str
 ) -> List[CompletionItem]:
@@ -718,17 +717,12 @@ def complete_workspace(
     Completion runs inside the user's shell on every TAB, so this answers from the cache only — no
     workspace needed, no network, and every failure answers "nothing to offer" instead of raising.
     """
-    try:
-        from click.shell_completion import CompletionItem
-
-        items = []
-        for entry in load_store():
-            if entry.name.startswith(incomplete):
-                detail = " — ".join(part for part in (entry.folder, entry.age()) if part)
-                items.append(CompletionItem(entry.name, help=detail))
-        return items
-    except Exception:  # pragma: no cover - a completion callback must never break the shell
-        return []
+    items = []
+    for entry in load_store():
+        if entry.name.startswith(incomplete):
+            detail = " — ".join(part for part in (entry.folder, entry.age()) if part)
+            items.append(CompletionItem(entry.name, help=detail))
+    return items
 
 
 def open_editor(

@@ -16,7 +16,7 @@ import click
 from click.shell_completion import CompletionItem
 
 from aisland import discovery, failures, locations, tracking, workspace_file
-from aisland.errors import AislandError
+from aisland.errors import AislandError, quiet_completion
 from aisland.projects import get_workspace_root
 from aisland.services import registry as service_registry
 
@@ -268,21 +268,17 @@ def main(ctx: click.Context, debug: bool) -> None:
     ctx.meta[_DEBUG] = debug
 
 
+@quiet_completion
 def _complete_submodules(ctx: click.Context, param: click.Parameter, incomplete: str) -> List[CompletionItem]:
     """The workspace's submodules whose name starts with ``incomplete``; nothing for a workspace it cannot read."""
-    try:
-        names = tracking.submodule_projects(get_workspace_root())
-    except Exception:  # a completion callback must never break the shell
-        return []
+    names = tracking.submodule_projects(get_workspace_root())
     return [CompletionItem(name) for name in names if name.startswith(incomplete)]
 
 
+@quiet_completion
 def _complete_workspace_projects(ctx: click.Context, param: click.Parameter, incomplete: str) -> List[CompletionItem]:
     """The projects of ``workspace.toml`` whose name starts with ``incomplete``; nothing for a file it cannot read."""
-    try:
-        names = list(workspace_file.load(get_workspace_root()).projects)
-    except Exception:  # a completion callback must never break the shell
-        return []
+    names = list(workspace_file.load(get_workspace_root()).projects)
     return [CompletionItem(name) for name in names if name.startswith(incomplete)]
 
 

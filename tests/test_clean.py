@@ -28,6 +28,7 @@ from click.testing import CliRunner
 
 from aisland import clean
 from aisland.cli import main
+from aisland.cli import toplevel as cli_toplevel
 
 NOW = datetime(2026, 8, 4, 12, 0, 0)
 
@@ -425,7 +426,7 @@ def test_the_cli_forwards_its_options(monkeypatch: pytest.MonkeyPatch) -> None:
         seen.append({"project": project, **kwargs})
         return 0
 
-    monkeypatch.setattr(clean, "clean_project", _record)
+    monkeypatch.setattr(cli_toplevel, "clean_project", _record)
     result = CliRunner().invoke(main, ["clean", "proj", "--keep-days", "3", "--dry-run", "-y"])
 
     assert result.exit_code == 0
@@ -439,7 +440,7 @@ def test_the_cli_defaults_to_the_documented_retention_window(monkeypatch: pytest
         seen.append(kwargs)
         return 0
 
-    monkeypatch.setattr(clean, "clean_project", _record)
+    monkeypatch.setattr(cli_toplevel, "clean_project", _record)
     CliRunner().invoke(main, ["clean", "proj"])
 
     assert seen[0]["keep_days"] == clean.DEFAULT_KEEP_DAYS == 7
@@ -786,7 +787,7 @@ def test_the_restore_cli_forwards_its_options(monkeypatch: pytest.MonkeyPatch) -
         seen.append({"project": project, **kwargs})
         return 0
 
-    monkeypatch.setattr(clean, "restore_backup", _record)
+    monkeypatch.setattr(cli_toplevel, "restore_backup", _record)
     result = CliRunner().invoke(
         main,
         ["backups", "restore", "proj", "--stamp", "20260804-120000", "--entry", "build", "--force", "--dry-run", "-y"],
@@ -812,7 +813,7 @@ def test_the_list_cli_forwards_its_options(monkeypatch: pytest.MonkeyPatch) -> N
         seen.append((project, kwargs))
         return 0
 
-    monkeypatch.setattr(clean, "list_store", _record)
+    monkeypatch.setattr(cli_toplevel, "list_store", _record)
     CliRunner().invoke(main, ["backups", "list", "proj", "--keep-days", "3"])
     CliRunner().invoke(main, ["backups", "list"])
 
@@ -1008,7 +1009,7 @@ def test_the_prune_cli_forwards_its_options(monkeypatch: pytest.MonkeyPatch) -> 
         seen.append(kwargs)
         return 0
 
-    monkeypatch.setattr(clean, "prune_store", _record)
+    monkeypatch.setattr(cli_toplevel, "prune_store", _record)
     CliRunner().invoke(main, ["backups", "prune", "--keep-days", "2", "--dry-run", "-y"])
     CliRunner().invoke(main, ["backups", "prune"])
 

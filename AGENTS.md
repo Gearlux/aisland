@@ -253,7 +253,8 @@ start-time port pre-flight naming the PID is the only signal). All service state
   `Error: <it> (run `aisland --debug …` for the traceback)` line; `aisland --debug` re-raises it and prints the
   traceback of aisland's own refusals too; any other exception is a bug and keeps its traceback. An `except` names
   what can fail there (`OSError`, `ET.ParseError`, `tomllib.TOMLDecodeError`), never `Exception` — except around a
-  project's own code, a completion callback and the pytest plugin's hooks (it loads in every pytest run). Every download goes through `downloads.download` (a timeout, no
+  project's own code, a completion callback (`errors.quiet_completion`, the one guard every completer is wrapped in:
+  a failure offers nothing, never a traceback in the shell) and the pytest plugin's hooks (it loads in every pytest run). Every download goes through `downloads.download` (a timeout, no
   part file left), and a `git` network call sets `GIT_TERMINAL_PROMPT=0` and gives up on a silent remote (`gitcmd.py`)
   (`tests/test_errors_exit_one.py::test_no_library_module_raises_clicks_own_exception_or_exits` and its neighbours,
   `tests/test_downloads.py`).
@@ -277,6 +278,15 @@ start-time port pre-flight naming the PID is the only signal). All service state
   callback takes `Optional[click.Context]`/`Optional[click.Parameter]`. What stays `Any` — a parsed TOML table
   (`pyproject.Table`), Jenkins' or VS Code's JSON, a project's plugin object, a service's own options — says why on
   the line, or once on the alias it goes through. No `# type: ignore` is added to make a type fit.
+- **A container names what it holds:** the package is checked with `disallow_any_generics` (`mypy.ini`'s
+  `[mypy-aisland,aisland.*]`; the tests are not held to it) — never a bare `dict`, `set`, `List[dict]` or
+  `CompletedProcess`. The project records setup passes around are `projects.ProjectMetadata`, a client file's servers
+  `mcp_config.McpServer`; a test builds a record with `tests/records.py::project_metadata`.
+- **Imports sit at the top of each module** (aisland rules → "Top-Level Imports"). The two that would close a
+  module-level cycle stay in their function and say so — `projects.get_workspace_name` → `workspace_file`,
+  `provision.install` → `services.jenkins` — and a standalone script's optional library stays lazy
+  (`wheels_install.py`'s PyYAML, `filter_repo.py`'s git-filter-repo). `tests/test_imports.py` imports every module
+  first, with no aisland module loaded before it, so a new cycle fails there.
 
 ## Workspace root and paths
 

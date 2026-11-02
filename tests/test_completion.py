@@ -14,6 +14,7 @@ from click.testing import CliRunner
 
 from aisland import completion as comp
 from aisland.cli import main
+from aisland.cli import toplevel as cli_toplevel
 from aisland.projects import get_workspace_name
 
 LIQUIFAI_APPS = ["matrainer", "sonair"]
@@ -293,7 +294,7 @@ def test_the_cli_warns_when_a_click_app_emits_nothing(
 ) -> None:
     """An inert block is the silent failure this whole module exists to surface."""
     monkeypatch.setattr(comp, "_program_exists", lambda prog: True)
-    monkeypatch.setattr(comp, "verify_click_completion", lambda prog="aisland": False)
+    monkeypatch.setattr(cli_toplevel, "verify_click_completion", lambda prog="aisland": False)
 
     result = CliRunner().invoke(main, ["completion", "install", "--target-rc", str(tmp_path / "frag")])
 

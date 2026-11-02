@@ -14,7 +14,8 @@ import subprocess
 import time
 import xml.etree.ElementTree as ET
 from pathlib import Path
-from typing import TYPE_CHECKING, List, Optional
+from typing import TYPE_CHECKING, AbstractSet, Dict, List, Optional
+from xml.sax.saxutils import escape
 
 import click
 
@@ -23,7 +24,7 @@ from aisland import pyproject as pyproject_toml
 from aisland import supervisor
 from aisland.ci_scaffold import registers_slow_marker
 from aisland.errors import AislandError
-from aisland.projects import get_workspace_root
+from aisland.projects import ProjectMetadata, get_install_order, get_workspace_name, get_workspace_root
 
 if TYPE_CHECKING:
     from aisland.services.jenkins import JenkinsService
@@ -41,14 +42,48 @@ NIGHTLY_CHECK_CRON = "30 9 * * 1-5"
 
 
 def init_pipelines(service: "JenkinsService", project_name: Optional[str] = None, local: bool = False) -> None:
-    """Seed ``service``'s Jenkins with Multi-branch pipelines for projects discovered in the workspace."""
+    """Seed ``service``'s Jenkins: a job per project — a multibranch pipeline per ``Jenkinsfile``, or with ``local`` a
+    pipeline job per ``Jenkinsfile.local``, its script embedded — the orchestrator over them, the nightly check
+    (``local``), the dashboard and the workspace's properties; Jenkins is stopped while its files change."""
     home = service.service_data_dir
     service.setup()
     # setup_plugins returns True if it actually installed/updated something
     plugins_changed = service.setup_plugins()
 
-    workspace_root = get_workspace_root()
+    projects = _projects_to_seed(get_workspace_root(), project_name, local)
+    if not projects:
+        click.echo("No projects with the required Jenkinsfile found to initialize.")
+        return
 
+    jobs_dir = home / "jobs"
+    jobs_dir.mkdir(parents=True, exist_ok=True)
+    click.echo(f"Initializing Jenkins pipelines for {len(projects)} project(s)...")
+    for project_path in projects:
+        _seed_project_job(home, jobs_dir, project_path, local)
+
+    # Create the orchestrator job
+    _create_orchestrator_job(home, local, [p.name for p in projects if p.name])
+    if local:
+        _create_nightly_check_job(home)
+
+    _stop_with_a_config_xml(service, home)
+    setup_dashboard_view(home)
+    setup_global_properties(home)
+
+    if local:
+        if click.confirm("Reduce Jenkins security for faster local access? (Disables CSRF, allows anonymous read)"):
+            reduce_security(home)
+
+    click.echo("Starting Jenkins to load the new plugins, pipelines, and globalProperties...")
+    service.launch(background=True)
+    if plugins_changed:
+        click.echo("Jenkins plugins updated.")
+    click.echo("Jenkins started in the background.")
+
+
+def _projects_to_seed(workspace_root: Path, project_name: Optional[str], local: bool) -> List[Path]:
+    """The project folders to seed: ``project_name``'s, refused without the Jenkinsfile the mode needs, else every
+    folder holding one."""
     if project_name:
         project_path = workspace_root / project_name
         if not project_path.exists() or not project_path.is_dir():
@@ -57,54 +92,44 @@ def init_pipelines(service: "JenkinsService", project_name: Optional[str] = None
             raise AislandError(f"Project '{project_name}' does not have a Jenkinsfile at its root.")
         if local and not (project_path / "Jenkinsfile.local").exists():
             raise AislandError(f"Project '{project_name}' does not have a Jenkinsfile.local at its root.")
-        projects = [project_path]
-    else:
-        if local:
-            projects = [p for p in workspace_root.iterdir() if p.is_dir() and (p / "Jenkinsfile.local").exists()]
-        else:
-            projects = [p for p in workspace_root.iterdir() if p.is_dir() and (p / "Jenkinsfile").exists()]
+        return [project_path]
+    if local:
+        return [p for p in workspace_root.iterdir() if p.is_dir() and (p / "Jenkinsfile.local").exists()]
+    return [p for p in workspace_root.iterdir() if p.is_dir() and (p / "Jenkinsfile").exists()]
 
-    if not projects:
-        click.echo("No projects with the required Jenkinsfile found to initialize.")
+
+def _seed_project_job(home: Path, jobs_dir: Path, project_path: Path, local: bool) -> None:
+    """One project's job: ``<project>.local`` with its ``Jenkinsfile.local`` embedded, or a multibranch job over its
+    remote with the credentials Jenkins holds for it."""
+    project = f"{project_path.name}.local" if local else project_path.name
+    project_job_dir = jobs_dir / project
+    project_job_dir.mkdir(exist_ok=True)
+
+    if local:
+        # For local jobs, embed the Jenkinsfile.local content directly to avoid needing commits
+        jenkinsfile_path = project_path / "Jenkinsfile.local"
+        if not jenkinsfile_path.exists():
+            failures.warn(f"  - Warning: {jenkinsfile_path} not found for {project}. Skipping.")
+            return
+        config_xml = local_job_config(project_path.name, jenkinsfile_path.read_text(), project_path)
+        (project_job_dir / "config.xml").write_text(config_xml)
+        click.echo(f"  - Seeded local job (embedded script): {project}")
         return
 
-    jobs_dir = home / "jobs"
-    jobs_dir.mkdir(parents=True, exist_ok=True)
+    # Standard Multibranch Pipeline for remote jobs
+    remote_url = _get_git_remote(project_path)
+    if not remote_url:
+        click.echo(f"  - Skipping {project}: Could not determine Git remote.")
+        return
+    cred_id = _find_credentials(home, remote_url)
+    (project_job_dir / "config.xml").write_text(_multibranch_config(project, remote_url, cred_id))
+    click.echo(f"  - Seeded job: {project} (Remote: {remote_url}, CredID: {cred_id})")
 
-    click.echo(f"Initializing Jenkins pipelines for {len(projects)} project(s)...")
 
-    for project_path in projects:
-        project_base_name: Optional[str] = project_path.name
-        if project_base_name is None:
-            continue
-
-        project: str = f"{project_base_name}.local" if local else project_base_name
-        project_job_dir = jobs_dir / project
-        project_job_dir.mkdir(exist_ok=True)
-
-        if local:
-            # For local jobs, embed the Jenkinsfile.local content directly to avoid needing commits
-            jenkinsfile_path = project_path / "Jenkinsfile.local"
-            if jenkinsfile_path.exists():
-                config_xml = local_job_config(project_base_name, jenkinsfile_path.read_text(), project_path)
-                config_file = project_job_dir / "config.xml"
-                config_file.write_text(config_xml)
-                click.echo(f"  - Seeded local job (embedded script): {project}")
-                continue
-            else:
-                failures.warn(f"  - Warning: {jenkinsfile_path} not found for {project}. Skipping.")
-                continue
-
-        # Standard Multibranch Pipeline for remote jobs
-        remote_url = _get_git_remote(project_path)
-        if not remote_url:
-            click.echo(f"  - Skipping {project}: Could not determine Git remote.")
-            continue
-        cred_id = _find_credentials(home, remote_url)
-        script_path = "Jenkinsfile"
-
-        # Simplified Multibranch Pipeline config.xml template
-        config_xml = f"""<?xml version='1.1' encoding='UTF-8'?>
+def _multibranch_config(project: str, remote_url: str, cred_id: str) -> str:
+    """The config.xml of a multibranch job over ``remote_url`` (a simplified Multibranch Pipeline template)."""
+    script_path = "Jenkinsfile"
+    config_xml = f"""<?xml version='1.1' encoding='UTF-8'?>
 <org.jenkinsci.plugins.workflow.multibranch.WorkflowMultiBranchProject plugin="workflow-multibranch">
   <properties/>
   <folderViews class="jenkins.branch.MultiBranchProjectViewHolder" plugin="branch-api">
@@ -152,16 +177,11 @@ def init_pipelines(service: "JenkinsService", project_name: Optional[str] = None
   </factory>
 </org.jenkinsci.plugins.workflow.multibranch.WorkflowMultiBranchProject>
 """
-        config_file = project_job_dir / "config.xml"
-        config_file.write_text(config_xml)
-        click.echo(f"  - Seeded job: {project} (Remote: {remote_url}, CredID: {cred_id})")
+    return config_xml
 
-    # Create the orchestrator job
-    initialized_names = [p.name for p in projects if p.name]
-    _create_orchestrator_job(home, local, initialized_names)
-    if local:
-        _create_nightly_check_job(home)
 
+def _stop_with_a_config_xml(service: "JenkinsService", home: Path) -> None:
+    """Jenkins stopped, with a ``config.xml`` in ``home`` for the writes that follow."""
     # Two failure modes to avoid when injecting globalProperties:
     #   1. Jenkins is running → our config.xml edits get clobbered by
     #      Jenkins's in-memory model on its next save.
@@ -181,19 +201,6 @@ def init_pipelines(service: "JenkinsService", project_name: Optional[str] = None
         if not config_file.exists():
             failures.warn("  - Warning: config.xml did not appear within 90s.")
     service.stop()
-
-    setup_dashboard_view(home)
-    setup_global_properties(home)
-
-    if local:
-        if click.confirm("Reduce Jenkins security for faster local access? (Disables CSRF, allows anonymous read)"):
-            reduce_security(home)
-
-    click.echo("Starting Jenkins to load the new plugins, pipelines, and globalProperties...")
-    service.launch(background=True)
-    if plugins_changed:
-        click.echo("Jenkins plugins updated.")
-    click.echo("Jenkins started in the background.")
 
 
 def _get_git_remote(project_path: Path) -> Optional[str]:
@@ -297,82 +304,97 @@ def local_job_config(project_base_name: str, script_content: str, project_path: 
 
 def _create_orchestrator_job(home: Path, local: bool, initialized_projects: List[str]) -> None:
     """Create an orchestrator job that builds all discovered projects in topological order."""
-    from aisland.projects import get_install_order, get_workspace_name, get_workspace_root
-
     workspace_root = get_workspace_root()
     install_order = get_install_order(workspace_root)
     base_name = get_workspace_name()
+    phases = _build_phases(install_order, initialized_projects)
+    pipeline_script = _orchestrator_script(_phase_stages(phases, local, workspace_root), local)
 
-    # `initialized_projects` is a list of Jenkins job dir names, which follow the
-    # workspace directory names (e.g. "loggair", "recordstream") — NOT the pyproject
-    # distribution names (which may differ: "loggair", "recordstream"). Build a
-    # lookup that maps both forms to the canonical workspace-dir form so we can
-    # match either a pyproject name or a dir name against initialized_projects.
+    job_name = f"{base_name}.local" if local else base_name
+    description = (
+        f"Orchestrates the build of all local {base_name} workspace projects based on dependencies."
+        if local
+        else f"Orchestrates the build of all {base_name} workspace projects based on dependencies."
+    )
+    project_job_dir = home / "jobs" / job_name
+    project_job_dir.mkdir(parents=True, exist_ok=True)
+    (project_job_dir / "config.xml").write_text(_orchestrator_config(pipeline_script, description, local))
+    click.echo(f"  - Seeded orchestrator job: {job_name}")
+
+
+def _build_phases(install_order: List[ProjectMetadata], initialized_projects: List[str]) -> Dict[int, List[str]]:
+    """Each seeded project by its phase: one after the deepest of its workspace dependencies, so a phase builds in
+    parallel what the next one needs.
+
+    ``initialized_projects`` are Jenkins job folder names, which follow the workspace folders — NOT the distribution
+    names, which may differ (a dashed name, a dashless folder): both are mapped to the folder form to match.
+    """
     initialized_set = set(initialized_projects)
-
-    def _to_dir_name(pyproject_name: str) -> str:
-        return pyproject_to_workspace_dir(pyproject_name, initialized_set)
-
-    depths: dict[str, int] = {}
+    depths: Dict[str, int] = {}
     for p in install_order:
-        dir_name = _to_dir_name(p["name"])
+        dir_name = pyproject_to_workspace_dir(p["name"], initialized_set)
         if dir_name not in initialized_set:
             continue
-
         deps = []
         for dep in p["dependencies"]:
             dep_name = dep.split(">=")[0].split("==")[0].split("<=")[0].split("[")[0].strip()
-            dep_dir = _to_dir_name(dep_name)
+            dep_dir = pyproject_to_workspace_dir(dep_name, initialized_set)
             if dep_dir in initialized_set and dep_dir != dir_name:
                 deps.append(dep_dir)
+        depths[dir_name] = max((depths.get(d, -1) for d in deps), default=-1) + 1
 
-        max_dep_depth = -1
-        for d in deps:
-            max_dep_depth = max(max_dep_depth, depths.get(d, -1))
-
-        depths[dir_name] = max_dep_depth + 1
-
-    phases: dict[int, list[str]] = {}
+    phases: Dict[int, List[str]] = {}
     for proj_name, depth_val in depths.items():
         phases.setdefault(depth_val, []).append(proj_name)
+    return phases
 
+
+def _phase_stages(phases: Dict[int, List[str]], local: bool, workspace_root: Path) -> str:
+    """The orchestrator's stages: one per phase, its projects' builds in parallel."""
     stages_str = ""
     for depth in sorted(phases.keys()):
         phase_projects = phases[depth]
         if not phase_projects:
             continue
-
         stages_str += f"        stage('Phase {depth}') {{\n            parallel {{\n"
-        for proj in phase_projects:
-            job_name = f"{proj}.local" if local else f"{proj}/main"
-            stages_str += f"                stage('Build {proj}') {{\n"
-            if local:
-                # In local-orchestration mode we want the run to walk
-                # through every project even when individual builds fail
-                # — `catchError` marks the offending stage red but keeps
-                # the overall orchestrator result at SUCCESS so the user
-                # can see all failures in one shot instead of fixing
-                # them one-by-one. CI keeps the strict propagate: true
-                # so PRs/branches stay gated.
-                stages_str += "                    steps {\n"
-                stages_str += "                        catchError(buildResult: 'SUCCESS', stageResult: 'FAILURE') {\n"
-                # A project with slow tests gets the nightly run's switch (`slowTests()` below); one without has
-                # no Slow Tests stage, and Jenkins would only drop a parameter it does not define.
-                slow_switch = (
-                    ", parameters: [booleanParam(name: 'SLOW_TESTS', value: slowTests())]"
-                    if _project_has_slow_tests(workspace_root / proj)
-                    else ""
-                )
-                stages_str += (
-                    f"                            build job: '{job_name}', wait: true, propagate: true{slow_switch}\n"
-                )
-                stages_str += "                        }\n"
-                stages_str += "                    }\n"
-            else:
-                stages_str += f"                    steps {{ build job: '{job_name}', wait: true, propagate: true }}\n"
-            stages_str += "                }\n"
+        stages_str += "".join(_build_stage(proj, local, workspace_root) for proj in phase_projects)
         stages_str += "            }\n        }\n"
+    return stages_str
 
+
+def _build_stage(proj: str, local: bool, workspace_root: Path) -> str:
+    """The stage that builds one project's job."""
+    stage = ""
+    job_name = f"{proj}.local" if local else f"{proj}/main"
+    stage += f"                stage('Build {proj}') {{\n"
+    if local:
+        # In local-orchestration mode we want the run to walk
+        # through every project even when individual builds fail
+        # — `catchError` marks the offending stage red but keeps
+        # the overall orchestrator result at SUCCESS so the user
+        # can see all failures in one shot instead of fixing
+        # them one-by-one. CI keeps the strict propagate: true
+        # so PRs/branches stay gated.
+        stage += "                    steps {\n"
+        stage += "                        catchError(buildResult: 'SUCCESS', stageResult: 'FAILURE') {\n"
+        # A project with slow tests gets the nightly run's switch (`slowTests()` below); one without has
+        # no Slow Tests stage, and Jenkins would only drop a parameter it does not define.
+        slow_switch = (
+            ", parameters: [booleanParam(name: 'SLOW_TESTS', value: slowTests())]"
+            if _project_has_slow_tests(workspace_root / proj)
+            else ""
+        )
+        stage += f"                            build job: '{job_name}', wait: true, propagate: true{slow_switch}\n"
+        stage += "                        }\n"
+        stage += "                    }\n"
+    else:
+        stage += f"                    steps {{ build job: '{job_name}', wait: true, propagate: true }}\n"
+    stage += "                }\n"
+    return stage
+
+
+def _orchestrator_script(stages_str: str, local: bool) -> str:
+    """The orchestrator's pipeline script around ``stages_str``."""
     # `agent none`: the orchestrator only TRIGGERS jobs (`build job:` needs no node). Holding a
     # built-in executor for the whole run left one of the node's two executors for the projects,
     # so every "parallel" phase ran one project at a time (2026-09-13: one project waited 875 s for
@@ -412,18 +434,12 @@ def _create_orchestrator_job(home: Path, local: bool, initialized_projects: List
 {slow_tests_param}{triggers_block}    stages {{
 {stages_str}    }}
 }}"""
+    return pipeline_script
 
-    from xml.sax.saxutils import escape
 
+def _orchestrator_config(pipeline_script: str, description: str, local: bool) -> str:
+    """The orchestrator's config.xml, its script escaped."""
     escaped_script = escape(pipeline_script)
-
-    job_name = f"{base_name}.local" if local else base_name
-    description = (
-        f"Orchestrates the build of all local {base_name} workspace projects based on dependencies."
-        if local
-        else f"Orchestrates the build of all {base_name} workspace projects based on dependencies."
-    )
-
     timer_property = (
         f"""
     <org.jenkinsci.plugins.workflow.job.properties.PipelineTriggersJobProperty>
@@ -466,12 +482,7 @@ def _create_orchestrator_job(home: Path, local: bool, initialized_projects: List
   <disabled>false</disabled>
 </flow-definition>
 """
-    jobs_dir = home / "jobs"
-    project_job_dir = jobs_dir / job_name
-    project_job_dir.mkdir(parents=True, exist_ok=True)
-    config_file = project_job_dir / "config.xml"
-    config_file.write_text(config_xml)
-    click.echo(f"  - Seeded orchestrator job: {job_name}")
+    return config_xml
 
 
 def _create_nightly_check_job(home: Path) -> None:
@@ -482,8 +493,6 @@ def _create_nightly_check_job(home: Path) -> None:
     the job's properties (armed at seeding) and in the pipeline's `triggers` (re-applied at each run).
     """
     from xml.sax.saxutils import escape
-
-    from aisland.projects import get_workspace_name
 
     job_name = f"{get_workspace_name()}.nightly-check"
     pipeline_script = f"""// The morning report of the nightly runs (aisland/nightly.py): written to aisland/data/nightly/<date>.md,
@@ -539,7 +548,6 @@ pipeline {{
 
 def setup_dashboard_view(home: Path, name: Optional[str] = None) -> None:
     """Create a Build Monitor View for the Ecosystem branching workflow."""
-    from aisland.projects import get_workspace_name
 
     base_name = get_workspace_name()
     if name is None:
@@ -654,8 +662,6 @@ def setup_global_properties(home: Path) -> None:
     config_file = home / "config.xml"
     if not config_file.exists():
         return
-
-    from aisland.projects import get_workspace_root
 
     try:
         tree = ET.parse(config_file)
@@ -790,7 +796,7 @@ def _project_has_slow_tests(project_dir: Path) -> bool:
     return registers_slow_marker(pyproject_toml.load(pyproject))
 
 
-def pyproject_to_workspace_dir(pyproject_name: str, initialized_set: set) -> str:
+def pyproject_to_workspace_dir(pyproject_name: str, initialized_set: AbstractSet[str]) -> str:
     """Map a pyproject distribution name to its workspace directory name.
 
     Handles two conventions:

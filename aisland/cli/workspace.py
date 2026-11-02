@@ -10,13 +10,25 @@ from typing import Callable, Optional, Tuple
 
 import click
 
-from aisland import configure, discovery, editor_files, env_example, locations, manager, recording, tracking
+from aisland import (
+    configure,
+    discovery,
+    editor_files,
+    env_example,
+    harness,
+    locations,
+    manager,
+    provision,
+    recording,
+    tracking,
+)
 from aisland import workspace as workspace_mod
 from aisland import workspace_check
 from aisland.cli import configure as configure_cli
 from aisland.cli import editor as editor_cli
 from aisland.cli._base import _complete_submodules, _complete_workspace_projects, _configure_root, _editor_root, _Group
 from aisland.errors import AislandError
+from aisland.mirrors import run_sync
 from aisland.projects import get_workspace_root, workspace_folders
 
 # --- Workspace Commands ---
@@ -245,7 +257,6 @@ def workspace_provision(ctx: click.Context, as_json: bool) -> None:
     aisland workspace provision
     aisland workspace provision install
     """
-    from aisland import provision
 
     if ctx.invoked_subcommand is not None:
         return
@@ -260,7 +271,6 @@ def workspace_provision(ctx: click.Context, as_json: bool) -> None:
 @workspace_provision.command("install")
 def workspace_provision_install() -> None:
     """Install every system tool this machine needs: aisland's own and the projects' sys-dependencies."""
-    from aisland import provision
 
     provision.install(_configure_root())
 
@@ -277,7 +287,6 @@ def workspace_harness(ctx: click.Context, as_json: bool) -> None:
     [harness]
     sets = ["aisland", "models", { git = "https://github.com/acme/agent-rules", ref = "v2" }]
     """
-    from aisland import harness
 
     if ctx.invoked_subcommand is not None:
         return
@@ -298,7 +307,6 @@ def workspace_harness(ctx: click.Context, as_json: bool) -> None:
 @workspace_harness.command("install")
 def workspace_harness_install() -> None:
     """Install the harness sets into the workspace, as `aisland setup` does."""
-    from aisland import harness
 
     root = _configure_root()
     notes = harness.install_harness(root)
@@ -315,7 +323,6 @@ def workspace_harness_export(folder: Path) -> None:
     \b
     aisland workspace harness export agents
     """
-    from aisland import harness
 
     copied = harness.export(folder)
     click.echo(f"==> Copied aisland's harness set into {folder} ({len(copied)} files)")
@@ -338,7 +345,6 @@ def workspace_mirror_sync(project: Optional[str]) -> None:
     mirror, and a local branch the primary lacks is reported, not pushed. Fast-forward only: a branch the mirror moved is refused, a tag that differs is never overwritten, and nothing on
     the mirror is ever deleted. Exit 1 when anything was refused or failed.
     """
-    from aisland.mirrors import run_sync
 
     if not locations.workspace_found():
         raise AislandError(locations.missing_workspace_message())

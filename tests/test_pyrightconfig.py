@@ -11,14 +11,16 @@ import json
 from pathlib import Path
 
 from aisland.editor_files import write_pyrightconfig
+from aisland.projects import ProjectMetadata
+from tests.records import project_metadata
 
 
-def _fake_projects(workspace: Path, names: list[str]) -> list[dict]:
+def _fake_projects(workspace: Path, names: list[str]) -> list[ProjectMetadata]:
     """Build ``get_install_order``-shaped dicts (only ``path`` is consumed)."""
-    projects = []
+    projects: list[ProjectMetadata] = []
     for name in names:
         (workspace / name).mkdir(parents=True, exist_ok=True)
-        projects.append({"name": name, "path": workspace / name})
+        projects.append(project_metadata(name, workspace / name))
     return projects
 
 
@@ -47,7 +49,7 @@ class TestWritePyrightConfig:
         through `extraPaths`. A project outside the workspace is no file of the root's: it is not excluded."""
         projects = _fake_projects(tmp_path / "acme", ["matrainer", "confluid"])
         (tmp_path / "elsewhere").mkdir()
-        projects.append({"name": "elsewhere", "path": tmp_path / "elsewhere"})
+        projects.append(project_metadata("elsewhere", tmp_path / "elsewhere"))
         write_pyrightconfig(tmp_path / "acme", projects)
 
         data = json.loads((tmp_path / "acme" / "pyrightconfig.json").read_text())

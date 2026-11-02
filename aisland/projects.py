@@ -3,7 +3,7 @@
 import re
 import subprocess
 from pathlib import Path
-from typing import Dict, List, Optional, Tuple
+from typing import Dict, List, Optional, Tuple, TypedDict
 
 from aisland import gitmodules, locations
 from aisland import pyproject as pyproject_toml
@@ -59,7 +59,17 @@ def discover_projects(root: Path, workspace_root: Optional[Path] = None) -> List
     return projects
 
 
-def get_project_metadata(pyproject_path: Path) -> dict:
+class ProjectMetadata(TypedDict):
+    """What :func:`get_project_metadata` reads of a project's ``pyproject.toml``: its distribution name, its folder,
+    every requirement (its extras' included) and whether it has a ``dev`` extra."""
+
+    name: str
+    path: Path
+    dependencies: List[str]
+    has_dev: bool
+
+
+def get_project_metadata(pyproject_path: Path) -> ProjectMetadata:
     """Extract name and dependencies from pyproject.toml."""
     data = pyproject_toml.load(pyproject_path)
     project_info = data.get("project", {})
@@ -78,7 +88,7 @@ def get_project_metadata(pyproject_path: Path) -> dict:
     }
 
 
-def internal_dependencies(projects: List[dict]) -> Dict[str, List[str]]:
+def internal_dependencies(projects: List[ProjectMetadata]) -> Dict[str, List[str]]:
     """Map each project name to the names of the workspace projects it depends on."""
     project_names = {p["name"] for p in projects}
     adj: Dict[str, List[str]] = {p["name"]: [] for p in projects}
@@ -91,7 +101,7 @@ def internal_dependencies(projects: List[dict]) -> Dict[str, List[str]]:
     return adj
 
 
-def install_groups(projects: List[dict]) -> List[List[dict]]:
+def install_groups(projects: List[ProjectMetadata]) -> List[List[ProjectMetadata]]:
     """Group projects into install units, dependencies first; a dependency CYCLE is one unit.
 
     Tarjan's strongly-connected-components: a cycle (``a[dev]`` requires ``b`` and ``b`` requires
@@ -106,7 +116,7 @@ def install_groups(projects: List[dict]) -> List[List[dict]]:
     low: Dict[str, int] = {}
     stack: List[str] = []
     on_stack: set[str] = set()
-    groups: List[List[dict]] = []
+    groups: List[List[ProjectMetadata]] = []
 
     def visit(name: str) -> None:
         index[name] = low[name] = len(index)
@@ -134,13 +144,13 @@ def install_groups(projects: List[dict]) -> List[List[dict]]:
     return groups
 
 
-def get_install_order(workspace_root: Path) -> List[dict]:
+def get_install_order(workspace_root: Path) -> List[ProjectMetadata]:
     """Determine the correct installation order using topological sort based on workspace dependencies."""
     pyprojects = discover_projects(workspace_root)
     return dependency_order([get_project_metadata(p) for p in pyprojects])
 
 
-def dependency_order(projects: List[dict]) -> List[dict]:
+def dependency_order(projects: List[ProjectMetadata]) -> List[ProjectMetadata]:
     """``projects`` with every workspace dependency before its dependents; otherwise in the order given."""
     adj = internal_dependencies(projects)
 

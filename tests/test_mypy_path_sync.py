@@ -13,6 +13,8 @@ from __future__ import annotations
 from pathlib import Path
 
 from aisland.editor_files import sync_mypy_path
+from aisland.projects import ProjectMetadata
+from tests.records import project_metadata
 
 _INI_TEMPLATE = """\
 [mypy]
@@ -24,8 +26,8 @@ ignore_missing_imports = True
 """
 
 
-def _projects(root: Path, *names: str) -> list[dict]:
-    return [{"name": n, "path": root / n} for n in names]
+def _projects(root: Path, *names: str) -> list[ProjectMetadata]:
+    return [project_metadata(n, root / n) for n in names]
 
 
 def test_appends_missing_projects(tmp_path: Path) -> None:

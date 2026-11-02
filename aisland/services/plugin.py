@@ -25,6 +25,7 @@ import click
 
 from aisland import projects, supervisor
 from aisland.errors import AislandError
+from aisland.selection import add_command
 from aisland.services.base import BaseService
 
 
@@ -73,7 +74,6 @@ class ServiceContext:
     def choose_command(self, selection: str, name: str) -> str:
         """The command that adds ``name`` to ``selection`` keeping what this machine chose — ``set`` takes the whole
         list, so naming ``name`` alone would drop the rest."""
-        from aisland.selection import add_command
 
         return add_command(self.workspace, selection, name)
 

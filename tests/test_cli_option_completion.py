@@ -15,6 +15,7 @@ import pytest
 
 from aisland.cli import _base as cli_base
 from aisland.cli import main
+from aisland.errors import quiet_completion
 
 from .test_wheels import _complete, _project, _workspace
 
@@ -98,3 +99,20 @@ def test_every_group_makes_its_commands_and_subgroups_with_the_completing_classe
         assert isinstance(group, cli_base._Group), group.name
         for command in group.commands.values():
             assert isinstance(command, (cli_base._Group, cli_base._Command)), command.name
+
+
+def test_a_completion_callback_that_fails_offers_nothing_and_one_that_works_answers() -> None:
+    """``quiet_completion``: a failure while completing (a workspace it cannot read) offers no candidates, never a
+    traceback in the shell; a callback that works answers as it would without it."""
+
+    @quiet_completion
+    def broken(incomplete: str) -> List[click.shell_completion.CompletionItem]:
+        raise OSError(f"workspace.toml: cannot read ({incomplete})")
+
+    @quiet_completion
+    def working(incomplete: str) -> List[click.shell_completion.CompletionItem]:
+        return [click.shell_completion.CompletionItem(incomplete + "els")]
+
+    assert broken("mod") == []
+    assert [item.value for item in working("mod")] == ["models"]
+    assert working.__name__ == "working"

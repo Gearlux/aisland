@@ -8,7 +8,7 @@ import click
 
 from aisland import failures, provision, sources
 from aisland.paths import DATA_DIR
-from aisland.projects import get_workspace_root
+from aisland.projects import discover_projects, get_project_metadata, get_workspace_root
 from aisland.services.base import BaseService
 from aisland.services.jenkins import JenkinsService
 
@@ -60,8 +60,6 @@ class SwiftBarService(BaseService):
         excluded (it has no ``pyproject.toml``); callers add it separately.
         """
         import graphlib
-
-        from aisland.projects import discover_projects, get_project_metadata
 
         projects = [get_project_metadata(p) for p in discover_projects(workspace_root)]
         project_names = {p["name"] for p in projects if p["name"]}

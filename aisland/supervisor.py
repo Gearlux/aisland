@@ -40,15 +40,10 @@ from typing import Any, Dict, Iterator, List, NotRequired, Optional, Tuple, Type
 import click
 import yaml
 
-from aisland import failures, locations
+from aisland import failures, provision
 from aisland.errors import AislandError
-
-# Mirrors manager.py's path constants. Kept local (not imported) because
-# manager imports this module for BaseService — importing manager back at
-# module level would be a circular import.
-BASE_DIR = locations.state_dir()
-DATA_DIR = BASE_DIR / "data"
-BIN_DIR = BASE_DIR / "bin"
+from aisland.paths import BIN_DIR, DATA_DIR
+from aisland.projects import get_workspace_root
 
 CONFIG_FILE = DATA_DIR / "process-compose.yaml"
 SOCKET_PATH = DATA_DIR / "process-compose.sock"
@@ -111,10 +106,6 @@ def ensure_binary() -> str:
     if binary:
         return binary
 
-    # Circular-dependency exception to the top-level-imports mandate: provision imports manager, which imports this
-    # module (BaseService delegates to it), so provision is imported here.
-    from aisland import provision
-
     provision.ask_to_install("process-compose")
     binary = find_binary()
     if binary is None:
@@ -135,7 +126,7 @@ def _connection_args() -> List[str]:
 
 def _run_client(
     args: List[str], capture: bool = True, env: Optional[Dict[str, str]] = None
-) -> subprocess.CompletedProcess:
+) -> subprocess.CompletedProcess[str]:
     """Run a process-compose client command against the aisland server."""
     binary = ensure_binary()
     cmd = [binary, *args, *_connection_args()]
@@ -737,6 +728,5 @@ def port_in_use(port: int) -> Optional[int]:
 
 def _workspace_root() -> Path:
     """Workspace root via manager's marker search (lazy import — see above)."""
-    from aisland.projects import get_workspace_root
 
     return get_workspace_root()

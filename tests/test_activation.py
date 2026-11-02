@@ -193,7 +193,7 @@ def test_a_folder_with_uncommitted_work_is_never_emptied(ws: Path, capsys: pytes
 def test_a_project_on_a_package_source_stays_empty_whatever_its_choice(
     ws: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    monkeypatch.setattr("aisland.sources.detached_projects", lambda root: {"models"})
+    monkeypatch.setattr("aisland.activation.detached_projects", lambda root: {"models"})
     activation.reconcile(ws)
     assert list((ws / "models").iterdir()) == []
     assert activation.machine_choice(ws, "models") is None  # the source emptied it, no choice was made
@@ -356,7 +356,7 @@ def test_setup_asks_then_reconciles(tmp_path: Path, monkeypatch: pytest.MonkeyPa
     def apply_all(*args: object, **kwargs: object) -> None:
         raise _Stop
 
-    monkeypatch.setattr("aisland.sources.apply_all", apply_all)
+    monkeypatch.setattr("aisland.manager.apply_all", apply_all)
     with pytest.raises(_Stop):
         manager.setup_workspace(non_interactive=True)
     assert calls == ["resolve True", "reconcile"]

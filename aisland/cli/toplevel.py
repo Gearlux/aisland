@@ -9,10 +9,13 @@ from typing import Optional
 import click
 
 from aisland import nightly, pytest_stats
-from aisland.clean import DEFAULT_KEEP_DAYS
+from aisland.clean import DEFAULT_KEEP_DAYS, clean_project, list_store, prune_store, restore_backup
 from aisland.cli._base import _Command, _Group
+from aisland.completion import install_completions, is_sourced_by, shell_snippet, verify_click_completion
+from aisland.doctor import run_doctor
 from aisland.manager import setup_workspace
 from aisland.mcp_config import generate_gemini_settings, generate_mcp_json
+from aisland.notebook_utils import clean_notebook_stdin
 from aisland.pytest_stats import DEFAULT_WINDOW_DAYS
 from aisland.quality import run_quality_gates
 
@@ -31,7 +34,6 @@ def notebooks_clean() -> None:
     Clear outputs of code cells from standard input.
     Can be used as a git filter to avoid committing notebook outputs.
     """
-    from aisland.notebook_utils import clean_notebook_stdin
 
     clean_notebook_stdin()
 
@@ -71,7 +73,6 @@ def setup(non_interactive: bool, install_all: bool) -> None:
 @click.command(cls=_Command)
 def doctor() -> None:
     """Check the shared .venv and the Docker/Colima setup for known recurring skew (exit 1 if any check fails)."""
-    from aisland.doctor import run_doctor
 
     raise SystemExit(run_doctor())
 
@@ -100,7 +101,6 @@ def clean(project: str, keep_days: int, dry_run: bool, yes: bool) -> None:
     aisland clean models               # move it, after confirming
     aisland clean models --keep-days 1 # sweep harder on a full disk
     """
-    from aisland.clean import clean_project
 
     raise SystemExit(clean_project(project, keep_days=keep_days, dry_run=dry_run, assume_yes=yes))
 
@@ -128,7 +128,6 @@ def backups() -> None:
 )
 def backups_list(project: Optional[str], keep_days: int) -> None:
     """Show every backup in the store (newest first), optionally just PROJECT's."""
-    from aisland.clean import list_store
 
     raise SystemExit(list_store(project, keep_days=keep_days))
 
@@ -155,7 +154,6 @@ def backups_prune(keep_days: int, dry_run: bool, yes: bool) -> None:
     aisland backups prune              # delete it (asks first)
     aisland backups prune --keep-days 1
     """
-    from aisland.clean import prune_store
 
     raise SystemExit(prune_store(keep_days=keep_days, dry_run=dry_run, assume_yes=yes))
 
@@ -188,7 +186,6 @@ def backups_restore(
     aisland backups restore models --entry checkpoints   # just this one, repeatable
     aisland backups restore models --force               # overwrite what came back on its own
     """
-    from aisland.clean import restore_backup
 
     raise SystemExit(restore_backup(project, stamp=stamp, only=entries, force=force, dry_run=dry_run, assume_yes=yes))
 
@@ -279,7 +276,6 @@ def completion_install(target_rc: Optional[Path], shell: Optional[str], no_prune
     Idempotent: every block is marker-delimited and rewritten in place, so re-run this after
     installing a new project rather than re-running the whole of `aisland setup`.
     """
-    from aisland.completion import install_completions, is_sourced_by, shell_snippet, verify_click_completion
 
     report = install_completions(target_rc=target_rc, shell=shell, prune=not no_prune)
 

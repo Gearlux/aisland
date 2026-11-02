@@ -38,6 +38,7 @@ import sys
 from pathlib import Path
 from typing import List, Literal, NamedTuple, Optional, Sequence, Tuple
 
+from aisland import discovery
 from aisland.projects import get_workspace_root
 
 #: The rc fragment `project.bashrc` sources. Gitignored, so writing it leaves no diff.
@@ -78,7 +79,6 @@ def workspace_click_clis(root: Optional[Path] = None) -> List[NonLiquifaiCli]:
     """The click CLIs the workspace's projects declare (``[tool.aisland] click-commands``, read by
     :mod:`aisland.discovery` without importing anything). A workspace whose declarations aisland cannot use (a
     :class:`~aisland.discovery.DeclarationError`) completes none: every command that reads them says why."""
-    from aisland import discovery
 
     try:
         found = discovery.discover(root or get_workspace_root())

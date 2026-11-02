@@ -47,7 +47,7 @@ from types import FrameType, ModuleType
 from typing import TYPE_CHECKING, Callable, Dict, Iterator, List, Mapping, Optional, Tuple
 
 from aisland import tunnel_shell
-from aisland.errors import AislandError
+from aisland.errors import AislandError, quiet_completion
 from aisland.tunnel import state_dir
 
 if TYPE_CHECKING:
@@ -227,6 +227,7 @@ def _save_cache(tunnels: List[Tunnel]) -> None:
         pass
 
 
+@quiet_completion
 def complete_tunnel(
     ctx: Optional[click.Context], param: Optional[click.Parameter], incomplete: str
 ) -> List[CompletionItem]:
@@ -235,17 +236,15 @@ def complete_tunnel(
     Like :func:`aisland.tunnel.complete_workspace` it answers from a file only — no network on a TAB —
     and an unreadable file offers nothing rather than breaking the shell's TAB.
     """
-    try:
-        from click.shell_completion import CompletionItem
+    # click is imported here, not at the top: this module runs where only the connection is wanted.
+    from click.shell_completion import CompletionItem
 
-        items = []
-        for entry in json.loads(cache_path().read_text()):
-            if str(entry["name"]).startswith(incomplete):
-                state = "online" if entry["online"] else "offline"
-                items.append(CompletionItem(entry["name"], help=f"{entry['tunnel_id']} — {state}"))
-        return items
-    except Exception:  # a completion callback must never break the shell
-        return []
+    items = []
+    for entry in json.loads(cache_path().read_text()):
+        if str(entry["name"]).startswith(incomplete):
+            state = "online" if entry["online"] else "offline"
+            items.append(CompletionItem(entry["name"], help=f"{entry['tunnel_id']} — {state}"))
+    return items
 
 
 # --------------------------------------------------------------------------------------------------

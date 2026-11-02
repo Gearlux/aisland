@@ -20,6 +20,7 @@ import pytest
 
 from aisland import git_exclude
 from aisland.editor_files import write_pyrightconfig
+from tests.records import project_metadata
 
 
 def _git(cwd: Path, *args: str) -> str:
@@ -41,7 +42,7 @@ def _repository(path: Path, files: tuple = ("pyproject.toml",)) -> Path:
 def _setup_files(project: Path) -> None:
     """What setup and the editable install leave in a project: the generated config and the install metadata, in a
     flat and in a src layout."""
-    write_pyrightconfig(project.parent, [{"name": project.name, "path": project}])
+    write_pyrightconfig(project.parent, [project_metadata(project.name, project)])
     (project / f"{project.name}.egg-info").mkdir()
     (project / f"{project.name}.egg-info" / "PKG-INFO").write_text("x\n")
     (project / "src" / f"{project.name}.egg-info").mkdir(parents=True)
@@ -70,7 +71,7 @@ def test_a_tracked_gitignore_is_left_as_it_is(tmp_path: Path) -> None:
 def test_running_setup_again_writes_each_line_once(tmp_path: Path) -> None:
     lib = _repository(tmp_path / "lib")
     _setup_files(lib)
-    write_pyrightconfig(tmp_path, [{"name": "lib", "path": lib}])
+    write_pyrightconfig(tmp_path, [project_metadata("lib", lib)])
     lines = _exclude_lines(lib)
     assert lines.count("/pyrightconfig.json") == 1 and lines.count("/**/*.egg-info/") == 1
 

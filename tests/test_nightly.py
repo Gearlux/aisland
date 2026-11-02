@@ -14,7 +14,7 @@ from typing import Any, Dict, List, Optional
 import pytest
 from click.testing import CliRunner
 
-from aisland import nightly, projects
+from aisland import nightly
 from aisland.ci_scaffold import TIMED_OUT_MESSAGE
 from aisland.cli import main
 from aisland.services import jenkins_jobs
@@ -315,7 +315,7 @@ def test_the_cli_prints_the_report_as_json_and_exits_one_on_a_failure(
 
 def test_the_check_job_runs_the_report_on_weekday_mornings(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
 
-    monkeypatch.setattr(projects, "get_workspace_name", lambda: "ws")
+    monkeypatch.setattr(jenkins_jobs, "get_workspace_name", lambda: "ws")
     svc = JenkinsService()
     svc.service_data_dir = tmp_path / "jenkins"
     jenkins_jobs._create_nightly_check_job(svc.service_data_dir)

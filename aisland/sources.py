@@ -65,6 +65,7 @@ from packaging.version import InvalidVersion, Version
 from aisland import failures, gitcmd, locations
 from aisland import pyproject as pyproject_toml
 from aisland import workspace_file
+from aisland.editor_files import write_code_workspace
 from aisland.errors import AislandError
 from aisland.installers import ensure_uv_in_venv
 from aisland.mcp_config import no_venv
@@ -766,7 +767,6 @@ def set_project_source(
     A failed apply ROLLS THE CONFIGURATION BACK — a registry claiming a state the working tree
     does not have is worse than no change at all (and `aisland setup` would keep retrying it).
     """
-    from aisland.editor_files import write_code_workspace
 
     root = workspace_root or get_workspace_root()
     if project not in known_projects(root):
@@ -860,7 +860,6 @@ def unset_project_source(
     :func:`aisland.activation.reconcile` re-inits it) — set an explicit ``git`` source
     instead if you want the checkout back now.
     """
-    from aisland.editor_files import write_code_workspace
 
     root = workspace_root or get_workspace_root()
     committed = read_committed_sources(root)
@@ -888,7 +887,6 @@ def unset_project_source(
 
 def apply_configured(project: Optional[str] = None, workspace_root: Optional[Path] = None) -> int:
     """Re-apply configured source(s) without changing configuration. Returns an exit code."""
-    from aisland.editor_files import write_code_workspace
 
     root = workspace_root or get_workspace_root()
     venv_bin = root / ".venv" / "bin"

@@ -303,7 +303,7 @@ def _set_pypi(root: Path, project: str, monkeypatch: pytest.MonkeyPatch) -> int:
     monkeypatch.setattr(s, "local_override", lambda root, name: None)
     monkeypatch.setattr(s, "set_local_override", lambda *a, **k: None)
     monkeypatch.setattr(s, "apply_source", lambda *a, **k: True)
-    monkeypatch.setattr("aisland.editor_files.write_code_workspace", lambda *a, **k: None)
+    monkeypatch.setattr("aisland.sources.write_code_workspace", lambda *a, **k: None)
     return s.set_project_source(project, "pypi", workspace_root=root)
 
 

@@ -26,7 +26,7 @@ import subprocess
 import zipfile
 from dataclasses import dataclass
 from pathlib import Path
-from typing import List, Mapping, Optional, Sequence, Tuple
+from typing import List, Mapping, Optional, Sequence, Set, Tuple
 
 #: Where a JDK installed outside Homebrew and JAVA_HOME lives: the macOS installers' folder (which
 #: also holds the links a Homebrew caveat asks for) and the Linux distributions' one.
@@ -195,7 +195,7 @@ def find_runtimes(env: Optional[Mapping[str, str]] = None) -> List[JavaRuntime]:
         env: The environment to read `JAVA_HOME`, `PATH` and `HOMEBREW_PREFIX` from; the
             process's own when omitted.
     """
-    seen: set = set()
+    seen: Set[Path] = set()
     runtimes: List[JavaRuntime] = []
     for java in candidate_javas(os.environ if env is None else env):
         runtime = runtime_at(java)

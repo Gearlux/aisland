@@ -8,15 +8,14 @@ from click.shell_completion import CompletionItem
 
 from aisland import editor, editor_files
 from aisland.cli._base import _editor_root, _Group
+from aisland.errors import quiet_completion
 
 
+@quiet_completion
 def _complete_themes(ctx: click.Context, param: click.Parameter, incomplete: str) -> List[CompletionItem]:
     """The installed VS Code themes whose name starts with ``incomplete``, case ignored; nothing when they cannot be
-    read — a completion callback must never break the shell."""
-    try:
-        themes = editor.list_themes()
-    except Exception:  # a completion callback must never break the shell
-        return []
+    read."""
+    themes = editor.list_themes()
     return [CompletionItem(t.name) for t in themes if t.name.casefold().startswith(incomplete.casefold())]
 
 

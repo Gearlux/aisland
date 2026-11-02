@@ -11,7 +11,7 @@ import subprocess
 import tarfile
 import tempfile
 from pathlib import Path
-from typing import Dict, List, NotRequired, TypedDict
+from typing import AbstractSet, Dict, List, NotRequired, TypedDict
 
 import click
 
@@ -90,7 +90,7 @@ USERSPACE_TOOLS: Dict[str, UserspaceTool] = {
 _LINUX_ARCH_ALIASES = {"x86_64": "amd64", "amd64": "amd64", "aarch64": "arm64", "arm64": "arm64"}
 
 
-def install_brew_packages(packages: set) -> None:
+def install_brew_packages(packages: AbstractSet[str]) -> None:
     """Install the given packages via Homebrew (macOS).
 
     Silent no-op if ``brew`` is not on PATH. Idempotent — brew skips packages
@@ -251,7 +251,7 @@ def install_userspace_tool(name: str) -> None:
     click.echo(f"  - Ensure {BIN_DIR} is on PATH (project.bashrc handles this).")
 
 
-def offer_shell_switch(required_pkgs: set) -> None:
+def offer_shell_switch(required_pkgs: AbstractSet[str]) -> None:
     """If ``bash`` is declared as a sys-dep, offer to make brew's bash the login shell.
 
     No-op on non-macOS (chsh / /etc/shells flow is macOS-specific) and when
