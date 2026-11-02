@@ -4421,7 +4421,7 @@ pytest plugin imports the module.
 
 ### Consequences
 
-acme is unchanged (its `.gitmodules` lists `aisland`). A contributor's clone works on the workspace it is run in.
+The workspace aisland is developed in is unchanged (its `.gitmodules` lists `aisland`). A contributor's clone works on the workspace it is run in.
 GitHub CI, which checks aisland out alone, now runs aisland's tests in wheel mode: a test of checkout mode sets
 `FROM_CHECKOUT` itself or carries `needs_workspace`.
 
