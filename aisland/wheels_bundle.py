@@ -222,6 +222,114 @@ def render_metadata(
     return "\n".join(lines) + "\n\n" + description
 
 
+#: The mode a file the bundle writes itself gets, as a zip member's ``external_attr``.
+_REGULAR = 0o644 << 16
+
+
+@dataclass
+class _Members:
+    """What goes into the bundle: each member's bytes, mode and owner, and what its parts' dist-infos bring."""
+
+    #: ``{path: (bytes, external_attr, owner)}``; the first owner of a path keeps it.
+    files: Dict[str, Tuple[bytes, int, str]] = field(default_factory=dict)
+    #: Each path or entry point two parts hold differently.
+    clashes: List[str] = field(default_factory=list)
+    #: ``{group: {name: (target, project)}}``.
+    entry_points: Dict[str, Dict[str, Tuple[str, str]]] = field(default_factory=dict)
+    top_level: Set[str] = field(default_factory=set)
+
+    def add(self, path: str, data: bytes, attributes: int, owner: str) -> None:
+        if path in self.files and self.files[path][0] != data:
+            self.clashes.append(f"{path} differs between {self.files[path][2]} and {owner}")
+        self.files.setdefault(path, (data, attributes, owner))
+
+    def add_entry_points(self, text: str, part: BundlePart) -> None:
+        for group, names in _entry_points(text, part).items():
+            for key, value in names.items():
+                held = self.entry_points.setdefault(group, {}).get(key)
+                if held is not None and held[0] != value:
+                    self.clashes.append(
+                        f"entry point {group}:{key} is {held[0]} in {held[1]} and {value} in {part.project}"
+                    )
+                self.entry_points[group].setdefault(key, (value, part.project))
+
+
+def _take_wheel(members: _Members, part: BundlePart, info: str, data_dir: str) -> None:
+    """Every member of ``part``'s wheel into ``members``: its dist-info read for entry points, top-level names and licence
+    files (kept under ``licenses/<distribution>/``), its ``.data`` folder renamed to the bundle's. A wheel that is not
+    pure Python is refused."""
+    with zipfile.ZipFile(part.wheel) as archive:
+        own_info = _dist_info(archive, part.wheel)
+        own_data = own_info[: -len(".dist-info")] + ".data"
+        wheel_file = archive.read(f"{own_info}/WHEEL").decode("utf-8", errors="replace")
+        impure = [tag for tag in _tags(wheel_file) if tag not in _PURE_TAGS]
+        if impure or "Root-Is-Purelib: false" in wheel_file:
+            raise AislandError(
+                f"{part.project}'s wheel {part.wheel.name} is built for {', '.join(impure) or 'platlib'}; "
+                "a bundle holds pure-Python wheels only"
+            )
+        for item in archive.infolist():
+            if item.is_dir():
+                continue
+            payload = archive.read(item)
+            top, _, rest = item.filename.partition("/")
+            if top == own_info:
+                if rest == "entry_points.txt":
+                    members.add_entry_points(payload.decode("utf-8"), part)
+                elif rest == "top_level.txt":
+                    members.top_level.update(filter(None, payload.decode("utf-8").splitlines()))
+                elif _LICENSE.match(rest):
+                    leaf = rest.removeprefix("licenses/")
+                    members.add(
+                        f"{info}/licenses/{part.distribution}/{leaf}", payload, item.external_attr, part.project
+                    )
+            elif top == own_data:
+                members.add(f"{data_dir}/{rest}", payload, item.external_attr, part.project)
+            else:
+                members.add(item.filename, payload, item.external_attr, part.project)
+
+
+def _add_dist_info(members: _Members, info: str, distribution: str, metadata: str) -> None:
+    """The bundle's own dist-info: ``metadata``, its WHEEL, and the parts' entry points and top-level names merged."""
+    members.add(f"{info}/METADATA", metadata.encode("utf-8"), _REGULAR, distribution)
+    wheel_text = "Wheel-Version: 1.0\nGenerator: aisland wheels build --bundle\nRoot-Is-Purelib: true\n"
+    members.add(f"{info}/WHEEL", (wheel_text + "Tag: py3-none-any\n").encode(), _REGULAR, distribution)
+    if members.entry_points:
+        blocks = [
+            f"[{group}]\n" + "".join(f"{key} = {value}\n" for key, (value, _) in sorted(names.items()))
+            for group, names in sorted(members.entry_points.items())
+        ]
+        members.add(f"{info}/entry_points.txt", "\n".join(blocks).encode("utf-8"), _REGULAR, distribution)
+    if members.top_level:
+        top_level = "".join(f"{t}\n" for t in sorted(members.top_level)).encode()
+        members.add(f"{info}/top_level.txt", top_level, _REGULAR, distribution)
+
+
+def _write_bundle(
+    files: Dict[str, Tuple[bytes, int, str]], info: str, bundle: Path, date_time: Tuple[int, int, int, int, int, int]
+) -> None:
+    """Write ``files`` and their RECORD into ``bundle``, every member stamped ``date_time``, by way of a ``.partial``
+    file so a failed write leaves no wheel."""
+    record = io.StringIO()
+    for path in sorted(files):
+        record.write(f"{path},{_record_hash(files[path][0])},{len(files[path][0])}\n")
+    record.write(f"{info}/RECORD,,\n")
+    bundle.parent.mkdir(parents=True, exist_ok=True)
+    partial = bundle.with_suffix(".whl.partial")
+    with zipfile.ZipFile(partial, "w", compression=zipfile.ZIP_DEFLATED) as zipped:
+        for path in sorted(files):
+            data, attributes, _ = files[path]
+            entry = zipfile.ZipInfo(path, date_time=date_time)
+            entry.external_attr = attributes or _REGULAR
+            entry.compress_type = zipfile.ZIP_DEFLATED
+            zipped.writestr(entry, data)
+        entry = zipfile.ZipInfo(f"{info}/RECORD", date_time=date_time)
+        entry.external_attr = _REGULAR
+        entry.compress_type = zipfile.ZIP_DEFLATED
+        zipped.writestr(entry, record.getvalue())
+    partial.replace(bundle)
+
+
 def merge_wheels(
     parts: Sequence[BundlePart],
     distribution: str,
@@ -239,88 +347,12 @@ def merge_wheels(
     name = bundle_wheel_name(distribution, version)
     stem = name.split("-py3-none-any.whl")[0]
     info, data_dir = f"{stem}.dist-info", f"{stem}.data"
-    members: Dict[str, Tuple[bytes, int, str]] = {}
-    clashes: List[str] = []
-    entry_points: Dict[str, Dict[str, Tuple[str, str]]] = {}
-    top_level: Set[str] = set()
-
-    def _add(path: str, data: bytes, attributes: int, owner: str) -> None:
-        if path in members and members[path][0] != data:
-            clashes.append(f"{path} differs between {members[path][2]} and {owner}")
-        members.setdefault(path, (data, attributes, owner))
-
+    members = _Members()
     for part in parts:
-        with zipfile.ZipFile(part.wheel) as archive:
-            own_info = _dist_info(archive, part.wheel)
-            own_data = own_info[: -len(".dist-info")] + ".data"
-            wheel_file = archive.read(f"{own_info}/WHEEL").decode("utf-8", errors="replace")
-            impure = [tag for tag in _tags(wheel_file) if tag not in _PURE_TAGS]
-            if impure or "Root-Is-Purelib: false" in wheel_file:
-                raise AislandError(
-                    f"{part.project}'s wheel {part.wheel.name} is built for {', '.join(impure) or 'platlib'}; "
-                    "a bundle holds pure-Python wheels only"
-                )
-            for item in archive.infolist():
-                if item.is_dir():
-                    continue
-                payload = archive.read(item)
-                top, _, rest = item.filename.partition("/")
-                if top == own_info:
-                    if rest == "entry_points.txt":
-                        for group, names in _entry_points(payload.decode("utf-8"), part).items():
-                            for key, value in names.items():
-                                held = entry_points.setdefault(group, {}).get(key)
-                                if held is not None and held[0] != value:
-                                    clashes.append(
-                                        f"entry point {group}:{key} is {held[0]} in {held[1]} and {value} in "
-                                        f"{part.project}"
-                                    )
-                                entry_points[group].setdefault(key, (value, part.project))
-                    elif rest == "top_level.txt":
-                        top_level.update(filter(None, payload.decode("utf-8").splitlines()))
-                    elif _LICENSE.match(rest):
-                        leaf = rest.removeprefix("licenses/")
-                        _add(f"{info}/licenses/{part.distribution}/{leaf}", payload, item.external_attr, part.project)
-                    continue
-                if top == own_data:
-                    _add(f"{data_dir}/{rest}", payload, item.external_attr, part.project)
-                    continue
-                _add(item.filename, payload, item.external_attr, part.project)
-    if clashes:
-        raise AislandError("the wheels cannot share one bundle:\n" + "\n".join(f"    {c}" for c in clashes))
-
-    regular = 0o644 << 16
-    owner = distribution
-    _add(f"{info}/METADATA", metadata.encode("utf-8"), regular, owner)
-    wheel_text = "Wheel-Version: 1.0\nGenerator: aisland wheels build --bundle\nRoot-Is-Purelib: true\n"
-    _add(f"{info}/WHEEL", (wheel_text + "Tag: py3-none-any\n").encode(), regular, owner)
-    if entry_points:
-        blocks = [
-            f"[{group}]\n" + "".join(f"{key} = {value}\n" for key, (value, _) in sorted(names.items()))
-            for group, names in sorted(entry_points.items())
-        ]
-        _add(f"{info}/entry_points.txt", "\n".join(blocks).encode("utf-8"), regular, owner)
-    if top_level:
-        _add(f"{info}/top_level.txt", "".join(f"{t}\n" for t in sorted(top_level)).encode(), regular, owner)
-
-    record = io.StringIO()
-    for path in sorted(members):
-        record.write(f"{path},{_record_hash(members[path][0])},{len(members[path][0])}\n")
-    record.write(f"{info}/RECORD,,\n")
-
-    out_dir.mkdir(parents=True, exist_ok=True)
+        _take_wheel(members, part, info, data_dir)
+    if members.clashes:
+        raise AislandError("the wheels cannot share one bundle:\n" + "\n".join(f"    {c}" for c in members.clashes))
+    _add_dist_info(members, info, distribution, metadata)
     bundle = out_dir / name
-    partial = bundle.with_suffix(".whl.partial")
-    with zipfile.ZipFile(partial, "w", compression=zipfile.ZIP_DEFLATED) as zipped:
-        for path in sorted(members):
-            data, attributes, _ = members[path]
-            entry = zipfile.ZipInfo(path, date_time=date_time)
-            entry.external_attr = attributes or regular
-            entry.compress_type = zipfile.ZIP_DEFLATED
-            zipped.writestr(entry, data)
-        entry = zipfile.ZipInfo(f"{info}/RECORD", date_time=date_time)
-        entry.external_attr = regular
-        entry.compress_type = zipfile.ZIP_DEFLATED
-        zipped.writestr(entry, record.getvalue())
-    partial.replace(bundle)
+    _write_bundle(members.files, info, bundle, date_time)
     return bundle

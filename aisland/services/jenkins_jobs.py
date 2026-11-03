@@ -535,18 +535,20 @@ pipeline {{
     click.echo(f"  - Seeded nightly check job: {job_name}")
 
 
+#: The jobs the dashboard shows: the branches the ecosystem is built from, and every job of the local pipeline.
+_DASHBOARD_JOBS = "^(main|dev/main|.*\\.local)$"
+_BUILD_MONITOR_VIEW = "com.smartcodeltd.jenkinsci.plugins.buildmonitor.BuildMonitorView"
+
+
 def setup_dashboard_view(home: Path, name: Optional[str] = None) -> None:
     """Create a Build Monitor View for the Ecosystem branching workflow."""
-
-    base_name = get_workspace_name()
     if name is None:
-        name = f"{base_name.capitalize()} Ecosystem Dashboard"
+        name = f"{get_workspace_name().capitalize()} Ecosystem Dashboard"
 
     config_file = home / "config.xml"
     if not config_file.exists():
         click.echo("  - Jenkins config.xml not found. Skipping view setup until first run.")
         return
-
     try:
         tree = ET.parse(config_file)
         root = tree.getroot()
@@ -554,96 +556,87 @@ def setup_dashboard_view(home: Path, name: Optional[str] = None) -> None:
         failures.report(f"  - Error parsing config.xml: {e}")
         return
 
-    # Find or create the 'views' container
+    dashboard = _dashboard_view(_views(root), name)
+    _filter_dashboard_jobs(dashboard)
+    # Revert primary view to 'all' to ensure standard overview is default
+    primary_view = root.find("primaryView")
+    if primary_view is not None:
+        primary_view.text = "all"
+    tree.write(config_file, encoding="UTF-8", xml_declaration=True)
+
+
+def _view_basics(view: ET.Element, name: str) -> None:
+    """The elements every Jenkins view starts with: its owner, name, filters and properties."""
+    ET.SubElement(view, "owner").set("class", "hudson")
+    ET.SubElement(view, "owner").set("reference", "../../..")
+    ET.SubElement(view, "name").text = name
+    ET.SubElement(view, "filterExecutors").text = "false"
+    ET.SubElement(view, "filterQueue").text = "false"
+    ET.SubElement(view, "properties").set("class", "hudson.model.View$PropertyList")
+
+
+def _views(root: ET.Element) -> ET.Element:
+    """Jenkins' ``views`` container — made with the standard ``all`` view when the config has none."""
     views = root.find("views")
     if views is None:
         views = ET.SubElement(root, "views")
-        # If views was missing, also add the 'all' view to keep standard behavior
-        all_view = ET.SubElement(views, "hudson.model.AllView")
-        ET.SubElement(all_view, "owner").set("class", "hudson")
-        ET.SubElement(all_view, "owner").set("reference", "../../..")
-        ET.SubElement(all_view, "name").text = "all"
-        ET.SubElement(all_view, "filterExecutors").text = "false"
-        ET.SubElement(all_view, "filterQueue").text = "false"
-        ET.SubElement(all_view, "properties").set("class", "hudson.model.View$PropertyList")
+        _view_basics(ET.SubElement(views, "hudson.model.AllView"), "all")
+    return views
 
-    # Find or create the view.
-    # First pass: look for an exact name match.
-    # Second pass: if not found, look for ANY existing "<Anything> Ecosystem Dashboard"
-    # view and RENAME it in place. This handles workspace rename (e.g. the repo is
-    # renamed on GitHub, so get_workspace_name() returns a new string) without
-    # stranding the old view or creating a duplicate.
-    dashboard_view = None
-    for v in views:
-        if v.findtext("name") == name:
-            dashboard_view = v
-            break
-    if dashboard_view is None:
-        for v in views:
-            existing = v.findtext("name") or ""
-            if existing.endswith(" Ecosystem Dashboard"):
-                click.echo(f"  - Renaming stale dashboard view '{existing}' -> '{name}' " f"(workspace was renamed).")
-                name_elem = v.find("name")
-                if name_elem is not None:
-                    name_elem.text = name
-                title_elem = v.find("title")
-                if title_elem is not None:
-                    title_elem.text = name
-                dashboard_view = v
-                break
 
-    if dashboard_view is None:
-        click.echo(
-            f"  - Creating '{name}' view (branches: main, dev/main, *.local) " f"with Build Monitor View plugin..."
-        )
-        dashboard_view = ET.SubElement(
-            views,
-            "com.smartcodeltd.jenkinsci.plugins.buildmonitor.BuildMonitorView",
-        )
-        dashboard_view.set("plugin", "build-monitor-plugin")
-        ET.SubElement(dashboard_view, "owner").set("class", "hudson")
-        ET.SubElement(dashboard_view, "owner").set("reference", "../../..")
-        ET.SubElement(dashboard_view, "name").text = name
-        ET.SubElement(dashboard_view, "filterExecutors").text = "false"
-        ET.SubElement(dashboard_view, "filterQueue").text = "false"
-        ET.SubElement(dashboard_view, "properties").set("class", "hudson.model.View$PropertyList")
-        ET.SubElement(dashboard_view, "jobNames").set("class", "hudson.util.CaseInsensitiveComparator")
-        ET.SubElement(dashboard_view, "jobFilters")
-        ET.SubElement(dashboard_view, "columns").set("class", "empty-list")
-        ET.SubElement(dashboard_view, "recurse").text = "true"
-        ET.SubElement(dashboard_view, "title").text = name
-        config = ET.SubElement(dashboard_view, "config")
-        ET.SubElement(config, "displayCommitters").text = "true"
-        ET.SubElement(config, "displayLowPriorityJobs").text = "false"
-        ET.SubElement(config, "displayLastBuildConsoleOutput").text = "true"
-        ET.SubElement(config, "order").set("class", "com.smartcodeltd.jenkinsci.plugins.buildmonitor.order.ByName")
+def _dashboard_view(views: ET.Element, name: str) -> ET.Element:
+    """The view called ``name``; else any ``<Anything> Ecosystem Dashboard``, renamed in place; else a new one.
 
-    # Always ensure the regex filter is present and correct
-    job_filters = dashboard_view.find("jobFilters")
+    The rename handles a workspace rename (the repository renamed on GitHub, so :func:`get_workspace_name` answers a new
+    string) without stranding the old view or creating a duplicate.
+    """
+    for view in views:
+        if view.findtext("name") == name:
+            return view
+    for view in views:
+        existing = view.findtext("name") or ""
+        if existing.endswith(" Ecosystem Dashboard"):
+            click.echo(f"  - Renaming stale dashboard view '{existing}' -> '{name}' (workspace was renamed).")
+            for field in ("name", "title"):
+                element = view.find(field)
+                if element is not None:
+                    element.text = name
+            return view
+    click.echo(f"  - Creating '{name}' view (branches: main, dev/main, *.local) with Build Monitor View plugin...")
+    view = ET.SubElement(views, _BUILD_MONITOR_VIEW)
+    view.set("plugin", "build-monitor-plugin")
+    _view_basics(view, name)
+    ET.SubElement(view, "jobNames").set("class", "hudson.util.CaseInsensitiveComparator")
+    ET.SubElement(view, "jobFilters")
+    ET.SubElement(view, "columns").set("class", "empty-list")
+    ET.SubElement(view, "recurse").text = "true"
+    ET.SubElement(view, "title").text = name
+    config = ET.SubElement(view, "config")
+    ET.SubElement(config, "displayCommitters").text = "true"
+    ET.SubElement(config, "displayLowPriorityJobs").text = "false"
+    ET.SubElement(config, "displayLastBuildConsoleOutput").text = "true"
+    ET.SubElement(config, "order").set("class", "com.smartcodeltd.jenkinsci.plugins.buildmonitor.order.ByName")
+    return view
+
+
+def _filter_dashboard_jobs(view: ET.Element) -> None:
+    """Make the view's regular-expression job filter show :data:`_DASHBOARD_JOBS`, adding the filter if it lacks one."""
+    job_filters = view.find("jobFilters")
     if job_filters is None:
-        job_filters = ET.SubElement(dashboard_view, "jobFilters")
-
+        job_filters = ET.SubElement(view, "jobFilters")
     regex_filter = job_filters.find("hudson.views.RegExJobFilter")
     if regex_filter is None:
         regex_filter = ET.SubElement(job_filters, "hudson.views.RegExJobFilter")
         regex_filter.set("plugin", "view-job-filters")
         ET.SubElement(regex_filter, "includeExcludeTypeString").text = "includeMatched"
         ET.SubElement(regex_filter, "valueTypeString").text = "NAME"
-        ET.SubElement(regex_filter, "regex").text = "^(main|dev/main|.*\\.local)$"
+        ET.SubElement(regex_filter, "regex").text = _DASHBOARD_JOBS
         ET.SubElement(regex_filter, "matchCanary").text = "false"
-    else:
-        regex_elem = regex_filter.find("regex")
-        if regex_elem is None:
-            regex_elem = ET.SubElement(regex_filter, "regex")
-        regex_elem.text = "^(main|dev/main|.*\\.local)$"
-
-    # Revert primary view to 'all' to ensure standard overview is default
-    primary_view = root.find("primaryView")
-    if primary_view is not None:
-        primary_view.text = "all"
-
-    # Robust write
-    tree.write(config_file, encoding="UTF-8", xml_declaration=True)
+        return
+    regex = regex_filter.find("regex")
+    if regex is None:
+        regex = ET.SubElement(regex_filter, "regex")
+    regex.text = _DASHBOARD_JOBS
 
 
 def setup_global_properties(home: Path) -> None:
