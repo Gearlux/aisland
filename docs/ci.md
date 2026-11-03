@@ -30,6 +30,11 @@ aisland check pytest
 aisland check pytest lib
 ```
 
+Each gate runs once and prints `PASS` or `FAIL`; a failed gate shows what it printed, and the command exits 1 naming
+the projects that failed. **`isort` and `black` are formatters: `aisland check` runs them without `--check`, so they
+rewrite the files they find** — look at `git diff` afterwards. The generated CI jobs only check; they fail on a file
+that is not formatted.
+
 ## GitHub Actions Local Testing
 
 `act` runs and tests GitHub Actions locally. The first time `aisland check` needs it, aisland asks before installing
