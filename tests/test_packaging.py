@@ -96,6 +96,8 @@ def test_the_package_holds_the_templates_and_the_git_scripts() -> None:
         "aisland/templates/ci/_venv_check.groovy.jinja",
         "aisland/templates/ci/ci.yml.jinja",
         "aisland/templates/ci/template.toml",
+        "aisland/templates/swiftbar/gh_status.sh",
+        "aisland/templates/swiftbar/jenkins_status.sh",
         "aisland/templates/test_env_example.py.template",
         "aisland/templates/vscode-init-bash.sh",
     ]

@@ -110,7 +110,7 @@ include = ["aisland*"]
 # into every workspace (aisland/harness.py: the commands, their helper script, the generic rules — `harness/` is no
 # Python package, so its script is data too). setup.py adds project.bashrc.
 [tool.setuptools.package-data]
-aisland = ["py.typed", "code-workspace.json", "git/*.sh", "templates/*", "templates/ci/*", "harness/*.md", "harness/*.toml", "harness/commands/*.md", "harness/scripts/*.py"]
+aisland = ["py.typed", "code-workspace.json", "git/*.sh", "templates/*", "templates/ci/*", "templates/swiftbar/*", "harness/*.md", "harness/*.toml", "harness/commands/*.md", "harness/scripts/*.py"]
 
 [tool.black]
 line-length = 120
