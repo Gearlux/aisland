@@ -395,6 +395,16 @@ def test_the_source_package_carries_the_licence_and_the_changelog(released: Path
     assert {"LICENSE", "CHANGELOG.md"} <= names
 
 
+def test_the_source_package_carries_no_part_of_the_test_suite(released: Path) -> None:
+    """A partial suite (the test files without `conftest.py`, its helpers, `docs/` or `examples/`) cannot run; the
+    source package is for building the wheel."""
+    (source_package,) = released.glob("*.tar.gz")
+    with tarfile.open(source_package) as archive:
+        names = [name.split("/", 1)[1] for name in archive.getnames() if "/" in name]
+    assert [name for name in names if name.startswith("tests/")] == []
+    assert "aisland/cli/__init__.py" in names  # the package itself is all there
+
+
 def test_the_wheel_carries_the_licence_and_the_typing_marker(released: Path) -> None:
     (built,) = released.glob("*.whl")
     with zipfile.ZipFile(built) as archive:

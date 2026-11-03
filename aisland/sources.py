@@ -544,7 +544,7 @@ def _remote_ref_exists(workspace_root: Path, project: str, ref: str) -> bool:
     # Never a password prompt (a script or the MCP server would wait on it), never longer than a minute.
     try:
         probe = gitcmd.git(
-            workspace_root, "ls-remote", "--heads", "--tags", url, ref, network=True, timeout=REMOTE_TIMEOUT
+            workspace_root, "ls-remote", "--heads", "--tags", "--", url, ref, network=True, timeout=REMOTE_TIMEOUT
         )
     except subprocess.TimeoutExpired:
         probe = subprocess.CompletedProcess([], 1)

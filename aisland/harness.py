@@ -55,7 +55,7 @@ from dataclasses import dataclass, field
 from pathlib import Path, PurePosixPath
 from typing import Dict, List, Literal, Optional, Tuple, TypedDict
 
-from aisland import git_exclude, gitcmd, locations
+from aisland import atomic, git_exclude, gitcmd, locations
 from aisland import pyproject as pyproject_toml
 from aisland import workspace_file
 from aisland.discovery import Where, key_line, table_line
@@ -303,7 +303,7 @@ def _clone(url: str, ref: str, name: str, where: Where) -> Path:
     stamp.unlink(missing_ok=True)
     folder.parent.mkdir(parents=True, exist_ok=True)
     try:
-        cloned = gitcmd.git(folder.parent, "clone", "--quiet", url, name, network=True, timeout=CLONE_SECONDS)
+        cloned = gitcmd.git(folder.parent, "clone", "--quiet", "--", url, name, network=True, timeout=CLONE_SECONDS)
     except subprocess.TimeoutExpired as late:
         raise HarnessError(f"{where}: cloning {url} did not finish within {CLONE_SECONDS:.0f} s") from late
     if cloned.returncode != 0:
@@ -415,7 +415,7 @@ def _write_record(root: Path, record: Dict[str, str]) -> None:
             path.unlink()
         return
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps(dict(sorted(record.items())), indent=2) + "\n")
+    atomic.write_text(path, json.dumps(dict(sorted(record.items())), indent=2) + "\n")
 
 
 def _owner(name: str) -> str:

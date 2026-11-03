@@ -167,9 +167,10 @@ def _can_ask() -> bool:
     return sys.stdin.isatty() and sys.stdout.isatty()
 
 
-def agree(question: str) -> bool:
-    """``question`` asked in a terminal (yes by default); False, without asking, when no one is there to answer."""
-    return _can_ask() and click.confirm(question, default=True)
+def agree(question: str, default: bool = True) -> bool:
+    """``question`` asked in a terminal (``default`` the answer a bare Enter gives); False, without asking, when no
+    one is there to answer."""
+    return _can_ask() and click.confirm(question, default=default)
 
 
 def _formula(name: str) -> str:

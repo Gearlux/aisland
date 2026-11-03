@@ -35,7 +35,7 @@ from typing import Dict, List, Literal, Optional, Sequence, Tuple, get_args
 
 import click
 
-from aisland import env_example, gitcmd, local_workspace, locations, tracking, workspace_file
+from aisland import atomic, env_example, gitcmd, local_workspace, locations, tracking, workspace_file
 from aisland.errors import AislandError
 from aisland.harness import install_harness
 from aisland.harness import sets as harness_sets
@@ -153,6 +153,7 @@ def _add_submodule(
         "-q",
         *(["--progress"] if terminal else []),
         *(["-b", branch] if branch else []),
+        "--",  # a url or path from a file is never read as an option
         url,
         *([path] if path else []),
     ]
@@ -214,6 +215,11 @@ def _refuse_a_bak_in_the_way(root: Path, rewrite: Sequence[StartingFile]) -> Non
             )
 
 
+def _write_starting_file(target: Path, text: str) -> None:
+    """One starting file; ``.env``, which will hold the workspace's secrets, readable by its owner alone."""
+    atomic.write_text(target, text, new_mode=atomic.PRIVATE if target.name == ".env" else None)
+
+
 def _write_starting_files(root: Path, rewrite: Sequence[StartingFile], only_rewrite: bool = False) -> List[str]:
     """Write each starting file that is missing, and each of ``rewrite`` over its old copy (kept as ``.bak``).
 
@@ -228,10 +234,10 @@ def _write_starting_files(root: Path, rewrite: Sequence[StartingFile], only_rewr
                 rows.append(_row(name, "kept (it exists)"))
                 continue
             target.rename(root / f"{name}.bak")
-            target.write_text(text)
+            _write_starting_file(target, text)
             rows.append(_row(name, f"rewritten (the old one kept as {name}.bak)"))
             continue
-        target.write_text(text)
+        _write_starting_file(target, text)
         rows.append(_row(name, "written"))
     return rows
 

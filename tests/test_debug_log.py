@@ -294,19 +294,11 @@ def test_a_docker_socket_already_linked_is_said_in_the_debug_log_only(
     standard_socket = tmp_path / "docker.sock"
     os.symlink(colima_socket, standard_socket)
 
-    class _Paths:
-        """`Path` as the module calls it: `/var/run/docker.sock` and the home folder both in the test's folder."""
-
-        def __call__(self, path: str) -> Path:
-            return standard_socket if path == "/var/run/docker.sock" else Path(path)
-
-        def home(self) -> Path:
-            return tmp_path
-
     def no_sudo(*args: object, **kwargs: object) -> None:
         raise AssertionError("a socket already linked runs no command")
 
-    monkeypatch.setattr(docker, "Path", _Paths())
+    monkeypatch.setattr(docker, "STANDARD_SOCKET", standard_socket)
+    monkeypatch.setattr(docker.Path, "home", lambda: tmp_path)
     monkeypatch.setattr(docker.subprocess, "run", no_sudo)
     docker.DockerService().configure_socket()
     assert capsys.readouterr().out == "Configuring Docker socket symlink...\n"

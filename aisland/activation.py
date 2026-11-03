@@ -136,7 +136,7 @@ def _reconcile(root: Path) -> List[str]:
                 branch = ["-b", project.branch] if project.branch else []
                 # A local workspace's `.gitignore` ignores everything: git adds the path only with `-f`.
                 force = ["-f"] if local_workspace.is_local(root) else []
-                done = gitcmd.git(root, "submodule", "add", "-q", *force, *branch, project.url, project.path)
+                done = gitcmd.git(root, "submodule", "add", "-q", *force, *branch, "--", project.url, project.path)
                 name = _submodule_names(root).get(project.path)
             else:
                 click.echo(f"    skip {project.path}: active, but workspace.toml gives it no url to clone from.")

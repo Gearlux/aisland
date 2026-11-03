@@ -31,8 +31,9 @@ dependencies = [
     # Renders a project's CI files from a template set (aisland/ci_templates.py): aisland's own in
     # aisland/templates/ci/, or one a workspace or an installed package brings.
     "jinja2>=3.1.6",
-    # Generates the process-compose desired-state document (aisland/supervisor.py).
-    "pyyaml>=6.0",
+    # Generates the process-compose desired-state document (aisland/supervisor.py). 6.0.1: 6.0 ships no wheel for
+    # Python 3.12 and its sdist no longer builds, so the lowest version a resolver may pick must install.
+    "pyyaml>=6.0.1",
     # PEP 508 requirement parsing for the CI scaffolder's internal-dep closure
     # (services/jenkins.py) — an extras-carrying spec like `matrainer[keras]>=0.1.0`
     # must resolve to its dep and the named extra, which a regex split cannot do.

@@ -27,7 +27,7 @@ from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Set, Tuple
 
-from aisland import __version__, gitmodules, locations
+from aisland import __version__, atomic, gitmodules, locations
 from aisland.discovery import Where, key_line, table_line
 from aisland.errors import AislandError
 
@@ -294,7 +294,7 @@ def write(root: Path, workspace: WorkspaceFile) -> Optional[Path]:
     if not workspace.settings and not workspace.projects and not workspace.ci and not workspace.harness:
         path.unlink(missing_ok=True)
         return None
-    path.write_text(render(workspace, workspace.settings.get(NAME_KEY) or root.name))
+    atomic.write_text(path, render(workspace, workspace.settings.get(NAME_KEY) or root.name))
     return path
 
 

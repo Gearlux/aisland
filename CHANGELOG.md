@@ -50,7 +50,8 @@ The first release on PyPI: `pip install aisland`.
 - **`aisland --version`** says which aisland runs, inside a workspace or not. Every error is one `Error:` line and
   exit 1; **`aisland --debug <command>`** shows its traceback too.
 - **`aisland doctor`** checks the environment and prints the command that fixes what it finds, in a workspace or not.
-- **The workspace's `.env`** is read the way the shell reads it, by the services and Jenkins alike.
+- **The workspace's `.env`** is read the way the shell reads it, by the services and Jenkins alike; a new one
+  is readable by its owner alone, and every state file aisland writes is written whole or not at all.
 - **`aisland workspace env-example`** writes the workspace's `env.complete` (every environment variable the
   projects read) and `env.example` (the ones a person normally sets) from each project's own two files, every line
   commented out, a variable several projects read listed once under the project that defines it; a new machine

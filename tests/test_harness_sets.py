@@ -203,6 +203,16 @@ def test_an_unreachable_repository_fails_naming_its_line(root: Path, tmp_path: P
         harness.install_harness(root, link=False)
 
 
+def test_a_url_that_looks_like_an_option_is_read_as_a_repository(root: Path) -> None:
+    """`workspace.toml` is another person's file once a workspace is cloned: its url reaches git after `--`, so
+    `--template=…` or `--upload-pack=…` names a repository that does not exist and never becomes an option."""
+    _sets(root, '[{ git = "--template=/nowhere", ref = "v1", name = "team" }]')
+    # git's own reason names the url as the repository: read as an option, the repository would be `team`.
+    with pytest.raises(harness.HarnessError, match=r"could not clone --template=/nowhere: .*'--template=/nowhere'"):
+        harness.install_harness(root, link=False)
+    assert not (harness.clones_dir() / "team").exists()
+
+
 def test_a_ref_the_repository_lacks_is_refused(root: Path, tmp_path: Path) -> None:
     url = _remote(tmp_path, {"AGENTS.md": "# rules\n"}, "v1")
     _sets(root, f'[{{ git = "{url}", ref = "v9", name = "team" }}]')

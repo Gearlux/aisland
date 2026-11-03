@@ -40,7 +40,7 @@ from typing import Any, Dict, Iterator, List, NotRequired, Optional, Tuple, Type
 import click
 import yaml
 
-from aisland import failures, provision
+from aisland import atomic, failures, provision
 from aisland.errors import AislandError
 from aisland.paths import BIN_DIR, DATA_DIR
 from aisland.projects import get_workspace_root
@@ -250,7 +250,8 @@ def write_workspace_env(values: Dict[str, str]) -> Path:
                 break
         else:
             lines.append(entry)
-    env_file.write_text("\n".join(lines) + "\n")
+    # Whole or not at all, and a new one readable by its owner alone: it holds the workspace's secrets.
+    atomic.write_text(env_file, "\n".join(lines) + "\n", new_mode=atomic.PRIVATE)
     return env_file
 
 
@@ -300,7 +301,7 @@ def save_config(config: Dict[str, object]) -> None:
     """Write the desired-state document with its provenance header."""
     DATA_DIR.mkdir(parents=True, exist_ok=True)
     body = yaml.safe_dump(config, sort_keys=True, default_flow_style=False)
-    CONFIG_FILE.write_text(_PROVENANCE_HEADER + body)
+    atomic.write_text(CONFIG_FILE, _PROVENANCE_HEADER + body)
 
 
 def register_process(

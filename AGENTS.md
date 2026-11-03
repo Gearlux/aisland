@@ -32,7 +32,14 @@ The workspace's dev-infrastructure CLI, `aisland` (click, the `aisland/cli/` pac
   `gitcmd.network_options()` (`http.lowSpeedLimit=1`, `http.lowSpeedTime=STALL_SECONDS`) and `network_env()`, through
   `git(network=True)`, the helpers above or `gitcmd.fetch` (best-effort, no overall limit). A transfer may be long, so
   the guard is never an overall limit (ssh's `ServerAliveInterval` bounds SSH). Never a bare
-  `subprocess.run(["git", "fetch", …])` (`tests/test_gitcmd.py`).
+  `subprocess.run(["git", "fetch", …])` (`tests/test_gitcmd.py`). **A url, ref or path read from a file reaches git
+  after `--`** (`clone`, `submodule add`, `ls-remote`, `remote add|set-url`): `workspace.toml` and a harness set are
+  another person's files once a workspace is cloned, and `--upload-pack=…` must name a repository, never an option
+  (`tests/test_harness_sets.py::test_a_url_that_looks_like_an_option_is_read_as_a_repository`).
+- **`atomic.py`**: `write_text(path, text, new_mode=)` writes a state file whole or not at all (a scratch file beside
+  it, then `os.replace`), keeps an existing file's mode and a link's target; `workspace.toml`, `.env`, the
+  supervisor's document, the completion file and the harness's record go through it, and a new `.env` is
+  `atomic.PRIVATE` (0600). Standard library only (`tests/test_atomic.py`).
 - **`machine_config.py`**: this machine's settings — a repository's own `git config --local`, never committed.
   `get`, `get_bool`, `get_all(pattern)` and `put(key, value)` (`None` forgets the key; a bool is written
   `true`/`false`; `check=True` raises when git refuses) are the one way a module reads or writes
@@ -232,6 +239,8 @@ naming the PID is the only signal). All service state lives under `<workspace>/a
     (`tests/workspace_layout.py`) and is skipped there with its reason, never failed. The runners have no git
     identity: every test commits as `conftest.git_identity`'s author. Reproduce CI in a fresh venv holding only
     `aisland[dev]` and `pip`, in a `git clone` of aisland alone, with `HOME` an empty folder, before changing either.
+  - The source package builds the wheel and nothing else: `MANIFEST.in` prunes `tests/`, whose suite needs the
+    repository (`tests/test_packaging.py::test_the_source_package_carries_no_part_of_the_test_suite`).
   - A release ships `LICENSE`, `CHANGELOG.md` and `aisland/py.typed`; the newest `## [<version>]` of the CHANGELOG is
     `pyproject.toml`'s version. It is published by `.github/workflows/release.yml` on a `v<version>` tag: the quality
     gates and both test runs (`pytest tests -m ''`), the tag guard, the guard that the CHANGELOG dates the version
@@ -420,6 +429,9 @@ naming the PID is the only signal). All service state lives under `<workspace>/a
   resolved, a missing directory refused, a running engine never restarted for the user
   (`tests/test_docker_service.py`) [containers]. `DockerService.is_running()` is `colima status`'s exit code, never its
   text; everything else reuses it.
+- **Another engine's `/var/run/docker.sock` is replaced only after a yes** (`configure_socket`, `provision.agree(…,
+  default=False)`): without a terminal or on a no it is left, and a warning names the `sudo rm` / `sudo ln -s` that
+  switch it (`tests/test_docker_socket.py`).
 - **On Linux the container engine is the system's.** [linux-docker] `docker.docker_service()` is `LinuxDockerService`
   there: `docker info`'s exit code says it runs; `start` refuses naming the install page or `sudo systemctl start
   docker`, `stop` leaves it running, `reset` and `--mount` are refused. aisland never installs, starts, stops or wipes

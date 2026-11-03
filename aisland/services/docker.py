@@ -86,6 +86,10 @@ def covers(configured: Sequence[Mount], wanted: Mount) -> bool:
     return False
 
 
+#: Where Docker clients look for the engine by default; aisland links it to Colima's socket.
+STANDARD_SOCKET = Path("/var/run/docker.sock")
+
+
 class DockerService(BaseService):
     """Docker Container Engine (via Colima)."""
 
@@ -233,7 +237,7 @@ class DockerService(BaseService):
         colima_socket_default = Path.home() / COLIMA_PROFILE_DIR / "docker.sock"
         colima_socket_legacy = Path.home() / ".colima" / "docker.sock"
         colima_socket = colima_socket_default if colima_socket_default.exists() else colima_socket_legacy
-        standard_socket = Path("/var/run/docker.sock")
+        standard_socket = STANDARD_SOCKET
         click.echo(f"  Colima socket : {colima_socket} " + ("(present)" if colima_socket.exists() else "(missing)"))
         link_info = ""
         if standard_socket.is_symlink():
@@ -250,7 +254,7 @@ class DockerService(BaseService):
         """Ensure the Docker client is pointing to the standard /var/run/docker.sock."""
         # Colima socket path
         colima_socket = Path.home() / COLIMA_PROFILE_DIR / "docker.sock"
-        standard_socket = Path("/var/run/docker.sock")
+        standard_socket = STANDARD_SOCKET
 
         if not colima_socket.exists():
             # Fallback for older colima versions/custom profiles
@@ -262,13 +266,23 @@ class DockerService(BaseService):
 
         click.echo("Configuring Docker socket symlink...")
         try:
-            # Check if /var/run/docker.sock already exists and points to the right place
             if standard_socket.exists() or standard_socket.is_symlink():
                 if standard_socket.is_symlink() and os.readlink(standard_socket) == str(colima_socket):
                     logger.debug("%s already links to %s", standard_socket, colima_socket)
                     return
-
-                # If it exists but is wrong/different, we need to remove it
+                # Another engine's socket (Docker Desktop's, a link elsewhere): replaced only once the user says so,
+                # never by default — that engine's clients would lose it.
+                owner = f"a link to {os.readlink(standard_socket)}" if standard_socket.is_symlink() else "a socket"
+                if not provision.agree(
+                    f"{standard_socket} is {owner}, not Colima's. Replace it with a link to {colima_socket} (sudo)?",
+                    default=False,
+                ):
+                    failures.warn(
+                        f"  - Warning: {standard_socket} left as it is ({owner}); clients that use it reach that "
+                        f"engine, not Colima. To switch: sudo rm {standard_socket} && "
+                        f"sudo ln -s {colima_socket} {standard_socket}"
+                    )
+                    return
                 click.echo(f"  - Removing existing {standard_socket}...")
                 subprocess.run(["sudo", "rm", "-f", str(standard_socket)], check=True)
 

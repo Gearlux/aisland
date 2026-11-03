@@ -256,9 +256,9 @@ def _foreign_remote(path: Path, url: str) -> Optional[str]:
 def _ensure_remote(path: Path, url: str) -> None:
     current, _managed = _remote_state(path)
     if not current:
-        _git(path, "remote", "add", MIRROR_REMOTE, url)
+        _git(path, "remote", "add", "--", MIRROR_REMOTE, url)
     elif current != url:
-        _git(path, "remote", "set-url", MIRROR_REMOTE, url)
+        _git(path, "remote", "set-url", "--", MIRROR_REMOTE, url)
     _git(path, "config", f"remote.{MIRROR_REMOTE}.tagOpt", "--no-tags")
     _git(path, "config", _MANAGED_KEY, "true")
 

@@ -59,7 +59,7 @@ def add_unlisted(root: Path) -> List[str]:
     force = ["-f"] if local_workspace.is_local(root) else []
     for clone in unlisted(root):
         branch = ["-b", clone.branch] if clone.branch else []
-        added = gitcmd.git(root, "submodule", "add", "-q", *force, *branch, clone.url, clone.path)
+        added = gitcmd.git(root, "submodule", "add", "-q", *force, *branch, "--", clone.url, clone.path)
         if added.returncode != 0:
             lines.append(f"could not add {clone.path}: {(added.stderr.strip().splitlines() or ['failed'])[-1]}")
             continue

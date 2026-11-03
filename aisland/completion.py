@@ -38,7 +38,7 @@ import sys
 from pathlib import Path
 from typing import List, Literal, NamedTuple, Optional, Sequence, Tuple
 
-from aisland import discovery
+from aisland import atomic, discovery
 from aisland.projects import get_workspace_root
 
 #: The rc fragment `project.bashrc` sources. Gitignored, so writing it leaves no diff.
@@ -211,7 +211,7 @@ def _prune_stale(rc: Path) -> List[str]:
         text = _strip_block(text, f"{_LIQUIFAI_BLOCK_PREFIX}{prog} >>>", f"# <<< liquifai completion for {prog} <<<")
         pruned.append(prog)
     if pruned:
-        rc.write_text(text)
+        atomic.write_text(rc, text)
     return pruned
 
 
@@ -254,7 +254,7 @@ def install_completions(
     text = _strip_block(rc.read_text() if rc.exists() else "", _NON_LIQUIFAI_START, _NON_LIQUIFAI_END)
     if text and not text.endswith("\n"):
         text += "\n"
-    rc.write_text(text + block)
+    atomic.write_text(rc, text + block)
 
     return CompletionReport(rc=rc, shell=shell, liquifai_apps=installed, non_liquifai=covered, pruned=pruned)
 

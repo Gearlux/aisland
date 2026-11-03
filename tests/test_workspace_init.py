@@ -109,6 +109,14 @@ def test_the_starting_files_are_what_aisland_setup_needs(tmp_path: Path) -> None
         assert "aisland workspace init" in (root / name).read_text().splitlines()[1]
 
 
+def test_the_new_env_is_readable_by_its_owner_alone(tmp_path: Path) -> None:
+    """It will hold the workspace's secrets; the other starting files are ordinary ones."""
+    _init(tmp_path)
+    root = tmp_path / "acme"
+    assert (root / ".env").stat().st_mode & 0o777 == 0o600
+    assert (root / "mypy.ini").stat().st_mode & 0o077 != 0
+
+
 def test_a_new_workspace_gets_the_agent_commands_and_rules(tmp_path: Path) -> None:
     result = _init(tmp_path)
     root = tmp_path / "acme"

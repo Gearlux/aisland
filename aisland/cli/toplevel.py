@@ -59,13 +59,13 @@ def setup(non_interactive: bool, install_all: bool) -> None:
     Which projects this machine has: `aisland workspace configure active` (a project with an `active` value in
     workspace.toml is optional, and setup asks about it once).
 
-    What each project installs is a selection — `extras`, and each one the projects declare (`framework`,
-    `tracker`, …) — asked once and committed in workspace.toml; choose beforehand with
+    What each project installs is a selection — aisland's own `extras`, and each one the projects declare
+    (`aisland workspace show` lists them) — asked once and committed in workspace.toml; choose beforehand with
     `aisland workspace configure <selection> set`, or take every extra with --all.
 
     \b
     aisland setup --all
-    aisland workspace configure framework set torch --machine-only && aisland setup -y
+    aisland workspace configure extras set dev --machine-only && aisland setup -y
     """
     setup_workspace(non_interactive=non_interactive, install_all=install_all)
 
