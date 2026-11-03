@@ -84,11 +84,11 @@ from packaging.version import InvalidVersion, Version
 
 from aisland import downloads
 from aisland import pyproject as pyproject_toml
-from aisland import wheels_bundle, wheels_check, wheels_extra
+from aisland import wheels_bundle, wheels_check, wheels_extra, wheels_scrub
 from aisland.errors import AislandError
 from aisland.github import GitHubRepository, project_repositories
 from aisland.installers import ensure_uv_in_venv
-from aisland.projects import workspace_folders
+from aisland.projects import get_workspace_name, workspace_folders
 from aisland.pypi import PypiFile, PypiInfo, PypiProject, points_at_owner, pypi_json
 from aisland.sources import read_committed_sources
 from aisland.wheels_check import (
@@ -484,6 +484,9 @@ class WheelsPlan:
     ``needed`` is the target's closure (:func:`dependency_closure`); ``states`` PyPI's answer for every project the
     run may build or take from it; ``to_build`` the projects whose wheels the scope builds; ``not_built`` the ones the
     scope covers that have no checkout here; ``published`` the needed projects taken from PyPI, checked against it.
+    ``on_github`` is whether the target's own remote is on GitHub; for one that is not, ``hidden_names`` (the
+    workspace's name and its projects' GitHub owners) are what its wheels' metadata must not carry
+    (:mod:`aisland.wheels_scrub`).
     """
 
     projects: Dict[str, WorkspaceProject]
@@ -493,6 +496,8 @@ class WheelsPlan:
     to_build: List[WorkspaceProject]
     not_built: List[NotBuilt]
     published: List[WorkspaceProject]
+    on_github: bool = True
+    hidden_names: Tuple[str, ...] = ()
 
     @property
     def needed_names(self) -> Set[str]:
@@ -697,7 +702,10 @@ def _plan(workspace_root: Path, project_name: str, scope: WheelsScope) -> Wheels
             if not p.checked_out
         ]
     published = [p for p in needed if _published(states, p) and p not in to_build]
-    return WheelsPlan(projects, target, needed, states, to_build, not_built, published)
+    hidden = (get_workspace_name(workspace_root), *sorted({r.owner for r in repositories.values()}))
+    return WheelsPlan(
+        projects, target, needed, states, to_build, not_built, published, target.name in repositories, hidden
+    )
 
 
 def _remote_owner(repositories: Dict[str, GitHubRepository], project: WorkspaceProject) -> Optional[str]:
@@ -737,10 +745,13 @@ def _choose_extra(plan: WheelsPlan, pyproject: Path, extra: Optional[str], optio
 
 
 def _build_all(uv: str, plan: WheelsPlan, dirty: Dict[str, List[str]], scratch: Path, own: bool) -> _Built:
-    """Every wheel of the plan's ``to_build`` — and the target's own when ``own`` — into ``scratch/wheels``."""
+    """Every wheel of the plan's ``to_build`` — and the target's own when ``own`` — into ``scratch/wheels``; for a
+    target not on GitHub, each scrubbed of what names GitHub or the workspace (:func:`wheels_scrub.scrub_wheel`)."""
     built = _Built()
     for project in plan.to_build:
         wheel, entry = _build_one(uv, project, plan, dirty, scratch)
+        if not plan.on_github:
+            wheels_scrub.scrub_wheel(wheel, plan.hidden_names)
         built.wheels.append(wheel)
         built.entries.append(entry)
         built.owners.update({module: project.distribution for module in wheel_modules(wheel)})
@@ -749,6 +760,8 @@ def _build_all(uv: str, plan: WheelsPlan, dirty: Dict[str, List[str]], scratch: 
             built.name_clashes.extend(_clash(project, payload, entry.version))
     if own:
         built.own_wheel, built.own_entry = _build_one(uv, plan.target, plan, dirty, scratch)
+        if not plan.on_github:
+            wheels_scrub.scrub_wheel(built.own_wheel, plan.hidden_names)
     return built
 
 
@@ -795,9 +808,18 @@ def _write_folder(
     target, scope, include_project = plan.target, options.scope, options.include_project
     project_wheel = built.own_entry if include_project else None
     files = {
-        README_NAME: render_readme(target.name, scope, built.entries, project_wheel, chosen.name, chosen.command),
+        README_NAME: render_readme(
+            target.name, scope, built.entries, project_wheel, chosen.name, chosen.command, commits=plan.on_github
+        ),
         WHEELS_YAML: render_wheels_yaml(
-            target.name, scope, built.entries, plan.not_built, choices, project_wheel, chosen.command
+            target.name,
+            scope,
+            built.entries,
+            plan.not_built,
+            choices,
+            project_wheel,
+            chosen.command,
+            commits=plan.on_github,
         ),
         INSTALL_SCRIPT: render_install_script(target.name, scope, include_project, chosen.command),
         GITIGNORE: IGNORE_ZIP if options.commit else IGNORE_ALL,

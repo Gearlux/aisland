@@ -283,6 +283,21 @@ that stops tracking them (the files stay on disk):
 wheels/ is tracked in app (10 files); stop tracking it with: git -C app rm -r --cached wheels
 ```
 
+### A project not on GitHub: its wheels say nothing of GitHub
+
+When the project's own remote is not on GitHub (a company's server, say), the folder it commits must not tell that
+repository where the workspace's other projects live. The run then writes `wheels.yaml` and the README without any
+wheel's branch or commit (the README's table has the columns Wheel, Project and Needed), and rewrites each wheel's
+METADATA without:
+
+- its description, which is its project's README with its links to the GitHub repositories;
+- the URL fields on GitHub (`Project-URL`, `Home-page`, `Download-URL`);
+- the author and maintainer fields that name the workspace or the GitHub owner of one of its projects.
+
+Everything that installs stays as built: the code, the requirements (a third-party `git+https://github.com/…`
+requirement among them) and the entry points. RECORD names the new METADATA, so pip installs the wheel as before, and
+an unchanged project still rebuilds byte for byte. A project on GitHub gets its folder and its wheels as before.
+
 ### Old committed wheels: `aisland wheels prune` and `aisland wheels reset`
 
 Every `--commit` that changes a wheel adds its bytes to the history for good, and every clone carries every version

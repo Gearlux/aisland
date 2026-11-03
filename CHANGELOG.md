@@ -57,7 +57,9 @@ The first release on PyPI: `pip install aisland`.
   `--include-project` builds the project's own wheel too, and `--extra NAME` writes the extra NAME into the project's
   `pyproject.toml`, so `uv pip install -e ./<project>[NAME]` installs the project with every wheel. It refuses,
   before it builds anything, a project whose setuptools discovery would take the `wheels/` folder it writes for a
-  package, and names the `[tool.setuptools.packages.find]` table that fixes it.
+  package, and names the `[tool.setuptools.packages.find]` table that fixes it. For a project whose remote is not on
+  GitHub, its folder names no branch or commit, and each wheel's metadata keeps no README, no GitHub URL and no
+  author naming the workspace.
 - **`aisland wheels zip <project>`** packs a project's wheels into a zip that installs with plain `python`, and
   **`aisland wheels install`** unpacks one into a project's `wheels/` and installs it into the environment you name.
 - **`aisland wheels prune <project>`** strips from a project's history the committed wheel versions no branch or tag

@@ -157,24 +157,29 @@ def render_readme(
     project_wheel: Optional[BuiltWheel] = None,
     extra: Optional[str] = None,
     command_extra: Optional[str] = "",
+    commits: bool = True,
 ) -> str:
     """``wheels/README.md``: its generator, the install command, and each wheel's commit (``project_wheel``, the
     target's own, last); with ``extra``, the uv command that installs the extra first. ``command_extra`` is the
     ``--extra`` the regenerate command names (``""``: ``extra``; ``None``: none, the project remembering it).
+    Without ``commits`` (a target not on GitHub) no wheel's branch or commit is written.
 
     No date and no PyPI verdict, so a rebuild of unchanged projects changes no file.
     """
     flag = extra if command_extra == "" else command_extra
     command = regenerate_command(target, scope, project_wheel is not None, flag)
     shipped = built + ([project_wheel] if project_wheel else [])
-    rows = "\n".join(
-        f"| {b.wheel} | {b.project} | {b.branch} | {b.commit} | {'yes' if b.needed else 'no'} |" for b in shipped
-    )
-    table = (
-        f"| Wheel | Project | Branch | Commit | Needed |\n| --- | --- | --- | --- | --- |\n{rows}"
-        if shipped
-        else "No wheel is needed."
-    )
+    if commits:
+        rows = "\n".join(
+            f"| {b.wheel} | {b.project} | {b.branch} | {b.commit} | {'yes' if b.needed else 'no'} |" for b in shipped
+        )
+        columns = "| Wheel | Project | Branch | Commit | Needed |\n| --- | --- | --- | --- | --- |"
+    else:
+        rows = "\n".join(f"| {b.wheel} | {b.project} | {'yes' if b.needed else 'no'} |" for b in shipped)
+        columns = "| Wheel | Project | Needed |\n| --- | --- | --- |"
+    table = f"{columns}\n{rows}" if shipped else "No wheel is needed."
+    # Where each wheel comes from, in the intro's words: the commit the table names, or (no commits) its last one.
+    source, rest, that = ("the commit", "below", "the commit") if commits else ("its last", "commit", "that commit")
     if project_wheel is None:
         how = f"""\
 Install {target} from its own folder, editable, with the wheels marked `install: true` in
@@ -187,19 +192,19 @@ install {target} from its folder, editable, instead:"""
     title, intro = {
         "unpublished": (
             f"The wheels {target} needs",
-            f"The workspace projects {target} depends on that are not on PyPI, each built from the commit\n"
-            "below. Everything else it needs comes from PyPI.",
+            f"The workspace projects {target} depends on that are not on PyPI, each built from {source}\n"
+            f"{rest}. Everything else it needs comes from PyPI.",
         ),
         "needed": (
             f"The wheels {target} needs",
             f"Every workspace project {target} depends on that had a checkout where these were built, each\n"
-            "built from the commit below — those on PyPI too, so the commit, not the release, is what\n"
+            f"built from {source} {rest} — those on PyPI too, so {that}, not the release, is what\n"
             "installs. Everything else it needs comes from PyPI.",
         ),
         "all": (
             f"The workspace's wheels, for {target}",
-            "Every workspace project that had a checkout where these were built, each built from the commit\n"
-            f"below. *Needed* marks the ones {target} depends on; everything else it needs comes from PyPI.",
+            f"Every workspace project that had a checkout where these were built, each built from {source}\n"
+            f"{rest}. *Needed* marks the ones {target} depends on; everything else it needs comes from PyPI.",
         ),
     }[scope]
     header = "\n".join(provenance_header("", command, "aisland/aisland/wheels_files.py (render_readme)"))
@@ -247,9 +252,10 @@ def render_wheels_yaml(
     keep: Dict[str, bool],
     project_wheel: Optional[BuiltWheel] = None,
     extra: Optional[str] = None,
+    commits: bool = True,
 ) -> str:
-    """``wheels/wheels.yaml``: each wheel, its commit, whether ``target`` needs it, and ``install:``; the target's
-    own wheel (``project_wheel``) last.
+    """``wheels/wheels.yaml``: each wheel, its commit (not without ``commits``: a target not on GitHub), whether
+    ``target`` needs it, and ``install:``; the target's own wheel (``project_wheel``) last.
 
     ``install:`` is the value in ``keep`` (the user's, read from the file this one replaces) for a project
     listed there, else whether it is needed (the target's own wheel: true). Strings are written as JSON strings,
@@ -279,10 +285,10 @@ def render_wheels_yaml(
     lines.append("wheels:" if shipped else "wheels: []")
     for b in shipped:
         install = keep.get(b.project, b.needed)
+        lines += [f"  - wheel: {_string(b.wheel)}", f"    project: {_string(b.project)}"]
+        if commits:
+            lines.append(f"    commit: {_string(f'{b.branch} {b.commit}')}")
         lines += [
-            f"  - wheel: {_string(b.wheel)}",
-            f"    project: {_string(b.project)}",
-            f"    commit: {_string(f'{b.branch} {b.commit}')}",
             f"    needed: {'true' if b.needed else 'false'}",
             f"    on_pypi: {_string(b.on_pypi)}",
             f"    install: {'true' if install else 'false'}",

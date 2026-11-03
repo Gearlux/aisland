@@ -100,8 +100,8 @@ The workspace's dev-infrastructure CLI, `aisland` (click, the `aisland/cli/` pac
   [module-split]: `_plan` (a frozen `WheelsPlan`), `_choose_extra`, `_build_all`, `_write_folder`, `_check` (or
   `_unchecked` under `--no-check`), `_commit_or_note`; every refusal comes before the first build, in that order. The
   run's other parts are modules of their own: `wheels_report.py`, `wheels_files.py`, `wheels_check.py`,
-  `wheels_bundle.py`, `wheels_extra.py`, `wheels_prune.py` (with `filter_repo.py`), and `wheels_install.py` /
-  `wheels_unzip.py` (standard library only: they run where aisland is not). A name the run patches in a test is patched
+  `wheels_bundle.py`, `wheels_extra.py`, `wheels_scrub.py`, `wheels_prune.py` (with `filter_repo.py`), and
+  `wheels_install.py` / `wheels_unzip.py` (standard library only: they run where aisland is not). A name the run patches in a test is patched
   where it is CALLED: `wheels.build_wheel`, `wheels.install_and_import`, but `wheels_check.PYPI_INDEX_ARGS`, which both
   modules read from there.
 - **`tunnel.py`**: `aisland tunnel` — a VS Code Remote Tunnel to the machine aisland runs on. One detached process with
@@ -870,6 +870,12 @@ An aisland command, only the named project's closure, both checks; each flag's m
 - The folder is git-ignored (`wheels/.gitignore`: `*`) unless `--commit`, which commits `wheels/` ITSELF — that path
   only, only after a passing check, never the zip; a tracked folder without `--commit` is reported with its `git rm -r
   --cached`, never untracked by the command (`tests/test_wheels_zip.py::TestGit`).
+- **A target not on GitHub gets a folder that says nothing of GitHub** (root rule "A Bitbucket Project Never Names
+  acme Or The GitHub Projects") [wheels-off-github]: for a target not in `github.project_repositories`, `wheels.yaml`
+  and the README carry no branch or commit, and every wheel built is scrubbed (`wheels_scrub.scrub_wheel`) of its
+  METADATA's description, its URL fields naming `github.com` and its author/maintainer fields naming the workspace or
+  a GitHub owner (`WheelsPlan.hidden_names`), RECORD following; code, requirements and entry points stay as built, and
+  a target on GitHub gets byte-identical files (`tests/test_wheels_scrub.py`).
 - `aisland wheels` is a group (`build`, `zip`, `install`); an unknown first word is `build`'s project. The zip runs with
   plain `python` (`wheels_unzip.py`, standard library only), refuses another project's folder before unpacking and is
   byte-identical for an unchanged folder; `install` refuses the workspace's `.venv` (`tests/test_wheels_zip.py`).
