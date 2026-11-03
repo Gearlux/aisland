@@ -251,87 +251,117 @@ def _built_lines(report: WheelsReport) -> List[str]:
 
 
 def render_report(report: WheelsReport) -> str:
-    """The text ``aisland wheels`` prints."""
-    target = report.target
-    lines = _built_lines(report)
+    """The text ``aisland wheels`` prints: what was built, what PyPI has, what imported, the verdict, then what the
+    run wrote beside the wheels. Each section's lines end with the blank line that separates it from the next."""
+    lines = _built_lines(report) + _own_wheel_lines(report) + [""]
+    lines += _forced_lines(report)
+    lines += _published_lines(report)
+    lines += _name_clash_lines(report)
+    lines += _import_check_lines(report)
+    lines += _verdict_lines(report)
+    tail = _tail_lines(report)
+    if tail:
+        lines += ["", *tail]
+    return "\n".join(lines).rstrip() + "\n"
+
+
+def _own_wheel_lines(report: WheelsReport) -> List[str]:
+    """The target's own wheel (``--include-project``), when the run built it."""
     own = report.project_wheel
-    if own is not None:
-        lines.append(f"{target}'s own wheel (--include-project), installed in place of its folder:")
-        lines += _table([[own.project, own.version, f"{own.branch} {own.commit}"]])
-    lines.append("")
+    if own is None:
+        return []
+    return [
+        f"{report.target}'s own wheel (--include-project), installed in place of its folder:",
+        *_table([[own.project, own.version, f"{own.branch} {own.commit}"]]),
+    ]
 
+
+def _forced_lines(report: WheelsReport) -> List[str]:
+    """The wheels ``--force`` built from a working tree, with the changes no commit holds."""
+    own = report.project_wheel
     forced = [b for b in report.built + ([own] if own else []) if b.uncommitted]
-    if forced:
-        lines.append("Built with changes no commit holds (--force); no commit reproduces these wheels:")
-        for b in forced:
-            lines.append(f"  {b.project}")
-            lines += [f"    {line}" for line in b.uncommitted]
-        lines.append("")
+    if not forced:
+        return []
+    lines = ["Built with changes no commit holds (--force); no commit reproduces these wheels:"]
+    for b in forced:
+        lines.append(f"  {b.project}")
+        lines += [f"    {line}" for line in b.uncommitted]
+    return lines + [""]
 
-    if report.published and not report.checked:
-        count = len(report.published)
-        taken = ", ".join(f"{p.project} {p.pypi_version}" for p in report.published)
-        lines.append(
-            f"It takes {count} workspace project{'s' if count > 1 else ''} from PyPI, not compared (--no-check): {taken}"
-        )
-    elif report.published:
-        count = len(report.published)
-        lines.append(
-            f"It takes {count} workspace project{'s' if count > 1 else ''} from PyPI, compared with this checkout:"
-        )
-        rows = []
-        for p in report.published:
-            version = f"PyPI {p.pypi_version}"
-            if p.checkout_version and p.checkout_version != p.pypi_version:
-                version += f", checkout {p.checkout_version}"
-            if p.note:
-                verdict = f"not compared: {p.note}"
-            elif p.differing_files:
-                verdict = f"behind: {_files(p.differing_files)}"
-            else:
-                verdict = "up to date"
-            rows.append([p.project, version, verdict])
-        lines += _table(rows)
-    else:
-        lines.append("It takes no workspace project from PyPI.")
-    lines.append("")
 
-    if report.name_clashes:
-        lines.append("Names PyPI gives to other projects:")
-        lines += [f"  {clash}" for clash in report.name_clashes]
-        lines.append("")
-
+def _published_lines(report: WheelsReport) -> List[str]:
+    """The workspace projects the target takes from PyPI, and how each compares with its checkout."""
+    if not report.published:
+        return ["It takes no workspace project from PyPI.", ""]
+    count = len(report.published)
+    projects = f"{count} workspace project{'s' if count > 1 else ''}"
     if not report.checked:
-        lines.append(
-            f"Not checked (--no-check): {target} was not installed in an empty venv, so nothing says these wheels import."
-        )
-    elif report.install_error is not None:
-        lines.append(f"Installing {target} in an empty venv failed:")
-        lines += [f"    {line}" for line in report.install_error.splitlines()]
-    else:
-        n_packages = len(report.packages)
-        lines.append(
-            f"Installed {target} in an empty venv (its wheels + PyPI) and imported every module of its "
-            f"{n_packages} package{'s' if n_packages != 1 else ''}:"
-        )
-        n_imported = len(report.imported)
-        modules = f"module{'s' if n_imported != 1 else ''}"
-        if report.import_failures:
-            rows = [
-                [f.module, f.error + (f"  ({', '.join(f.blamed)})" if f.blamed else "")] for f in report.import_failures
-            ]
-            lines += _table(rows)
-            lines.append(f"  {n_imported} other {modules} imported")
-        elif report.import_warnings:
-            lines.append(f"  {n_imported} {modules} imported")
+        taken = ", ".join(f"{p.project} {p.pypi_version}" for p in report.published)
+        return [f"It takes {projects} from PyPI, not compared (--no-check): {taken}", ""]
+    rows = []
+    for p in report.published:
+        version = f"PyPI {p.pypi_version}"
+        if p.checkout_version and p.checkout_version != p.pypi_version:
+            version += f", checkout {p.checkout_version}"
+        if p.note:
+            verdict = f"not compared: {p.note}"
+        elif p.differing_files:
+            verdict = f"behind: {_files(p.differing_files)}"
         else:
-            lines.append(f"  all {n_imported} {modules} imported")
-        if report.import_warnings:
-            lines.append("")
-            lines.append("Not imported, missing what no workspace project ships (an optional extra's?):")
-            lines += _table([[f.module, f.error] for f in report.import_warnings])
-    lines.append("")
+            verdict = "up to date"
+        rows.append([p.project, version, verdict])
+    return [f"It takes {projects} from PyPI, compared with this checkout:", *_table(rows), ""]
 
+
+def _name_clash_lines(report: WheelsReport) -> List[str]:
+    """The names PyPI gives to other projects."""
+    if not report.name_clashes:
+        return []
+    return ["Names PyPI gives to other projects:", *[f"  {clash}" for clash in report.name_clashes], ""]
+
+
+def _import_check_lines(report: WheelsReport) -> List[str]:
+    """What the empty venv found: the target installed, or not, and every module imported, or not."""
+    target = report.target
+    if not report.checked:
+        return [
+            f"Not checked (--no-check): {target} was not installed in an empty venv, so nothing says these wheels import.",
+            "",
+        ]
+    if report.install_error is not None:
+        return [
+            f"Installing {target} in an empty venv failed:",
+            *[f"    {line}" for line in report.install_error.splitlines()],
+            "",
+        ]
+    n_packages = len(report.packages)
+    lines = [
+        f"Installed {target} in an empty venv (its wheels + PyPI) and imported every module of its "
+        f"{n_packages} package{'s' if n_packages != 1 else ''}:"
+    ]
+    n_imported = len(report.imported)
+    modules = f"module{'s' if n_imported != 1 else ''}"
+    if report.import_failures:
+        rows = [
+            [f.module, f.error + (f"  ({', '.join(f.blamed)})" if f.blamed else "")] for f in report.import_failures
+        ]
+        lines += _table(rows)
+        lines.append(f"  {n_imported} other {modules} imported")
+    elif report.import_warnings:
+        lines.append(f"  {n_imported} {modules} imported")
+    else:
+        lines.append(f"  all {n_imported} {modules} imported")
+    if report.import_warnings:
+        lines.append("")
+        lines.append("Not imported, missing what no workspace project ships (an optional extra's?):")
+        lines += _table([[f.module, f.error] for f in report.import_warnings])
+    return lines + [""]
+
+
+def _verdict_lines(report: WheelsReport) -> List[str]:
+    """Whether PyPI is the cause of a failure, behind, or up to date."""
+    target = report.target
+    lines: List[str] = []
     if report.install_error is not None:
         if report.behind:
             lines.append(f"Behind: {', '.join(report.behind)}")
@@ -344,6 +374,12 @@ def render_report(report: WheelsReport) -> str:
             lines.append(f"Behind, nothing breaks: {', '.join(report.behind_only)}")
         if not report.import_failures and not report.behind:
             lines.append(f"PyPI is up to date for {target}.")
+    return lines
+
+
+def _tail_lines(report: WheelsReport) -> List[str]:
+    """What the run wrote beside the wheels: the extra, the commit, the zip and the bundle."""
+    target = report.target
     tail = []
     if report.extra is not None:
         n_wheels = len(report.built)
@@ -370,10 +406,7 @@ def render_report(report: WheelsReport) -> str:
         tail.append(
             f"Zip: {report.zip_file} ({human_size(report.zip_bytes)}) — install it from {where} with: python {zip_name}"
         )
-    tail += _bundle_lines(report)
-    if tail:
-        lines += ["", *tail]
-    return "\n".join(lines).rstrip() + "\n"
+    return tail + _bundle_lines(report)
 
 
 def _bundle_lines(report: WheelsReport) -> List[str]:

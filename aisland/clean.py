@@ -306,7 +306,7 @@ def _human(size: int) -> str:
 
 
 def _resolve_project_dir(project: str, workspace_root: Path, *, action: str = "clean") -> Path:
-    """Validated project directory, or raise ``click.ClickException`` explaining why not.
+    """Validated project directory, or raise an :class:`AislandError` explaining why not.
 
     Shared by the clean and the restore side, because the target of both is the same thing —
     a project working tree — and every refusal below applies to putting files back as much as
@@ -613,6 +613,122 @@ def _forget_restored(backup: Backup, restored: Set[str]) -> None:
     (backup.path / MANIFEST_NAME).write_text(json.dumps(manifest, indent=2) + "\n")
 
 
+@dataclass(frozen=True)
+class _RestorePlan:
+    """What putting a backup back would do, entry by entry (project-relative paths)."""
+
+    #: ``(rel, source, destination)`` to move into the project.
+    pending: Tuple[Tuple[str, Path, Path], ...]
+    #: The project already holds this, byte for byte: the backup's copy is dropped.
+    duplicate: Tuple[str, ...]
+    #: The project holds something ELSE under this path, and ``--force`` was not given.
+    occupied: Tuple[str, ...]
+    #: The manifest lists it, the payload no longer holds it.
+    missing: Tuple[str, ...]
+
+    @property
+    def replacing(self) -> List[str]:
+        """The pending entries that would replace something the project holds now."""
+        return [rel for rel, _source, destination in self.pending if _exists(destination)]
+
+
+def _exists(path: Path) -> bool:
+    """Whether anything is at ``path`` — a dangling link included."""
+    return path.exists() or path.is_symlink()
+
+
+def _wanted_entries(backup: Backup, only: Sequence[str]) -> List[str]:
+    """The entries to restore: all the backup holds, or the ``only`` ones, refused when it does not hold one."""
+    available = restorable_entries(backup)
+    if not only:
+        return available
+    unknown = [rel for rel in only if rel not in available]
+    if unknown:
+        raise AislandError(
+            f"{backup.path.name} holds no entry {', '.join(repr(rel) for rel in unknown)}.\n"
+            f"It holds: {', '.join(available) or '(nothing)'}"
+        )
+    return [rel for rel in available if rel in set(only)]
+
+
+def _plan_restore(payload: Path, project_dir: Path, wanted: Sequence[str], *, force: bool) -> _RestorePlan:
+    """Sort ``wanted`` into what moves, what is already there, what is in the way and what is gone."""
+    pending: List[Tuple[str, Path, Path]] = []
+    duplicate: List[str] = []
+    occupied: List[str] = []
+    missing: List[str] = []
+    for rel in wanted:
+        source = payload / _safe_rel(rel)
+        destination = project_dir / _safe_rel(rel)
+        if not _exists(source):
+            missing.append(rel)
+        elif not _exists(destination):
+            pending.append((rel, source, destination))
+        elif _same_content(source, destination):
+            duplicate.append(rel)  # nothing to restore; the backup's copy is redundant
+        elif force:
+            pending.append((rel, source, destination))
+        else:
+            occupied.append(rel)
+    return _RestorePlan(tuple(pending), tuple(duplicate), tuple(occupied), tuple(missing))
+
+
+def _announce(plan: _RestorePlan, backup: Backup, project: str, project_dir: Path) -> None:
+    """Say what the restore will do, one line per entry."""
+    click.echo(click.style(f"Restoring {backup.path.name} into {project} ({project_dir})", bold=True))
+    for rel, _source, destination in plan.pending:
+        verb = "replace" if _exists(destination) else "restore"
+        click.echo(f"  {verb:<8} {rel}")
+    for rel in plan.duplicate:
+        click.echo(f"  {'already':<8} {rel}  (identical in the project — dropping the backup's copy)")
+    for rel in plan.occupied:
+        click.echo(f"  {'skip':<8} {rel}  (the project has a DIFFERENT one — use --force to replace it)")
+    for rel in plan.missing:
+        click.echo(click.style(f"  {'gone':<8} {rel}  (not in the payload)", fg="red"), err=True)
+
+
+def _move_back(plan: _RestorePlan, payload: Path) -> Tuple[Set[str], List[Tuple[str, str]]]:
+    """Move each pending entry into the project: the entries restored, and ``(rel, reason)`` of the ones that failed."""
+    restored: Set[str] = set()
+    failed: List[Tuple[str, str]] = []
+    for rel, source, destination in plan.pending:
+        try:
+            if destination.is_dir() and not destination.is_symlink():
+                shutil.rmtree(destination)
+            elif _exists(destination):
+                destination.unlink()
+            destination.parent.mkdir(parents=True, exist_ok=True)
+            shutil.move(str(source), str(destination))
+        except (OSError, shutil.Error) as exc:
+            failed.append((rel, str(exc)))
+            click.echo(click.style(f"  ! could not restore {rel}: {exc}", fg="red"), err=True)
+        else:
+            restored.add(rel)
+            _prune_empty_parents(source, payload)
+    return restored, failed
+
+
+def _drop_duplicates(plan: _RestorePlan, payload: Path, restored: Set[str], failed: List[Tuple[str, str]]) -> None:
+    """Delete the backup's copy of every entry the project already holds, byte for byte.
+
+    A proven-identical copy is dropped rather than moved: the content IS in the project, so keeping the duplicate
+    would make the next ``list`` count it as recoverable content and make every later restore re-run the comparison
+    that proved it redundant.
+    """
+    for rel in plan.duplicate:
+        redundant = payload / _safe_rel(rel)
+        try:
+            if redundant.is_dir() and not redundant.is_symlink():
+                shutil.rmtree(redundant)
+            else:
+                redundant.unlink()
+        except OSError as exc:  # pragma: no cover - the compare just read it successfully
+            failed.append((rel, str(exc)))
+        else:
+            restored.add(rel)
+            _prune_empty_parents(redundant, payload)
+
+
 def restore_backup(
     project: str,
     *,
@@ -648,99 +764,33 @@ def restore_backup(
     root = workspace_root or get_workspace_root()
     project_dir = _resolve_project_dir(project, root, action="restore")
     backup = select_backup(backup_root(data_dir), project, stamp)
-
-    available = restorable_entries(backup)
-    if only:
-        unknown = [rel for rel in only if rel not in available]
-        if unknown:
-            raise AislandError(
-                f"{backup.path.name} holds no entry {', '.join(repr(rel) for rel in unknown)}.\n"
-                f"It holds: {', '.join(available) or '(nothing)'}"
-            )
-        available = [rel for rel in available if rel in set(only)]
-
     payload = backup.path / PAYLOAD_DIRNAME
-    pending: List[Tuple[str, Path, Path]] = []  # (rel, source, destination)
-    duplicate: List[str] = []  # the project already holds this, byte for byte
-    occupied: List[str] = []  # the project holds something ELSE under this path
-    missing: List[str] = []
-    for rel in available:
-        source = payload / _safe_rel(rel)
-        destination = project_dir / _safe_rel(rel)
-        if not source.exists() and not source.is_symlink():
-            missing.append(rel)
-        elif not destination.exists() and not destination.is_symlink():
-            pending.append((rel, source, destination))
-        elif _same_content(source, destination):
-            duplicate.append(rel)  # nothing to restore; the backup's copy is redundant
-        elif force:
-            pending.append((rel, source, destination))
-        else:
-            occupied.append(rel)
+    plan = _plan_restore(payload, project_dir, _wanted_entries(backup, only), force=force)
 
-    click.echo(click.style(f"Restoring {backup.path.name} into {project} ({project_dir})", bold=True))
-    for rel, _source, destination in pending:
-        verb = "replace" if destination.exists() or destination.is_symlink() else "restore"
-        click.echo(f"  {verb:<8} {rel}")
-    for rel in duplicate:
-        click.echo(f"  {'already':<8} {rel}  (identical in the project — dropping the backup's copy)")
-    for rel in occupied:
-        click.echo(f"  {'skip':<8} {rel}  (the project has a DIFFERENT one — use --force to replace it)")
-    for rel in missing:
-        click.echo(click.style(f"  {'gone':<8} {rel}  (not in the payload)", fg="red"), err=True)
-
+    _announce(plan, backup, project, project_dir)
     if dry_run:
         click.echo("\nDry run — nothing was restored.")
-        return 1 if occupied or missing else 0
+        return 1 if plan.occupied or plan.missing else 0
 
-    replacing = [rel for rel, _source, destination in pending if destination.exists() or destination.is_symlink()]
-    if replacing and not assume_yes:
-        if not click.confirm(f"Replace {len(replacing)} existing path(s) in {project}?"):
-            click.echo("Nothing was restored.")
-            return 1
+    replacing = plan.replacing
+    if replacing and not assume_yes and not click.confirm(f"Replace {len(replacing)} existing path(s) in {project}?"):
+        click.echo("Nothing was restored.")
+        return 1
 
-    restored: Set[str] = set()
-    failed: List[Tuple[str, str]] = []
-    for rel, source, destination in pending:
-        try:
-            if destination.is_dir() and not destination.is_symlink():
-                shutil.rmtree(destination)
-            elif destination.exists() or destination.is_symlink():
-                destination.unlink()
-            destination.parent.mkdir(parents=True, exist_ok=True)
-            shutil.move(str(source), str(destination))
-        except (OSError, shutil.Error) as exc:
-            failed.append((rel, str(exc)))
-            click.echo(click.style(f"  ! could not restore {rel}: {exc}", fg="red"), err=True)
-        else:
-            restored.add(rel)
-            _prune_empty_parents(source, payload)
-
+    restored, failed = _move_back(plan, payload)
     moved = len(restored)
-    # A proven-identical copy is dropped rather than moved: the content IS in the project, so
-    # keeping the duplicate would make the next `list` count it as recoverable content and
-    # make every later restore re-run the comparison that proved it redundant.
-    for rel in duplicate:
-        redundant = payload / _safe_rel(rel)
-        try:
-            if redundant.is_dir() and not redundant.is_symlink():
-                shutil.rmtree(redundant)
-            else:
-                redundant.unlink()
-        except OSError as exc:  # pragma: no cover - the compare just read it successfully
-            failed.append((rel, str(exc)))
-        else:
-            restored.add(rel)
-            _prune_empty_parents(redundant, payload)
-
+    _drop_duplicates(plan, payload, restored, failed)
     if restored:
         _forget_restored(backup, restored)
+
     click.echo(f"\nRestored {moved} entries into {project_dir}")
-    if duplicate:
-        click.echo(f"{len(duplicate)} were already there identically; the backup's copies were dropped.")
-    if occupied:
-        click.echo(f"{len(occupied)} left in the backup because the project has a different one (--force replaces).")
-    return 1 if occupied or missing or failed else 0
+    if plan.duplicate:
+        click.echo(f"{len(plan.duplicate)} were already there identically; the backup's copies were dropped.")
+    if plan.occupied:
+        click.echo(
+            f"{len(plan.occupied)} left in the backup because the project has a different one (--force replaces)."
+        )
+    return 1 if plan.occupied or plan.missing or failed else 0
 
 
 def list_store(
