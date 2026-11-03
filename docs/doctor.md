@@ -30,7 +30,7 @@ aisland doctor
 #   ✓ torch-ext-lock   torch 2.14.1 holds an OS lock while it builds — a killed build leaves no lock that blocks
 #   ✓ tunnel-relay     no tunnel configured here (nothing in ~/.aisland/tunnel)
 #   ✓ tunnel-connect   `aisland tunnel connect` not used here (nothing in ~/.aisland/tunnel)
-#   ✓ pylance-memory   Pylance ran out of memory at 2026-10-30 12:06:49 and runs on its own Node.js since 2026-10-30 12:15:51
+#   ✓ pylance-memory   Pylance ran out of memory at 2026-01-12 09:00:00 and runs on its own Node.js since 2026-01-12 09:08:00
 #
 # All 10 checks passed.
 ```

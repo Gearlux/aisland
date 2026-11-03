@@ -9,6 +9,7 @@ name = "aisland"
 version = "0.1.0"
 description = "One workspace of many Python projects: a shared venv, local services, generated CI and git aliases."
 readme = "README.md"
+keywords = ["workspace", "monorepo", "git submodules", "virtualenv", "continuous integration", "jenkins", "developer tools"]
 authors = [{name = "Gert Behiels"}]
 # PEP 639 SPDX expression; no `License ::` classifier (setuptools warns on one beside this field).
 license = "MIT"

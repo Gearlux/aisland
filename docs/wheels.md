@@ -316,7 +316,7 @@ app: 27 of 59 wheel versions stripped (7.6 MB), 41 commits rewritten
   pushed to origin: dev/main, main, v0.1.0, wheels-prune/map
   this clone: 20.4 MB → 12.8 MB
   the root records app at 1c0e4a2 (was 0c80aef), committed; push the root as usual
-  backup: …/.git/wheels-prune/20261027-140512-123456.bundle
+  backup: …/.git/wheels-prune/20260112-090000-123456.bundle
 Every other clone of app: aisland wheels reset app, before its next pull
 ```
 
@@ -333,7 +333,7 @@ app: 1 prune taken
   uncommitted changes set aside and put back: README.md
   this clone: 20.4 MB → 12.8 MB
   the root records app at 1c0e4a2 (was 8d52967), committed; push the root as usual
-  backup: …/.git/wheels-prune/20261027-141003-654321.bundle
+  backup: …/.git/wheels-prune/20260112-091000-654321.bundle
 ```
 
 `reset` strips the same versions the same way, so each branch that was origin's lands on origin's new commit; its

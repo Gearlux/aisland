@@ -241,7 +241,7 @@ aisland tests nightly --json --no-notify  # the same report as data, no banner
 ```text
 # Nightly runs
 
-Jenkins http://localhost:9080/ · acme.local timer runs since 2026-10-05T11:50+02:00
+Jenkins http://localhost:9080/ · acme.local timer runs since 2026-01-12T09:00+01:00
 
 **No 01:00 run** of acme.local started in that window.
 ```

@@ -143,6 +143,40 @@ def test_the_readme_indexes_every_page() -> None:
     assert missing == []
 
 
+def _decisions_and_contents(page: Path) -> Tuple[List[str], List[Tuple[str, str]]]:
+    """The titles of the ``##`` decisions of ``page`` (its Contents section aside) and the ``(title, anchor)`` of
+    each link in that Contents section."""
+    decisions: List[str] = []
+    listed: List[Tuple[str, str]] = []
+    in_contents = False
+    for _, line in _outside_code(page.read_text(encoding="utf-8")):
+        if line.startswith("## "):
+            in_contents = line == "## Contents"
+            if not in_contents:
+                decisions.append(line[3:].strip())
+        elif in_contents:
+            listed += re.findall(r"^- \[(.+)\]\(#([^)\s]+)\)$", line)
+    return decisions, listed
+
+
+def test_the_architecture_contents_lists_each_decision_once() -> None:
+    decisions, listed = _decisions_and_contents(DOCS / "architecture.md")
+    titles = [title for title, _ in listed]
+    assert sorted(titles) == sorted(decisions)
+
+
+def test_every_link_of_the_architecture_contents_lands_on_its_own_heading() -> None:
+    page = DOCS / "architecture.md"
+    _, listed = _decisions_and_contents(page)
+    anchors = _anchors(page)
+    wrong = []
+    for title, anchor in listed:
+        slug = re.sub(r"[^\w\- ]", "", title.lower()).replace(" ", "-")
+        if anchor != slug or anchor not in anchors:
+            wrong.append(f"{title}: #{anchor}")
+    assert wrong == []
+
+
 _WORKSPACE_NAME = re.compile(r"\b(" + "|".join(WORKSPACE_NAMES) + r")\b", re.IGNORECASE)
 
 #: The user's choice (2026-10-29): the example of a project's service. The one place a page names a project of the

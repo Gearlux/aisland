@@ -1,5 +1,5 @@
 """
-Aisland Manager: Cross-platform infrastructure CLI.
+aisland: one workspace of many Python projects — a shared venv, local services, generated CI and git aliases.
 """
 
 from importlib.metadata import PackageNotFoundError, version

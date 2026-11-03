@@ -27,8 +27,8 @@ package instead.
 Each file holds one JSON line for the run and one per test:
 
 ```json
-{"kind": "run", "run": "20261027T093800-56267", "at": "2026-10-27T09:38:00+01:00", "commit": "", "leg": "fast", "whole": true, "seconds": 0.053, "exit": 0, "tests": 1}
-{"kind": "test", "run": "20261027T093800-56267", "test": "tests/test_a.py::test_ok", "seconds": 0.0, "outcome": "passed", "slow": false}
+{"kind": "run", "run": "20260112T090000-4242", "at": "2026-01-12T09:00:00+01:00", "commit": "", "leg": "fast", "whole": true, "seconds": 0.053, "exit": 0, "tests": 1}
+{"kind": "test", "run": "20260112T090000-4242", "test": "tests/test_a.py::test_ok", "seconds": 0.0, "outcome": "passed", "slow": false}
 ```
 
 - `leg` — which run it was: `fast` (plain `pytest`), `slow` (`-m slow`), `all` (`-m ''`) or `other` (any other

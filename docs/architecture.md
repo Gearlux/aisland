@@ -6,6 +6,129 @@ the agent-facing rulebook lives in [`../AGENTS.md`](../AGENTS.md). These cross-l
 
 ---
 
+## Contents
+
+Where things live first, then every decision by subject. Most sections run Context, Decision, Consequences, Example and
+"What you may change"; where a heading carries a date, that is when it was decided.
+
+### Where things live
+
+The package is `aisland/`. A command is a click function in `aisland/cli/` that calls the module of its subject;
+`manager.py` runs the steps of `aisland setup` in order, and each step is a module of its own.
+
+| area | modules |
+|---|---|
+| The workspace and its file | `projects`, `locations`, `paths`, `workspace`, `workspace_file`, `workspace_check`, `clones`, `local_workspace`, `gitmodules`, `pyproject`, `discovery` |
+| What a project or a machine chooses | `activation`, `selection`, `sources`, `tracking`, `mirrors`, `recording`, `configure` |
+| Setting a machine up | `manager`, `provision`, `installers`, `downloads`, `editor_files`, `editor`, `mcp_config`, `uv_config`, `env_example`, `completion`, `harness` |
+| Services | `services/` (`base`, `registry`, `plugin`, `declared`, `jenkins`, `docker`, `swiftbar`), `supervisor` |
+| CI and tests | `ci_scaffold`, `ci_templates` (the sets under `templates/`), `quality`, `pytest_stats`, `nightly` |
+| Wheels | `wheels` and the `wheels_*` modules |
+| Reaching a remote machine | `tunnel`, `tunnel_connect`, `tunnel_shell` |
+| Diagnosis and housekeeping | `doctor`, `clean`, `filter_repo`, `git_exclude`, `notebook_utils`, `css_colors` |
+| Shared plumbing | `gitcmd` (every git call), `downloads` (every file fetch), `errors`, `failures`, `server` (the MCP server) |
+
+### The decisions
+
+**The workspace, its projects and its file**
+
+- [Project sources are a two-layer registry, and only the committed layer reaches a committed file](#project-sources-are-a-two-layer-registry-and-only-the-committed-layer-reaches-a-committed-file)
+- [A folder of projects is a workspace: its subfolders are read as submodules (2026-10-19)](#a-folder-of-projects-is-a-workspace-its-subfolders-are-read-as-submodules-2026-10-19)
+- [A clone the workspace does not list: setup adds it as a submodule](#a-clone-the-workspace-does-not-list-setup-adds-it-as-a-submodule)
+- [`workspace.toml`: the workspace written down like `.gitmodules`, kept current by setup](#workspacetoml-the-workspace-written-down-like-gitmodules-kept-current-by-setup)
+- [`aisland workspace configure`: one set of commands built from each plugin's keys; `source` the first](#aisland-workspace-configure-one-set-of-commands-built-from-each-plugins-keys-source-the-first)
+- [A root's two choices: a local repository (`--local`), projects it does not record (`track unset`)](#a-roots-two-choices-a-local-repository---local-projects-it-does-not-record-track-unset)
+- [Which projects a machine has: the `active` key marks a project optional, its value the default](#which-projects-a-machine-has-the-active-key-marks-a-project-optional-its-value-the-default)
+- [What each project installs: selections the projects declare, committed in `workspace.toml`](#what-each-project-installs-selections-the-projects-declare-committed-in-workspacetoml)
+- [An extra a project marks is installed only when named (2026-10-23)](#an-extra-a-project-marks-is-installed-only-when-named-2026-10-23)
+- [A project's wheels folder is a find-links path of the generated `uv.toml` (2026-10-23)](#a-projects-wheels-folder-is-a-find-links-path-of-the-generated-uvtoml-2026-10-23)
+- [The workspace's name can be written in `workspace.toml` (2026-10-23)](#the-workspaces-name-can-be-written-in-workspacetoml-2026-10-23)
+- [`workspace.toml` says its format, and a key nobody reads is named (2026-10-30)](#workspacetoml-says-its-format-and-a-key-nobody-reads-is-named-2026-10-30)
+- [A project is the workspace's own by its GitHub remote: no organisation is written into aisland](#a-project-is-the-workspaces-own-by-its-github-remote-no-organisation-is-written-into-aisland)
+- [A project declares what it brings; aisland finds it in two stages and the project never imports aisland](#a-project-declares-what-it-brings-aisland-finds-it-in-two-stages-and-the-project-never-imports-aisland)
+- [A project names its click CLIs, and the package names nothing of the workspace it was written in (2026-10-28)](#a-project-names-its-click-clis-and-the-package-names-nothing-of-the-workspace-it-was-written-in-2026-10-28)
+- [A project's `pyproject.toml` and `.gitmodules` each have one reader (2026-10-30)](#a-projects-pyprojecttoml-and-gitmodules-each-have-one-reader-2026-10-30)
+- [A checkout of aisland is one only where a workspace lists it](#a-checkout-of-aisland-is-one-only-where-a-workspace-lists-it)
+- [From a checkout aisland finds everything from its own place; from a wheel, from where it runs (2026-10-19)](#from-a-checkout-aisland-finds-everything-from-its-own-place-from-a-wheel-from-where-it-runs-2026-10-19)
+- [Every workspace gets aisland's agent commands and rules (2026-10-20)](#every-workspace-gets-aislands-agent-commands-and-rules-2026-10-20)
+- [A workspace combines harness sets](#a-workspace-combines-harness-sets)
+- [A link to a folder of the workspace is a short name, never a project (2026-10-21)](#a-link-to-a-folder-of-the-workspace-is-a-short-name-never-a-project-2026-10-21)
+- [System tools: declared by the projects, checked before installing, aisland's own in the package](#system-tools-declared-by-the-projects-checked-before-installing-aislands-own-in-the-package)
+- [A dev dependency that needs more than pip is declared by the dependency itself](#a-dev-dependency-that-needs-more-than-pip-is-declared-by-the-dependency-itself)
+- [`--extra NAME`: one uv command installs the project with its wheels (2026-10-27)](#--extra-name-one-uv-command-installs-the-project-with-its-wheels-2026-10-27)
+- [The example environment: each project lists its variables, aisland concatenates them (2026-10-27)](#the-example-environment-each-project-lists-its-variables-aisland-concatenates-them-2026-10-27)
+- [`.env` is read as the shell reads it, by one reader (2026-10-28)](#env-is-read-as-the-shell-reads-it-by-one-reader-2026-10-28)
+- [A failed `init` removes the folder it made (2026-10-28)](#a-failed-init-removes-the-folder-it-made-2026-10-28)
+
+**Editor, shell and MCP**
+
+- [The VS Code workspace file is generated per machine, never tracked](#the-vs-code-workspace-file-is-generated-per-machine-never-tracked)
+- [The editor's theme and colours are a per-machine choice laid over the generated workspace file (2026-10-21)](#the-editors-theme-and-colours-are-a-per-machine-choice-laid-over-the-generated-workspace-file-2026-10-21)
+- [aisland's tools are its own MCP server, a chosen set (2026-10-21)](#aislands-tools-are-its-own-mcp-server-a-chosen-set-2026-10-21)
+- [Every MCP server is started with the workspace's environment (2026-10-21)](#every-mcp-server-is-started-with-the-workspaces-environment-2026-10-21)
+- [Completion install is a command, not a section of the bootstrap script (2026-07-31)](#completion-install-is-a-command-not-a-section-of-the-bootstrap-script-2026-07-31)
+- [The completion block leaves a non-interactive shell before it runs anything (2026-10-20)](#the-completion-block-leaves-a-non-interactive-shell-before-it-runs-anything-2026-10-20)
+- [TAB on an empty word offers a command's options (2026-10-21)](#tab-on-an-empty-word-offers-a-commands-options-2026-10-21)
+- [A terminal on the remote machine rides the VS Code tunnel it already runs (2026-10-21)](#a-terminal-on-the-remote-machine-rides-the-vs-code-tunnel-it-already-runs-2026-10-21)
+- [`aisland --help` works out the projects' services once per run (2026-10-28)](#aisland---help-works-out-the-projects-services-once-per-run-2026-10-28)
+- [The commands print the real install line, and every command is on a page (2026-10-28)](#the-commands-print-the-real-install-line-and-every-command-is-on-a-page-2026-10-28)
+- [Listing the services imports no project's code (2026-10-29)](#listing-the-services-imports-no-projects-code-2026-10-29)
+- [The MCP service tools take any service of the workspace (2026-10-29)](#the-mcp-service-tools-take-any-service-of-the-workspace-2026-10-29)
+
+**Services and Jenkins**
+
+- [A containerised service pins its image by digest and is told what the VM shares](#a-containerised-service-pins-its-image-by-digest-and-is-told-what-the-vm-shares)
+- [Jenkins runs on the Java its WAR accepts, by full path](#jenkins-runs-on-the-java-its-war-accepts-by-full-path)
+- [Jenkins' port is written once (2026-10-28)](#jenkins-port-is-written-once-2026-10-28)
+- [A service a project brings: declared in its `pyproject.toml`, or a class of its own that imports nothing of aisland](#a-service-a-project-brings-declared-in-its-pyprojecttoml-or-a-class-of-its-own-that-imports-nothing-of-aisland)
+- [On Linux the container engine is the system's (2026-10-29)](#on-linux-the-container-engine-is-the-systems-2026-10-29)
+- [aisland installs its own tools when a feature first needs one, after asking (2026-10-28)](#aisland-installs-its-own-tools-when-a-feature-first-needs-one-after-asking-2026-10-28)
+
+**CI, tests and the doctor**
+
+- [The scaffolder pre-installs the closure of what CI installs — not every reachable extras group](#the-scaffolder-pre-installs-the-closure-of-what-ci-installs--not-every-reachable-extras-group)
+- [The local pipeline tests the venv, it does not install](#the-local-pipeline-tests-the-venv-it-does-not-install)
+- [A long stage of the local pipeline has a time limit, and past it the stage fails](#a-long-stage-of-the-local-pipeline-has-a-time-limit-and-past-it-the-stage-fails)
+- [A recurring environment skew becomes a doctor check, not a note](#a-recurring-environment-skew-becomes-a-doctor-check-not-a-note)
+- [Every pytest run of a workspace project is recorded, and the split is read from the record](#every-pytest-run-of-a-workspace-project-is-recorded-and-the-split-is-read-from-the-record)
+- [The test-run record can be turned off per workspace, project or machine](#the-test-run-record-can-be-turned-off-per-workspace-project-or-machine)
+- [The test-run record is written only in an aisland workspace (2026-10-29)](#the-test-run-record-is-written-only-in-an-aisland-workspace-2026-10-29)
+- [aisland's fast run is parallel (2026-10-28)](#aislands-fast-run-is-parallel-2026-10-28)
+- [The CI files come from a template set (2026-10-30)](#the-ci-files-come-from-a-template-set-2026-10-30)
+- [A project off GitHub never names one in its CI files (2026-10-28)](#a-project-off-github-never-names-one-in-its-ci-files-2026-10-28)
+- [A `package.json` with a `test` script is a Node test run CI runs](#a-packagejson-with-a-test-script-is-a-node-test-run-ci-runs)
+- [Warnings go to stderr, and the doctor and the notebook filter run outside a workspace](#warnings-go-to-stderr-and-the-doctor-and-the-notebook-filter-run-outside-a-workspace)
+
+**Git: pull, push and mirrors**
+
+- [`pull-all` settles a submodule pointer only to a commit holding both sides](#pull-all-settles-a-submodule-pointer-only-to-a-commit-holding-both-sides)
+- [A root without an origin remote is not pulled or pushed, and its submodules follow their own branch](#a-root-without-an-origin-remote-is-not-pulled-or-pushed-and-its-submodules-follow-their-own-branch)
+- [A mirror is push-only, fast-forward-only, and copies the primary (2026-10-16)](#a-mirror-is-push-only-fast-forward-only-and-copies-the-primary-2026-10-16)
+- [A git command that reaches a remote gives up on one that stops sending](#a-git-command-that-reaches-a-remote-gives-up-on-one-that-stops-sending)
+
+**Wheels**
+
+- [A project installed outside the workspace gets its unpublished dependencies as wheels](#a-project-installed-outside-the-workspace-gets-its-unpublished-dependencies-as-wheels)
+- [What `aisland wheels` builds is a scope, and the install is one generic script naming each wheel by its file](#what-aisland-wheels-builds-is-a-scope-and-the-install-is-one-generic-script-naming-each-wheel-by-its-file)
+- [The wheels folder is the machine's: ignored unless `--commit`, carried as one self-installing zip (2026-10-18)](#the-wheels-folder-is-the-machines-ignored-unless---commit-carried-as-one-self-installing-zip-2026-10-18)
+- [`--include-project`: the project's own wheel, installed in place of its folder (2026-10-21)](#--include-project-the-projects-own-wheel-installed-in-place-of-its-folder-2026-10-21)
+- [`--bundle`: one wheel, one name (2026-10-23)](#--bundle-one-wheel-one-name-2026-10-23)
+- [`--force` builds a dirty project from its working tree, and says so (2026-10-20)](#--force-builds-a-dirty-project-from-its-working-tree-and-says-so-2026-10-20)
+- [`--no-check` builds the wheels and checks nothing, and says so (2026-10-20)](#--no-check-builds-the-wheels-and-checks-nothing-and-says-so-2026-10-20)
+- [`aisland wheels prune`: old wheel versions leave the history; `reset` follows on every other clone (2026-10-27)](#aisland-wheels-prune-old-wheel-versions-leave-the-history-reset-follows-on-every-other-clone-2026-10-27)
+
+**Housekeeping and the shape of the code**
+
+- [Reclaiming a checkout's disk is a MOVE into a dated store, and it is per-project](#reclaiming-a-checkouts-disk-is-a-move-into-a-dated-store-and-it-is-per-project)
+- [A command that prints an `Error:` line exits 1 (2026-10-27)](#a-command-that-prints-an-error-line-exits-1-2026-10-27)
+- [One exception root, and `--debug` (2026-10-29)](#one-exception-root-and---debug-2026-10-29)
+- [A diagnostic is a debug record `--debug` shows, never output (2026-10-30)](#a-diagnostic-is-a-debug-record---debug-shows-never-output-2026-10-30)
+- [`manager.py` is split by what each part does (2026-10-29)](#managerpy-is-split-by-what-each-part-does-2026-10-29)
+- [The CLI, the CI scaffold and the wheels run are split by what they do](#the-cli-the-ci-scaffold-and-the-wheels-run-are-split-by-what-they-do)
+- [Imports at the top, containers typed, one completion guard](#imports-at-the-top-containers-typed-one-completion-guard)
+
+---
+
 ## Project sources are a two-layer registry, and only the committed layer reaches a committed file
 
 *2026-07-28; the layers' storage rewritten for `workspace.toml` 2026-10-22* [sources]
