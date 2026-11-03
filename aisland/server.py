@@ -111,11 +111,14 @@ def _run_aisland(args: List[str]) -> "subprocess.CompletedProcess[str]":
     """Run ``aisland ARGS`` with this interpreter, at the workspace root, its output captured.
 
     ``-P`` keeps the root's ``aisland/`` checkout off ``sys.path`` (it would shadow the package); the root is the
-    working folder because aisland installed from a wheel finds its workspace from there.
+    working folder because aisland installed from a wheel finds its workspace from there. Its stdin is empty, never
+    the server's: that is the client's JSON-RPC stream, and a question the command asked (or a git credential
+    prompt) would eat the protocol's bytes. A command that needs an answer gets none and refuses.
     """
     return subprocess.run(
         [sys.executable, "-P", "-m", "aisland.cli", *args],
         cwd=get_workspace_root(),
+        stdin=subprocess.DEVNULL,
         capture_output=True,
         text=True,
         timeout=SERVICE_TIMEOUT,

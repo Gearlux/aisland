@@ -878,6 +878,32 @@ class TestSetProjectSourceRollback:
             s.set_project_source("loggair", "pypi", workspace_root=ci_workspace)
         assert s.read_committed_sources(ci_workspace) == before
 
+    @pytest.mark.parametrize("stop", [KeyboardInterrupt(), OSError("uv vanished")])
+    def test_an_apply_that_is_interrupted_puts_the_file_back_byte_for_byte(
+        self, ci_workspace: Path, monkeypatch: pytest.MonkeyPatch, stop: BaseException
+    ) -> None:
+        """Ctrl-C during the install, or an apply that raises: the run stops with that exception, and the
+        configuration is as it was — this machine's override included."""
+        (ci_workspace / ".venv" / "bin").mkdir(parents=True)
+        (ci_workspace / ".venv" / "bin" / "uv").touch(mode=0o755)
+        overrides: List[object] = []
+        previous = s.ProjectSource(kind="local", ref="feature")
+        monkeypatch.setattr(s, "local_override", lambda root, name: previous)
+        monkeypatch.setattr(s, "set_local_override", lambda root, name, value: overrides.append(value))
+        monkeypatch.setattr(s, "_pypi_provenance", lambda dist, owner: (True, "0.1.0"))
+
+        def interrupted(*args: object, **kwargs: object) -> bool:
+            raise stop
+
+        monkeypatch.setattr(s, "apply_source", interrupted)
+        text = '# the how-to\n[project."loggair"]\nurl = "u"\nbranch = "dev/main"\n'
+        (ci_workspace / workspace_file.FILE_NAME).write_text(text)
+
+        with pytest.raises(type(stop)):
+            s.set_project_source("loggair", "pypi", workspace_root=ci_workspace)
+        assert (ci_workspace / workspace_file.FILE_NAME).read_text() == text
+        assert overrides[-1] == previous
+
     def test_rejected_pypi_name_writes_nothing(self, ci_workspace: Path, monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.setattr(s, "_pypi_provenance", lambda dist, owner: (False, "is not published on PyPI"))
         with pytest.raises(AislandError):

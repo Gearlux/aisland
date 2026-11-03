@@ -630,7 +630,8 @@ def set_project_source(
     No CI file is touched: CI installs what is RELEASED, never what this machine checked out
     (see :func:`released_on_pypi`).
     A failed apply ROLLS THE CONFIGURATION BACK — a registry claiming a state the working tree
-    does not have is worse than no change at all (and `aisland setup` would keep retrying it).
+    does not have is worse than no change at all (and `aisland setup` would keep retrying it). So
+    does an apply that raises or is interrupted (Ctrl-C); the exception then goes on as it was.
     """
     root = workspace_root or get_workspace_root()
     _refuse_unmanageable(root, project, kind)
@@ -648,9 +649,8 @@ def set_project_source(
 
     file = root / workspace_file.FILE_NAME
     before = file.read_text() if file.is_file() else None
-    committed = _record_source(root, project, source, original, machine_only)
-    uv_cmd = ensure_uv_in_venv(venv_bin)
-    if not apply_source(root, project, effective_source(root, project, committed) or source, uv_cmd):
+
+    def roll_back() -> None:
         set_local_override(root, project, previous_override)
         if not machine_only:
             # The file as it was, byte for byte: a branch the set wrote goes too, and a workspace that had no
@@ -659,6 +659,16 @@ def set_project_source(
                 file.unlink(missing_ok=True)
             else:
                 file.write_text(before)
+
+    try:
+        committed = _record_source(root, project, source, original, machine_only)
+        uv_cmd = ensure_uv_in_venv(venv_bin)
+        applied = apply_source(root, project, effective_source(root, project, committed) or source, uv_cmd)
+    except BaseException:
+        roll_back()
+        raise
+    if not applied:
+        roll_back()
         raise AislandError(f"{project}: source change reverted; configuration is unchanged")
 
     # The workspace file is per machine and gitignored, so a --machine-only change rewrites it too.

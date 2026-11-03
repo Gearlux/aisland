@@ -192,7 +192,9 @@ def _extract_cli(tarball: Path, destination: Path) -> None:
     """Write the archive's ``code`` member to ``destination``, executable.
 
     The single member is copied out by name rather than unpacked: an archive cannot then write
-    anywhere but the one path this function chose.
+    anywhere but the one path this function chose. It is written to a ``.part`` file beside
+    ``destination`` and moved into place whole, so an interrupted copy leaves no binary that
+    :func:`install_cli` would take for an installed one.
     """
     with tarfile.open(tarball) as archive:
         try:
@@ -202,9 +204,15 @@ def _extract_cli(tarball: Path, destination: Path) -> None:
         if member is None:
             raise AislandError(f"{tarball} holds no 'code' binary — is it the VS Code CLI archive?")
         destination.parent.mkdir(parents=True, exist_ok=True)
-        with member, open(destination, "wb") as out:
-            shutil.copyfileobj(member, out)
-    destination.chmod(0o755)
+        part = destination.with_name(destination.name + ".part")
+        try:
+            with member, open(part, "wb") as out:
+                shutil.copyfileobj(member, out)
+            part.chmod(0o755)
+            os.replace(part, destination)
+        except BaseException:
+            part.unlink(missing_ok=True)
+            raise
 
 
 def install_cli(tarball: Optional[Path] = None, force: bool = False) -> Path:
@@ -257,19 +265,29 @@ def read_pid() -> Optional[int]:
         return None
 
 
-def _alive(pid: int) -> bool:
-    """Whether ``pid`` is a process this user can signal."""
+def _is_tunnel(pid: int) -> bool:
+    """Whether ``pid`` is a live process of this machine's VS Code CLI (:func:`cli_path`).
+
+    After a reboot the pidfile's number may belong to any other process of this user; only its command line tells
+    them apart, and a process that is not the tunnel is never signalled. Where ``ps`` cannot answer, a live pid
+    counts."""
     try:
         os.kill(pid, 0)
     except OSError:
         return False
-    return True
+    try:
+        listed = subprocess.run(
+            ["ps", "-o", "command=", "-p", str(pid)], capture_output=True, text=True, timeout=10, check=False
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        return True
+    return str(cli_path()) in listed.stdout
 
 
 def running() -> bool:
     """Whether the tunnel this machine started is still running."""
     pid = read_pid()
-    return pid is not None and _alive(pid)
+    return pid is not None and _is_tunnel(pid)
 
 
 def read_provider() -> Optional[str]:
@@ -398,9 +416,10 @@ def start(
 
 
 def stop() -> Dict[str, object]:
-    """Stop the tunnel this machine started; saying so is not an error when none runs."""
+    """Stop the tunnel this machine started; saying so is not an error when none runs. A pidfile naming no tunnel
+    (its process gone, or the number another process's since a reboot) is removed, and nothing is signalled."""
     pid = read_pid()
-    if pid is None or not _alive(pid):
+    if pid is None or not _is_tunnel(pid):
         pid_path().unlink(missing_ok=True)
         return {"running": False, "stopped": False}
     try:
@@ -414,7 +433,7 @@ def stop() -> Dict[str, object]:
 def status() -> Dict[str, object]:
     """What this machine's tunnel is doing, as JSON-serializable fields."""
     pid = read_pid()
-    is_running = pid is not None and _alive(pid)
+    is_running = pid is not None and _is_tunnel(pid)
     payload: Dict[str, object] = {
         "running": is_running,
         "pid": pid if is_running else None,

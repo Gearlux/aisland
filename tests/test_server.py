@@ -475,6 +475,20 @@ def test_a_command_that_fails_is_an_error_carrying_its_output(monkeypatch: pytes
     assert "Error: port 9080 is in use by PID 12" in _error("service_start", {"name": "jenkins"})
 
 
+def test_the_aisland_command_never_reads_the_servers_stdin(repo: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """The server's stdin is the client's JSON-RPC stream: a command that asks (`click.confirm`) or a git credential
+    prompt must find it empty, never eat the protocol's bytes."""
+    given: Dict[str, Any] = {}
+
+    def run(args: List[str], **kwargs: Any) -> subprocess.CompletedProcess[str]:
+        given.update(kwargs)
+        return subprocess.CompletedProcess(args, 0, stdout="", stderr="")
+
+    monkeypatch.setattr(server.subprocess, "run", run)
+    server._run_aisland(["jenkins", "status"])
+    assert given["stdin"] is subprocess.DEVNULL
+
+
 def test_the_aisland_command_runs_with_this_interpreter_at_the_workspace_root(repo: Path) -> None:
     """At the root `-P` keeps the `aisland/` checkout from shadowing the package; from a wheel the root is where
     aisland finds its workspace."""

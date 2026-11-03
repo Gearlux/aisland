@@ -108,7 +108,9 @@ The workspace's dev-infrastructure CLI, `aisland` (click, the `aisland/cli/` pac
   a pidfile, NOT a `BaseService` (the remote box has no process-compose) and not in `aisland services start`;
   workspace-free (`_WORKSPACE_FREE`). State is PER MACHINE, `~/.aisland/tunnel` (`AISLAND_TUNNEL_HOME` overrides it),
   never derived from the working directory. `code tunnel` is passed NO account option (the sign-in runs first,
-  separately). Every reader of the remembered-workspaces file treats a bad file as empty.
+  separately). The pidfile's pid is the tunnel only while its command line names `cli_path()` (`_is_tunnel`): after
+  a reboot the number may be any process's, which is never signalled; the CLI is unpacked to a `.part` file and moved
+  into place whole (`tests/test_tunnel_process.py`). Every reader of the remembered-workspaces file treats a bad file as empty.
 - **`tunnel_connect.py` + `tunnel_shell.py`** [tunnel-terminal]: `aisland tunnel connect`, a terminal through the SAME
   VS Code tunnel (no sshd on the box, no second tunnel): `devtunnel connect` forwards its control port 31545 and
   aisland's MessagePack client (`msgpack`, the `[connect]` extra) `spawn`s `tunnel_shell.py` FROM ITS SOURCE
@@ -162,8 +164,8 @@ naming the PID is the only signal). All service state lives under `<workspace>/a
 - **One exception root, and `--debug`.** [errors-root] Library code raises `AislandError` — never
   `click.ClickException` itself, never `SystemExit` (the harness scripts and `aisland-mcp`'s `main` are their own entry
   points) — and an exception class aisland defines derives from it AND the builtin it stands for
-  (`DeclarationError(AislandError, ValueError)`). `_WorkspaceGroup.invoke` turns an `OSError` or `CalledProcessError`
-  into one `Error: <it> (run `aisland --debug …` for the traceback)` line; `--debug` re-raises it and prints aisland's
+  (`DeclarationError(AislandError, ValueError)`). `_WorkspaceGroup.invoke` turns an `OSError` or a `SubprocessError` (a
+  `CalledProcessError`, a `TimeoutExpired`) into one `Error: <it> (run `aisland --debug …` for the traceback)` line; `--debug` re-raises it and prints aisland's
   own refusals' tracebacks too; any other exception is a bug and keeps its traceback. An `except` names what can fail
   there, never `Exception` — except around a project's own code, a completion callback (`errors.quiet_completion`, the
   one guard every completer is wrapped in) and the pytest plugin's hooks. Every download goes through
@@ -557,7 +559,7 @@ Root `AGENTS.md` "Two Test Runs". [test-stats] (`tests/test_pytest_stats.py`,
   deletes (`setup`, `clean`, `backups prune`, `* reset`, `jenkins init`, `source set`), and never every click command
   generated as tools. A tool returns ONE JSON object — the data its command prints with `--json`, from the same
   function; a service or tunnel tool runs the `aisland` command itself (`_run_aisland`: this interpreter, `-P`, the
-  workspace root). An anticipated refusal (a `ToolRefusal`, aisland's own `click.ClickException`) is raised as the SDK's
+  workspace root, stdin EMPTY — the server's is the client's JSON-RPC stream). An anticipated refusal (a `ToolRefusal`, aisland's own `click.ClickException`) is raised as the SDK's
   `ToolError` (`_refusals_reach_the_client`): from mcp 2.1 any other exception reaches the client as `Error executing
   tool <name>` alone. Not a copy of `_LLMSafeMCPServer` (no confluid here): a plain `MCPServer` with the
   resources/prompts handlers dropped (`tests/test_server.py`, `tests/test_server_tunnel.py`,
@@ -616,7 +618,7 @@ Root `AGENTS.md` "Two Test Runs". [test-stats] (`tests/test_pytest_stats.py`,
   nothing the table already says is written again. Per machine: `.source`, `.branch`, `.version`, a missing `.branch`
   being the committed one. No backward compatibility: an old `[sources.*]` table or one-key `aisland.source.<project>`
   is simply not read — never refused, named or converted by code. A failed `set` puts `workspace.toml` back byte for
-  byte. The commands are the generic ones of `aisland workspace configure` (`configure.py`: a `Plugin`'s keys build
+  byte, and so does one that raises or is interrupted (Ctrl-C) during the apply. The commands are the generic ones of `aisland workspace configure` (`configure.py`: a `Plugin`'s keys build
   `set`/`unset`/the listing; there is no `aisland source` group and no `source apply` — setup applies). The effective
   one drives the checkout, the `.venv` and, through the checkout, the generated workspace file's folders. No CI file
   reads either; an override never reaches a tracked file (`tests/test_sources.py`, `tests/test_configure.py`).

@@ -209,7 +209,7 @@ def test_start_spawns_the_license_flag_and_the_name_and_nothing_else(state: Path
     with (
         patch.object(tunnel, "install_cli", return_value=state / "code"),
         patch.object(tunnel.subprocess, "Popen", popen),
-        patch.object(tunnel, "_alive", return_value=True),
+        patch.object(tunnel, "_is_tunnel", return_value=True),
         patch.object(tunnel, "signed_in", return_value="user@example.invalid"),
     ):
         payload = tunnel.start(name="Box_1", timeout=0)
@@ -238,7 +238,7 @@ def test_a_second_start_does_not_spawn_a_second_tunnel(state: Path) -> None:
     with (
         patch.object(tunnel, "install_cli", return_value=state / "code"),
         patch.object(tunnel.subprocess, "Popen", popen),
-        patch.object(tunnel, "_alive", return_value=True),
+        patch.object(tunnel, "_is_tunnel", return_value=True),
         patch.object(tunnel, "signed_in", return_value="user@example.invalid"),
     ):
         tunnel.start(timeout=0)
@@ -388,7 +388,7 @@ def test_stop_without_a_tunnel_is_not_an_error(state: Path) -> None:
 def test_stop_signals_the_recorded_pid_and_clears_the_pidfile(state: Path) -> None:
     state.mkdir(parents=True, exist_ok=True)
     tunnel.pid_path().write_text("4711\n")
-    with patch.object(tunnel, "_alive", return_value=True), patch.object(tunnel.os, "kill") as kill:
+    with patch.object(tunnel, "_is_tunnel", return_value=True), patch.object(tunnel.os, "kill") as kill:
         payload = tunnel.stop()
 
     assert payload == {"running": False, "stopped": True, "pid": 4711}

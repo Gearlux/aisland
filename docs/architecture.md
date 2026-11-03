@@ -4129,7 +4129,7 @@ from: an `OSError` reached the user as a raw traceback, a refusal never showed o
 
 `errors.AislandError` is the root; it IS a `click.ClickException`, so the CLI's printing (one `Error:` line, exit 1)
 needs no wrapper and code catching click's class keeps working. Each class aisland defines derives from it and the
-builtin it stands for. The group turns an `OSError` or `CalledProcessError` into one `Error:` line; `--debug` shows
+builtin it stands for. The group turns an `OSError` or `SubprocessError` (`CalledProcessError`, `TimeoutExpired`) into one `Error:` line; `--debug` shows
 the traceback of both; any other exception is a bug and keeps its traceback. An `except` names what fails there.
 Downloads go through `downloads.download` (urllib's `urlretrieve` has no timeout).
 
@@ -4147,7 +4147,7 @@ class ReleaseProbeError(AislandError, ConnectionError): ...
 
 ### What you may change
 
-Which builtin exceptions the group words as one line (today `OSError` and `CalledProcessError`): add one only for a
+Which builtin exceptions the group words as one line (today `OSError` and `SubprocessError`, which holds `CalledProcessError` and `TimeoutExpired`): add one only for a
 failure of the machine, never of aisland's own logic.
 
 ## Listing the services imports no project's code (2026-10-29)

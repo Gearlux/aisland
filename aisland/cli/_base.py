@@ -75,9 +75,10 @@ class _WorkspaceGroup(_Group):
             if ctx.meta.get(_DEBUG):
                 traceback.print_exc()
             raise
-        except (OSError, subprocess.CalledProcessError) as error:
-            # What the machine refused (a file, a permission, a program that failed): one Error line, like aisland's
-            # own refusals; --debug keeps the traceback. Anything else is a bug in aisland and keeps its traceback.
+        except (OSError, subprocess.SubprocessError) as error:
+            # What the machine refused (a file, a permission, a program that failed or ran past its time limit): one
+            # Error line, like aisland's own refusals; --debug keeps the traceback. Anything else is a bug in aisland
+            # and keeps its traceback.
             if ctx.meta.get(_DEBUG):
                 raise
             raise AislandError(f"{error} (run `aisland --debug …` for the traceback)") from error

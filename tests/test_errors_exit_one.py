@@ -131,6 +131,10 @@ def test_no_library_module_raises_clicks_own_exception_or_exits() -> None:
             subprocess.CalledProcessError(128, ["git", "fetch"]),
             "Error: Command '['git', 'fetch']' returned non-zero exit status 128.",
         ),
+        (
+            subprocess.TimeoutExpired(["process-compose", "process", "list"], 30),
+            "Error: Command '['process-compose', 'process', 'list']' timed out after 30 seconds",
+        ),
     ],
 )
 def test_what_the_machine_refuses_is_one_error_line_and_debug_shows_the_traceback(

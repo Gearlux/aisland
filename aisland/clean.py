@@ -131,11 +131,12 @@ def ignored_paths(project_dir: Path) -> List[Path]:
     newline round-trips exactly.
 
     Raises:
-        RuntimeError: if git fails (e.g. the directory is not a repository).
+        AislandError: if git fails (e.g. the directory is not a repository) — one ``Error:`` line naming the folder.
     """
     result = gitcmd.git(project_dir, "status", "--porcelain", "--ignored", "-z")
     if result.returncode != 0:
-        raise RuntimeError(result.stderr.strip() or f"git status failed in {project_dir}")
+        cause = result.stderr.strip() or "git status failed"
+        raise AislandError(f"{project_dir}: git cannot list what it ignores there: {cause}")
 
     paths: List[Path] = []
     for record in result.stdout.split("\0"):

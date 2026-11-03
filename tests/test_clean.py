@@ -16,6 +16,7 @@ What is worth pinning here is everything that makes a DESTRUCTIVE command safe t
 from __future__ import annotations
 
 import json
+import re
 import shutil
 import subprocess
 from datetime import datetime, timedelta
@@ -29,6 +30,7 @@ from click.testing import CliRunner
 from aisland import clean
 from aisland.cli import main
 from aisland.cli import toplevel as cli_toplevel
+from aisland.errors import AislandError
 
 NOW = datetime(2026, 8, 4, 12, 0, 0)
 
@@ -104,8 +106,9 @@ def test_ignored_paths_collapses_a_directory_into_one_entry(workspace: Path) -> 
     assert found == {"build", "run.log"}
 
 
-def test_ignored_paths_rejects_a_non_repository(tmp_path: Path) -> None:
-    with pytest.raises(RuntimeError):
+def test_ignored_paths_rejects_a_non_repository_with_one_error_line(tmp_path: Path) -> None:
+    """aisland's own refusal (one `Error:` line, exit 1), never a builtin that prints a traceback."""
+    with pytest.raises(AislandError, match=f"^{re.escape(str(tmp_path))}: git cannot list what it ignores there: "):
         clean.ignored_paths(tmp_path)
 
 
