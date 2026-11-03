@@ -2,7 +2,6 @@
 (:data:`USERSPACE_TOOLS`), each checked against its sha256 before it is unpacked. Which tools a machine needs is
 :mod:`aisland.provision`'s."""
 
-import hashlib
 import logging
 import os
 import platform
@@ -16,7 +15,7 @@ from typing import AbstractSet, Dict, List, NotRequired, TypedDict
 import click
 
 from aisland import failures, locations
-from aisland.downloads import download
+from aisland.downloads import download, sha256
 from aisland.errors import AislandError
 from aisland.paths import BIN_DIR, TOOLS_DIR
 
@@ -115,15 +114,6 @@ def install_brew_packages(packages: AbstractSet[str]) -> None:
             failures.report(f"  - Error: Failed to install {pkg}: {e}")
 
 
-def _sha256(path: Path) -> str:
-    """Return the hex sha256 of a file, read in chunks (constant memory)."""
-    digest = hashlib.sha256()
-    with open(path, "rb") as fh:
-        for chunk in iter(lambda: fh.read(1 << 20), b""):
-            digest.update(chunk)
-    return digest.hexdigest()
-
-
 def install_userspace_tool(name: str) -> None:
     """Install a tool from :data:`USERSPACE_TOOLS` entirely in userspace.
 
@@ -187,7 +177,7 @@ def install_userspace_tool(name: str) -> None:
     # while making the gap visible) — see the USERSPACE_TOOLS docstring.
     expected = spec.get("sha256", {}).get(arch)
     if expected:
-        actual = _sha256(tarball)
+        actual = sha256(tarball)
         if actual.lower() != expected.lower():
             failures.report(
                 f"  - Error: checksum mismatch for {tarball.name} "

@@ -14,6 +14,7 @@ and `aisland check` without `act` fails that gate naming the command.
 
 from __future__ import annotations
 
+import hashlib
 from pathlib import Path
 from typing import Dict, List, Optional
 
@@ -198,7 +199,13 @@ def test_jenkins_asks_before_it_downloads_its_war(
     monkeypatch.setattr(base, "DATA_DIR", tmp_path)
     service = jenkins.JenkinsService()
     service.war_file = tmp_path / "bin" / "jenkins.war"
-    monkeypatch.setattr(jenkins, "download", lambda url, path: installs["download"].append(url))
+
+    def fetch(url: str, path: Path) -> None:
+        installs["download"].append(url)
+        path.write_bytes(b"a war")
+
+    monkeypatch.setattr(jenkins, "download", fetch)
+    monkeypatch.setattr(jenkins.JenkinsService, "WAR_SHA256", hashlib.sha256(b"a war").hexdigest())
     _terminal(monkeypatch, None)
     with pytest.raises(click.ClickException, match="Jenkins needs its WAR"):
         service.setup()

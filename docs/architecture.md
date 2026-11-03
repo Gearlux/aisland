@@ -1730,11 +1730,16 @@ the `opt` link survives a `brew upgrade`).
   with. Provisioning goes on when the WAR cannot be downloaded or no JDK is accepted; it never exits.
 - **The bare `openjdk` formula is never one of aisland's tools** (a test reads `provision.AISLAND_TOOLS`;
   aisland's `pyproject.toml` held them until 2026-10-23).
+- **The WAR is a pinned release (2026-11-03).** `JenkinsService.WAR_VERSION` and `WAR_SHA256` name one long-term-support
+  release; the download goes to a `.part` file and moves into place only when its sha256 is the pinned one, so a
+  tampered or truncated WAR is never installed. A WAR already in `bin/` is used as it is. Moving to a newer release
+  changes the two constants together (jenkins.io publishes the digest as `jenkins.war.sha256`), and the Java it
+  needs is still asked of the WAR, never written into aisland (`tests/test_jenkins_war.py`).
 
 Rejected:
 
 - `openjdk@25` written into the sys-dependencies. It is correct today, and it breaks silently
-  once a re-downloaded WAR (`war-stable/latest`) drops 25.
+  once the pinned WAR is moved to a release that drops 25.
 - `--enable-future-java`. Jenkins calls it preview support, and plugins are not tested on
   non-LTS Java.
 - Reading the supported releases from `executable/Main.class` without a JVM. That is parsing

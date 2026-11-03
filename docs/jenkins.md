@@ -13,9 +13,10 @@ aisland jenkins start --background
 ```
 - **Default URL:** [http://localhost:9080](http://localhost:9080)
 - **Home Directory:** `.aisland/data/jenkins/` in the workspace (`aisland/data/jenkins/` when aisland runs from its own checkout)
-- **Which Jenkins:** the current long-term-support WAR from `get.jenkins.io` (`war-stable/latest`), downloaded once and
-  kept. It is not pinned to a version or checked against a digest, unlike the tools `aisland setup` installs; delete
-  `.aisland/bin/jenkins.war` (`aisland/bin/jenkins.war` from a checkout) to fetch the current one.
+- **Which Jenkins:** one long-term-support release, pinned by version and sha256 (`JenkinsService.WAR_VERSION` and
+  `WAR_SHA256`), downloaded from `get.jenkins.io` once and kept. A download that does not match the digest is refused
+  and nothing is installed. A WAR already in `.aisland/bin/jenkins.war` (`aisland/bin/jenkins.war` from a checkout) is
+  used as it is; delete it to get the pinned release.
 
 *Note: `start` does not install plugins. It brings the server up and checks whether you have configured credentials.*
 

@@ -19,7 +19,7 @@ from typing import Any, Dict, Optional, Set, Tuple
 import click
 
 from aisland import failures, provision
-from aisland.downloads import TIMEOUT, download
+from aisland.downloads import TIMEOUT, download, sha256
 from aisland.errors import AislandError
 from aisland.installers import install_brew_packages
 from aisland.paths import BIN_DIR
@@ -33,7 +33,12 @@ logger = logging.getLogger(__name__)
 class JenkinsService(BaseService):
     """Jenkins CI/CD Server."""
 
-    URL = "https://get.jenkins.io/war-stable/latest/jenkins.war"
+    #: The Jenkins release aisland runs, a long-term-support WAR pinned by version AND sha256 (jenkins.io publishes the
+    #: digest beside every WAR, as ``jenkins.war.sha256``). A download that does not match is refused. To move to a
+    #: newer release, change both from ``https://get.jenkins.io/war-stable/<version>/jenkins.war.sha256``.
+    WAR_VERSION = "2.555.2"
+    WAR_SHA256 = "dfda09578c5c1b18f28d50ec362868305f572c3b7aef8b90d00f7a9436a62867"
+    URL = f"https://get.jenkins.io/war-stable/{WAR_VERSION}/jenkins.war"
     REPO = "jenkinsci/plugin-installation-manager-tool"
     #: The port Jenkins starts on unless `--port` says otherwise; everything else asks :meth:`url`.
     DEFAULT_PORT = 9080
@@ -84,14 +89,29 @@ class JenkinsService(BaseService):
         return data, None
 
     def ensure_war(self) -> bool:
-        """Download the Jenkins WAR unless it is already in the bin dir; return whether it is there now."""
+        """Download the pinned Jenkins WAR unless one is already in the bin dir; return whether it is there now.
+
+        The download lands in a ``.part`` file beside the WAR and moves into place only once its sha256 is the pinned
+        one, so a refused or interrupted download leaves no WAR that later runs would take for a finished one. A WAR
+        already in the bin dir is used as it is."""
         self.war_file.parent.mkdir(exist_ok=True)
         if self.war_file.exists():
             return True
-        click.echo(f"Downloading Jenkins from {self.URL}...")
+        click.echo(f"Downloading Jenkins {self.WAR_VERSION} from {self.URL}...")
+        part = self.war_file.with_name(self.war_file.name + ".part")
         try:
-            download(self.URL, self.war_file)
+            download(self.URL, part)
+            actual = sha256(part)
+            if actual != self.WAR_SHA256:
+                part.unlink()
+                failures.report(
+                    f"Error downloading Jenkins: {self.URL} has the sha256 {actual}, not the pinned "
+                    f"{self.WAR_SHA256}; nothing was installed."
+                )
+                return False
+            os.replace(part, self.war_file)
         except OSError as e:
+            part.unlink(missing_ok=True)
             failures.report(f"Error downloading Jenkins: {e}")
             return False
         click.echo("  - Jenkins download complete.")
