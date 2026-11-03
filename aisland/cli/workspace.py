@@ -1,4 +1,4 @@
-"""`aisland workspace …`: init, show, track, test-stats, provision, harness, mirror, the editor and shell files and the
+"""`aisland workspace …`: init, show, projects, track, test-stats, provision, harness, mirror, the editor and shell files and the
 environment files; `configure` (:mod:`aisland.cli.configure`) and `theme`/`color` (:mod:`aisland.cli.editor`) are
 added here.
 """
@@ -15,6 +15,7 @@ from aisland import (
     discovery,
     editor_files,
     env_example,
+    failures,
     harness,
     locations,
     manager,
@@ -26,10 +27,17 @@ from aisland import workspace as workspace_mod
 from aisland import workspace_check
 from aisland.cli import configure as configure_cli
 from aisland.cli import editor as editor_cli
-from aisland.cli._base import _complete_submodules, _complete_workspace_projects, _configure_root, _editor_root, _Group
+from aisland.cli._base import (
+    _complete_submodules,
+    _complete_workspace_projects,
+    _configure_root,
+    _editor_root,
+    _Group,
+    main,
+)
 from aisland.errors import AislandError
 from aisland.mirrors import run_sync
-from aisland.projects import get_workspace_root, workspace_folders
+from aisland.projects import get_install_order, get_workspace_root, workspace_folders
 
 # --- Workspace Commands ---
 
@@ -239,11 +247,35 @@ def workspace_show(as_json: bool) -> None:
     loaded = discovery.load(found)
     for line in workspace_check.unknown_keys(root):
         click.echo(line, err=True)
+    for name in sorted((set(found.services) | set(found.plugins)) & set(main.commands)):
+        failures.warn(
+            f"Warning: service {name!r} shares its name with the command `aisland {name}`, which wins: "
+            f"reach it as `aisland services start {name}` (and stop, restart, status, info, reset)"
+        )
     if as_json:
         click.echo(json.dumps(discovery.as_json(found, loaded), indent=2))
         return
     for line in discovery.report_lines(found, loaded):
         click.echo(line)
+
+
+@workspace_group.command("projects")
+@click.option("--json", "as_json", is_flag=True, help="Print them as one JSON object.")
+def workspace_projects(as_json: bool) -> None:
+    """The workspace's projects with a checkout, every dependency before the projects that need it: one folder a
+    line, or with --json each project's folder and distribution name.
+
+    \b
+    for project in $(aisland workspace projects); do git -C "$project" status --short; done
+    """
+    if not locations.workspace_found():
+        raise AislandError(locations.missing_workspace_message())
+    projects = [{"folder": p["path"].name, "name": p["name"]} for p in get_install_order(get_workspace_root())]
+    if as_json:
+        click.echo(json.dumps({"projects": projects}, indent=2))
+        return
+    for project in projects:
+        click.echo(project["folder"])
 
 
 @workspace_group.group("provision", invoke_without_command=True)

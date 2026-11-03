@@ -69,9 +69,11 @@ def init_pipelines(service: "JenkinsService", project_name: Optional[str] = None
     setup_dashboard_view(home)
     setup_global_properties(home)
 
-    if local:
-        if click.confirm("Reduce Jenkins security for faster local access? (Disables CSRF, allows anonymous read)"):
-            reduce_security(home)
+    if local and click.confirm(
+        "Allow anonymous read access? (the nightly report, the SwiftBar menu and the scaffold's linter read Jenkins "
+        "without logging in; the login and CSRF protection stay)"
+    ):
+        allow_anonymous_read(home)
 
     click.echo("Starting Jenkins to load the new plugins, pipelines, and globalProperties...")
     service.launch(background=True)
@@ -708,8 +710,10 @@ def setup_global_properties(home: Path) -> None:
     tree.write(config_file, encoding="UTF-8", xml_declaration=True)
 
 
-def reduce_security(home: Path) -> None:
-    """Modify config.xml to reduce security for local development."""
+def allow_anonymous_read(home: Path) -> None:
+    """Let a visitor who has not logged in read Jenkins (`denyAnonymousReadAccess` false). Nothing else is loosened:
+    the login stays, and so does CSRF protection — Jenkins listens on this machine only, but a page open in your
+    browser can still post to it, so neither is ever switched off."""
     config_file = home / "config.xml"
     if not config_file.exists():
         return
@@ -718,29 +722,16 @@ def reduce_security(home: Path) -> None:
         tree = ET.parse(config_file)
         root = tree.getroot()
     except (OSError, ET.ParseError) as e:
-        failures.report(f"  - Error parsing config.xml for security reduction: {e}")
+        failures.report(f"  - Error parsing config.xml for anonymous read access: {e}")
         return
 
-    if click.confirm("Disable Jenkins security entirely? (No login required, most fast/unsecure)"):
-        use_security = root.find("useSecurity")
-        if use_security is not None:
-            use_security.text = "false"
-            click.echo("  - Jenkins security disabled.")
-    else:
-        # 1. Allow Anonymous Read Access
-        auth_strategy = root.find("authorizationStrategy")
-        if auth_strategy is not None:
-            deny_anon = auth_strategy.find("denyAnonymousReadAccess")
-            if deny_anon is not None:
-                deny_anon.text = "false"
-                click.echo("  - Enabled anonymous read access.")
-
-        # 2. Disable CSRF Protection (Crumb Issuer)
-        crumb = root.find("crumbIssuer")
-        if crumb is not None:
-            root.remove(crumb)
-            click.echo("  - Disabled CSRF protection (Crumb Issuer removed).")
-
+    auth_strategy = root.find("authorizationStrategy")
+    deny_anon = auth_strategy.find("denyAnonymousReadAccess") if auth_strategy is not None else None
+    if deny_anon is None:
+        click.echo("  - Anonymous read access: config.xml has no setting for it; left as it is.")
+        return
+    deny_anon.text = "false"
+    click.echo("  - Enabled anonymous read access.")
     tree.write(config_file, encoding="UTF-8", xml_declaration=True)
 
 

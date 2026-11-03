@@ -9,17 +9,15 @@ import json
 import logging
 import os
 import subprocess
-import urllib.error
-import urllib.parse
 import urllib.request
 import xml.etree.ElementTree as ET
 from pathlib import Path
-from typing import Any, Dict, Optional, Set, Tuple
+from typing import Set
 
 import click
 
 from aisland import failures, provision
-from aisland.downloads import TIMEOUT, download, sha256
+from aisland.downloads import download, sha256
 from aisland.errors import AislandError
 from aisland.installers import install_brew_packages
 from aisland.paths import BIN_DIR
@@ -39,9 +37,19 @@ class JenkinsService(BaseService):
     WAR_VERSION = "2.555.2"
     WAR_SHA256 = "dfda09578c5c1b18f28d50ec362868305f572c3b7aef8b90d00f7a9436a62867"
     URL = f"https://get.jenkins.io/war-stable/{WAR_VERSION}/jenkins.war"
-    REPO = "jenkinsci/plugin-installation-manager-tool"
+    #: The plugin installation manager aisland runs, pinned the same way: its GitHub release publishes the digest
+    #: beside the jar (``jenkins-plugin-manager-<version>.jar.sha256``). Move both together.
+    MANAGER_VERSION = "2.15.0"
+    MANAGER_SHA256 = "a86853ec2e2933f37a4b471ba65099b61e03c87a80c2ef8fe2315eb135672d43"
+    MANAGER_URL = (
+        "https://github.com/jenkinsci/plugin-installation-manager-tool/releases/download/"
+        f"{MANAGER_VERSION}/jenkins-plugin-manager-{MANAGER_VERSION}.jar"
+    )
     #: The port Jenkins starts on unless `--port` says otherwise; everything else asks :meth:`url`.
     DEFAULT_PORT = 9080
+    #: The one address Jenkins listens on: this machine's own. Jenkins' default is every interface, which on a shared
+    #: network would offer its script console (code run as you) and the `.env` values its jobs see to anyone near.
+    LISTEN_ADDRESS = "127.0.0.1"
 
     PLUGINS = [
         "workflow-multibranch",
@@ -62,59 +70,23 @@ class JenkinsService(BaseService):
     def __init__(self) -> None:
         super().__init__("jenkins")
         self.war_file = BIN_DIR / "jenkins.war"
-        # Find any existing manager jar in the bin directory
-        self.manager_jar = self._find_manager_jar()
-
-    def _find_manager_jar(self) -> Path:
-        """Find the most recent manager jar in the bin directory."""
-        jars = list(BIN_DIR.glob("jenkins-plugin-manager-*.jar"))
-        if jars:
-            # Sort by version or modification time if multiple exist
-            return sorted(jars)[-1]
-        return BIN_DIR / "jenkins-plugin-manager.jar"
-
-    def _get_latest_manager_info(self) -> Tuple[Dict[str, Any], Optional[str]]:  # Any: GitHub's release JSON
-        """The plugin manager's latest release from GitHub's API, and why there is none when it cannot be read. Whether
-        that fails the run is :meth:`setup`'s question: a manager downloaded before still serves."""
-        api_url = f"https://api.github.com/repos/{self.REPO}/releases/latest"
-        headers = {"User-Agent": "aisland"}
-        try:
-            req = urllib.request.Request(api_url, headers=headers)
-            with urllib.request.urlopen(req, timeout=TIMEOUT) as response:
-                data = json.loads(response.read().decode())
-        except (OSError, ValueError) as error:  # no answer, or no JSON
-            return {}, f"GitHub's API did not answer ({error})"
-        if not isinstance(data, dict):
-            return {}, "GitHub's API answered no release"
-        return data, None
+        self.manager_jar = BIN_DIR / f"jenkins-plugin-manager-{self.MANAGER_VERSION}.jar"
 
     def ensure_war(self) -> bool:
-        """Download the pinned Jenkins WAR unless one is already in the bin dir; return whether it is there now.
-
-        The download lands in a ``.part`` file beside the WAR and moves into place only once its sha256 is the pinned
-        one, so a refused or interrupted download leaves no WAR that later runs would take for a finished one. A WAR
+        """Download the pinned Jenkins WAR unless one is already in the bin dir; return whether it is there now. A WAR
         already in the bin dir is used as it is."""
-        self.war_file.parent.mkdir(exist_ok=True)
-        if self.war_file.exists():
-            return True
-        click.echo(f"Downloading Jenkins {self.WAR_VERSION} from {self.URL}...")
-        part = self.war_file.with_name(self.war_file.name + ".part")
-        try:
-            download(self.URL, part)
-            actual = sha256(part)
-            if actual != self.WAR_SHA256:
-                part.unlink()
-                failures.report(
-                    f"Error downloading Jenkins: {self.URL} has the sha256 {actual}, not the pinned "
-                    f"{self.WAR_SHA256}; nothing was installed."
-                )
-                return False
-            os.replace(part, self.war_file)
-        except OSError as e:
-            part.unlink(missing_ok=True)
-            failures.report(f"Error downloading Jenkins: {e}")
+        return _fetch_pinned(f"Jenkins {self.WAR_VERSION}", self.URL, self.war_file, self.WAR_SHA256)
+
+    def ensure_manager(self) -> bool:
+        """Download the pinned plugin manager unless it is already in the bin dir; return whether it is there now. Once
+        it is, the jars of other versions an older aisland downloaded are removed."""
+        if not _fetch_pinned(
+            f"Jenkins Plugin Manager {self.MANAGER_VERSION}", self.MANAGER_URL, self.manager_jar, self.MANAGER_SHA256
+        ):
             return False
-        click.echo("  - Jenkins download complete.")
+        for other in self.manager_jar.parent.glob("jenkins-plugin-manager-*.jar"):
+            if other != self.manager_jar:
+                other.unlink()
         return True
 
     def resolve_java(self) -> JenkinsJava:
@@ -181,41 +153,10 @@ class JenkinsService(BaseService):
         click.echo(f"  - {choice.describe()}.")
 
     def setup(self) -> None:
-        """Download Jenkins binary and the latest plugin manager."""
-        if not self.ensure_war_asking():
-            return  # the download's failure is reported: the command exits 1 (aisland.failures)
-
-        # Check for latest manager version
-        info, unread = self._get_latest_manager_info()
-        if unread is not None and self.manager_jar.exists():
-            logger.debug("the plugin manager's latest release is not known (%s); %s serves", unread, self.manager_jar)
-        if info:
-            tag = info.get("tag_name", "")
-            assets = info.get("assets", [])
-            jar_asset = next((a for a in assets if a["name"].endswith(".jar")), None)
-
-            if jar_asset:
-                latest_jar_name = jar_asset["name"]
-                latest_jar_path = BIN_DIR / latest_jar_name
-                download_url = jar_asset["browser_download_url"]
-
-                if not latest_jar_path.exists():
-                    click.echo(f"Downloading Jenkins Plugin Manager {tag}...")
-                    try:
-                        download(download_url, latest_jar_path)
-                        click.echo(f"  - Plugin Manager {tag} download complete.")
-                        # Remove old versions
-                        for old_jar in BIN_DIR.glob("jenkins-plugin-manager-*.jar"):
-                            if old_jar != latest_jar_path:
-                                old_jar.unlink()
-                    except OSError as e:
-                        failures.report(f"Error downloading Plugin Manager: {e}")
-
-                self.manager_jar = latest_jar_path
-
-        if not self.manager_jar.exists():
-            cause = f": {unread}" if unread is not None else ""
-            failures.report(f"  - Error: Plugin Manager could not be discovered or downloaded{cause}.")
+        """Download the Jenkins WAR (once the user agrees) and the plugin manager. A failed download is reported: the
+        command exits 1 (aisland.failures)."""
+        if self.ensure_war_asking():
+            self.ensure_manager()
 
     def _are_plugins_installed(self) -> bool:
         """Check if all required plugins are present in the plugins directory."""
@@ -316,8 +257,6 @@ class JenkinsService(BaseService):
             return
 
         config_file = self.service_data_dir / "credentials.xml"
-        admin_pass_file = self.service_data_dir / "secrets/initialAdminPassword"
-
         has_creds = False
         if config_file.exists():
             try:
@@ -338,9 +277,8 @@ class JenkinsService(BaseService):
             click.echo("=" * 65)
             click.echo("No Git credentials found. To allow Jenkins to pull code:")
             click.echo("  1. Open Jenkins at " + click.style(f"http://localhost:{port}", fg="blue", bold=True))
-            if admin_pass_file.exists():
-                password = admin_pass_file.read_text().strip()
-                click.echo(f"  2. Unlock using password: {click.style(password, bg='black', fg='white')}")
+            if self.admin_password_file.exists():
+                click.echo(f"  2. Unlock it with the password in {self.admin_password_file}")
             click.echo("  3. Navigate to: Manage Jenkins -> Credentials -> System ->")
             click.echo("     Global credentials -> Add Credentials")
             click.echo("  4. Add your Git username/password or SSH key.")
@@ -377,7 +315,14 @@ class JenkinsService(BaseService):
         ]
 
         # Start Jenkins without skipping the setup wizard to ensure security is enabled
-        cmd = [str(java), *jvm_args, "-jar", str(self.war_file), f"--httpPort={port}"]
+        cmd = [
+            str(java),
+            *jvm_args,
+            "-jar",
+            str(self.war_file),
+            f"--httpPort={port}",
+            f"--httpListenAddress={self.LISTEN_ADDRESS}",
+        ]
         workspace_root = get_workspace_root()
         venv_bin = workspace_root / ".venv" / "bin"
         # BIN_DIR (aisland/bin) hosts symlinks to userspace-installed tools like
@@ -394,13 +339,17 @@ class JenkinsService(BaseService):
         # the setup wizard is pending), which is exactly "ready" for aisland.
         self.start(cmd, env=env, background=background, readiness={"port": port, "path": "/login"})
 
+    @property
+    def admin_password_file(self) -> Path:
+        """The file Jenkins writes its initial admin password to. aisland names the file and never prints the password:
+        a command's output reaches terminals' scrollback, CI logs and, through `aisland-mcp`, an AI client."""
+        return self.service_data_dir / "secrets" / "initialAdminPassword"
+
     def status(self) -> None:
         """Show extended Jenkins status."""
         super().status()
-        admin_pass_file = self.service_data_dir / "secrets/initialAdminPassword"
-        if self.is_running() and admin_pass_file.exists():
-            password = admin_pass_file.read_text().strip()
-            click.echo(f"    Initial Admin Password: {password}")
+        if self.is_running() and self.admin_password_file.exists():
+            click.echo(f"    Initial admin password: in {self.admin_password_file}")
 
     def url(self) -> str:
         """Where Jenkins answers: the port it runs on, else :attr:`DEFAULT_PORT` (it is not running, or not here)."""
@@ -418,11 +367,9 @@ class JenkinsService(BaseService):
         click.echo(f"  Plugin manager: {self.manager_jar}")
         click.echo(f"  Plugins dir   : {self.service_data_dir / 'plugins'}")
         click.echo(f"  Jobs dir      : {self.service_data_dir / 'jobs'}")
-        admin_pass_file = self.service_data_dir / "secrets/initialAdminPassword"
-        if admin_pass_file.exists():
-            password = admin_pass_file.read_text().strip()
+        if self.admin_password_file.exists():
             click.echo("  Admin user    : admin")
-            click.echo(f"  Admin password: {password}")
+            click.echo(f"  Admin password: in {self.admin_password_file}")
         else:
             click.echo("  Admin password: (not yet generated — start Jenkins to create it)")
         creds_file = self.service_data_dir / "credentials.xml"
@@ -434,12 +381,10 @@ class JenkinsService(BaseService):
             return
 
         click.echo("  - Issuing Safe Restart to Jenkins (waiting for active jobs)...")
-        admin_pass_file = self.service_data_dir / "secrets/initialAdminPassword"
-
         url = self.url()
 
-        if admin_pass_file.exists():
-            password = admin_pass_file.read_text().strip()
+        if self.admin_password_file.exists():
+            password = self.admin_password_file.read_text().strip()
             auth = base64.b64encode(f"admin:{password}".encode()).decode()
             auth_str = f"Basic {auth}"
 
@@ -471,3 +416,32 @@ class JenkinsService(BaseService):
 
         self.stop()
         self.launch(background=True)
+
+
+def _fetch_pinned(what: str, url: str, target: Path, digest: str) -> bool:
+    """``url`` downloaded to ``target`` unless a file is there already; whether it is there now.
+
+    The download lands in a ``.part`` file beside the target and moves into place only once its sha256 is ``digest``,
+    so a refused or interrupted download leaves nothing a later run would take for a finished one. A failure is
+    reported (the command exits 1) and nothing is installed."""
+    if target.exists():
+        return True
+    target.parent.mkdir(parents=True, exist_ok=True)
+    click.echo(f"Downloading {what} from {url}...")
+    part = target.with_name(target.name + ".part")
+    try:
+        download(url, part)
+        actual = sha256(part)
+        if actual != digest:
+            part.unlink()
+            failures.report(
+                f"Error downloading {what}: {url} has the sha256 {actual}, not the pinned {digest}; nothing was installed."
+            )
+            return False
+        os.replace(part, target)
+    except OSError as e:
+        part.unlink(missing_ok=True)
+        failures.report(f"Error downloading {what}: {e}")
+        return False
+    click.echo(f"  - {what} download complete.")
+    return True

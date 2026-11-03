@@ -21,6 +21,7 @@ import click
 
 from aisland import discovery, failures, selection, supervisor
 from aisland.errors import AislandError
+from aisland.services.base import ServiceState
 from aisland.services.declared import DeclaredService
 from aisland.services.docker import docker_service
 from aisland.services.jenkins import JenkinsService
@@ -46,6 +47,9 @@ class Service(Protocol):
     def stop(self) -> None:
         """Stop it."""
 
+    def state(self) -> ServiceState:
+        """Its state, as data (``status`` prints it)."""
+
     def status(self) -> None:
         """Print its one-line state."""
 
@@ -68,6 +72,8 @@ class Entry:
     takes_port: bool = False
     #: The project that brings it (its help names it); empty for aisland's own.
     project: str = ""
+    #: Whether it is also ``aisland <name> …``: not when an aisland command has that name, which wins.
+    shortcut: bool = True
     #: What a project's class says of itself, read when first asked — its code is imported only then, so listing the
     #: services (`aisland --help`) imports no project's code.
     details: Callable[[], "Details"] = lambda: Details()
@@ -127,18 +133,15 @@ def declared(root: Path, reserved: Collection[str] = ()) -> List[Entry]:
     """The services the projects of ``root`` bring, after aisland's own: the ones they declare whose ``needs`` are
     chosen, then the ones they implement whose project is installed.
 
-    A name of one of aisland's services, or of an aisland command (``reserved``), is refused naming the line: the
-    project's service would hide it."""
+    A name of one of aisland's services is refused naming the line. A name of an aisland command (``reserved``) is
+    not: the service has no ``aisland <name>`` shortcut (``Entry.shortcut``) and is reached as ``aisland services
+    <verb> <name>``, so a command a newer aisland adds never breaks a workspace whose service has its name."""
     own = {entry.name for entry in ENTRIES}
 
     def free(name: str, where: object) -> None:
         if name in own:
             raise discovery.DeclarationError(
                 f"{where}: service {name!r} is one of aisland's own — give it another name"
-            )
-        if name in reserved:
-            raise discovery.DeclarationError(
-                f"{where}: service {name!r} would hide the command `aisland {name}` — give it another name"
             )
 
     found = discovery.discover(root)
@@ -154,6 +157,7 @@ def declared(root: Path, reserved: Collection[str] = ()) -> List[Entry]:
                 by_default=False,
                 takes_background=True,
                 project=service.project,
+                shortcut=name not in reserved,
             )
         )
     for name, entry in discovery.installed(found).items():
@@ -171,6 +175,7 @@ def declared(root: Path, reserved: Collection[str] = ()) -> List[Entry]:
                 takes_port=True,
                 project=plugin.project,
                 details=lazy.details,
+                shortcut=name not in reserved,
             )
         )
     return entries
@@ -249,6 +254,13 @@ def status(entries: Sequence[Entry], names: Sequence[str]) -> None:
     with supervisor.snapshot():  # one `process list` for every service's state
         for entry in chosen(entries, names, every=True):
             entry.make().status()
+
+
+def states(entries: Sequence[Entry], names: Sequence[str]) -> List[ServiceState]:
+    """Each named service's state (default: every service): what ``aisland services status --json`` prints and the MCP
+    tool ``services_status`` returns."""
+    with supervisor.snapshot():
+        return [entry.make().state() for entry in chosen(entries, names, every=True)]
 
 
 def info(entries: Sequence[Entry], names: Sequence[str]) -> None:

@@ -180,14 +180,16 @@ def test_the_name_of_one_of_aislands_own_services_is_refused_naming_the_line(
     )
 
 
-def test_the_name_of_an_aisland_command_is_refused_naming_the_line(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+def test_a_service_named_like_an_aisland_command_is_reached_through_aisland_services(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, supervised: List[Dict[str, Any]]
 ) -> None:
-    root = _workspace(tmp_path, monkeypatch, NOTES.replace("service.notes", "service.setup"))
-    result = _run("services")
-    assert result.exit_code == 1
-    assert result.output == (
-        f"Error: {root / 'notes' / 'pyproject.toml'}:4: service 'setup' would hide the command `aisland setup` — "
-        "give it another name\n"
-    )
-    assert "Usage: main setup" in _run("setup", "--help").output  # the command itself still works
+    """A command a newer aisland adds may take a service's name: the service then loses only its shortcut
+    `aisland <name>` — the command wins — and the workspace keeps working."""
+    _workspace(tmp_path, monkeypatch, NOTES.replace("service.notes", "service.setup"))
+    assert "Usage: main setup" in _run("setup", "--help").output  # the command itself
+    assert _run("services", "start", "setup", "-b").exit_code == 0
+    assert [call.get("start") for call in supervised] == ["setup"]
+    assert _run("--help").output.count("  setup ") == 1
+    shown = _run("workspace", "show")
+    assert shown.exit_code == 0
+    assert "Warning: service 'setup' shares its name with the command `aisland setup`" in shown.stderr

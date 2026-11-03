@@ -17,6 +17,7 @@ from click.testing import CliRunner, Result
 
 from aisland import cli
 from aisland.services import registry
+from aisland.services.base import ServiceState, service_state
 
 
 @pytest.fixture(autouse=True)
@@ -42,6 +43,9 @@ class _Fake:
 
     def stop(self) -> None:
         self.calls.append(("stop", self.name))
+
+    def state(self) -> ServiceState:
+        return service_state(self.name, "stopped")
 
     def status(self) -> None:
         self.calls.append(("status", self.name))

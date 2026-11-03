@@ -10,7 +10,7 @@ from aisland import failures, gitcmd, locations, provision
 from aisland.github import github_repository
 from aisland.paths import DATA_DIR
 from aisland.projects import discover_projects, get_project_metadata, get_workspace_root
-from aisland.services.base import BaseService
+from aisland.services.base import BaseService, ServiceState, service_state, styled_state
 from aisland.services.jenkins import JenkinsService
 
 #: The bodies of the menu scripts ``aisland swiftbar init`` writes, each ``<[ name ]>`` filled in by :func:`_render_script`.
@@ -212,18 +212,21 @@ class SwiftBarService(BaseService):
         """Alias for remove() to maintain consistency with other services."""
         self.remove()
 
-    def status(self) -> None:
-        """Display SwiftBar status."""
+    def state(self) -> ServiceState:
+        """Whether the SwiftBar app runs (``pgrep``); ``not supported`` off macOS."""
         if platform.system() != "Darwin":
-            click.echo(f"  Swiftbar        : {click.style('Not supported (macOS only)', fg='yellow')}")
-            return
+            return service_state(self.name, "not supported")
         try:
             subprocess.check_output(["pgrep", "SwiftBar"])
-            status_str = click.style("Running", fg="green")
-        except subprocess.CalledProcessError:
-            status_str = click.style("Stopped", fg="red")
+        except (subprocess.CalledProcessError, FileNotFoundError):
+            return service_state(self.name, "stopped")
+        return service_state(self.name, "running")
 
-        click.echo(f"  Swiftbar        : {status_str}")
+    def status(self) -> None:
+        """Display SwiftBar status."""
+        state = self.state()["state"]
+        words = "Not supported (macOS only)" if state == "not supported" else None
+        click.echo(f"  Swiftbar        : {styled_state(state, words)}")
 
     def info(self) -> None:
         """Show detailed SwiftBar configuration."""

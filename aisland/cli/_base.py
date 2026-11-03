@@ -110,14 +110,14 @@ class _WorkspaceGroup(_Group):
             declared = self._declared(ctx)
         except discovery.DeclarationError:
             return names  # the listing (--help, completion) stays usable; every command that reads them says why
-        return names + sorted(entry.name for entry in declared)
+        return names + sorted(entry.name for entry in declared if entry.shortcut)
 
     def get_command(self, ctx: click.Context, cmd_name: str) -> Optional[click.Command]:
         command = super().get_command(ctx, cmd_name)
         if command is not None or not locations.workspace_found():
             return command
         for entry in self._declared(ctx):
-            if entry.name == cmd_name:
+            if entry.name == cmd_name and entry.shortcut:
                 return _declared_service_group(entry)
         return None
 

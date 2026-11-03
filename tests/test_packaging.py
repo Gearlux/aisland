@@ -481,6 +481,32 @@ def test_the_tag_guard_refuses_a_tag_that_is_not_the_version(
     assert (result.returncode == 0) is accepted, result.stdout + result.stderr
 
 
+@pytest.mark.parametrize(
+    "heading, accepted",
+    [
+        ("## [0.1.0] - 2026-11-03", True),
+        ("## [0.1.0] - unreleased", False),
+        ("## [0.1.0]", False),
+        ("## [0.1.01] - 2026-11-03", False),
+        ("## [0.2.0] - 2026-11-03", False),
+    ],
+)
+def test_the_changelog_guard_refuses_a_version_the_changelog_does_not_date(
+    release_workflow: Workflow, tmp_path: Path, heading: str, accepted: bool
+) -> None:
+    """Keep a Changelog gives a release its date: the tag `v0.1.0` is refused until the entry has one."""
+    (tmp_path / "CHANGELOG.md").write_text(f"# Changelog\n\n## [Unreleased]\n\n{heading}\n\n- a change\n")
+    script = _step(release_workflow, "build", "Guard - the CHANGELOG dates this version")["run"]
+    result = subprocess.run(
+        ["bash", "-e", "-c", script],
+        cwd=tmp_path,
+        env={**os.environ, "GITHUB_REF_NAME": "v0.1.0"},
+        capture_output=True,
+        text=True,
+    )
+    assert (result.returncode == 0) is accepted, result.stdout + result.stderr
+
+
 def test_the_release_is_built_only_after_the_gates_and_every_test_pass(release_workflow: Workflow) -> None:
     """A tag pushed from a commit CI never checked (or checked red) must not reach PyPI: the build waits on a job
     that runs the quality gates and both test runs, fast and slow, under a time limit."""

@@ -110,6 +110,7 @@ aisland workspace configure source set models pypi          # install models fro
 aisland workspace configure source set models local --machine-only
 aisland workspace configure extras set dev                  # the extras every project installs
 aisland workspace show                                      # what the projects declare to aisland
+aisland workspace projects                                  # the project folders, dependencies first
 ```
 
 A project tells aisland what it brings — a selection to choose from, a service to run, the system tools it

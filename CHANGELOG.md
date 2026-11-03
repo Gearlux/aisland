@@ -5,7 +5,9 @@ All notable changes to aisland are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [0.1.0] - unreleased
+## [Unreleased]
+
+## [0.1.0] - 2026-11-03
 
 The first release on PyPI: `pip install aisland`.
 
@@ -26,11 +28,14 @@ The first release on PyPI: `pip install aisland`.
 - **`aisland services`** runs the local services under process-compose or Docker — Jenkins, the container engine,
   SwiftBar — and a service a project declares in its own `pyproject.toml` or implements in its own
   code; `aisland --help` names the project that brings each without importing its code. One service that cannot
-  start never keeps the others down: its error is printed and the command exits 1. On Linux the container engine is
-  the system's own Docker Engine, which aisland checks and never manages. The Jenkins it runs is one pinned
-  long-term-support release, its download checked against Jenkins' published sha256. `aisland supervisor status|attach|down` shows, attaches
-  to and stops the process-compose supervisor behind them, and `aisland swiftbar` puts the workspace's Jenkins
-  builds and GitHub Actions runs in the macOS menu bar.
+  start never keeps the others down: its error is printed and the command exits 1. `aisland services status --json`
+  prints each service's state for a script. A service a project brings is also `aisland <name> …` while no aisland
+  command has its name. On Linux the container engine is the system's own Docker Engine, which aisland checks and never
+  manages. The Jenkins it runs is one pinned long-term-support release, and its plugin manager one pinned release,
+  each download checked against its published sha256; Jenkins listens on this machine only (`127.0.0.1`), keeps its
+  login and CSRF protection, and aisland names the file holding its initial admin password, never the password.
+  `aisland supervisor status|attach|down` shows, attaches to and stops the process-compose supervisor behind them, and
+  `aisland swiftbar` puts the workspace's Jenkins builds and GitHub Actions runs in the macOS menu bar.
 - **`aisland jenkins scaffold`** writes a project's CI files from a template set — aisland's own (`Jenkinsfile`,
   `Jenkinsfile.local` and GitHub's `ci.yml`), or one the workspace names in `workspace.toml`'s `[ci]`: a folder of
   Jinja2 templates with variables of its own, or a set an installed package registers; `aisland jenkins templates
@@ -72,6 +77,8 @@ The first release on PyPI: `pip install aisland`.
   test-stats off [PROJECT…] [--machine-only]` turns it off for a workspace, a project or this machine, and
   `pytest -p no:aisland_test_stats` leaves one run out.
 - **`aisland workspace show`** lists what the projects declare to aisland — selections, services and code plugins.
+  **`aisland workspace projects`** prints the project folders, dependencies first (`--json` adds their distribution
+  names).
   **`aisland workspace provision`** lists the system tools this machine needs, who needs each and whether it is
   installed; `provision install` installs them.
 - **`aisland workspace track set|unset|status [PROJECT…]`** chooses whether the root repository records a project's commits;
@@ -97,4 +104,5 @@ The first release on PyPI: `pip install aisland`.
   start, stop and restart any service of the workspace, and its tunnel tools read, start and stop the remote tunnel
   to this machine.
 
+[Unreleased]: https://github.com/Gearlux/aisland/compare/v0.1.0...HEAD
 [0.1.0]: https://github.com/Gearlux/aisland/releases/tag/v0.1.0

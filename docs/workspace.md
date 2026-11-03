@@ -416,6 +416,23 @@ A declaration aisland cannot use stops it with one line naming the file and the 
 Error: /path/to/app/pyproject.toml:8: app offers 'jax' for selection 'framework', but defines no extra of that name
 ```
 
+### The projects in dependency order (`aisland workspace projects`)
+
+`aisland workspace projects` prints the folder of each project with a checkout, every dependency before the projects
+that need it — the order `aisland setup` installs them in, and the one a script that commits or releases them all
+walks:
+
+```text
+$ aisland workspace projects
+lib
+models
+app
+```
+
+`--json` prints `{"projects": [{"folder": …, "name": …}, …]}` in the same order, adding each project's distribution
+name, which can differ from its folder. A script uses this command, never
+an import of aisland's modules: those are no interface ([stability](stability.md)).
+
 ### System tools (`aisland workspace provision`)
 
 A project declares the tools it needs from outside Python in its `pyproject.toml`; aisland has its own (the service

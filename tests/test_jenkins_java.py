@@ -384,7 +384,12 @@ class TestJenkinsStart:
         assert f"Jenkins 2.555.2 runs on Java 25.0.3 ({keg_25})" in result.output
         [cmd] = jenkins_bin["started"]
         assert cmd[0] == str(keg_25)
-        assert cmd[-3:] == ["-jar", str(jenkins_bin["tmp"] / "bin" / "jenkins.war"), "--httpPort=9080"]
+        assert cmd[-4:] == [
+            "-jar",
+            str(jenkins_bin["tmp"] / "bin" / "jenkins.war"),
+            "--httpPort=9080",
+            "--httpListenAddress=127.0.0.1",
+        ]
 
     def test_refuses_with_the_fix_when_no_installed_java_is_accepted(
         self, jenkins_bin: Dict[str, Any], monkeypatch: pytest.MonkeyPatch

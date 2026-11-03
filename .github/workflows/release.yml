@@ -73,6 +73,13 @@ jobs:
           echo "::error::Tag $GITHUB_REF_NAME does not match pyproject version $PKG_VERSION"
           exit 1
         fi
+    - name: Guard - the CHANGELOG dates this version
+      run: |
+        VERSION=${GITHUB_REF_NAME#v}
+        if ! grep -Eq "^## \[${VERSION//./\\.}\] - [0-9]{4}-[0-9]{2}-[0-9]{2}$" CHANGELOG.md; then
+          echo "::error::CHANGELOG.md has no dated entry for $VERSION: write its heading as '## [$VERSION] - YYYY-MM-DD'"
+          exit 1
+        fi
     - name: Build sdist + wheel
       run: python -m build
     - name: Check package metadata

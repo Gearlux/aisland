@@ -17,7 +17,7 @@ No local-CI gate: CI runs on every push and is the authoritative gate.
 
 ## 2. Dependency order
 
-Resolve via the call `/commit-all` uses (step 1 of `commit-all.md`), with the workspace `.venv` active: `python3 -c "from aisland.projects import get_install_order, get_workspace_root; print([p['path'].name for p in get_install_order(get_workspace_root())])"` — the project folders, dependencies first. Iterate the **submodules** in that order, then auto-stage any submodule pointer drift (§ 2a), then handle the **root workspace** with the per-project flow at the end.
+Resolve via the call `/commit-all` uses (step 1 of `commit-all.md`), with the workspace `.venv` active: `aisland workspace projects` — the project folders, one a line, dependencies first. Iterate the **submodules** in that order, then auto-stage any submodule pointer drift (§ 2a), then handle the **root workspace** with the per-project flow at the end.
 
 ### 2a. Auto-stage submodule pointer bumps (between submodules and root)
 

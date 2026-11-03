@@ -61,7 +61,7 @@ the entry's environment:
 | `doctor` | `aisland doctor`'s checks: each one's result and the command that fixes it |
 | `tests_report(project, days)` | `aisland tests report PROJECT --json` |
 | `sources` | `aisland workspace configure source`'s rows |
-| `services_status` | every supervised service: running, PID, ports |
+| `services_status` | every service of the workspace: its state, PID, ports (`aisland services status --json`) |
 | `tunnel_list` | `aisland tunnel list --json` |
 | `tunnel_status` | `aisland tunnel status --json`: whether the tunnel to this machine runs, its name, account and address |
 | `track_status(projects)` | `aisland workspace track status --json`: per project whether the root records its commits, whose choice that is and whether git agrees; `track set\|unset` stay commands |

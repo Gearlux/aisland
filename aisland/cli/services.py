@@ -2,6 +2,7 @@
 `swiftbar` — and of the supervisor behind them.
 """
 
+import json
 from pathlib import Path
 from typing import Optional, Tuple
 
@@ -287,8 +288,12 @@ def services_restart(names: Tuple[str, ...], background: bool) -> None:
 
 @services.command(name="status")
 @_SERVICE_NAMES
-def services_status(names: Tuple[str, ...]) -> None:
+@click.option("--json", "as_json", is_flag=True, help="Print the states as one JSON object.")
+def services_status(names: Tuple[str, ...], as_json: bool) -> None:
     """Each named service's state (default: every service)."""
+    if as_json:
+        click.echo(json.dumps({"services": service_registry.states(_service_entries(), names)}, indent=2))
+        return
     service_registry.status(_service_entries(), names)
 
 

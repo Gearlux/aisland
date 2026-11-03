@@ -11,20 +11,27 @@ To download the base Jenkins binary (if missing) and launch the server:
 ```bash
 aisland jenkins start --background
 ```
-- **Default URL:** [http://localhost:9080](http://localhost:9080)
+- **Default URL:** [http://localhost:9080](http://localhost:9080). Jenkins listens on this machine only
+  (`127.0.0.1`): another machine on the network cannot reach it. From a remote machine, forward the port (the
+  [tunnel](tunnel.md) does).
 - **Home Directory:** `.aisland/data/jenkins/` in the workspace (`aisland/data/jenkins/` when aisland runs from its own checkout)
 - **Which Jenkins:** one long-term-support release, pinned by version and sha256 (`JenkinsService.WAR_VERSION` and
   `WAR_SHA256`), downloaded from `get.jenkins.io` once and kept. A download that does not match the digest is refused
   and nothing is installed. A WAR already in `.aisland/bin/jenkins.war` (`aisland/bin/jenkins.war` from a checkout) is
   used as it is; delete it to get the pinned release.
+- **Its plugin manager:** the plugin installation manager `aisland jenkins init` runs is pinned the same way
+  (`JenkinsService.MANAGER_VERSION` and `MANAGER_SHA256`), downloaded from its GitHub release and checked before it
+  is ever run.
 
 *Note: `start` does not install plugins. It brings the server up and checks whether you have configured credentials.*
 
 ### 2. Initial Setup & Unlock
 If this is a clean installation, `aisland jenkins start` will detect that no credentials exist and print instructions to the console. 
-The first start keeps Jenkins' setup wizard, so security is on from the start. Unlock it with the initial admin password; `aisland jenkins start` prints it, and `aisland jenkins status` prints it as `Initial Admin Password:` while Jenkins runs:
+The first start keeps Jenkins' setup wizard, so security is on from the start. Unlock it with the initial admin
+password. aisland never prints the password itself; `aisland jenkins start`, `status` and `info` name the file that
+holds it:
 ```bash
-aisland jenkins status
+cat .aisland/data/jenkins/secrets/initialAdminPassword   # aisland/data/jenkins/… from aisland's own checkout
 ```
 Paste it into the Jenkins web interface to unlock it, then create your admin user.
 
@@ -62,15 +69,14 @@ This command performs the following steps:
 `aisland jenkins init --local` seeds `<project>.local` jobs instead, each with its `Jenkinsfile.local` embedded: the
 pipeline runs on this machine's checkout and workspace `.venv`, with nothing fetched from Git. It also seeds the
 nightly orchestrator and the job that reports its nightly runs (`aisland tests nightly`). Before the restart it asks
-two questions, for a Jenkins only you reach:
+one question:
 
 ```text
-Reduce Jenkins security for faster local access? (Disables CSRF, allows anonymous read) [y/N]:
-Disable Jenkins security entirely? (No login required, most fast/unsecure) [y/N]:
+Allow anonymous read access? (the nightly report, the SwiftBar menu and the scaffold's linter read Jenkins without logging in; the login and CSRF protection stay) [y/N]:
 ```
 
-The second is asked only after a yes to the first; a no to it keeps the login, allowing anonymous read and turning
-CSRF protection off.
+A yes lets a visitor who has not logged in read jobs and builds. The login and CSRF protection always stay on: Jenkins
+listens on this machine only, but a page open in your browser can still send it requests.
 
 #### Initialize a Single Project:
 ```bash
@@ -85,9 +91,9 @@ aisland jenkins init models
 | :--- | :--- |
 | `aisland jenkins start` | Starts the Jenkins server (use `--background` or `-b` for detached mode). |
 | `aisland jenkins stop` | Stops the running Jenkins server. |
-| `aisland jenkins status` | Shows if Jenkins is running, its PID, and the Initial Admin Password. |
+| `aisland jenkins status` | Shows if Jenkins is running, its PID, and the file holding the initial admin password. |
 | `aisland jenkins restart` | Stops and starts Jenkins (`--port`, `--background`). |
-| `aisland jenkins info` | Shows its URL, `JENKINS_HOME` and the initial admin password. |
+| `aisland jenkins info` | Shows its URL, `JENKINS_HOME` and the file holding the initial admin password. |
 | `aisland jenkins init [PROJECT]` | Creates Multibranch Pipeline jobs for projects in the workspace, then restarts Jenkins. |
 | `aisland jenkins init --local [PROJECT]` | Creates `<project>.local` jobs that run `Jenkinsfile.local` on this machine's checkout. |
 | `aisland jenkins scaffold [PROJECT]` | Writes a project's `Jenkinsfile`, `Jenkinsfile.local` and GitHub Actions `ci.yml` ([ci](ci.md)). |

@@ -29,6 +29,11 @@ Without a name, `start`, `stop`, `restart` and `reset` act on the services start
 SwiftBar — and `status` and `info` on every service. Each service also has its own group with the same verbs
 (`aisland jenkins status`).
 
+`aisland services status --json` prints the same states for a script, one object per service:
+`{"services": [{"service": "jenkins", "state": "running", "pid": 4242, "ports": [9080], "ready": null}, …]}`. A
+`state` is `running`, `stopped`, `not installed`, `not supported` (SwiftBar off macOS) or `unknown` (a project's
+service that Docker runs: its own `status` shows it).
+
 A project can bring a service of its own, declared in its `pyproject.toml` — no aisland code:
 
 ```toml

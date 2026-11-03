@@ -27,7 +27,8 @@ from aisland import cli, doctor, editor, editor_files, locations, mcp_config, pr
 from aisland import sources as sources_mod
 from aisland import supervisor
 from aisland import tunnel as tunnel_mod
-from aisland.services import registry
+from aisland.services import docker, registry, swiftbar
+from aisland.services.base import ServiceState, service_state
 from tests.test_editor import no_vscode, vscode  # noqa: F401  (fixtures)
 
 READ_ONLY = {
@@ -234,27 +235,50 @@ def test_tunnel_list_is_what_the_command_prints_with_json() -> None:
     assert _call("tunnel_list")["workspaces"][0]["name"] == "sandbox-4821"
 
 
-def test_services_status_lists_every_supervised_process(monkeypatch: pytest.MonkeyPatch) -> None:
+class _Notes:
+    """A project's service whose state is known: running as PID 7 on port 5005."""
+
+    name = "notes"
+
+    def state(self) -> ServiceState:
+        return service_state("notes", "running", pid=7, ports=[5005])
+
+
+@pytest.fixture
+def every_service(monkeypatch: pytest.MonkeyPatch, repo: Path) -> None:
+    """The workspace's services: aisland's own — Jenkins running under the supervisor, the container engine not
+    installed, the menu stopped — and `notes`, one a project brings."""
+    notes = registry.Entry("notes", cast(Any, _Notes), by_default=False, takes_background=True, project="app")
+    monkeypatch.setattr(registry, "declared", lambda root, reserved=(): [notes])
     monkeypatch.setattr(
-        supervisor,
-        "list_processes",
-        lambda: {
-            "jenkins": {"name": "jenkins", "is_running": True, "pid": 4242, "status": "Running"},
-            "mlflow": {"name": "mlflow", "is_running": False, "pid": 0, "status": "Disabled"},
-        },
+        supervisor, "list_processes", lambda: {"jenkins": {"name": "jenkins", "is_running": True, "pid": 4242}}
     )
     monkeypatch.setattr(supervisor, "get_ports", lambda name: [9080] if name == "jenkins" else [])
+    for service in (docker.DockerService, docker.LinuxDockerService):
+        monkeypatch.setattr(service, "state", lambda self: service_state("docker", "not installed"))
+    monkeypatch.setattr(swiftbar.SwiftBarService, "state", lambda self: service_state("swiftbar", "stopped"))
+    monkeypatch.setattr(locations, "workspace_root", lambda: repo)  # the command's root too
+
+
+@pytest.mark.usefixtures("every_service")
+def test_services_status_answers_for_every_service_not_only_the_supervisors() -> None:
+    """The container engine and a project's service are not the supervisor's processes; the tool still answers for
+    them, as `aisland services status` does."""
     assert _call("services_status") == {
         "services": [
-            {"service": "jenkins", "running": True, "pid": 4242, "ports": [9080], "status": "Running"},
-            {"service": "mlflow", "running": False, "pid": None, "ports": [], "status": "Disabled"},
+            {"service": "docker", "state": "not installed", "pid": None, "ports": [], "ready": None},
+            {"service": "jenkins", "state": "running", "pid": 4242, "ports": [9080], "ready": None},
+            {"service": "swiftbar", "state": "stopped", "pid": None, "ports": [], "ready": None},
+            {"service": "notes", "state": "running", "pid": 7, "ports": [5005], "ready": None},
         ]
     }
 
 
-def test_services_status_without_a_supervisor_lists_nothing(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr(supervisor, "list_processes", lambda: {})
-    assert _call("services_status") == {"services": []}
+@pytest.mark.usefixtures("every_service")
+def test_services_status_is_what_the_command_prints_with_json() -> None:
+    printed = CliRunner().invoke(cli.main, ["services", "status", "--json"])
+    assert printed.exit_code == 0, printed.output
+    assert _call("services_status") == json.loads(printed.output)
 
 
 def test_track_status_is_what_the_command_prints_with_json(tracked: Path) -> None:
@@ -385,11 +409,12 @@ def ran(monkeypatch: pytest.MonkeyPatch, repo: Path) -> List[List[str]]:
         calls.append(args)
         return subprocess.CompletedProcess(args, 0, stdout=f"{args[0].capitalize()} started.\n", stderr="")
 
-    notes = registry.Entry("notes", cast(Any, lambda: None), by_default=False, takes_background=True, project="app")
+    notes = registry.Entry("notes", cast(Any, _Notes), by_default=False, takes_background=True, project="app")
     monkeypatch.setattr(registry, "declared", lambda root, reserved=(): [notes])
     monkeypatch.setattr(server, "_run_aisland", run)
-    monkeypatch.setattr(supervisor, "get_process", lambda name: {"name": name, "is_running": True, "pid": 7})
-    monkeypatch.setattr(supervisor, "get_ports", lambda name: [5005])
+    for service in (docker.DockerService, docker.LinuxDockerService):
+        monkeypatch.setattr(service, "state", lambda self: service_state("docker", "running"))
+    monkeypatch.setattr(swiftbar.SwiftBarService, "state", lambda self: service_state("swiftbar", "running"))
     return calls
 
 
@@ -406,9 +431,10 @@ def test_a_service_tool_runs_the_aisland_command_in_the_background(
 ) -> None:
     assert _call(tool, {"name": "notes"}) == {
         "service": "notes",
-        "running": True,
+        "state": "running",
         "pid": 7,
         "ports": [5005],
+        "ready": None,
         "output": "Notes started.",
     }
     assert ran == [args]

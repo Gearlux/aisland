@@ -26,7 +26,7 @@ import click
 from aisland import projects, supervisor
 from aisland.errors import AislandError
 from aisland.selection import add_command
-from aisland.services.base import BaseService
+from aisland.services.base import BaseService, ServiceState, service_state
 
 
 class ServiceContext:
@@ -117,6 +117,11 @@ class PluginService(BaseService):
             own(ServiceContext(self))
         else:
             super().stop()
+
+    def state(self) -> ServiceState:
+        """The supervisor's answer for a supervised class; ``unknown`` for one whose processes are Docker's — its own
+        ``status`` prints them, and a state aisland cannot read is never guessed."""
+        return super().state() if self.supervised else service_state(self.name, "unknown")
 
     def status(self) -> None:
         own = self._own("status")

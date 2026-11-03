@@ -3,13 +3,41 @@ folder and log, and its start, stop, status, info and reset."""
 
 import os
 import shutil
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Literal, Optional, Sequence, TypedDict
 
 import click
 
 from aisland import failures, supervisor
 from aisland.paths import DATA_DIR
 from aisland.projects import get_workspace_root
+
+#: What a service's state can be: ``not installed`` (its program is missing), ``not supported`` (not on this platform),
+#: ``unknown`` (a project's service whose processes are not the supervisor's; its own ``status`` prints the detail).
+State = Literal["running", "stopped", "not installed", "not supported", "unknown"]
+
+_STATE_STYLE = {"running": "green", "stopped": "red"}  # the others: yellow
+
+
+class ServiceState(TypedDict):
+    """One service's state, as ``aisland services status --json`` and the MCP tool ``services_status`` give it."""
+
+    service: str
+    state: State
+    pid: Optional[int]
+    ports: List[int]
+    #: The supervisor's readiness answer (``Ready``, ``Not Ready``) for a service with a probe, else ``None``.
+    ready: Optional[str]
+
+
+def service_state(
+    name: str, state: State, pid: Optional[int] = None, ports: Sequence[int] = (), ready: Optional[str] = None
+) -> ServiceState:
+    return {"service": name, "state": state, "pid": pid, "ports": list(ports), "ready": ready}
+
+
+def styled_state(state: State, words: Optional[str] = None) -> str:
+    """``state`` as ``status`` prints it: capitalised (or ``words``), green running, red stopped, else yellow."""
+    return click.style(words or state.capitalize(), fg=_STATE_STYLE.get(state, "yellow"))
 
 
 class BaseService:
@@ -180,22 +208,32 @@ class BaseService:
                     f"orphaned {self.name} child processes may have survived; stop them manually."
                 )
 
-    def status(self) -> None:
-        """Display service status."""
+    def state(self) -> ServiceState:
+        """Its state, as the supervisor knows it."""
         proc = supervisor.get_process(self.name)
-        running = bool(proc and proc.get("is_running"))
-        status_str = click.style("Running", fg="green") if running else click.style("Stopped", fg="red")
+        if not (proc and proc.get("is_running")):
+            return service_state(self.name, "stopped")
+        ready = proc.get("is_ready")
+        return service_state(
+            self.name,
+            "running",
+            pid=int(proc["pid"]) if proc.get("pid") else None,
+            ports=supervisor.get_ports(self.name),
+            ready=ready if ready and ready != "-" else None,
+        )
+
+    def status(self) -> None:
+        """Display service status: :meth:`state` on one line."""
+        state = self.state()
         detail = ""
-        if running and proc is not None:
-            ports = supervisor.get_ports(self.name)
-            ready = proc.get("is_ready")
-            extras = [f"PID: {proc.get('pid')}"]
-            if ports:
-                extras.append(f"port: {', '.join(str(p) for p in ports)}")
-            if ready and ready != "-":
-                extras.append(f"ready: {ready}")
+        if state["state"] == "running":
+            extras = [f"PID: {state['pid']}"]
+            if state["ports"]:
+                extras.append(f"port: {', '.join(str(p) for p in state['ports'])}")
+            if state["ready"]:
+                extras.append(f"ready: {state['ready']}")
             detail = f"({', '.join(extras)})"
-        click.echo(f"  {self.name.capitalize():<15} : {status_str} {detail}")
+        click.echo(f"  {self.name.capitalize():<15} : {styled_state(state['state'])} {detail}")
 
     def info(self) -> None:
         """Display detailed service information.

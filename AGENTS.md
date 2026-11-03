@@ -232,7 +232,8 @@ naming the PID is the only signal). All service state lives under `<workspace>/a
     `aisland[dev]` and `pip`, in a `git clone` of aisland alone, with `HOME` an empty folder, before changing either.
   - A release ships `LICENSE`, `CHANGELOG.md` and `aisland/py.typed`; the newest `## [<version>]` of the CHANGELOG is
     `pyproject.toml`'s version. It is published by `.github/workflows/release.yml` on a `v<version>` tag: the quality
-    gates and both test runs (`pytest tests -m ''`), the tag guard, `python -m build`, `twine check --strict`, a smoke
+    gates and both test runs (`pytest tests -m ''`), the tag guard, the guard that the CHANGELOG dates the version
+    (`## [<version>] - YYYY-MM-DD`; changes since go under `## [Unreleased]`), `python -m build`, `twine check --strict`, a smoke
     test of the wheel in a clean venv from `/tmp`, then Trusted Publishing from the `pypi` environment. Change a step
     and its test together (`tests/test_packaging.py`).
   - `project.bashrc` ALWAYS sets `PROJECT_ROOT` from its own place, never keeps an inherited one; `.env` is SOURCED
@@ -337,7 +338,17 @@ naming the PID is the only signal). All service state lives under `<workspace>/a
   (`::test_registry_pins_wellformed_sha256_for_every_tool`).
 - **The Jenkins WAR is pinned the same way** (`JenkinsService.WAR_VERSION`, `WAR_SHA256`): it downloads to a `.part`
   file and moves into place only on a matching digest; bump both together from jenkins.io's `jenkins.war.sha256`; a
-  WAR already in `bin/` is used as it is (`tests/test_jenkins_war.py`).
+  WAR already in `bin/` is used as it is (`tests/test_jenkins_war.py`). **So is its plugin manager**
+  (`MANAGER_VERSION`, `MANAGER_SHA256`, from its GitHub release's `.jar.sha256`), through the same `_fetch_pinned`;
+  never "latest", since the jar is code `jenkins init` runs; the jars of other versions go once the pinned one is in
+  place (`tests/test_errors_exit_one.py::test_a_plugin_manager_whose_digest_differs_is_refused_and_never_kept`).
+- **The local Jenkins is this machine's alone.** It listens on `JenkinsService.LISTEN_ADDRESS` (`127.0.0.1`) — never
+  every interface, Jenkins' default, which offers its script console and the `.env` values its jobs see to the
+  network. Its initial admin password is named by its file (`admin_password_file`), never printed: output reaches
+  scrollback, CI logs and, through `aisland-mcp`, an AI client. `jenkins init --local` may allow anonymous read
+  (`allow_anonymous_read`: the nightly report, the SwiftBar menu and the scaffold's linter read without a login);
+  never add back an option that turns the login or CSRF protection off — a page in the browser can post to
+  localhost (`tests/test_jenkins_security.py`).
 - **Every service is in ONE list, `services/registry.py` (`ENTRIES`, start order).** `aisland services
   [start|stop|restart|status|info|reset] [NAME…]` reads it: named → those, in the order given; of several, one that
   fails is reported and the others still get their turn (`registry._each`); unnamed → `status`/`info` every service,
@@ -358,8 +369,10 @@ naming the PID is the only signal). All service state lives under `<workspace>/a
   `DeclaredService` — probed only with both `port` and `ready` — appended after aisland's own (`registry.declared`),
   started only when named, offered only while every `needs` choice is in that selection's effective choice. It gets
   `aisland <name> …` from `_WorkspaceGroup.get_command`, after aisland's own commands; its help names the project that
-  brings it (`Entry.project`). A name of an aisland service or command is a `DeclarationError` naming the line
-  (`tests/test_declared_services.py`).
+  brings it (`Entry.project`). A name of one of aisland's services is a `DeclarationError` naming the line; a name of
+  an aisland command is NOT: the service loses only its shortcut (`Entry.shortcut`), stays `aisland services <verb>
+  <name>`, and `aisland workspace show` warns — so a command a later aisland adds never breaks a workspace
+  (`docs/stability.md`; `tests/test_declared_services.py`).
 - **A project implements a service in its own code, importing nothing of aisland.** An `aisland.plugins` entry point of
   kind `service` (a class needing only `start(ctx)`; `stop`, `status`, `info`, `reset` are `BaseService`'s unless it
   has them, its `info(ctx)` printed after aisland's) becomes a `services/plugin.py` `PluginService`, offered once its
@@ -370,6 +383,12 @@ naming the PID is the only signal). All service state lives under `<workspace>/a
   `start`/`restart`; `port`/`background` refused), `supervised = False` when Docker runs it, and `reset_question` when
   its `reset` wipes no data. A moved service disappears with its project; its data folder stays `data/<name>/`
   (`tests/test_plugin_services.py`).
+- **A service's state is data: `state()` → `services.base.ServiceState`** (`service`, `state` — `running`, `stopped`,
+  `not installed`, `not supported`, `unknown` —, `pid`, `ports`, `ready`). `status()` prints it; `registry.states`
+  is what `aisland services status --json` prints and the MCP tool `services_status` returns, and a service tool
+  answers with it after its command. A service the supervisor does not run (Colima, Linux Docker, SwiftBar) overrides
+  `state()`; a project's class Docker runs (`supervised = False`) is `unknown`, never guessed
+  (`tests/test_server.py::test_services_status_is_what_the_command_prints_with_json`).
 - A new service extends `BaseService` and implements `launch()` (command, env, probe); the base owns
   start/stop/status/reset. One `aisland/data/<service>/` and log each; no shared state. A Docker-run service overrides
   `launch`/`stop`/`status`/`reset`; its `info()` skips `super().info()`. New services write `.env` through
@@ -785,6 +804,9 @@ A bare `::` pin in this section is in `tests/test_jenkins_scaffold.py`.
   anything is installed, naming both — never a precedence by position; `exclude` leaves a file out and one naming
   nothing is refused. A new place an agent reads joins `_usual_places`; a new `harness.toml` key joins `_SET_KEYS` and
   `docs/stability.md`.
+- **A harness file reaches aisland through its commands, never its modules** (`aisland workspace projects` for the
+  dependency order, never `python3 -c "from aisland…"`): `docs/stability.md` keeps the modules out of the interface,
+  and the files run in other workspaces against other aisland releases.
 - `harness/` holds ONLY what every aisland workspace shares: no workspace's project names, private names or domain
   rules (`::test_the_harness_names_no_project_of_the_workspace_it_was_written_in`); a workspace's own rule goes in its
   `AGENTS.md` below the import line. A command cites a rule as `aisland rules → "<bold heading>"`, and

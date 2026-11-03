@@ -37,7 +37,7 @@ import click
 
 from aisland import cli, doctor, editor, editor_files, pytest_stats
 from aisland import sources as sources_mod
-from aisland import supervisor, tracking
+from aisland import tracking
 from aisland import tunnel as tunnel_mod
 from aisland.errors import AislandError
 from aisland.projects import get_workspace_root
@@ -123,19 +123,6 @@ def _run_aisland(args: List[str]) -> "subprocess.CompletedProcess[str]":
     )
 
 
-def _service_state(name: str, process: Optional[supervisor.ProcessState] = None) -> Dict[str, object]:
-    """A service's state: from ``process`` (a supervisor listing's entry), else asked of the supervisor."""
-    if process is None:
-        process = supervisor.get_process(name) or {}
-    running = bool(process.get("is_running"))
-    return {
-        "service": name,
-        "running": running,
-        "pid": int(process["pid"]) if running and process.get("pid") else None,
-        "ports": supervisor.get_ports(name) if running else [],
-    }
-
-
 def _service_entry(name: str) -> service_registry.Entry:
     """The workspace's service called ``name``: aisland's, or one a project brings. A name no service has is refused
     in the command's own words (``no service 'x' (the services: …)``)."""
@@ -153,7 +140,7 @@ def _service_command(name: str, action: str) -> Dict[str, object]:
     output = "\n".join(part.strip() for part in (result.stdout, result.stderr) if part.strip())
     if result.returncode != 0:
         raise ToolRefusal(output or f"aisland {name} {' '.join(args)} exited with {result.returncode}")
-    return {**_service_state(name), "output": output}
+    return {**entry.make().state(), "output": output}
 
 
 # --- the tools ----------------------------------------------------------------------------
@@ -238,15 +225,11 @@ def tool_sources() -> Dict[str, object]:
 
 
 def tool_services_status() -> Dict[str, object]:
-    """Every service the supervisor knows: running or not, its PID, its ports and the supervisor's status. Empty
-    when no supervisor runs."""
-    processes = supervisor.list_processes()
-    return {
-        "services": [
-            {**_service_state(name, process), "status": process.get("status")}
-            for name, process in sorted(processes.items())
-        ]
-    }
+    """Every service of the workspace — aisland's and the ones its projects bring — with its state (`running`,
+    `stopped`, `not installed`, `not supported`, `unknown`), PID, ports and readiness (`aisland services status
+    --json`)."""
+    entries = service_registry.entries(get_workspace_root(), reserved=cli.main.commands)
+    return {"services": service_registry.states(entries, ())}
 
 
 def tool_tunnel_list() -> Dict[str, object]:

@@ -8,9 +8,10 @@ stderr, the command finishes its work, and the run then exits 1.
 
 from __future__ import annotations
 
+import hashlib
 import subprocess
 from pathlib import Path
-from typing import Callable, Iterator
+from typing import Callable, Iterator, List
 
 import click
 import pytest
@@ -333,46 +334,78 @@ def test_a_jenkins_download_that_fails_is_reported(tmp_path: Path, monkeypatch: 
     assert failures.reported() == 1
 
 
-def _plugin_manager_setup(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, *, downloaded_before: bool) -> None:
-    """`JenkinsService.setup` with its WAR in place and GitHub's API not answering."""
+def _plugin_manager_setup(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, *, downloaded_before: bool, body: bytes = b""
+) -> List[str]:
+    """`JenkinsService.setup` with its WAR in place; the plugin manager's download writes ``body``, or fails when the
+    network is unreachable. Returns the URLs downloaded."""
     from aisland.services import jenkins
 
     monkeypatch.setattr(jenkins, "BIN_DIR", tmp_path)
     service = jenkins.JenkinsService()
     service.war_file = tmp_path / "jenkins.war"
     service.war_file.write_text("")
-    service.manager_jar = tmp_path / "jenkins-plugin-manager-2.15.0.jar"
     if downloaded_before:
         service.manager_jar.write_text("")
+    urls: List[str] = []
 
-    def _no_answer(request: object, timeout: float = 0) -> None:
-        raise OSError("network unreachable")
+    def _download(url: str, path: Path) -> None:
+        urls.append(url)
+        if not body:
+            raise OSError("network unreachable")
+        path.write_bytes(body)
 
-    monkeypatch.setattr(jenkins.urllib.request, "urlopen", _no_answer)
+    monkeypatch.setattr(jenkins, "download", _download)
     service.setup()
+    return urls
 
 
-def test_a_plugin_manager_github_cannot_name_is_one_reported_line_with_its_cause(
+def test_a_plugin_manager_that_cannot_be_downloaded_is_one_reported_line_with_its_cause(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
-    """No plugin manager downloaded before and GitHub's API not answering: ONE reported line, so the run exits 1,
-    saying why — never a second `Error` line echoed beside it."""
+    """No plugin manager downloaded before and no network: ONE reported line, so the run exits 1, saying why — never
+    a second `Error` line echoed beside it."""
     _plugin_manager_setup(tmp_path, monkeypatch, downloaded_before=False)
     err = capsys.readouterr().err
     assert failures.reported() == 1
     assert err.count("Error") == 1, err
-    assert (
-        "Plugin Manager could not be discovered or downloaded: GitHub's API did not answer (network unreachable)."
-        in err
-    )
+    assert "Error downloading Jenkins Plugin Manager 2.15.0: network unreachable" in err
+    assert not list(tmp_path.glob("jenkins-plugin-manager-*"))
 
 
-def test_a_plugin_manager_downloaded_before_serves_when_github_does_not_answer(
+def test_a_plugin_manager_downloaded_before_serves_without_the_network(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
-    _plugin_manager_setup(tmp_path, monkeypatch, downloaded_before=True)
+    assert _plugin_manager_setup(tmp_path, monkeypatch, downloaded_before=True) == []
     assert failures.reported() == 0
     assert capsys.readouterr().err == ""
+
+
+def test_a_plugin_manager_whose_digest_differs_is_refused_and_never_kept(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """The jar is code Jenkins' plugin step runs: one that is not the pinned release's is deleted, never run."""
+    from aisland.services.jenkins import JenkinsService
+
+    urls = _plugin_manager_setup(tmp_path, monkeypatch, downloaded_before=False, body=b"not the release")
+    assert urls == [JenkinsService.MANAGER_URL]
+    assert JenkinsService.MANAGER_URL.endswith("/2.15.0/jenkins-plugin-manager-2.15.0.jar")
+    assert failures.reported() == 1
+    assert f"not the pinned {JenkinsService.MANAGER_SHA256}; nothing was installed" in capsys.readouterr().err
+    assert not list(tmp_path.glob("jenkins-plugin-manager-*"))
+
+
+def test_the_pinned_plugin_manager_replaces_the_jars_of_other_versions(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from aisland.services import jenkins
+
+    body = b"the release"
+    monkeypatch.setattr(jenkins.JenkinsService, "MANAGER_SHA256", hashlib.sha256(body).hexdigest())
+    (tmp_path / "jenkins-plugin-manager-2.9.0.jar").write_text("old")
+    _plugin_manager_setup(tmp_path, monkeypatch, downloaded_before=False, body=body)
+    assert failures.reported() == 0
+    assert [p.name for p in tmp_path.glob("jenkins-plugin-manager-*")] == ["jenkins-plugin-manager-2.15.0.jar"]
 
 
 def test_a_supervisor_that_does_not_stop_exits_1(monkeypatch: pytest.MonkeyPatch) -> None:

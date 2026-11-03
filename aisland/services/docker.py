@@ -36,7 +36,7 @@ import yaml
 
 from aisland import failures, provision
 from aisland.errors import AislandError
-from aisland.services.base import BaseService
+from aisland.services.base import BaseService, ServiceState, service_state, styled_state
 
 logger = logging.getLogger(__name__)
 
@@ -196,21 +196,16 @@ class DockerService(BaseService):
         except subprocess.CalledProcessError as e:
             failures.report(f"Error stopping Docker (Colima): {e}")
 
+    def state(self) -> ServiceState:
+        """Colima's state: ``not installed`` without it, else :meth:`is_running`'s."""
+        if shutil.which("colima") is None:
+            return service_state(self.name, "not installed")
+        return service_state(self.name, "running" if self.is_running() else "stopped")
+
     def status(self) -> None:
-        """Display Docker engine status."""
-        try:
-            result = subprocess.run(["colima", "status"], capture_output=True, text=True)
-            if result.returncode == 0:
-                click.echo(f"  Docker (Colima)  : {click.style('Running', fg='green')}")
-                # Show socket info if available
-                if "socket:" in result.stdout.lower():
-                    for line in result.stdout.splitlines():
-                        if "socket:" in line.lower():
-                            click.echo(f"    {line.strip()}")
-            else:
-                click.echo(f"  Docker (Colima)  : {click.style('Stopped', fg='red')}")
-        except FileNotFoundError:
-            click.echo(f"  Docker (Colima)  : {click.style('Not Installed', fg='yellow')}")
+        """Display Docker engine status (its socket: :meth:`info`)."""
+        state = self.state()["state"]
+        click.echo(f"  Docker (Colima)  : {styled_state(state, 'Not Installed' if state == 'not installed' else None)}")
 
     def info(self) -> None:
         """Show detailed Docker (Colima) configuration."""
@@ -342,12 +337,15 @@ class LinuxDockerService(BaseService):
             "Docker engine left running: it is the system's, not aisland's (sudo systemctl stop docker stops it)."
         )
 
-    def status(self) -> None:
+    def state(self) -> ServiceState:
+        """The system engine's state: ``not installed`` without the ``docker`` client, else whether it answers."""
         if shutil.which("docker") is None:
-            state = click.style("Not Installed", fg="yellow")
-        else:
-            state = click.style("Running", fg="green") if self.is_running() else click.style("Stopped", fg="red")
-        click.echo(f"  Docker (engine)  : {state}")
+            return service_state(self.name, "not installed")
+        return service_state(self.name, "running" if self.is_running() else "stopped")
+
+    def status(self) -> None:
+        state = self.state()["state"]
+        click.echo(f"  Docker (engine)  : {styled_state(state, 'Not Installed' if state == 'not installed' else None)}")
 
     def info(self) -> None:
         click.echo(click.style("Docker (engine):", bold=True))
