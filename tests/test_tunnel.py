@@ -30,7 +30,7 @@ import click
 import pytest
 from click.testing import CliRunner
 
-from aisland import locations, tunnel
+from aisland import downloads, locations, tunnel
 from aisland.cli import main
 from aisland.errors import AislandError
 
@@ -289,6 +289,34 @@ def test_installing_from_an_archive_never_reaches_the_network(state: Path, tmp_p
     assert installed == state / "code"
     assert installed.read_bytes().startswith(b"#!/bin/sh")
     assert installed.stat().st_mode & 0o111
+
+
+def test_the_cli_is_fetched_through_the_shared_download_and_installed(state: Path, tmp_path: Path) -> None:
+    archive = _cli_archive(tmp_path)
+    fetched: List[str] = []
+
+    def fetch(url: str, target: Path, timeout: float = downloads.TIMEOUT) -> None:
+        fetched.append(url)
+        target.write_bytes(archive.read_bytes())
+
+    with patch.object(downloads, "download", fetch):
+        installed = tunnel.install_cli()
+
+    assert fetched == [tunnel.CLI_DOWNLOAD_URL.format(asset=tunnel.cli_asset())]
+    assert installed == state / "code"
+    assert installed.stat().st_mode & 0o111
+
+
+def test_a_cli_download_that_fails_names_the_url_and_the_way_around_it(state: Path) -> None:
+    def fetch(url: str, target: Path, timeout: float = downloads.TIMEOUT) -> None:
+        raise TimeoutError("timed out")
+
+    with patch.object(downloads, "download", fetch):
+        with pytest.raises(AislandError, match="Could not download the VS Code CLI from https://.*timed out") as raised:
+            tunnel.install_cli()
+
+    assert "aisland tunnel start --cli" in str(raised.value)
+    assert not (state / "code").exists()
 
 
 def test_an_archive_without_the_binary_is_refused_by_name(tmp_path: Path) -> None:

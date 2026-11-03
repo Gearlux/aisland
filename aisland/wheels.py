@@ -73,7 +73,6 @@ import subprocess
 import sys
 import tarfile
 import tempfile
-import urllib.request
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Dict, List, Literal, Optional, Sequence, Set, Tuple
@@ -83,6 +82,7 @@ from packaging.requirements import InvalidRequirement, Requirement
 from packaging.utils import canonicalize_name
 from packaging.version import InvalidVersion, Version
 
+from aisland import downloads
 from aisland import pyproject as pyproject_toml
 from aisland import wheels_bundle, wheels_check, wheels_extra
 from aisland.errors import AislandError
@@ -330,8 +330,7 @@ def _wheel_version(wheel: Path) -> str:
 
 def _download(url: str, dest: Path) -> Path:
     dest.parent.mkdir(parents=True, exist_ok=True)
-    with urllib.request.urlopen(url, timeout=60) as response:
-        dest.write_bytes(response.read())
+    downloads.download(url, dest)
     return dest
 
 

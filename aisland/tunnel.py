@@ -53,6 +53,7 @@ from urllib.parse import parse_qs, urlparse
 import click
 from click.shell_completion import CompletionItem
 
+from aisland import downloads
 from aisland.errors import AislandError, quiet_completion
 
 #: The relay the tunnel dials out to; also what the doctor check probes.
@@ -232,9 +233,8 @@ def install_cli(tarball: Optional[Path] = None, force: bool = False) -> Path:
     with tempfile.TemporaryDirectory() as tmp:
         downloaded = Path(tmp) / "vscode_cli.tar.gz"
         try:
-            with urllib.request.urlopen(url, timeout=180) as response, open(downloaded, "wb") as out:
-                shutil.copyfileobj(response, out)
-        except (urllib.error.URLError, OSError) as exc:
+            downloads.download(url, downloaded, timeout=180)
+        except OSError as exc:  # ``URLError`` and a timeout are ``OSError``s
             raise AislandError(
                 f"Could not download the VS Code CLI from {url}: {exc}\n"
                 "  Fetch it on a machine that can, upload it here, and install it with:\n"

@@ -9,7 +9,7 @@ from typing import Iterator
 
 import pytest
 
-from aisland import downloads
+from aisland import downloads, wheels
 
 
 @pytest.fixture
@@ -42,3 +42,21 @@ def test_a_file_is_fetched_whole(tmp_path: Path) -> None:
     target = tmp_path / "target"
     downloads.download(source.as_uri(), target)
     assert target.read_bytes() == source.read_bytes()
+
+
+def test_a_wheel_the_comparison_needs_is_fetched_whole_into_its_folder(tmp_path: Path) -> None:
+    source = tmp_path / "source.whl"
+    source.write_bytes(b"w" * 100_000)
+
+    fetched = wheels._download(source.as_uri(), tmp_path / "pypi" / "nested" / "lib-1.0-py3-none-any.whl")
+
+    assert fetched.read_bytes() == source.read_bytes()
+
+
+def test_a_wheel_that_cannot_be_fetched_leaves_no_part_file(tmp_path: Path) -> None:
+    target = tmp_path / "pypi" / "lib-1.0-py3-none-any.whl"
+
+    with pytest.raises(OSError):
+        wheels._download((tmp_path / "missing.whl").as_uri(), target)
+
+    assert not target.exists()
