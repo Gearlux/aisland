@@ -18,12 +18,11 @@ that is no local root is a folder of clones, where each clone already is a proje
 
 from __future__ import annotations
 
-import subprocess
 from dataclasses import dataclass
 from pathlib import Path
 from typing import List, Optional
 
-from aisland import local_workspace, locations, tracking, workspace_file
+from aisland import gitcmd, local_workspace, locations, tracking, workspace_file
 
 
 @dataclass(frozen=True)
@@ -33,11 +32,6 @@ class Clone:
     path: str
     url: str
     branch: Optional[str]
-
-
-def _out(folder: Path, *args: str) -> Optional[str]:
-    run = subprocess.run(["git", *args], cwd=folder, capture_output=True, text=True)
-    return run.stdout.strip() if run.returncode == 0 else None
 
 
 def unlisted(root: Path) -> List[Clone]:
@@ -51,9 +45,9 @@ def unlisted(root: Path) -> List[Clone]:
             continue
         if locations.is_alias(child, root) or not (child / ".git").is_dir() or not (child / "pyproject.toml").is_file():
             continue
-        url = _out(child, "remote", "get-url", "origin")
+        url = gitcmd.remote_url(child)
         if url:
-            found.append(Clone(child.name, url, _out(child, "branch", "--show-current") or None))
+            found.append(Clone(child.name, url, gitcmd.read(child, "branch", "--show-current") or None))
     return found
 
 
@@ -65,12 +59,7 @@ def add_unlisted(root: Path) -> List[str]:
     force = ["-f"] if local_workspace.is_local(root) else []
     for clone in unlisted(root):
         branch = ["-b", clone.branch] if clone.branch else []
-        added = subprocess.run(
-            ["git", "submodule", "add", "-q", *force, *branch, clone.url, clone.path],
-            cwd=root,
-            capture_output=True,
-            text=True,
-        )
+        added = gitcmd.git(root, "submodule", "add", "-q", *force, *branch, clone.url, clone.path)
         if added.returncode != 0:
             lines.append(f"could not add {clone.path}: {(added.stderr.strip().splitlines() or ['failed'])[-1]}")
             continue

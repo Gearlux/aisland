@@ -39,7 +39,7 @@ from typing import Dict, List, Optional, Sequence, Set, Tuple
 import click
 from packaging.requirements import InvalidRequirement, Requirement
 
-from aisland import discovery, failures
+from aisland import discovery, failures, machine_config
 from aisland import pyproject as pyproject_toml
 from aisland import workspace_file
 from aisland.errors import AislandError
@@ -202,20 +202,13 @@ def _machine_key(name: str) -> str:
 def machine_choice(root: Path, name: str) -> Optional[List[str]]:
     """This machine's choice, or ``None`` when it has made none. One space-separated key: a set replaced whole,
     where ``""`` is "none" and an absent key "never chosen"."""
-    run = subprocess.run(
-        ["git", "config", "--local", "--get", _machine_key(name)], cwd=root, capture_output=True, text=True
-    )
-    return run.stdout.split() if run.returncode == 0 else None
+    chosen = machine_config.get(root, _machine_key(name))
+    return None if chosen is None else chosen.split()
 
 
 def set_machine_choice(root: Path, name: str, names: Optional[Sequence[str]]) -> None:
     """Record (or, with ``None``, forget) this machine's choice. Never committed."""
-    if names is None:
-        subprocess.run(["git", "config", "--local", "--unset", _machine_key(name)], cwd=root, capture_output=True)
-        return
-    subprocess.run(
-        ["git", "config", "--local", _machine_key(name), " ".join(names)], cwd=root, check=True, capture_output=True
-    )
+    machine_config.put(root, _machine_key(name), None if names is None else " ".join(names), check=True)
 
 
 def effective(root: Path, name: str) -> Optional[List[str]]:

@@ -10,7 +10,6 @@ Every function writes into the Jenkins home it is handed (``JenkinsService().ser
 
 import logging
 import shutil
-import subprocess
 import time
 import xml.etree.ElementTree as ET
 from pathlib import Path
@@ -19,7 +18,7 @@ from xml.sax.saxutils import escape
 
 import click
 
-from aisland import failures
+from aisland import failures, gitcmd
 from aisland import pyproject as pyproject_toml
 from aisland import supervisor
 from aisland.ci_scaffold import registers_slow_marker
@@ -204,18 +203,8 @@ def _stop_with_a_config_xml(service: "JenkinsService", home: Path) -> None:
 
 
 def _get_git_remote(project_path: Path) -> Optional[str]:
-    """Get the Git remote origin URL for a project."""
-    try:
-        result = subprocess.run(
-            ["git", "remote", "get-url", "origin"],
-            cwd=project_path,
-            capture_output=True,
-            text=True,
-            check=True,
-        )
-        return result.stdout.strip()
-    except (OSError, subprocess.CalledProcessError):  # no origin, or no git
-        return None
+    """Get the Git remote origin URL for a project (None: no origin, or no git)."""
+    return gitcmd.remote_url(project_path)
 
 
 def _find_credentials(home: Path, remote_url: str) -> str:

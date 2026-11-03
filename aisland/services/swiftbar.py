@@ -6,7 +6,7 @@ from typing import Any, List, Optional
 
 import click
 
-from aisland import failures, provision
+from aisland import failures, gitcmd, provision
 from aisland.github import github_repository
 from aisland.paths import DATA_DIR
 from aisland.projects import discover_projects, get_project_metadata, get_workspace_root
@@ -44,13 +44,7 @@ class SwiftBarService(BaseService):
         """``owner/name`` of the GitHub repository ``path``'s origin names; None for no repository or another host."""
         if not (path / ".git").exists():  # a submodule's .git is a file, the root's a folder
             return None
-        try:
-            output = subprocess.check_output(
-                ["git", "remote", "get-url", "origin"], cwd=path, text=True, stderr=subprocess.DEVNULL
-            ).strip()
-        except (OSError, subprocess.CalledProcessError):  # no origin, or no git
-            return None
-        repository = github_repository(output)
+        repository = github_repository(gitcmd.remote_url(path) or "")
         return f"{repository.owner}/{repository.name}" if repository else None
 
     def _dependency_ordered_projects(self, workspace_root: Path) -> List[Path]:

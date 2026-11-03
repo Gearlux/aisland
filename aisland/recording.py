@@ -19,7 +19,7 @@ import dataclasses
 from pathlib import Path
 from typing import List, Optional, Sequence
 
-from aisland import gitcmd, locations, pytest_stats, workspace_file
+from aisland import locations, machine_config, pytest_stats, workspace_file
 from aisland.errors import AislandError
 
 KEY = pytest_stats.RECORD_KEY
@@ -42,11 +42,7 @@ def workspace_default(root: Path) -> bool:
 
 
 def _set_machine_choice(root: Path, project: str, on: Optional[bool]) -> None:
-    key = pytest_stats.machine_key(project)
-    if on is None:
-        gitcmd.git(root, "config", "--local", "--unset", key)
-    else:
-        gitcmd.git(root, "config", "--local", key, "true" if on else "false")
+    machine_config.put(root, pytest_stats.machine_key(project), on)
 
 
 def set_committed(root: Path, projects: Sequence[str], on: bool) -> None:
@@ -63,7 +59,7 @@ def set_committed(root: Path, projects: Sequence[str], on: bool) -> None:
             settings[KEY] = False
         workspace_file.write(root, dataclasses.replace(current, settings=settings))
         explicit = {}
-        gitcmd.git(root, "config", "--local", "--unset", pytest_stats.MACHINE_DEFAULT_KEY)
+        machine_config.put(root, pytest_stats.MACHINE_DEFAULT_KEY, None)
     default = workspace_default(root)
     for name in named:
         explicit[name] = on
@@ -81,7 +77,7 @@ def set_machine(root: Path, projects: Sequence[str], on: bool) -> None:
         for project in named:
             _set_machine_choice(root, project, on)
         return
-    gitcmd.git(root, "config", "--local", pytest_stats.MACHINE_DEFAULT_KEY, "true" if on else "false")
+    machine_config.put(root, pytest_stats.MACHINE_DEFAULT_KEY, on)
     for project in workspace_file.load(root).projects:
         _set_machine_choice(root, project, None)
 

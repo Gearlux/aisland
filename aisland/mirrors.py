@@ -57,7 +57,7 @@ from urllib.parse import urlparse
 
 import click
 
-from aisland import failures, gitcmd, workspace_file
+from aisland import failures, gitcmd, machine_config, workspace_file
 from aisland.projects import get_workspace_root, submodule_active_map
 
 #: The project's setting this module owns in its ``[project."<name>"]`` table of ``workspace.toml``, and the last part
@@ -144,22 +144,17 @@ def _override_key(project: str) -> str:
 
 def local_override(workspace_root: Path, project: str) -> Optional[str]:
     """This machine's mirror URL for ``project``, or ``None`` when it follows the committed one."""
-    value = _git_out(workspace_root, "config", "--local", "--get", _override_key(project))
-    return value or None
+    return machine_config.get(workspace_root, _override_key(project)) or None
 
 
 def set_local_override(workspace_root: Path, project: str, url: Optional[str]) -> None:
     """Record (or clear, when ``url`` is ``None``) this machine's URL. Never committed."""
-    if url is None:
-        _git(workspace_root, "config", "--local", "--unset", _override_key(project))
-    else:
-        _git(workspace_root, "config", "--local", _override_key(project), url)
+    machine_config.put(workspace_root, _override_key(project), url)
 
 
 def _overridden_projects(workspace_root: Path) -> List[str]:
-    listing = _git_out(workspace_root, "config", "--local", "--get-regexp", r"^aisland\.mirror\.")
     prefix, suffix = "aisland.mirror.", f".{MIRROR_KEY}"
-    keys = [line.split(" ", 1)[0] for line in listing.splitlines()]
+    keys = list(machine_config.get_all(workspace_root, r"^aisland\.mirror\."))
     return sorted(key[len(prefix) : -len(suffix)] for key in keys if key.startswith(prefix) and key.endswith(suffix))
 
 

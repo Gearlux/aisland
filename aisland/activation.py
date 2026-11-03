@@ -13,13 +13,12 @@ is off, and this machine's ``submodule.<name>.active``, so a plain ``git submodu
 
 from __future__ import annotations
 
-import subprocess
 from pathlib import Path
 from typing import Dict, List, Optional
 
 import click
 
-from aisland import gitcmd, local_workspace, tracking, workspace_file
+from aisland import gitcmd, local_workspace, machine_config, tracking, workspace_file
 from aisland.projects import submodule_active_map
 from aisland.sources import detached_projects
 
@@ -45,23 +44,12 @@ def _machine_key(project: str) -> str:
 
 def machine_choice(root: Path, project: str) -> Optional[bool]:
     """This machine's choice for ``project``, or ``None`` when it has made none."""
-    run = subprocess.run(
-        ["git", "config", "--local", "--type=bool", "--get", _machine_key(project)],
-        cwd=root,
-        capture_output=True,
-        text=True,
-    )
-    return run.stdout.strip() == "true" if run.returncode == 0 else None
+    return machine_config.get_bool(root, _machine_key(project))
 
 
 def set_machine_choice(root: Path, project: str, active: Optional[bool]) -> None:
     """Record (or, with ``None``, forget) this machine's choice. Never committed."""
-    if active is None:
-        subprocess.run(["git", "config", "--local", "--unset", _machine_key(project)], cwd=root, capture_output=True)
-        return
-    subprocess.run(
-        ["git", "config", "--local", _machine_key(project), "true" if active else "false"], cwd=root, check=False
-    )
+    machine_config.put(root, _machine_key(project), active)
 
 
 def effective(root: Path, project: str) -> bool:
@@ -167,7 +155,7 @@ def _reconcile(root: Path) -> List[str]:
                 stuck.append(project.name)
         if name is None:
             continue
-        gitcmd.git(root, "config", "--local", f"submodule.{name}.active", "true" if want else "false")
+        machine_config.put(root, f"submodule.{name}.active", want)
         if defaults.get(project.name) is False:
             gitcmd.git(root, "config", "-f", ".gitmodules", f"submodule.{name}.active", "false")
         else:

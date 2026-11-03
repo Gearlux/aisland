@@ -32,7 +32,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Dict, List, Literal, Optional, Sequence, Tuple
 
-from aisland import gitcmd, local_workspace, workspace_file
+from aisland import gitcmd, local_workspace, machine_config, workspace_file
 from aisland.errors import AislandError
 
 TRACK_KEY = "track"
@@ -41,8 +41,9 @@ TRACK_KEY = "track"
 _OURS = ("all", "none")
 
 
-def _get(root: Path, *args: str) -> Optional[str]:
-    run = gitcmd.git(root, "config", *args)
+def _shared(root: Path, key: str) -> Optional[str]:
+    """``key`` in ``.gitmodules`` (the committed layer), or ``None`` when it is not there."""
+    run = gitcmd.git(root, "config", "-f", ".gitmodules", "--get", key)
     return run.stdout.strip() if run.returncode == 0 else None
 
 
@@ -83,22 +84,14 @@ def committed(root: Path, project: str) -> bool:
     return workspace_default(root)
 
 
-def _bool_key(root: Path, key: str) -> Optional[bool]:
-    value = _get(root, "--local", "--type=bool", "--get", key)
-    return None if value is None else value == "true"
-
-
 def machine_choice(root: Path, project: str) -> Optional[bool]:
     """This machine's choice for ``project`` — its own, else this machine's for every project — or ``None``."""
-    own = _bool_key(root, _machine_key(project))
-    return own if own is not None else _bool_key(root, _MACHINE_DEFAULT_KEY)
+    own = machine_config.get_bool(root, _machine_key(project))
+    return own if own is not None else machine_config.get_bool(root, _MACHINE_DEFAULT_KEY)
 
 
 def _set_machine_choice(root: Path, project: str, track: Optional[bool]) -> None:
-    if track is None:
-        gitcmd.git(root, "config", "--local", "--unset", _machine_key(project))
-        return
-    gitcmd.git(root, "config", "--local", _machine_key(project), "true" if track else "false")
+    machine_config.put(root, _machine_key(project), track)
 
 
 @dataclass(frozen=True)
@@ -119,9 +112,9 @@ class Change:
 def _ignore_value(root: Path, name: str) -> Optional[str]:
     """git's ``ignore`` of the submodule ``name`` here: ``.git/config`` first, then ``.gitmodules``; ``None`` when unset."""
     key = f"submodule.{name}.ignore"
-    value = _get(root, "--local", "--get", key)
+    value = machine_config.get(root, key)
     if value is None:
-        value = _get(root, "-f", ".gitmodules", "--get", key)
+        value = _shared(root, key)
     return value
 
 
@@ -137,20 +130,20 @@ def apply(root: Path) -> List[Change]:
     for project, name in _submodules(root).items():
         key = f"submodule.{name}.ignore"
         before = _ignored(root, name)
-        shared = _get(root, "-f", ".gitmodules", "--get", key)
+        shared = _shared(root, key)
         if not committed(root, project):
             if shared != "all":
                 gitcmd.git(root, "config", "-f", ".gitmodules", key, "all")
         elif shared == "all":
             gitcmd.git(root, "config", "-f", ".gitmodules", "--unset", key)
         choice = machine_choice(root, project)
-        here = _get(root, "--local", "--get", key)
+        here = machine_config.get(root, key)
         if choice is not None:
             want = "none" if choice else "all"
             if here != want:
-                gitcmd.git(root, "config", "--local", key, want)
+                machine_config.put(root, key, want)
         elif here in _OURS:
-            gitcmd.git(root, "config", "--local", "--unset", key)
+            machine_config.put(root, key, None)
         after = _ignored(root, name)
         if after != before:
             changes.append(Change(project, tracked=not after, here=choice is not None))
@@ -192,7 +185,7 @@ def set_committed(root: Path, projects: Sequence[str], track: bool) -> List[Chan
     if not named:
         _write_workspace_default(root, track)
         explicit = {}
-        gitcmd.git(root, "config", "--local", "--unset", _MACHINE_DEFAULT_KEY)
+        machine_config.put(root, _MACHINE_DEFAULT_KEY, None)
     default = workspace_default(root)
     for name in named:
         explicit[name] = track
@@ -211,7 +204,7 @@ def set_machine(root: Path, projects: Sequence[str], track: bool) -> List[Change
         for project in named:
             _set_machine_choice(root, project, track)
     else:
-        gitcmd.git(root, "config", "--local", _MACHINE_DEFAULT_KEY, "true" if track else "false")
+        machine_config.put(root, _MACHINE_DEFAULT_KEY, track)
         for project in _submodules(root):
             _set_machine_choice(root, project, None)
     return apply(root)
@@ -219,7 +212,7 @@ def set_machine(root: Path, projects: Sequence[str], track: bool) -> List[Change
 
 def _followed_branch(root: Path, name: str, folder: Path) -> Optional[str]:
     """The branch an untracked submodule follows: ``.gitmodules``' (``.``: the root's), else origin's default."""
-    branch = _get(root, "-f", ".gitmodules", "--get", f"submodule.{name}.branch")
+    branch = _shared(root, f"submodule.{name}.branch")
     if branch == ".":
         branch = gitcmd.git(root, "branch", "--show-current").stdout.strip() or None
     if not branch:
@@ -325,10 +318,12 @@ def status(root: Path, projects: Sequence[str] = ()) -> List[Status]:
     named = _named(root, projects)
     submodules = _submodules(root)
     loaded = workspace_file.load(root)
-    machine_default = _bool_key(root, _MACHINE_DEFAULT_KEY)
+    machine_default = machine_config.get_bool(root, _MACHINE_DEFAULT_KEY)
     rows = []
     for project in named or list(submodules):
-        tracked, source, reason = _choice(loaded, project, _bool_key(root, _machine_key(project)), machine_default)
+        tracked, source, reason = _choice(
+            loaded, project, machine_config.get_bool(root, _machine_key(project)), machine_default
+        )
         ignore = _ignore_value(root, submodules[project])
         git: Git
         if ignore not in (None, *_OURS):

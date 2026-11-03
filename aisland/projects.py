@@ -1,11 +1,10 @@
 """The workspace and its projects: the root, the name, the project folders, and the order they install in."""
 
 import re
-import subprocess
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple, TypedDict
 
-from aisland import gitmodules, locations
+from aisland import gitcmd, gitmodules, locations, machine_config
 from aisland import pyproject as pyproject_toml
 
 
@@ -24,12 +23,7 @@ def get_workspace_name(root: Optional[Path] = None) -> str:
     named = workspace_file.name_of(root)
     if named:
         return named
-    try:  # no origin, or no git: the folder names it
-        output = subprocess.check_output(
-            ["git", "remote", "get-url", "origin"], cwd=root, text=True, stderr=subprocess.DEVNULL
-        ).strip()
-    except (OSError, subprocess.CalledProcessError):
-        output = ""
+    output = gitcmd.remote_url(root) or ""  # no origin, or no git: the folder names it
     # The repository's name: its URL's last part, `.git` dropped from its end only (https, ssh and scp-style:
     # https://github.com/acme/models.git, git@github.com:acme/my.github-tools.git, git@host:models.git).
     name = re.split(r"[/:]", output.rstrip("/"))[-1].removesuffix(".git") if output else ""
@@ -213,8 +207,4 @@ def workspace_folders(workspace_root: Path) -> List[Tuple[str, str, bool]]:
 
 def set_submodule_active(workspace_root: Path, name: str, active: bool) -> None:
     """Record the per-machine activation decision in ``.git/config`` (never committed)."""
-    subprocess.run(
-        ["git", "config", "--local", f"submodule.{name}.active", "true" if active else "false"],
-        cwd=workspace_root,
-        check=False,
-    )
+    machine_config.put(workspace_root, f"submodule.{name}.active", active)

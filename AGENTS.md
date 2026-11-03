@@ -23,13 +23,23 @@ The workspace's dev-infrastructure CLI, `aisland` (click, the `aisland/cli/` pac
   **`github.py`**: a project's GitHub repository from its remote (`github_repository`, `project_repositories`). Both
   were split out of `sources.py`, which keeps the source choice itself [module-split].
 - **`gitcmd.py`**: `git(repo, *args, network=, timeout=, check=)` is the one helper that runs `git` and captures its text
-  (`network=True`: no credential prompt, 60 s default limit; `check=True`: an `AislandError` naming the command).
-  `wheels.py`, `mirrors.py` (no overall limit on a push), `wheels_prune.py` and `workspace_file.py` keep helpers whose
-  behaviour differs. **Every git command that reaches a remote gives up on one that stops sending**:
+  (`network=True`: no credential prompt, 60 s default limit; `check=True`: an `AislandError` naming the command);
+  `read(repo, *args)` is what git prints, or `None` when it cannot answer, and `remote_url(repo)` an origin's address.
+  A new git call uses these, never a bare `subprocess.run(["git", …])`. The ones that keep their own runner differ in
+  behaviour: `wheels.py`, `workspace_file.py` (`git -C`), `mirrors.py` (no overall limit on a push), `wheels_prune.py`,
+  `sources._run` (git's output reaches the terminal), `workspace._add_submodule` (clone progress),
+  `filter_repo.py` and `pytest_stats.py` (they run where aisland is not). **Every git command that reaches a remote gives up on one that stops sending**:
   `gitcmd.network_options()` (`http.lowSpeedLimit=1`, `http.lowSpeedTime=STALL_SECONDS`) and `network_env()`, through
   `git(network=True)`, the helpers above or `gitcmd.fetch` (best-effort, no overall limit). A transfer may be long, so
   the guard is never an overall limit (ssh's `ServerAliveInterval` bounds SSH). Never a bare
   `subprocess.run(["git", "fetch", …])` (`tests/test_gitcmd.py`).
+- **`machine_config.py`**: this machine's settings — a repository's own `git config --local`, never committed.
+  `get`, `get_bool`, `get_all(pattern)` and `put(key, value)` (`None` forgets the key; a bool is written
+  `true`/`false`; `check=True` raises when git refuses) are the one way a module reads or writes
+  `aisland.<plugin>.<project>.<key>`, `submodule.<name>.active` or `pull.rebase`; never a bare `git config --local`.
+  A read answers "nothing" for an unset key or a folder that is no repository, and a write there is silent
+  (`tests/test_machine_config.py`). `.gitmodules` keeps `gitmodules.py`; `pytest_stats.py` reads its own keys with the
+  standard library.
 - **`locations.py`**: where the workspace and the state are (standard library only: the pytest plugin imports it).
 - **`manager.py`** [manager-split]: `aisland setup` runs its steps in order — provisioning, activation, editable
   installs (`_run_installs`), the generated workspace files, the git aliases — and each step's code is a module of its

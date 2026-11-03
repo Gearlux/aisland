@@ -13,12 +13,11 @@ by ``aisland workspace track set|unset``: ``.gitmodules`` and the new projects a
 
 from __future__ import annotations
 
-import subprocess
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Dict, List, Optional
 
-from aisland import gitcmd, gitmodules
+from aisland import gitcmd, gitmodules, machine_config
 
 #: This machine's mark of a local workspace, in the root's ``.git/config``.
 MARKER = "aisland.workspace.local"
@@ -31,12 +30,12 @@ def is_local(root: Path) -> bool:
     """Whether ``root`` is a repository marked local on this machine."""
     if not (root / ".git").is_dir():
         return False
-    return gitcmd.git(root, "config", "--local", "--type=bool", "--get", MARKER).stdout.strip() == "true"
+    return machine_config.get_bool(root, MARKER) is True
 
 
 def mark(root: Path) -> None:
     """Mark the repository ``root`` local on this machine."""
-    subprocess.run(["git", "config", "--local", MARKER, "true"], cwd=root, check=True)
+    machine_config.put(root, MARKER, True, check=True)
 
 
 def submodule_names(root: Path) -> Dict[str, str]:

@@ -35,7 +35,7 @@ from typing import Dict, List, Literal, Optional, Sequence, Tuple, get_args
 
 import click
 
-from aisland import env_example, local_workspace, locations, tracking, workspace_file
+from aisland import env_example, gitcmd, local_workspace, locations, tracking, workspace_file
 from aisland.errors import AislandError
 from aisland.harness import install_harness
 from aisland.harness import sets as harness_sets
@@ -338,7 +338,7 @@ def _build(
         rows = [_row(".git/", "kept (an existing repository)")]
     else:
         root.mkdir(parents=True, exist_ok=True)
-        subprocess.run(["git", "init", "-q"], cwd=root, check=True)
+        gitcmd.git(root, "init", "-q", check=True)
         rows = [_row(".git/", "git init (local: it tracks only the projects)" if local else "git init")]
     if local:
         local_workspace.mark(root)

@@ -16,12 +16,11 @@ import difflib
 import json
 import re
 import shutil
-import subprocess
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Dict, List, Literal, Optional, Sequence, Tuple, get_args
 
-from aisland import failures
+from aisland import failures, machine_config
 from aisland.css_colors import NAMED_COLORS
 from aisland.errors import AislandError
 
@@ -270,10 +269,6 @@ def named_colors(part: str = "") -> List[Tuple[str, str]]:
 # --- this machine's choice: git config --local aisland.editor.* ---------------------------
 
 
-def _git_config(workspace_root: Path, *args: str) -> subprocess.CompletedProcess[str]:
-    return subprocess.run(["git", "config", "--local", *args], cwd=workspace_root, capture_output=True, text=True)
-
-
 def _require_repository(workspace_root: Path) -> None:
     if not (workspace_root / ".git").exists():
         raise EditorChoiceError(
@@ -285,10 +280,8 @@ def read_choice(workspace_root: Path) -> EditorChoice:
     """This machine's choice; a value that cannot be read is ignored with a warning, never an error (setup runs on)."""
     if not (workspace_root / ".git").exists():
         return EditorChoice()
-    listing = _git_config(workspace_root, "--get-regexp", r"^aisland\.editor\.").stdout
     values: Dict[str, Any] = {}  # Any: each key's own type, checked by EditorChoice's fields
-    for line in listing.splitlines():
-        key, _, value = line.partition(" ")
+    for key, value in machine_config.get_all(workspace_root, r"^aisland\.editor\.").items():
         field = key[len(_KEY_PREFIX) :]
         try:
             if field in COLOR_ROLES:
@@ -306,10 +299,7 @@ def read_choice(workspace_root: Path) -> EditorChoice:
 
 def _store(workspace_root: Path, field: str, value: Optional[str]) -> None:
     _require_repository(workspace_root)
-    if value is None:
-        _git_config(workspace_root, "--unset", _KEY_PREFIX + field)
-    else:
-        _git_config(workspace_root, _KEY_PREFIX + field, value)
+    machine_config.put(workspace_root, _KEY_PREFIX + field, value)
 
 
 def set_theme(workspace_root: Path, typed: Optional[str]) -> Optional[ChosenTheme]:

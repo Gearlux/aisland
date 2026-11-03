@@ -19,7 +19,7 @@ The package is `aisland/`. A command is a click function in `aisland/cli/` that 
 | area | modules |
 |---|---|
 | The workspace and its file | `projects`, `locations`, `paths`, `workspace`, `workspace_file`, `workspace_check`, `clones`, `local_workspace`, `gitmodules`, `pyproject`, `discovery` |
-| What a project or a machine chooses | `activation`, `selection`, `sources`, `tracking`, `mirrors`, `recording`, `configure` |
+| What a project or a machine chooses | `activation`, `selection`, `sources`, `tracking`, `mirrors`, `recording`, `configure`, `machine_config` (this machine's `git config --local`) |
 | Setting a machine up | `manager`, `provision`, `installers`, `downloads`, `editor_files`, `editor`, `mcp_config`, `uv_config`, `env_example`, `completion`, `harness` |
 | Services | `services/` (`base`, `registry`, `plugin`, `declared`, `jenkins`, `docker`, `swiftbar`), `supervisor` |
 | CI and tests | `ci_scaffold`, `ci_templates` (the sets under `templates/`), `quality`, `pytest_stats`, `nightly` |

@@ -25,6 +25,26 @@ def test_a_failing_command_returns_its_code_unless_checked(tmp_path: Path) -> No
         gitcmd.git(tmp_path, "rev-parse", "--is-inside-work-tree", check=True)
 
 
+def test_read_answers_what_git_prints_and_nothing_when_git_cannot(tmp_path: Path) -> None:
+    subprocess.run(["git", "init", "-q", str(tmp_path)], check=True)
+    assert gitcmd.read(tmp_path, "rev-parse", "--is-inside-work-tree") == "true"
+    assert gitcmd.read(tmp_path, "rev-parse", "HEAD") is None  # no commit yet
+    assert gitcmd.read(tmp_path / "missing", "rev-parse", "HEAD") is None  # no such folder
+
+
+def test_read_answers_nothing_when_git_is_not_installed(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("PATH", str(tmp_path))
+    assert gitcmd.read(tmp_path, "rev-parse", "HEAD") is None
+
+
+def test_remote_url_is_the_address_of_a_remote_or_nothing(tmp_path: Path) -> None:
+    subprocess.run(["git", "init", "-q", str(tmp_path)], check=True)
+    assert gitcmd.remote_url(tmp_path) is None
+    subprocess.run(["git", "remote", "add", "origin", "https://example.org/acme/lib.git"], cwd=tmp_path, check=True)
+    assert gitcmd.remote_url(tmp_path) == "https://example.org/acme/lib.git"
+    assert gitcmd.remote_url(tmp_path, "mirror") is None
+
+
 def test_network_never_prompts_and_has_a_default_time_limit(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     seen: Dict[str, Any] = {}
 

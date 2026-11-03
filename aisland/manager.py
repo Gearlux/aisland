@@ -21,6 +21,7 @@ from aisland import (
     env_example,
     failures,
     locations,
+    machine_config,
     provision,
     selection,
     workspace_check,
@@ -243,10 +244,7 @@ def setup_workspace(non_interactive: bool = False, install_all: bool = False) ->
         project_dir = project["path"]
 
         # Git Configuration (pull.rebase false)
-        try:
-            subprocess.check_call(["git", "config", "pull.rebase", "false"], cwd=project_dir)
-        except (subprocess.CalledProcessError, FileNotFoundError):
-            pass
+        machine_config.put(project_dir, "pull.rebase", False)
 
     # Python provisioning (editable installs): cycles together, dependents of a failure skipped.
     failed, skipped = _run_installs(workspace_root, uv_cmd, install_order)

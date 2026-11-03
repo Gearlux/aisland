@@ -50,7 +50,6 @@ tracked file:
 from __future__ import annotations
 
 import logging
-import os
 import subprocess
 from dataclasses import dataclass
 from pathlib import Path
@@ -58,7 +57,7 @@ from typing import Dict, List, Literal, Optional, Tuple, cast, get_args
 
 import click
 
-from aisland import failures, gitcmd, locations
+from aisland import failures, gitcmd, locations, machine_config
 from aisland import pyproject as pyproject_toml
 from aisland import workspace_file
 from aisland.editor_files import write_code_workspace
@@ -205,20 +204,11 @@ def write_committed_sources(workspace_root: Path, sources: Dict[str, ProjectSour
 
 def _machine_settings(workspace_root: Path) -> Dict[str, Dict[str, str]]:
     """Every ``aisland.source.<project>.<key>`` entry of ``.git/config``: ``{project: {key: value}}``."""
-    res = subprocess.run(
-        ["git", "config", "--local", "--get-regexp", r"^aisland\.source\."],
-        cwd=str(workspace_root),
-        text=True,
-        capture_output=True,
-    )
     found: Dict[str, Dict[str, str]] = {}
-    for line in res.stdout.splitlines():
-        key, _, value = line.partition(" ")
-        if not key.startswith("aisland.source."):
-            continue
+    for key, value in machine_config.get_all(workspace_root, r"^aisland\.source\.").items():
         project, dot, setting = key[len("aisland.source.") :].rpartition(".")
         if dot and setting in _MACHINE_KEYS:
-            found.setdefault(project, {})[setting] = value.strip()
+            found.setdefault(project, {})[setting] = value
     return found
 
 
@@ -241,26 +231,15 @@ def local_override(workspace_root: Path, project: str) -> Optional[ProjectSource
 
 def set_local_override(workspace_root: Path, project: str, source: Optional[ProjectSource]) -> None:
     """Record (or clear, when ``source`` is ``None``) the per-machine source, one key each. Never committed."""
+    values: Dict[str, str] = {}
+    if source is not None:
+        values["source"] = source.kind
+        if source.kind in REF_KINDS:
+            values["branch"] = source.ref
+        elif source.version:
+            values["version"] = source.version
     for key in _MACHINE_KEYS:
-        subprocess.run(
-            ["git", "config", "--local", "--unset", f"aisland.source.{project}.{key}"],
-            cwd=str(workspace_root),
-            check=False,
-            capture_output=True,
-        )
-    if source is None:
-        return
-    values: Dict[str, str] = {"source": source.kind}
-    if source.kind in REF_KINDS:
-        values["branch"] = source.ref
-    elif source.version:
-        values["version"] = source.version
-    for key, value in values.items():
-        subprocess.run(
-            ["git", "config", "--local", f"aisland.source.{project}.{key}", value],
-            cwd=str(workspace_root),
-            check=False,
-        )
+        machine_config.put(workspace_root, f"aisland.source.{project}.{key}", values.get(key))
 
 
 def effective_source(
@@ -317,11 +296,7 @@ def remote_url(workspace_root: Path, project: str) -> Optional[str]:
     gitmodules = workspace_root / ".gitmodules"
     if not gitmodules.exists():
         return None
-    url = _capture(
-        ["git", "config", "-f", str(gitmodules), "--get", f"submodule.{project}.url"],
-        workspace_root,
-    )
-    return url or None
+    return gitcmd.read(workspace_root, "config", "-f", ".gitmodules", "--get", f"submodule.{project}.url") or None
 
 
 def pip_vcs_url(url: str, ref: str) -> str:
@@ -356,19 +331,6 @@ def _run(cmd: List[str], cwd: Path, *, quiet: bool = False) -> bool:
         return False
 
 
-def _capture(cmd: List[str], cwd: Path) -> str:
-    """Run ``cmd`` and return its stripped stdout; empty when it could not answer.
-
-    Diagnostics only: a probe that cannot run must degrade to "unknown" so the caller falls
-    back to a generic message, never raise into the middle of a source switch.
-    """
-    try:
-        res = subprocess.run(cmd, cwd=str(cwd), capture_output=True, text=True, check=True)
-    except (subprocess.CalledProcessError, FileNotFoundError):
-        return ""
-    return res.stdout.strip()
-
-
 def _deinit_remedy(workspace_root: Path, path: Path, rel: str) -> str:
     """Name the remedy for a refused ``git submodule deinit`` — matching the ACTUAL blocker.
 
@@ -388,10 +350,11 @@ def _deinit_remedy(workspace_root: Path, path: Path, rel: str) -> str:
     assert something unverified.
     """
     clauses: List[str] = []
-    if _capture(["git", "status", "--porcelain"], path):
+    # A probe that cannot answer degrades to "unknown": never raise into the middle of a source switch.
+    if gitcmd.read(path, "status", "--porcelain"):
         clauses.append(f"Commit or stash the changes in {rel}.")
-    head = _capture(["git", "rev-parse", "HEAD"], path)
-    recorded = _capture(["git", "rev-parse", f"HEAD:{rel}"], workspace_root)
+    head = gitcmd.read(path, "rev-parse", "HEAD")
+    recorded = gitcmd.read(workspace_root, "rev-parse", f"HEAD:{rel}")
     if head and recorded and head != recorded:
         clauses.append(
             f"The superproject records {recorded[:7]} for {rel} but the checkout is at "
@@ -508,13 +471,7 @@ def checkout_state(workspace_root: Path, project: str) -> str:
     path = project_path(workspace_root, project)
     if not (path / ".git").exists():
         return "empty"
-    res = subprocess.run(
-        ["git", "rev-parse", "--abbrev-ref", "HEAD"],
-        cwd=str(path),
-        text=True,
-        capture_output=True,
-    )
-    branch = res.stdout.strip()
+    branch = gitcmd.git(path, "rev-parse", "--abbrev-ref", "HEAD").stdout.strip()
     return f"on {branch}" if branch else "checked out"
 
 
@@ -586,13 +543,8 @@ def _remote_ref_exists(workspace_root: Path, project: str, ref: str) -> bool:
     # while exit 0 with empty output means it answered and has no such ref.
     # Never a password prompt (a script or the MCP server would wait on it), never longer than a minute.
     try:
-        probe = subprocess.run(
-            ["git", "ls-remote", "--heads", "--tags", url, ref],
-            cwd=str(workspace_root),
-            capture_output=True,
-            text=True,
-            env={**os.environ, "GIT_TERMINAL_PROMPT": "0"},
-            timeout=REMOTE_TIMEOUT,
+        probe = gitcmd.git(
+            workspace_root, "ls-remote", "--heads", "--tags", url, ref, network=True, timeout=REMOTE_TIMEOUT
         )
     except subprocess.TimeoutExpired:
         probe = subprocess.CompletedProcess([], 1)

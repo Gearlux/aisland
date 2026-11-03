@@ -36,7 +36,6 @@ import json
 import os
 import shutil
 import stat
-import subprocess
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 from pathlib import Path
@@ -44,6 +43,7 @@ from typing import Any, Dict, Iterator, List, Mapping, Optional, Sequence, Set, 
 
 import click
 
+from aisland import gitcmd
 from aisland.errors import AislandError
 from aisland.paths import DATA_DIR
 from aisland.projects import get_workspace_root
@@ -133,12 +133,7 @@ def ignored_paths(project_dir: Path) -> List[Path]:
     Raises:
         RuntimeError: if git fails (e.g. the directory is not a repository).
     """
-    result = subprocess.run(
-        ["git", "status", "--porcelain", "--ignored", "-z"],
-        cwd=str(project_dir),
-        text=True,
-        capture_output=True,
-    )
+    result = gitcmd.git(project_dir, "status", "--porcelain", "--ignored", "-z")
     if result.returncode != 0:
         raise RuntimeError(result.stderr.strip() or f"git status failed in {project_dir}")
 
@@ -340,13 +335,8 @@ def _resolve_project_dir(project: str, workspace_root: Path, *, action: str = "c
             "A project on a `github` or `pypi` source has no checkout; see: aisland workspace configure source"
         )
 
-    result = subprocess.run(
-        ["git", "rev-parse", "--show-toplevel"],
-        cwd=str(project_dir),
-        text=True,
-        capture_output=True,
-    )
-    toplevel = Path(result.stdout.strip()) if result.returncode == 0 else None
+    found = gitcmd.read(project_dir, "rev-parse", "--show-toplevel")
+    toplevel = Path(found) if found else None
     if toplevel is None or toplevel.resolve() != project_dir.resolve():
         raise AislandError(
             f"{project_dir} is not the root of its git repository"

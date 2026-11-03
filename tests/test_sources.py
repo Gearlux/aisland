@@ -16,12 +16,12 @@ import shutil
 import subprocess
 import tomllib
 from pathlib import Path
-from typing import Any, Callable, Dict, List, Set
+from typing import Any, Callable, Dict, List, Optional, Set
 
 import click
 import pytest
 
-from aisland import ci_scaffold, locations, pypi
+from aisland import ci_scaffold, gitcmd, locations, pypi
 from aisland import sources as s
 from aisland import workspace_file
 from aisland.errors import AislandError
@@ -289,21 +289,21 @@ class _Recorder:
         return [" ".join(c) for c in self.calls]
 
 
-def _fake_capture(*, status: str, head: str, recorded: str) -> Callable[[List[str], Path], str]:
-    """Stub for :func:`aisland.sources._capture`, answering per probe.
+def _fake_read(*, status: str, head: str, recorded: str) -> Callable[..., Optional[str]]:
+    """Stub for :func:`aisland.gitcmd.read`, answering per remedy probe.
 
-    `_capture` shells out via ``subprocess.run``, which `_Recorder` (``check_call``) does not
-    intercept — so the remedy probes are stubbed at the function instead of the subprocess.
+    The probes run ``git`` captured, which `_Recorder` (``check_call``) does not intercept — so they are stubbed at
+    the function instead of the subprocess.
     """
 
-    def capture(cmd: List[str], cwd: Path) -> str:
-        if cmd[:2] == ["git", "status"]:
+    def read(repo: Path, *args: str) -> Optional[str]:
+        if args[:1] == ("status",):
             return status
-        if cmd[:2] == ["git", "rev-parse"]:
-            return recorded if ":" in cmd[2] else head  # `HEAD:<rel>` is the superproject's gitlink
+        if args[:1] == ("rev-parse",):
+            return recorded if ":" in args[1] else head  # `HEAD:<rel>` is the superproject's gitlink
         return ""
 
-    return capture
+    return read
 
 
 @pytest.fixture
@@ -411,7 +411,7 @@ class TestApplySource:
         (tmp_path / "loggair").mkdir()
         (tmp_path / "loggair" / ".git").write_text("gitdir: x\n")
         recorder.fail_on = "submodule deinit"
-        monkeypatch.setattr(s, "_capture", _fake_capture(status="", head="8a6c24e" * 5, recorded="f3bba7c" * 5))
+        monkeypatch.setattr(gitcmd, "read", _fake_read(status="", head="8a6c24e" * 5, recorded="f3bba7c" * 5))
         assert s.apply_source(tmp_path, "loggair", s.ProjectSource(kind="pypi", distribution="loggair"), "uv") is False
         err = capsys.readouterr().err
         assert "records f3bba7c for loggair but the checkout is at 8a6c24e" in err
@@ -425,7 +425,7 @@ class TestApplySource:
         (tmp_path / "loggair" / ".git").write_text("gitdir: x\n")
         recorder.fail_on = "submodule deinit"
         sha = "8a6c24e" * 5
-        monkeypatch.setattr(s, "_capture", _fake_capture(status=" M core.py", head=sha, recorded=sha))
+        monkeypatch.setattr(gitcmd, "read", _fake_read(status=" M core.py", head=sha, recorded=sha))
         assert s.apply_source(tmp_path, "loggair", s.ProjectSource(kind="pypi", distribution="loggair"), "uv") is False
         err = capsys.readouterr().err
         assert "Commit or stash the changes in loggair." in err
@@ -437,7 +437,7 @@ class TestApplySource:
         (tmp_path / "loggair").mkdir()
         (tmp_path / "loggair" / ".git").write_text("gitdir: x\n")
         recorder.fail_on = "submodule deinit"
-        monkeypatch.setattr(s, "_capture", _fake_capture(status=" M core.py", head="a" * 40, recorded="b" * 40))
+        monkeypatch.setattr(gitcmd, "read", _fake_read(status=" M core.py", head="a" * 40, recorded="b" * 40))
         assert s.apply_source(tmp_path, "loggair", s.ProjectSource(kind="pypi", distribution="loggair"), "uv") is False
         err = capsys.readouterr().err
         assert "Commit or stash the changes in loggair." in err
@@ -450,15 +450,10 @@ class TestApplySource:
         (tmp_path / "loggair").mkdir()
         (tmp_path / "loggair" / ".git").write_text("gitdir: x\n")
         recorder.fail_on = "submodule deinit"
-        monkeypatch.setattr(s, "_capture", _fake_capture(status="", head="", recorded=""))
+        monkeypatch.setattr(gitcmd, "read", _fake_read(status="", head="", recorded=""))
         assert s.apply_source(tmp_path, "loggair", s.ProjectSource(kind="pypi", distribution="loggair"), "uv") is False
         err = capsys.readouterr().err
         assert "Resolve the local modifications in the checkout or the superproject" in err
-
-    def test_capture_degrades_to_empty_instead_of_raising(self, tmp_path: Path) -> None:
-        """`_capture` backs the remedy probes — a failing git must not abort the switch."""
-        assert s._capture(["git", "rev-parse", "HEAD"], tmp_path) == ""
-        assert s._capture(["definitely-not-a-binary"], tmp_path) == ""
 
     def test_pypi_reads_distribution_from_pyproject_when_unrecorded(self, tmp_path: Path, recorder: _Recorder) -> None:
         """The name must be captured while the directory is still readable — afterwards it is gone."""

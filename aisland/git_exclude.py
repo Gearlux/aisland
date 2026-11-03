@@ -8,19 +8,22 @@ per-clone list, never committed, and leaves ``git status`` as it was.
 
 from __future__ import annotations
 
-import subprocess
 from pathlib import Path
 from typing import Sequence
 
+from aisland import gitcmd
+
 
 def _git_path(folder: Path, *args: str) -> str:
-    return subprocess.run(["git", "-C", str(folder), "rev-parse", *args], capture_output=True, text=True).stdout.strip()
+    return gitcmd.read(folder, "rev-parse", *args) or ""
 
 
 def exclude(folder: Path, patterns: Sequence[str]) -> None:
     """Add each of ``patterns`` (gitignore syntax, relative to ``folder``) to the exclude list of the repository that
     holds ``folder``, anchored at ``folder``; a line already there is not written again. ``folder`` in no repository:
     nothing could commit the files, and nothing is written."""
+    if not folder.is_dir():
+        return
     top = _git_path(folder, "--show-toplevel")
     target = _git_path(folder, "--path-format=absolute", "--git-path", "info/exclude")
     if not top or not target:

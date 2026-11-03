@@ -64,3 +64,18 @@ def git(
         reason = done.stderr.strip() or done.stdout.strip() or f"exit {done.returncode}"
         raise AislandError(f"git {' '.join(args)} failed in {repo}: {reason}")
     return done
+
+
+def read(repo: Path, *args: str) -> Optional[str]:
+    """What ``git <args>`` prints in ``repo``, stripped; ``None`` when git could not answer (an unset key, a missing
+    ref, ``repo`` no repository, git not installed)."""
+    try:
+        done = git(repo, *args)
+    except OSError:
+        return None
+    return done.stdout.strip() if done.returncode == 0 else None
+
+
+def remote_url(repo: Path, remote: str = "origin") -> Optional[str]:
+    """The address of ``repo``'s ``remote``, or ``None`` for no such remote, no repository or no git."""
+    return read(repo, "remote", "get-url", remote)
