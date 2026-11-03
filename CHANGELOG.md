@@ -27,7 +27,8 @@ The first release on PyPI: `pip install aisland`.
   SwiftBar — and a service a project declares in its own `pyproject.toml` or implements in its own
   code; `aisland --help` names the project that brings each without importing its code. One service that cannot
   start never keeps the others down: its error is printed and the command exits 1. On Linux the container engine is
-  the system's own Docker Engine, which aisland checks and never manages. `aisland supervisor status|attach|down` shows, attaches
+  the system's own Docker Engine, which aisland checks and never manages. The Jenkins it runs is one pinned
+  long-term-support release, its download checked against Jenkins' published sha256. `aisland supervisor status|attach|down` shows, attaches
   to and stops the process-compose supervisor behind them, and `aisland swiftbar` puts the workspace's Jenkins
   builds and GitHub Actions runs in the macOS menu bar.
 - **`aisland jenkins scaffold`** writes a project's CI files from a template set — aisland's own (`Jenkinsfile`,
@@ -39,7 +40,8 @@ The first release on PyPI: `pip install aisland`.
   `aisland jenkins init [--local]` seeds the Jenkins jobs for them, and `aisland tests nightly` reports the local
   Jenkins' nightly runs.
 - **`aisland check`** runs the quality gates (`isort`, `black`, `flake8`, `mypy`, `pytest`, `act`) on every project
-  or on the ones named.
+  or on the ones named, each once, showing the output of one that fails. `isort` and `black` only check, as the CI
+  jobs do, and show the change they would make; `--write` lets them rewrite the files instead.
 - **`aisland --version`** says which aisland runs, inside a workspace or not. Every error is one `Error:` line and
   exit 1; **`aisland --debug <command>`** shows its traceback too.
 - **`aisland doctor`** checks the environment and prints the command that fixes what it finds, in a workspace or not.
