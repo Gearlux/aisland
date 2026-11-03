@@ -9,7 +9,7 @@ import pytest
 
 from aisland import ci_scaffold
 from aisland.ci_scaffold import discover_github_projects, is_private_repo
-from aisland.sources import GitHubRepository
+from aisland.github import GitHubRepository
 
 
 def _write_submodule(workspace: Path, name: str, url: str, pyproject_name: str | None = "pkg") -> None:

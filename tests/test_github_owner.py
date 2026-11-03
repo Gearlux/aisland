@@ -23,8 +23,9 @@ from aisland import sources as s
 from aisland import wheels as w
 from aisland.ci_scaffold import discover_github_projects, is_private_repo
 from aisland.errors import AislandError
+from aisland.github import GitHubRepository, github_repository, project_repositories
+from aisland.pypi import released_on_pypi
 from aisland.services.jenkins import JenkinsService
-from aisland.sources import GitHubRepository, github_repository, project_repositories
 
 
 def _project(root: Path, name: str, deps: list[str]) -> None:
@@ -78,10 +79,10 @@ def pypi(monkeypatch: pytest.MonkeyPatch) -> Iterator[Dict[str, Dict[str, Any]]]
 
     monkeypatch.setattr(urllib.request, "urlopen", _open)
     # The scaffold asks the REAL question here, of this fake PyPI (conftest stubs it for every other test).
-    monkeypatch.setattr("aisland.ci_scaffold.released_on_pypi", s.released_on_pypi)
-    s.released_on_pypi.cache_clear()
+    monkeypatch.setattr("aisland.ci_scaffold.released_on_pypi", released_on_pypi)
+    released_on_pypi.cache_clear()
     yield answers
-    s.released_on_pypi.cache_clear()
+    released_on_pypi.cache_clear()
 
 
 def _release(repository: str) -> Dict[str, Any]:
@@ -352,5 +353,5 @@ def test_a_wheel_counts_as_on_pypi_only_from_its_projects_owner(
 
 def test_released_on_pypi_asks_for_the_owner(pypi: Dict[str, Any]) -> None:
     pypi["lib"] = _release("https://github.com/acme/lib")
-    released: Set[bool] = {s.released_on_pypi("lib", "acme"), s.released_on_pypi("lib", "someone-else")}
+    released: Set[bool] = {released_on_pypi("lib", "acme"), released_on_pypi("lib", "someone-else")}
     assert released == {True, False}

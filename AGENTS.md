@@ -19,6 +19,9 @@ The workspace's dev-infrastructure CLI, `aisland` (click, the `aisland/cli/` pac
 - **`errors.py`** [errors-root]: `AislandError`, the root of every exception aisland defines. **`downloads.py`**:
   `download(url, target)` (a time limit, no part file left) is how every file aisland fetches arrives; `sha256(path)`
   checks one pinned by a digest.
+- **`pypi.py`**: PyPI's JSON document (`pypi_json`) and the CI scaffolder's question of it (`released_on_pypi`);
+  **`github.py`**: a project's GitHub repository from its remote (`github_repository`, `project_repositories`). Both
+  were split out of `sources.py`, which keeps the source choice itself [module-split].
 - **`gitcmd.py`**: `git(repo, *args, network=, timeout=, check=)` is the one helper that runs `git` and captures its text
   (`network=True`: no credential prompt, 60 s default limit; `check=True`: an `AislandError` naming the command).
   `wheels.py`, `mirrors.py` (no overall limit on a push), `wheels_prune.py` and `workspace_file.py` keep helpers whose
@@ -170,7 +173,7 @@ naming the PID is the only signal). All service state lives under `<workspace>/a
   parses; when unsure, it stays output. A line moved to debug is asserted through `caplog` at DEBUG; use `%`-style
   arguments, no work before the call (`tests/test_debug_log.py`).
 - **`Any` only with a `# Any: <why>` on its line.** A JSON or TOML shape read by key gets a `TypedDict`
-  (`installers.UserspaceTool`, `wheels.ModuleFailure`/`ImportRun`, `sources.PypiProject`,
+  (`installers.UserspaceTool`, `wheels.ModuleFailure`/`ImportRun`, `pypi.PypiProject`,
   `supervisor.Readiness`/`ProcessState`); a value only passed on is `object` / `Mapping[str, object]`; a completion
   callback takes `Optional[click.Context]`/`Optional[click.Parameter]`. What stays `Any` (a parsed TOML table
   `pyproject.Table`, Jenkins' or VS Code's JSON, a project's plugin object, a service's options) says why on the line
@@ -698,7 +701,7 @@ A bare `::` pin in this section is in `tests/test_jenkins_scaffold.py`.
   file; an unreachable PyPI stops the scaffold (`ReleaseProbeError`). Tests stub PyPI with the autouse
   `released_packages` fixture (`tests/test_sources.py`) [sources].
 - **A project that does not live on GitHub never names one in its CI files** (a company's repository must not reveal
-  the workspace it is developed in). For a project whose folder is not in `sources.project_repositories`, the
+  the workspace it is developed in). For a project whose folder is not in `github.project_repositories`, the
   unreleased dependencies are never git-URL lines: they come from the wheels it commits, through the extra `aisland
   wheels build --extra` writes (`wheels_extra.remembered_extra`); a dependency no wheel of that extra holds — or no
   such extra — refuses the scaffold, naming the dependencies and `aisland wheels build <project> --extra <name>

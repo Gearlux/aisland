@@ -25,20 +25,16 @@ from aisland import ci_templates, gitcmd
 from aisland import pyproject as pyproject_toml
 from aisland import wheels_extra
 from aisland.errors import AislandError
+from aisland.github import GitHubRepository, project_repositories
 from aisland.projects import get_project_metadata, get_workspace_name, get_workspace_root
+from aisland.pypi import released_on_pypi
 from aisland.selection import PLAYWRIGHT_BROWSER
 from aisland.selection import axes as sel_axes
 from aisland.selection import declared as sel_declared
 from aisland.selection import dev_extra_names
 from aisland.selection import extras_for as sel_extras_for
 from aisland.selection import read_committed as sel_committed
-from aisland.sources import (
-    DEFAULT_REF,
-    GitHubRepository,
-    project_repositories,
-    read_committed_sources,
-    released_on_pypi,
-)
+from aisland.sources import DEFAULT_REF, read_committed_sources
 
 #: Every GitHub Action a generated ``ci.yml`` uses — the ONE place their versions live. Each is a
 #: MAJOR tag whose ``action.yml`` declares ``using: node24`` (2026-09-26: GitHub annotated every run
@@ -143,7 +139,7 @@ def node_test_folders(project_dir: Path) -> List[str]:
 def discover_github_projects(workspace_root: Path) -> Dict[str, GitHubRepository]:
     """Every workspace project whose remote is on GitHub, by its PyPI distribution name, with that repository.
 
-    The remote is the project's own (``.gitmodules``, or a clone's ``origin``: :func:`aisland.sources.project_repositories`),
+    The remote is the project's own (``.gitmodules``, or a clone's ``origin``: :func:`aisland.github.project_repositories`),
     so the owner is whoever's the workspace's projects are — no organisation is written into aisland. The name is the
     ``[project] name`` of the project's ``pyproject.toml``; a project without one is skipped (it is no Python project
     aisland installs) unless it is DETACHED (a ``github`` / ``pypi`` source empties its folder), whose name is the
@@ -251,7 +247,7 @@ def project_facts(workspace_root: Path, project_name: str, jenkins_url: str) -> 
     # CI asks ONE question per internal dependency — is it RELEASED on PyPI? — and nothing about the workspace's
     # sources (`workspace.toml`) (user ruling 2026-09-26: "it should always point to released packages, and to GitHub
     # for non-released ones"). Released (a final, non-yanked version whose metadata points at github.com/<its owner>/ —
-    # `sources.released_on_pypi`) -> the dep drops out of the pre-install loop and `.[dev]` resolves the release from
+    # `pypi.released_on_pypi`) -> the dep drops out of the pre-install loop and `.[dev]` resolves the release from
     # PyPI. Not released -> the runner installs GitHub `main` (`DEFAULT_REF`). A source (`local` / `github` / `pypi`,
     # any `ref`) describes ONE machine's checkout and venv; before this rule it also decided the runner's install
     # line, so `aisland workspace configure source set` rewrote every dependent's committed CI files and a released

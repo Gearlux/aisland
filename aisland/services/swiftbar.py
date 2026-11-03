@@ -6,7 +6,8 @@ from typing import Any, List, Optional
 
 import click
 
-from aisland import failures, provision, sources
+from aisland import failures, provision
+from aisland.github import github_repository
 from aisland.paths import DATA_DIR
 from aisland.projects import discover_projects, get_project_metadata, get_workspace_root
 from aisland.services.base import BaseService
@@ -49,7 +50,7 @@ class SwiftBarService(BaseService):
             ).strip()
         except (OSError, subprocess.CalledProcessError):  # no origin, or no git
             return None
-        repository = sources.github_repository(output)
+        repository = github_repository(output)
         return f"{repository.owner}/{repository.name}" if repository else None
 
     def _dependency_ordered_projects(self, workspace_root: Path) -> List[Path]:

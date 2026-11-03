@@ -49,27 +49,25 @@ tracked file:
 
 from __future__ import annotations
 
-import functools
-import json
 import logging
 import os
-import re
 import subprocess
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Dict, List, Literal, NamedTuple, Optional, Tuple, TypedDict, cast, get_args
+from typing import Dict, List, Literal, Optional, Tuple, cast, get_args
 
 import click
-from packaging.version import InvalidVersion, Version
 
 from aisland import failures, gitcmd, locations
 from aisland import pyproject as pyproject_toml
 from aisland import workspace_file
 from aisland.editor_files import write_code_workspace
 from aisland.errors import AislandError
+from aisland.github import github_repository
 from aisland.installers import ensure_uv_in_venv
 from aisland.mcp_config import no_venv
 from aisland.projects import get_workspace_root, set_submodule_active, submodule_active_map
+from aisland.pypi import PypiInfo, PypiProject, points_at_owner, pypi_json
 from aisland.selection import editable_target
 
 logger = logging.getLogger(__name__)
@@ -528,152 +526,6 @@ def known_projects(workspace_root: Path) -> List[str]:
         if child.is_dir() and (child / "pyproject.toml").exists() and not locations.is_alias(child, workspace_root):
             names.add(child.name)
     return sorted(names)
-
-
-#: A GitHub remote in each spelling git accepts: ``git@github.com:owner/repo``, ``ssh://git@github.com/owner/repo``
-#: and ``https://github.com/owner/repo`` (a user before the host too: ``https://user@github.com/owner/repo``),
-#: ``.git`` optional. A deeper path is no repository.
-_GITHUB_URL_RE = re.compile(
-    r"^(?:git@github\.com:|ssh://git@github\.com/|https://(?:[^@/]+@)?github\.com/)([^/]+)/([^/]+?)(?:\.git)?/?$"
-)
-
-
-class GitHubRepository(NamedTuple):
-    """A repository on github.com, as a project's remote names it."""
-
-    owner: str
-    name: str
-
-    @property
-    def url(self) -> str:
-        """The address a runner clones it from (``https://github.com/<owner>/<name>.git``)."""
-        return f"https://github.com/{self.owner}/{self.name}.git"
-
-
-def github_repository(url: str) -> Optional[GitHubRepository]:
-    """The GitHub repository ``url`` names, or None when it is no GitHub repository (another host, a deeper path)."""
-    match = _GITHUB_URL_RE.match(url.strip())
-    return GitHubRepository(match.group(1), match.group(2)) if match else None
-
-
-def project_repositories(workspace_root: Path) -> Dict[str, GitHubRepository]:
-    """Each project folder whose remote is on GitHub, and that repository.
-
-    The remote is the submodule's in ``.gitmodules``, or a clone's ``origin`` in a workspace without one
-    (:func:`aisland.workspace_file.workspace_projects`). A project's GitHub owner is what makes it, and its PyPI
-    release, the workspace's own: no organisation is written into aisland.
-    """
-    repositories: Dict[str, GitHubRepository] = {}
-    for found in workspace_file.workspace_projects(workspace_root):
-        repository = github_repository(found.url)
-        if repository is None:
-            continue
-        folder = (workspace_root / found.path).resolve()
-        repositories[folder.relative_to(workspace_root.resolve()).as_posix()] = repository
-    return repositories
-
-
-class ReleaseProbeError(AislandError, ConnectionError):
-    """PyPI could not answer whether ``distribution`` is released — the scaffold must stop, not guess."""
-
-    def __init__(self, distribution: str, reason: str) -> None:
-        super().__init__(
-            f"cannot tell whether {distribution!r} is released: {reason}. The CI files were not written — "
-            f"generating them needs PyPI, because a guess would flip every released dependency to a "
-            f"GitHub install line. Retry when PyPI is reachable."
-        )
-        self.distribution = distribution
-
-
-class PypiFile(TypedDict, total=False):
-    """One file of a release in PyPI's JSON document (``urls``, ``releases``): the keys aisland reads."""
-
-    filename: str
-    url: str
-    packagetype: str
-    yanked: bool
-
-
-class PypiInfo(TypedDict, total=False):
-    """The ``info`` of PyPI's JSON document: the keys aisland reads."""
-
-    version: str
-    home_page: Optional[str]
-    project_urls: Optional[Dict[str, str]]
-
-
-class PypiProject(TypedDict, total=False):
-    """PyPI's JSON document for a distribution (``https://pypi.org/pypi/<name>/json``): the keys aisland reads."""
-
-    info: PypiInfo
-    releases: Dict[str, List[PypiFile]]
-    urls: List[PypiFile]
-
-
-def pypi_json(distribution: str) -> Tuple[Literal["ok", "missing", "unreachable"], Any]:  # Any: see the docstring
-    """PyPI's JSON document for ``distribution``: ``("ok", data)``, ``("missing", None)`` on a 404,
-    or ``("unreachable", reason)`` — shared by the provenance probe and the release probe. The second item is
-    ``Any``: a :class:`PypiProject`, ``None`` or a reason, told apart by the first, which a union cannot say."""
-    import urllib.error
-    import urllib.request
-
-    try:
-        with urllib.request.urlopen(f"https://pypi.org/pypi/{distribution}/json", timeout=5) as resp:
-            return "ok", json.loads(resp.read().decode())
-    except urllib.error.HTTPError as e:
-        if e.code == 404:
-            return "missing", None
-        return "unreachable", f"PyPI returned HTTP {e.code}"
-    except (urllib.error.URLError, OSError, TimeoutError, ValueError) as e:
-        return "unreachable", f"could not reach PyPI ({e})"
-
-
-def points_at_owner(info: PypiInfo, owner: Optional[str]) -> bool:
-    """The provenance marker: the published metadata names a ``github.com/<owner>/…`` URL (GitHub owners are
-    case-insensitive). No owner — a project whose remote is not on GitHub — matches nothing."""
-    if owner is None:
-        return False
-    prefix = f"github.com/{owner}/".lower()
-    urls = list((info.get("project_urls") or {}).values()) + [info.get("home_page") or ""]
-    return any(prefix in str(url).lower() for url in urls)
-
-
-@functools.lru_cache(maxsize=None)
-def released_on_pypi(distribution: str, owner: str) -> bool:
-    """Whether ``distribution`` is RELEASED: PyPI holds at least one FINAL (non-pre-release)
-    version with a file that is not yanked, and its metadata points at ``github.com/<owner>/``,
-    the owner of the project's own remote.
-
-    The ONE question the CI scaffolder asks per internal dependency (user ruling 2026-09-26):
-    released -> the runner installs it from PyPI (``.[dev]`` resolves it); not released -> from
-    GitHub ``main``. The workspace SOURCE of the dependency (``workspace.toml``) plays no part —
-    it describes one machine's checkout, never what a runner builds against. A pre-release
-    alone (``recordstream`` 0.1.0a1) is not a release: a plain ``>=0.1.0`` excludes it, and the
-    project is still developed from ``main``. A stranger's package under the same global name
-    is not ours (the provenance rule :func:`_pypi_provenance` applies).
-
-    Unlike :func:`_pypi_provenance` — where an unreachable index warns and continues — this
-    RAISES :class:`ReleaseProbeError`: a guess here would rewrite committed CI files, and
-    "assume unreleased" flips every released dependency to a GitHub line. Cached per process —
-    a workspace scaffold asks about the same few distributions for every project.
-    """
-    status, payload = pypi_json(distribution)
-    if status == "missing":
-        return False
-    if status == "unreachable":
-        raise ReleaseProbeError(distribution, str(payload))
-    project: PypiProject = payload
-    info: PypiInfo = project.get("info") or {}
-    if not points_at_owner(info, owner):
-        return False
-    for version, files in (project.get("releases") or {}).items():
-        try:
-            final = not Version(version).is_prerelease
-        except InvalidVersion:
-            continue
-        if final and any(not f.get("yanked", False) for f in files or []):
-            return True
-    return False
 
 
 def _pypi_provenance(distribution: str, owner: Optional[str]) -> Tuple[Optional[bool], str]:

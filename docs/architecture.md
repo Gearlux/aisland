@@ -26,7 +26,7 @@ The package is `aisland/`. A command is a click function in `aisland/cli/` that 
 | Wheels | `wheels` and the `wheels_*` modules |
 | Reaching a remote machine | `tunnel`, `tunnel_connect`, `tunnel_shell` |
 | Diagnosis and housekeeping | `doctor`, `clean`, `filter_repo`, `git_exclude`, `notebook_utils`, `css_colors` |
-| Shared plumbing | `gitcmd` (every git call), `downloads` (every file fetch), `errors`, `failures`, `server` (the MCP server) |
+| Shared plumbing | `gitcmd` (every git call), `downloads` (every file fetch), `pypi` (PyPI's JSON document and the release question), `github` (a project's repository from its remote), `errors`, `failures`, `server` (the MCP server) |
 
 ### The decisions
 
@@ -200,7 +200,7 @@ every consumer's committed CI install confluid from GitHub `main` (and switching
 them again — sixteen projects, twice, in one afternoon), and liquifai, released on PyPI but
 developed `local`, was built from GitHub `main` by every consumer. The user's ruling: CI "should
 always point to released packages, and to GitHub for non-released ones". So the scaffolder asks
-`sources.released_on_pypi(dep, owner)` — a FINAL, non-yanked version whose metadata points at
+`pypi.released_on_pypi(dep, owner)` — a FINAL, non-yanked version whose metadata points at
 `github.com/<owner>/`, the owner of the dependency's own remote (an organisation written into aisland until
 2026-10-26, record "A project is the workspace's own by its GitHub remote") — and `aisland workspace configure
 source set|unset` regenerate nothing at all. The earlier
@@ -1807,7 +1807,7 @@ rather than a root script; only what the project needs; both checks below):
   followed, because the target machine's platform is not this one's.
 - **On PyPI** means a version, pre-releases included, whose metadata points at
   `github.com/<owner>/` (the owner of the project's own remote), with a file that is not yanked. This differs on purpose from
-  `sources.released_on_pypi` (final releases only): that one decides what CI installs, while this
+  `pypi.released_on_pypi` (final releases only): that one decides what CI installs, while this
   one asks what pip on another machine will find, and pip takes a pre-release when no final
   release exists.
 - **Each wheel is built from `git archive HEAD`**, with `SOURCE_DATE_EPOCH` set to the commit's
@@ -3400,7 +3400,7 @@ already serves. aisland was about to be released for such workspaces.
 
 ### Decision
 
-The owner is read from each project's own remote (`sources.project_repositories`: `.gitmodules`, or a clone's
+The owner is read from each project's own remote (`github.project_repositories`: `.gitmodules`, or a clone's
 `origin`; `github_repository` reads every spelling git accepts). A project is internal when that remote is on
 github.com, and a runner installs it from `git+https://github.com/<owner>/<repository>.git@main`. A release is the
 project's when its metadata names `github.com/<owner>/` (case-insensitive); a project off GitHub has no owner and

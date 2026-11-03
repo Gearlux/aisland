@@ -15,7 +15,7 @@ The run, in order:
 2. **On PyPI or not** (:func:`pypi_state`): published = a version under the name whose metadata
    points at ``github.com/<owner>/`` — the owner of the project's own remote — and has a file that is not yanked. Pre-releases COUNT
    (recordstream 0.1.0a2: pip takes it when no final release exists), which is where this
-   question differs from :func:`aisland.sources.released_on_pypi`, the CI scaffolder's. A
+   question differs from :func:`aisland.pypi.released_on_pypi`, the CI scaffolder's. A
    stranger's package under the same name is not ours — and is reported, because pip takes the
    higher version of the two.
 3. **The wheels** (:func:`export_head`, :func:`build_wheel`): each from an export of the
@@ -86,18 +86,11 @@ from aisland import downloads
 from aisland import pyproject as pyproject_toml
 from aisland import wheels_bundle, wheels_check, wheels_extra
 from aisland.errors import AislandError
+from aisland.github import GitHubRepository, project_repositories
 from aisland.installers import ensure_uv_in_venv
 from aisland.projects import workspace_folders
-from aisland.sources import (
-    GitHubRepository,
-    PypiFile,
-    PypiInfo,
-    PypiProject,
-    points_at_owner,
-    project_repositories,
-    pypi_json,
-    read_committed_sources,
-)
+from aisland.pypi import PypiFile, PypiInfo, PypiProject, points_at_owner, pypi_json
+from aisland.sources import read_committed_sources
 from aisland.wheels_check import (
     attribute_failure,
     install_and_import,

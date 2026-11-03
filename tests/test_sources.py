@@ -21,7 +21,7 @@ from typing import Any, Callable, Dict, List, Set
 import click
 import pytest
 
-from aisland import ci_scaffold, locations
+from aisland import ci_scaffold, locations, pypi
 from aisland import sources as s
 from aisland import workspace_file
 from aisland.errors import AislandError
@@ -642,7 +642,7 @@ class TestScaffoldAsksPypiNotTheSource:
         dependency to a GitHub line."""
 
         def _unreachable(distribution: str, owner: str) -> bool:
-            raise s.ReleaseProbeError(distribution, "could not reach PyPI (offline)")
+            raise pypi.ReleaseProbeError(distribution, "could not reach PyPI (offline)")
 
         monkeypatch.setattr("aisland.ci_scaffold.released_on_pypi", _unreachable)
         with pytest.raises(click.ClickException, match="loggair.*could not reach PyPI"):
@@ -693,7 +693,7 @@ class TestReleasedOnPypi:
         import io
         import urllib.request
 
-        s.released_on_pypi.cache_clear()
+        pypi.released_on_pypi.cache_clear()
 
         @contextlib.contextmanager
         def _open(url: str, timeout: int = 5) -> Any:
@@ -706,45 +706,45 @@ class TestReleasedOnPypi:
 
     def test_a_final_release_is_released(self, monkeypatch: pytest.MonkeyPatch) -> None:
         self._payload(monkeypatch, {"0.1.0": self._FILE, "0.2.0": self._FILE}, self._GEARLUX)
-        assert s.released_on_pypi("liquifai", "Gearlux") is True
+        assert pypi.released_on_pypi("liquifai", "Gearlux") is True
 
     def test_only_pre_releases_is_not_released(self, monkeypatch: pytest.MonkeyPatch) -> None:
         """recordstream: 0.1.0a1 is all PyPI has."""
         self._payload(monkeypatch, {"0.1.0a1": self._FILE}, self._GEARLUX)
-        assert s.released_on_pypi("recordstream", "Gearlux") is False
+        assert pypi.released_on_pypi("recordstream", "Gearlux") is False
 
     def test_a_fully_yanked_final_release_does_not_count(self, monkeypatch: pytest.MonkeyPatch) -> None:
         self._payload(monkeypatch, {"0.1.0": [{"filename": "x.whl", "yanked": True}]}, self._GEARLUX)
-        assert s.released_on_pypi("liquifai", "Gearlux") is False
+        assert pypi.released_on_pypi("liquifai", "Gearlux") is False
 
     def test_a_strangers_package_is_not_released(self, monkeypatch: pytest.MonkeyPatch) -> None:
         self._payload(monkeypatch, {"9.9.9": self._FILE}, {"project_urls": {"Homepage": "https://example.com/x"}})
-        assert s.released_on_pypi("purifai", "Gearlux") is False
+        assert pypi.released_on_pypi("purifai", "Gearlux") is False
 
     def test_404_is_not_released(self, monkeypatch: pytest.MonkeyPatch) -> None:
         import urllib.error
         import urllib.request
 
-        s.released_on_pypi.cache_clear()
+        pypi.released_on_pypi.cache_clear()
 
         def _raise(url: str, timeout: int = 5) -> Any:
             raise urllib.error.HTTPError(url, 404, "Not Found", {}, None)  # type: ignore[arg-type]
 
         monkeypatch.setattr(urllib.request, "urlopen", _raise)
-        assert s.released_on_pypi("matrainer", "Gearlux") is False
+        assert pypi.released_on_pypi("matrainer", "Gearlux") is False
 
     def test_an_unreachable_index_raises_naming_the_package(self, monkeypatch: pytest.MonkeyPatch) -> None:
         import urllib.error
         import urllib.request
 
-        s.released_on_pypi.cache_clear()
+        pypi.released_on_pypi.cache_clear()
 
         def _raise(url: str, timeout: int = 5) -> Any:
             raise urllib.error.URLError("offline")
 
         monkeypatch.setattr(urllib.request, "urlopen", _raise)
-        with pytest.raises(s.ReleaseProbeError, match="liquifai"):
-            s.released_on_pypi("liquifai", "Gearlux")
+        with pytest.raises(pypi.ReleaseProbeError, match="liquifai"):
+            pypi.released_on_pypi("liquifai", "Gearlux")
 
 
 class TestRemoteRefExists:

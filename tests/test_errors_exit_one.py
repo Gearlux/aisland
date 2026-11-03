@@ -87,14 +87,14 @@ def test_the_next_command_starts_with_no_failure(monkeypatch: pytest.MonkeyPatch
 
 
 def test_every_exception_aisland_defines_is_an_aisland_error_and_the_builtin_it_stands_for() -> None:
-    from aisland import discovery, editor, nightly, server, sources, wheels_prune, workspace_file
+    from aisland import discovery, editor, nightly, pypi, server, wheels_prune, workspace_file
 
     assert issubclass(discovery.DeclarationError, (AislandError, ValueError))
     for error, builtin in (
         (discovery.DeclarationError, ValueError),
         (workspace_file.FileError, ValueError),
         (editor.EditorChoiceError, ValueError),
-        (sources.ReleaseProbeError, ConnectionError),
+        (pypi.ReleaseProbeError, ConnectionError),
         (nightly.JenkinsUnreachable, ConnectionError),
         (wheels_prune.PruneError, RuntimeError),
         (server.ToolRefusal, Exception),
