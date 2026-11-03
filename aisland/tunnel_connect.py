@@ -364,6 +364,73 @@ def _write_all(fd: int, data: bytes) -> None:
         data = data[written:]
 
 
+class _ShellSession:
+    """One shell on the far side of the control port: the messages sent and received, and the shell's streams.
+
+    What is typed before the shell's streams have started is held and sent once they have; so is the end of the input.
+    """
+
+    def __init__(self, sock: socket.socket, msgpack: ModuleType) -> None:
+        self.sock = sock
+        self.msgpack = msgpack
+        self.unpacker = msgpack.Unpacker(raw=False)
+        #: The shell's stdin, stdout and stderr stream ids, once ``streams_started`` named them.
+        self.streams: Optional[List[int]] = None
+        self.pending: List[bytes] = []
+        self.input_open = True
+        self.input_ended = False
+
+    def send(self, message: Mapping[str, object]) -> None:
+        self.sock.sendall(self.msgpack.packb(message, use_bin_type=True))
+
+    def to_box(self, frame: bytes) -> None:
+        """Send ``frame`` to the shell's stdin, or hold it until the streams have started."""
+        if self.streams is None:
+            self.pending.append(frame)
+        else:
+            self.send({"id": None, "method": "stream_data", "params": {"stream": self.streams[0], "segment": frame}})
+
+    def _end_input(self) -> None:
+        if self.streams is not None:
+            self.send({"id": None, "method": "stream_ended", "params": {"stream": self.streams[0]}})
+
+    def receive(self, stdout: int, stderr: int) -> Optional[int]:
+        """Read what the control port sent and act on each message; the shell's exit status once it has ended."""
+        data = self.sock.recv(65536)
+        if not data:
+            raise AislandError("The tunnel closed the connection before the shell ended.")
+        self.unpacker.feed(data)
+        for message in self.unpacker:
+            method = message.get("method")
+            params = message.get("params") or {}
+            if method == "streams_started" and params.get("for_request_id") == _SPAWN_ID:
+                self.streams = list(params["stream_ids"])
+                for frame in self.pending:
+                    self.to_box(frame)
+                self.pending.clear()
+                if self.input_ended:
+                    self._end_input()
+            elif method == "stream_data":
+                target = stderr if self.streams is not None and params["stream"] == self.streams[2] else stdout
+                _write_all(target, params["segment"])
+            elif method is None and message.get("id") == _SPAWN_ID:
+                if message.get("error"):
+                    reason = message["error"].get("message", message["error"])
+                    raise AislandError(f"The remote machine refused to start the shell: {reason}")
+                return int(message["result"]["exit_code"])
+        return None
+
+    def type_from(self, stdin: int) -> None:
+        """Send what was typed; at the end of the input, close the shell's stdin and stop reading it."""
+        typed = os.read(stdin, 65536)
+        if typed:
+            self.to_box(tunnel_shell.encode_data(typed))
+        else:
+            self.input_open = False
+            self.input_ended = True
+            self._end_input()
+
+
 def run_shell(
     sock: socket.socket,
     *,
@@ -394,70 +461,26 @@ def run_shell(
         idle_timeout: Fail when nothing happens for this long; None waits as long as the person
             does — a terminal is quiet whenever they are.
     """
-    msgpack = _msgpack()
-    unpacker = msgpack.Unpacker(raw=False)
-
-    def send(message: Mapping[str, object]) -> None:
-        sock.sendall(msgpack.packb(message, use_bin_type=True))
-
+    session = _ShellSession(sock, _msgpack())
     command, args = remote_command(rows, cols, folder)
-    send({"id": _SPAWN_ID, "method": "spawn", "params": {"command": command, "args": args, "env": {"TERM": term}}})
-
-    streams: Optional[List[int]] = None
-    pending: List[bytes] = []
-    input_open = True
-    input_ended = False
-
-    def to_box(frame: bytes) -> None:
-        if streams is None:
-            pending.append(frame)
-        else:
-            send({"id": None, "method": "stream_data", "params": {"stream": streams[0], "segment": frame}})
-
-    def end_input() -> None:
-        if streams is not None:
-            send({"id": None, "method": "stream_ended", "params": {"stream": streams[0]}})
-
+    session.send(
+        {"id": _SPAWN_ID, "method": "spawn", "params": {"command": command, "args": args, "env": {"TERM": term}}}
+    )
     while True:
-        watched = [sock] + ([stdin] if input_open else []) + ([wake] if wake is not None else [])
+        watched = [sock] + ([stdin] if session.input_open else []) + ([wake] if wake is not None else [])
         ready, _, _ = select.select(watched, [], [], idle_timeout)
         if not ready:
             raise AislandError(f"The remote machine sent nothing for {idle_timeout:g} s.")
         if wake is not None and wake in ready:
             os.read(wake, 4096)
             if size is not None:
-                to_box(tunnel_shell.encode_resize(*size()))
+                session.to_box(tunnel_shell.encode_resize(*size()))
         if sock in ready:
-            data = sock.recv(65536)
-            if not data:
-                raise AislandError("The tunnel closed the connection before the shell ended.")
-            unpacker.feed(data)
-            for message in unpacker:
-                method = message.get("method")
-                params = message.get("params") or {}
-                if method == "streams_started" and params.get("for_request_id") == _SPAWN_ID:
-                    streams = list(params["stream_ids"])
-                    for frame in pending:
-                        to_box(frame)
-                    pending.clear()
-                    if input_ended:
-                        end_input()
-                elif method == "stream_data":
-                    target = stderr if streams is not None and params["stream"] == streams[2] else stdout
-                    _write_all(target, params["segment"])
-                elif method is None and message.get("id") == _SPAWN_ID:
-                    if message.get("error"):
-                        reason = message["error"].get("message", message["error"])
-                        raise AislandError(f"The remote machine refused to start the shell: {reason}")
-                    return int(message["result"]["exit_code"])
-        if input_open and stdin in ready:
-            typed = os.read(stdin, 65536)
-            if typed:
-                to_box(tunnel_shell.encode_data(typed))
-            else:
-                input_open = False
-                input_ended = True
-                end_input()
+            exit_code = session.receive(stdout, stderr)
+            if exit_code is not None:
+                return exit_code
+        if session.input_open and stdin in ready:
+            session.type_from(stdin)
 
 
 def _window_size(fd: int) -> Tuple[int, int]:

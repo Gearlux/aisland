@@ -70,47 +70,10 @@ class BaseService:
         if self.is_running():
             click.echo(f"{self.name.capitalize()} is already running (PID: {self.get_pid()}).")
             return
-
-        # Pre-flight: a taken port means the service would crash-loop through
-        # its whole restart budget with only a log-side error. The usual
-        # culprit is an orphan instance the supervisor doesn't know about
-        # (e.g. started by a pre-supervisor aisland and never stopped).
-        if readiness is not None:
-            owner = supervisor.port_in_use(readiness["port"])
-            if owner is not None:
-                owner_hint = f"PID {owner}" if owner > 0 else "an unknown process"
-                failures.report(
-                    f"Error: port {readiness['port']} is already in use by {owner_hint} — "
-                    f"not managed by the aisland supervisor. Stop that process first "
-                    f"(it may be a {self.name} instance started by an older aisland).",
-                )
-                return
-
+        if readiness is not None and self._port_taken(readiness["port"]):
+            return
         click.echo(f"Starting {self.name.capitalize()}...")
-
-        process_env = dict(env or {})
-        if "PATH" not in process_env:
-            venv_bin = get_workspace_root() / ".venv" / "bin"
-            current_path = os.environ.get("PATH", "")
-            if str(venv_bin) not in current_path:
-                current_path = f"{venv_bin}:{current_path}"
-            process_env["PATH"] = current_path
-
-        was_registered = supervisor.get_process(self.name) is not None
-        supervisor.register_process(
-            self.name,
-            cmd,
-            env=process_env,
-            log_file=self.log_file,
-            readiness=readiness,
-            enabled=True,
-        )
-        supervisor.apply()
-        if was_registered and not self.is_running():
-            # `project update` is a no-op when the config is byte-identical
-            # (a re-start after a failed run), so launch the process directly.
-            supervisor.start_process(self.name)
-
+        self._register_and_apply(cmd, self._process_env(env), readiness)
         outcome, state = supervisor.wait_for_outcome(self.name)
         if outcome == "failed":
             status = (state or {}).get("status", "unknown")
@@ -121,21 +84,69 @@ class BaseService:
                 f"(status: {status}, exit code: {exit_code}, restarts: {restarts}). See {self.log_file}.",
             )
             return
-
         assert state is not None  # ready/running/pending all carry a state
         click.echo(f"{self.name.capitalize()} started (PID: {state.get('pid')})")
         if outcome == "pending":
             click.echo(f"  - Still initializing (readiness probe pending) — check 'aisland {self.name} status'.")
         click.echo(f"Logs: {self.log_file}")
-
         if not background:
-            click.echo(f"Following logs — press Ctrl+C to stop {self.name.capitalize()}...")
-            try:
-                supervisor.follow_logs(self.name)
-            except KeyboardInterrupt:
-                pass
-            click.echo("")
-            self.stop()
+            self._follow_then_stop()
+
+    def _port_taken(self, port: int) -> bool:
+        """Whether ``port`` is held by a process the supervisor does not know — reported, since the service would
+        otherwise crash-loop through its whole restart budget with only a log-side error. The usual culprit is an
+        orphan instance (e.g. started by a pre-supervisor aisland and never stopped)."""
+        owner = supervisor.port_in_use(port)
+        if owner is None:
+            return False
+        owner_hint = f"PID {owner}" if owner > 0 else "an unknown process"
+        failures.report(
+            f"Error: port {port} is already in use by {owner_hint} — "
+            f"not managed by the aisland supervisor. Stop that process first "
+            f"(it may be a {self.name} instance started by an older aisland).",
+        )
+        return True
+
+    @staticmethod
+    def _process_env(env: Optional[Dict[str, str]]) -> Dict[str, str]:
+        """``env``, with the workspace venv put first on ``PATH`` unless the caller gave a ``PATH`` of its own."""
+        process_env = dict(env or {})
+        if "PATH" not in process_env:
+            venv_bin = get_workspace_root() / ".venv" / "bin"
+            current_path = os.environ.get("PATH", "")
+            if str(venv_bin) not in current_path:
+                current_path = f"{venv_bin}:{current_path}"
+            process_env["PATH"] = current_path
+        return process_env
+
+    def _register_and_apply(
+        self, cmd: List[str], env: Dict[str, str], readiness: Optional[supervisor.Readiness]
+    ) -> None:
+        """Register the process with the supervisor, enabled, and apply the document."""
+        was_registered = supervisor.get_process(self.name) is not None
+        supervisor.register_process(
+            self.name,
+            cmd,
+            env=env,
+            log_file=self.log_file,
+            readiness=readiness,
+            enabled=True,
+        )
+        supervisor.apply()
+        if was_registered and not self.is_running():
+            # `project update` is a no-op when the config is byte-identical
+            # (a re-start after a failed run), so launch the process directly.
+            supervisor.start_process(self.name)
+
+    def _follow_then_stop(self) -> None:
+        """Stream the service's log until Ctrl+C, then stop the service (the old foreground meaning)."""
+        click.echo(f"Following logs — press Ctrl+C to stop {self.name.capitalize()}...")
+        try:
+            supervisor.follow_logs(self.name)
+        except KeyboardInterrupt:
+            pass
+        click.echo("")
+        self.stop()
 
     def stop(self) -> None:
         """Stop the running service (disable it in the desired state)."""

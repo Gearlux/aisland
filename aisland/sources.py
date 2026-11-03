@@ -554,6 +554,67 @@ def _remote_ref_exists(workspace_root: Path, project: str, ref: str) -> bool:
     return bool(probe.stdout.strip())
 
 
+def _refuse_unmanageable(root: Path, project: str, kind: str) -> None:
+    """Refuse a project the workspace does not know, a kind there is none of, and a detached kind for a folder."""
+    if project not in known_projects(root):
+        raise AislandError(f"'{project}' is not a workspace project. Known: {', '.join(known_projects(root))}")
+    if kind not in SOURCE_KINDS:
+        raise AislandError(f"unknown source kind '{kind}'; expected one of {', '.join(SOURCE_KINDS)}")
+    if kind in DETACHED_KINDS and project not in {name for name, _path, _active in submodule_active_map(root)}:
+        # A folder project (no .gitmodules entry) has no submodule to deinit and none to check out again.
+        raise AislandError(
+            f"'{project}' is a folder of the workspace, not a submodule: a {kind} source empties its folder, "
+            "and nothing could check it out again. Keep it local."
+        )
+
+
+def _checked_source(
+    root: Path, project: str, kind: str, ref: Optional[str], version: Optional[str], distribution: str
+) -> ProjectSource:
+    """The source to set, checked before anything changes: a ``pypi`` release must be this workspace's project, a
+    ``github`` ref must exist on the remote — a detached source empties the folder, so a bad one would only show
+    after the checkout was gone."""
+    if kind == "pypi":
+        repository = github_repository(remote_url(root, project) or "")
+        owner = repository.owner if repository else None
+        published, detail = _pypi_provenance(distribution, owner)
+        if published is False:
+            raise AislandError(
+                f"'{distribution}' {detail}. Publish it first, or use: "
+                f"aisland workspace configure source set {project} github"
+            )
+        if published is None:
+            failures.warn(f"  - Warning: {detail}; continuing without verifying '{distribution}'.")
+        else:
+            click.echo(f"  - Verified {distribution} {detail} on PyPI (published from github.com/{owner}).")
+        return ProjectSource(kind="pypi", version=version, distribution=distribution)
+    listed = workspace_file.load(root).projects.get(project)
+    branch = ref or (listed.branch if listed else None) or DEFAULT_REF  # no --branch: the project's own
+    source = ProjectSource(kind=cast(SourceKind, kind), ref=branch, distribution=distribution)
+    if kind == "github" and not _remote_ref_exists(root, project, source.ref):
+        raise AislandError(
+            f"'{source.ref}' does not exist on {project}'s remote, so a github source "
+            f"could never install. Push the branch first, or pick an existing ref."
+        )
+    return source
+
+
+def _record_source(
+    root: Path, project: str, source: ProjectSource, committed: Dict[str, ProjectSource], machine_only: bool
+) -> Dict[str, ProjectSource]:
+    """Write ``source`` to this machine's layer, or commit it (dropping this machine's deviation); the committed
+    sources that follow."""
+    if machine_only:
+        set_local_override(root, project, source)
+        click.echo(f"==> {project}: per-machine override set to {source.spec()} (nothing committed).")
+        return committed
+    set_local_override(root, project, None)
+    committed = {**committed, project: source}
+    path = write_committed_sources(root, committed)
+    click.echo(f"==> {project}: committed source set to {source.spec()} in {path.name}")
+    return committed
+
+
 def set_project_source(
     project: str,
     kind: str,
@@ -571,19 +632,8 @@ def set_project_source(
     A failed apply ROLLS THE CONFIGURATION BACK — a registry claiming a state the working tree
     does not have is worse than no change at all (and `aisland setup` would keep retrying it).
     """
-
     root = workspace_root or get_workspace_root()
-    if project not in known_projects(root):
-        raise AislandError(f"'{project}' is not a workspace project. Known: {', '.join(known_projects(root))}")
-    if kind not in SOURCE_KINDS:
-        raise AislandError(f"unknown source kind '{kind}'; expected one of {', '.join(SOURCE_KINDS)}")
-    if kind in DETACHED_KINDS and project not in {name for name, _path, _active in submodule_active_map(root)}:
-        # A folder project (no .gitmodules entry) has no submodule to deinit and none to check out again.
-        raise AislandError(
-            f"'{project}' is a folder of the workspace, not a submodule: a {kind} source empties its folder, "
-            "and nothing could check it out again. Keep it local."
-        )
-
+    _refuse_unmanageable(root, project, kind)
     venv_bin = root / ".venv" / "bin"
     if not venv_bin.exists():
         raise no_venv(root)
@@ -594,46 +644,11 @@ def set_project_source(
     distribution = (
         discover_distribution(project_path(root, project)) or (previous.distribution if previous else None) or project
     )
+    source = _checked_source(root, project, kind, ref, version, distribution)
 
-    if kind == "pypi":
-        repository = github_repository(remote_url(root, project) or "")
-        owner = repository.owner if repository else None
-        published, detail = _pypi_provenance(distribution, owner)
-        if published is False:
-            raise AislandError(
-                f"'{distribution}' {detail}. Publish it first, or use: "
-                f"aisland workspace configure source set {project} github"
-            )
-        if published is None:
-            failures.warn(f"  - Warning: {detail}; continuing without verifying '{distribution}'.")
-        else:
-            click.echo(f"  - Verified {distribution} {detail} on PyPI (published from github.com/{owner}).")
-        source = ProjectSource(kind="pypi", version=version, distribution=distribution)
-    else:
-        listed = workspace_file.load(root).projects.get(project)
-        branch = ref or (listed.branch if listed else None) or DEFAULT_REF  # no --branch: the project's own
-        source = ProjectSource(kind=cast(SourceKind, kind), ref=branch, distribution=distribution)
-        # A github source DETACHES, so a bad ref would only surface after the directory was
-        # already emptied — the same asymmetry the PyPI provenance check guards against.
-        if kind == "github" and not _remote_ref_exists(root, project, source.ref):
-            raise AislandError(
-                f"'{source.ref}' does not exist on {project}'s remote, so a github source "
-                f"could never install. Push the branch first, or pick an existing ref."
-            )
-
-    committed = dict(original)
     file = root / workspace_file.FILE_NAME
     before = file.read_text() if file.is_file() else None
-    if machine_only:
-        set_local_override(root, project, source)
-        click.echo(f"==> {project}: per-machine override set to {source.spec()} (nothing committed).")
-    else:
-        # A committed decision supersedes any stale per-machine deviation for this project.
-        set_local_override(root, project, None)
-        committed[project] = source
-        path = write_committed_sources(root, committed)
-        click.echo(f"==> {project}: committed source set to {source.spec()} in {path.name}")
-
+    committed = _record_source(root, project, source, original, machine_only)
     uv_cmd = ensure_uv_in_venv(venv_bin)
     if not apply_source(root, project, effective_source(root, project, committed) or source, uv_cmd):
         set_local_override(root, project, previous_override)

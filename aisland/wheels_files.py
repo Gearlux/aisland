@@ -15,7 +15,7 @@ import shutil
 import subprocess
 import zipfile
 from pathlib import Path
-from typing import Dict, List, Optional
+from typing import Dict, List, Optional, Tuple
 
 from aisland import wheels_bundle, wheels_install, wheels_unzip
 from aisland.errors import AislandError
@@ -150,6 +150,70 @@ def install_zip(
     return subprocess.run([str(python), str(zip_path), "--into", str(into), *args]).returncode
 
 
+def _wheel_table(shipped: List[BuiltWheel], commits: bool) -> str:
+    """The README's table of the wheels: each one's project, and its branch and commit unless ``commits`` is off."""
+    if not shipped:
+        return "No wheel is needed."
+    if commits:
+        rows = "\n".join(
+            f"| {b.wheel} | {b.project} | {b.branch} | {b.commit} | {'yes' if b.needed else 'no'} |" for b in shipped
+        )
+        columns = "| Wheel | Project | Branch | Commit | Needed |\n| --- | --- | --- | --- | --- |"
+    else:
+        rows = "\n".join(f"| {b.wheel} | {b.project} | {'yes' if b.needed else 'no'} |" for b in shipped)
+        columns = "| Wheel | Project | Needed |\n| --- | --- | --- |"
+    return f"{columns}\n{rows}"
+
+
+def _title_and_intro(target: str, scope: WheelsScope, commits: bool) -> Tuple[str, str]:
+    """The README's title, and the paragraph that says which wheels the folder holds for ``scope``."""
+    # Where each wheel comes from, in the intro's words: the commit the table names, or (no commits) its last one.
+    source, rest, that = ("the commit", "below", "the commit") if commits else ("its last", "commit", "that commit")
+    return {
+        "unpublished": (
+            f"The wheels {target} needs",
+            f"The workspace projects {target} depends on that are not on PyPI, each built from {source}\n"
+            f"{rest}. Everything else it needs comes from PyPI.",
+        ),
+        "needed": (
+            f"The wheels {target} needs",
+            f"Every workspace project {target} depends on that had a checkout where these were built, each\n"
+            f"built from {source} {rest} — those on PyPI too, so {that}, not the release, is what\n"
+            "installs. Everything else it needs comes from PyPI.",
+        ),
+        "all": (
+            f"The workspace's wheels, for {target}",
+            f"Every workspace project that had a checkout where these were built, each built from {source}\n"
+            f"{rest}. *Needed* marks the ones {target} depends on; everything else it needs comes from PyPI.",
+        ),
+    }[scope]
+
+
+def _how_to_install(target: str, project_wheel: Optional[BuiltWheel], extra: Optional[str]) -> str:
+    """The README's install paragraph: from the project's folder or its own wheel, after the uv command of ``extra``."""
+    if project_wheel is None:
+        how = f"""\
+Install {target} from its own folder, editable, with the wheels marked `install: true` in
+`wheels/{WHEELS_YAML}` (by default the ones it needs):"""
+    else:
+        how = f"""\
+{target}'s own wheel is here too. Install it with the wheels marked `install: true` in
+`wheels/{WHEELS_YAML}` (by default the ones it needs); set its own entry's `install:` to false to
+install {target} from its folder, editable, instead:"""
+    if extra is None:
+        return how
+    return f"""\
+With uv, from the folder holding {target}, install {target} editable together with every wheel
+here: its `pyproject.toml` has the extra `{extra}`, whose uv sources are these files. After the
+wheels are rebuilt, the same command takes the new ones.
+
+    uv pip install -e ./{target}[{extra}]
+
+Or with the script beside the wheels, which pip runs too.
+
+{how}"""
+
+
 def render_readme(
     target: str,
     scope: WheelsScope,
@@ -168,57 +232,10 @@ def render_readme(
     """
     flag = extra if command_extra == "" else command_extra
     command = regenerate_command(target, scope, project_wheel is not None, flag)
-    shipped = built + ([project_wheel] if project_wheel else [])
-    if commits:
-        rows = "\n".join(
-            f"| {b.wheel} | {b.project} | {b.branch} | {b.commit} | {'yes' if b.needed else 'no'} |" for b in shipped
-        )
-        columns = "| Wheel | Project | Branch | Commit | Needed |\n| --- | --- | --- | --- | --- |"
-    else:
-        rows = "\n".join(f"| {b.wheel} | {b.project} | {'yes' if b.needed else 'no'} |" for b in shipped)
-        columns = "| Wheel | Project | Needed |\n| --- | --- | --- |"
-    table = f"{columns}\n{rows}" if shipped else "No wheel is needed."
-    # Where each wheel comes from, in the intro's words: the commit the table names, or (no commits) its last one.
-    source, rest, that = ("the commit", "below", "the commit") if commits else ("its last", "commit", "that commit")
-    if project_wheel is None:
-        how = f"""\
-Install {target} from its own folder, editable, with the wheels marked `install: true` in
-`wheels/{WHEELS_YAML}` (by default the ones it needs):"""
-    else:
-        how = f"""\
-{target}'s own wheel is here too. Install it with the wheels marked `install: true` in
-`wheels/{WHEELS_YAML}` (by default the ones it needs); set its own entry's `install:` to false to
-install {target} from its folder, editable, instead:"""
-    title, intro = {
-        "unpublished": (
-            f"The wheels {target} needs",
-            f"The workspace projects {target} depends on that are not on PyPI, each built from {source}\n"
-            f"{rest}. Everything else it needs comes from PyPI.",
-        ),
-        "needed": (
-            f"The wheels {target} needs",
-            f"Every workspace project {target} depends on that had a checkout where these were built, each\n"
-            f"built from {source} {rest} — those on PyPI too, so {that}, not the release, is what\n"
-            "installs. Everything else it needs comes from PyPI.",
-        ),
-        "all": (
-            f"The workspace's wheels, for {target}",
-            f"Every workspace project that had a checkout where these were built, each built from {source}\n"
-            f"{rest}. *Needed* marks the ones {target} depends on; everything else it needs comes from PyPI.",
-        ),
-    }[scope]
     header = "\n".join(provenance_header("", command, "aisland/aisland/wheels_files.py (render_readme)"))
-    if extra is not None:
-        how = f"""\
-With uv, from the folder holding {target}, install {target} editable together with every wheel
-here: its `pyproject.toml` has the extra `{extra}`, whose uv sources are these files. After the
-wheels are rebuilt, the same command takes the new ones.
-
-    uv pip install -e ./{target}[{extra}]
-
-Or with the script beside the wheels, which pip runs too.
-
-{how}"""
+    title, intro = _title_and_intro(target, scope, commits)
+    how = _how_to_install(target, project_wheel, extra)
+    table = _wheel_table(built + ([project_wheel] if project_wheel else []), commits)
     return f"""\
 <!--
 =========================================================================

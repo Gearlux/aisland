@@ -378,21 +378,7 @@ def clean_project(
     store = backup_root(data_dir)
     destination = store / project / now.strftime(STAMP_FORMAT)
     entries = plan_entries(project_dir, store.resolve())
-
-    click.echo(click.style(f"Git-ignored content in {project} ({project_dir})", bold=True))
-    if not entries:
-        click.echo("  (nothing ignored — the checkout is already clean)")
-    for entry in entries:
-        label = entry.rel + ("/" if entry.is_dir else "")
-        click.echo(f"  {label:<48} {entry.files:>8} files  {_human(entry.bytes):>10}")
-
-    total_bytes = sum(entry.bytes for entry in entries)
-    total_files = sum(entry.files for entry in entries)
-    if entries:
-        click.echo(f"  {'':<48} {total_files:>8} files  {_human(total_bytes):>10}  in {len(entries)} entries")
-    if store.resolve().is_relative_to(project_dir.resolve()):
-        click.echo(f"\nNote: the backup store ({store}) lives inside this project and is preserved.")
-
+    _show_entries(project, project_dir, entries, store)
     expired = prune_backups(store, keep_days, now=now, dry_run=True)
 
     if dry_run:
@@ -403,7 +389,8 @@ def clean_project(
 
     if entries and not assume_yes:
         click.echo(f"\nEverything above moves into {destination} and is deleted after {keep_days} days.")
-        if not click.confirm(f"Move {len(entries)} entries ({_human(total_bytes)}) out of {project}?"):
+        total = _human(sum(entry.bytes for entry in entries))
+        if not click.confirm(f"Move {len(entries)} entries ({total}) out of {project}?"):
             click.echo("Nothing was moved.")
             return 0
 
@@ -411,6 +398,32 @@ def clean_project(
     # expiring backups are space the move itself may need.
     _report_pruned(prune_backups(store, keep_days, now=now), keep_days, dry_run=False)
 
+    moved, failed = _move_entries(entries, destination)
+    if not moved and not failed:
+        return 0
+    _write_manifest(destination, project, project_dir, now, moved, failed)
+    _report_moved(project, project_dir, destination, moved, failed)
+    return 1 if failed else 0
+
+
+def _show_entries(project: str, project_dir: Path, entries: List[Entry], store: Path) -> None:
+    """List what a clean of ``project`` would move, with each entry's files and size and the totals."""
+    click.echo(click.style(f"Git-ignored content in {project} ({project_dir})", bold=True))
+    if not entries:
+        click.echo("  (nothing ignored — the checkout is already clean)")
+    for entry in entries:
+        label = entry.rel + ("/" if entry.is_dir else "")
+        click.echo(f"  {label:<48} {entry.files:>8} files  {_human(entry.bytes):>10}")
+    if entries:
+        total_bytes = sum(entry.bytes for entry in entries)
+        total_files = sum(entry.files for entry in entries)
+        click.echo(f"  {'':<48} {total_files:>8} files  {_human(total_bytes):>10}  in {len(entries)} entries")
+    if store.resolve().is_relative_to(project_dir.resolve()):
+        click.echo(f"\nNote: the backup store ({store}) lives inside this project and is preserved.")
+
+
+def _move_entries(entries: List[Entry], destination: Path) -> Tuple[List[Entry], List[Tuple[Entry, str]]]:
+    """Move each entry under ``destination``'s payload: the entries moved, and ``(entry, reason)`` of the others."""
     moved: List[Entry] = []
     failed: List[Tuple[Entry, str]] = []
     for entry in entries:
@@ -423,11 +436,13 @@ def clean_project(
             click.echo(click.style(f"  ! could not move {entry.rel}: {exc}", fg="red"), err=True)
         else:
             moved.append(entry)
+    return moved, failed
 
-    if not moved and not failed:
-        return 0
 
-    _write_manifest(destination, project, project_dir, now, moved, failed)
+def _report_moved(
+    project: str, project_dir: Path, destination: Path, moved: List[Entry], failed: List[Tuple[Entry, str]]
+) -> None:
+    """Say what moved where, how to put it back, and what could not be moved."""
     click.echo(f"\nMoved {len(moved)} entries ({_human(sum(entry.bytes for entry in moved))}) into {destination}")
     # Both forms are printed on purpose: the command is the one to reach for, and the `cp` is
     # the one that still works when this code is the thing that broke.
@@ -435,8 +450,6 @@ def clean_project(
     click.echo(f"          or:  cp -R {destination / PAYLOAD_DIRNAME}/. {project_dir}/")
     if failed:
         click.echo(click.style(f"{len(failed)} entries could not be moved (left in place).", fg="red"), err=True)
-        return 1
-    return 0
 
 
 def _report_pruned(expired: List[Backup], keep_days: int, *, dry_run: bool) -> None:
