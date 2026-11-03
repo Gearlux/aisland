@@ -299,16 +299,22 @@ def completion_install(target_rc: Optional[Path], shell: Optional[str], no_prune
 @click.command(name="check", cls=_Command)
 @click.argument("arg1", required=False)
 @click.argument("arg2", required=False)
-def check(arg1: Optional[str], arg2: Optional[str]) -> None:
+@click.option(
+    "--write", is_flag=True, help="Let isort and black rewrite the files they find; without it they only check."
+)
+def check(arg1: Optional[str], arg2: Optional[str], write: bool) -> None:
     """Run the quality gates (isort, black, flake8, mypy, pytest, act): every one, or one tool, of every project or one.
+
+    isort and black only check, and show the change they would make; --write rewrites the files instead.
 
     \b
     aisland check                 every project, every tool
     aisland check models          every tool for models
     aisland check pytest          pytest for every project
     aisland check pytest models   pytest for models
+    aisland check --write models  format models, then run the other gates
     """
-    run_quality_gates(arg1=arg1, arg2=arg2)
+    run_quality_gates(arg1=arg1, arg2=arg2, write=write)
 
 
 # --- MCP Commands ---

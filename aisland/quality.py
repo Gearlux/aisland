@@ -12,8 +12,8 @@ from aisland.errors import AislandError
 from aisland.mcp_config import no_venv
 from aisland.projects import discover_projects, get_project_metadata, get_workspace_root
 
-#: The gates, in the order they run. ``isort`` and ``black`` are the FORMATTERS: they rewrite the files they find (the
-#: CI jobs only ``--check``); the others read.
+#: The gates, in the order they run. ``isort`` and ``black`` are formatters: they only check (as the CI jobs do) unless
+#: ``aisland check --write`` lets them rewrite the files they find.
 SUPPORTED_TOOLS = ["isort", "black", "flake8", "mypy", "pytest", "act"]
 
 #: One gate: its tool, its command, and whether it runs in the project folder (else in the workspace root).
@@ -33,10 +33,10 @@ def _targets(arg1: Optional[str], arg2: Optional[str], project_names: Set[str]) 
     return None, None
 
 
-def _gates(project_dir: Path, workspace_root: Path) -> List[_Gate]:
+def _gates(project_dir: Path, workspace_root: Path, write: bool) -> List[_Gate]:
     gates: List[_Gate] = [
-        ("isort", ["isort", "."], True),
-        ("black", ["black", "."], True),
+        ("isort", ["isort", "."] if write else ["isort", "--check-only", "--diff", "."], True),
+        ("black", ["black", "."] if write else ["black", "--check", "--diff", "."], True),
         ("flake8", ["flake8", "."], True),
         ("mypy", ["mypy", str(project_dir.relative_to(workspace_root))], False),
         ("pytest", ["pytest"], True),
@@ -69,7 +69,7 @@ def _run_gate(tool: str, cmd: List[str], cwd: Path, env: Dict[str, str], venv_bi
     return False
 
 
-def run_quality_gates(arg1: Optional[str] = None, arg2: Optional[str] = None) -> None:
+def run_quality_gates(arg1: Optional[str] = None, arg2: Optional[str] = None, write: bool = False) -> None:
     """
     Execute quality gates.
     aisland check                 -> All projects, all tools
@@ -77,7 +77,8 @@ def run_quality_gates(arg1: Optional[str] = None, arg2: Optional[str] = None) ->
     aisland check pytest          -> pytest for all projects
     aisland check pytest models   -> pytest for models
 
-    ``isort`` and ``black`` rewrite the files they find. Each gate runs once; a failed one shows what it printed.
+    ``isort`` and ``black`` only check, and show the change they would make; ``write`` lets them rewrite the files
+    instead. Each gate runs once; a failed one shows what it printed.
     """
     workspace_root = get_workspace_root()
     venv_bin = workspace_root / ".venv" / "bin"
@@ -105,7 +106,7 @@ def run_quality_gates(arg1: Optional[str] = None, arg2: Optional[str] = None) ->
         name = project["name"]
         click.echo(f"==> Checking {name} at {project_dir}...")
         passed = True
-        for tool, cmd, in_project in _gates(project_dir, workspace_root):
+        for tool, cmd, in_project in _gates(project_dir, workspace_root, write):
             if target_tool and tool != target_tool:
                 continue
             cwd = project_dir if in_project else workspace_root

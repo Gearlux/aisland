@@ -74,6 +74,31 @@ def test_every_gate_passes_once_and_runs_in_the_folder_it_belongs_to(workspace: 
     assert [args for tool, _folder, args in calls if tool == "mypy"] == ["app"]
 
 
+def test_the_formatters_only_check_and_show_the_change_they_would_make(workspace: Path) -> None:
+    _project(workspace, "app")
+    log = _install_tools(workspace)
+
+    result = _invoke("check", "app")
+
+    assert result.exit_code == 0, result.output
+    args = {tool: args for tool, _folder, args in _calls(log)}
+    assert args["isort"] == "--check-only --diff ."
+    assert args["black"] == "--check --diff ."
+
+
+def test_write_lets_the_formatters_rewrite_the_files(workspace: Path) -> None:
+    _project(workspace, "app")
+    log = _install_tools(workspace)
+
+    result = _invoke("check", "--write", "app")
+
+    assert result.exit_code == 0, result.output
+    args = {tool: args for tool, _folder, args in _calls(log)}
+    assert args["isort"] == "."
+    assert args["black"] == "."
+    assert args["flake8"] == "."
+
+
 def test_a_failed_gate_runs_once_and_shows_the_output_it_printed_once(workspace: Path) -> None:
     _project(workspace, "app")
     log = _install_tools(workspace, fail_tool="pytest")
