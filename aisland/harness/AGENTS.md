@@ -172,7 +172,7 @@ in that project's `AGENTS.md`. The commands in `.agents/workflows/` cite these r
   projects that depend on it — say "a consuming project", "a visual editor". Naming flows one way: a project may name
   its dependencies, never its dependents. A published project's docs carry no private or company names. Exempt:
   `AGENTS.md`, the workspace's root docs, code comments.
-- **No Obsolete-Code Documentation, No Pre-1.0 Backward Compatibility (user ruling 2026-08-17):** a removed name,
+- **No Obsolete-Code Documentation, No Pre-1.0 Backward Compatibility:** a removed name,
   parameter or spelling is REMOVED — no strikethrough rows, no "was X / migrate Y → Z" notes, no deprecation aliases
   or shims, no test recounting the old name. Docs describe the surface that exists. Before 1.0, add backward
   compatibility or migration docs only when the user asks in that change; when you think a removal needs either, ask.
@@ -268,12 +268,12 @@ in that project's `AGENTS.md`. The commands in `.agents/workflows/` cite these r
   `/commit-session`, `/ship`, `/pull-all`, `/push-all`); approval once is not approval later. `/commit-all` commits
   every session's work, `/commit-session` only the running session's files and hunks. Never push without the user's
   confirmation. Messages are conventional (`feat:`, `fix:`, `chore:`), one per coherent sub-task.
-- **`/ship` Runs The Gates, `/push-all` Does Not (user ruling 2026-10-07):** `/ship` runs the full quality suite for
+- **`/ship` Runs The Gates, `/push-all` Does Not:** `/ship` runs the full quality suite for
   every affected project before it merges and pushes; `/push-all` publishes committed `dev/main` branches and runs no
   gates — the work was checked when its task ended. Never add the gates back to it.
 - **Never Delete `dev/main`:** it is the staging branch for `main`; merging a pull request from it never uses
   `--delete-branch`.
-- **Commits Go To A `dev/*` Branch — Never Create A Branch (user rulings 2026-10-20, 2026-10-28):** every commit, in
+- **Commits Go To A `dev/*` Branch — Never Create A Branch:** every commit, in
   the root and in every project, lands on a `dev/*` branch — `dev/main` or another `dev/<name>` the user made. No
   session runs `git checkout -b`, `git switch -c` or `git branch <new>` in a workspace checkout: sessions share one
   working tree, so one session's branch moves HEAD for all, and their commits land on it unseen. A checkout found on
@@ -287,7 +287,7 @@ in that project's `AGENTS.md`. The commands in `.agents/workflows/` cite these r
 
 ## Working with the user
 
-- **Agree The Scope, Then The Tests, Then Implement (HARD RULE, user ruling 2026-08-12):** before ANY implementation —
+- **Agree The Scope, Then The Tests, Then Implement (HARD RULE):** before ANY implementation —
   a feature, a refactor or a bug fix — (1) state what you intend to achieve, the surfaces you will touch and the
   behaviour that will change, (2) STOP until the user reviews it, (3) write the tests, (4) implement. The trigger is
   "does this change behaviour?", never the label on the work; only a typo, a comment, a docstring or a test-only edit
@@ -316,7 +316,7 @@ in that project's `AGENTS.md`. The commands in `.agents/workflows/` cite these r
 - **Plain Words, The Outcome First:** report what the user sees, naming the object, before any internal measure;
   explain a measure in a phrase when it first appears; say explicitly when a result rests on synthetic data you made.
 - **Minimalism:** high-signal, low-noise output; no conversational filler.
-- **A Turn Left Waiting On A Background Task Says So On Its Last Line (user request 2026-10-20):** when a turn ends
+- **A Turn Left Waiting On A Background Task Says So On Its Last Line:** when a turn ends
   while something it started still runs (a test run, a build, a download, a subagent, another session), the LAST
   line of the message starts with `Waiting:` and names the task, about how long it takes, and what happens when it
   ends — `Waiting: the fast test run (about 5 minutes); then I compare it with the baseline and report.` Why: a
@@ -344,7 +344,7 @@ in that project's `AGENTS.md`. The commands in `.agents/workflows/` cite these r
 
 ## Sessions and models
 
-- **Sessions On This Machine Coordinate Before They Edit (user ruling 2026-10-05):** sessions share one checkout's
+- **Sessions On This Machine Coordinate Before They Edit:** sessions share one checkout's
   working tree, git index and `.venv`, and talk through `ListAgents` + `SendMessage` (a peer's message arrives as
   `<cross-session-message from="…">`; reply to its `from`). A session's subagents are covered by its announcement.
     - **Announce** the exact file paths before the first edit of every request that changes files: `ListAgents`,
@@ -367,7 +367,7 @@ in that project's `AGENTS.md`. The commands in `.agents/workflows/` cite these r
       ask a peer to do what your own session was refused.
     - **No messaging tool:** read `git status` / `git diff` of each file before editing it, and tell the user no
       coordination was possible.
-- **Sonnet For Commits, Model Picked Per Subagent (user ruling 2026-10-02):** the session's own model is the user's
+- **Sonnet For Commits, Model Picked Per Subagent:** the session's own model is the user's
   choice; no project file sets it. Committing never runs above Sonnet: the commands that commit carry `model: sonnet`,
   and an agent spawned to stage or commit gets `model: "sonnet"`. Every other subagent passes `model` explicitly:
   `haiku` for read-only, mechanical work; `sonnet` for routine work that reasons or writes; `opus` for hard reasoning;

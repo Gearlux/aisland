@@ -305,6 +305,10 @@ naming the PID is the only signal). All service state lives under `<workspace>/a
 - The README links only absolutely (`https://github.com/Gearlux/aisland/blob/main/…`); a page links relatively, and
   every link lands on a file and, with an anchor, on a heading of it. `docs/architecture.md` opens with a Contents that
   lists every decision once (`tests/test_docs.py`).
+- `docs/architecture.md` is the CONTRIBUTORS' decision log (its opening and the README row say so). It keeps its dates
+  and measurements, and names a project it measured on by role — `planner`, `trainer`, `corelib`, `datasets`,
+  `vision`, `compiler`, `labels`, `canvas`, `curator`, `detector` — never by name; the CHANGELOG and `examples/` are
+  held to the same list (`tests/test_docs.py`).
 - A user page names no project of the workspace aisland is developed in, nor a company: examples use `acme`, `models`,
   `tools`, `viewer`, `app`, `lib`; the tools aisland drives (liquifai's completion, loggair's log folder) keep their
   names (`WORKSPACE_NAMES`). No dated measurements or test references on a page — those belong in
@@ -821,8 +825,10 @@ A bare `::` pin in this section is in `tests/test_jenkins_scaffold.py`.
 - **A harness file reaches aisland through its commands, never its modules** (`aisland workspace projects` for the
   dependency order, never `python3 -c "from aisland…"`): `docs/stability.md` keeps the modules out of the interface,
   and the files run in other workspaces against other aisland releases.
-- `harness/` holds ONLY what every aisland workspace shares: no workspace's project names, private names or domain
-  rules (`::test_the_harness_names_no_project_of_the_workspace_it_was_written_in`); a workspace's own rule goes in its
+- `harness/` holds ONLY what every aisland workspace shares: no workspace's project names, private names, domain
+  rules or dated rulings — a "user ruling 2026-…" is one workspace's decision, kept in that workspace's records
+  (`::test_the_harness_names_no_project_of_the_workspace_it_was_written_in`,
+  `::test_the_harness_carries_no_dated_ruling_of_the_workspace_it_was_written_in`); a workspace's own rule goes in its
   `AGENTS.md` below the import line. A command cites a rule as `aisland rules → "<bold heading>"`, and
   `harness/AGENTS.md` must hold that heading (`::test_every_section_a_command_cites_is_in_the_rules`): rename a rule and
   its citations together.

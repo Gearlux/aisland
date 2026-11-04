@@ -368,6 +368,19 @@ def test_the_harness_names_no_project_of_the_workspace_it_was_written_in() -> No
     assert hits == []
 
 
+def test_the_harness_carries_no_dated_ruling_of_the_workspace_it_was_written_in() -> None:
+    """Every workspace installs these rules: a "user ruling 2026-…" is one person's decision in one workspace, which
+    another workspace's user never made. A rule states itself; its date stays in that workspace's own records."""
+    dated = re.compile(r"\b20\d\d-\d\d-\d\d\b|user (ruling|request|choice|pick|correction)s? \d")
+    hits = [
+        f"{path.relative_to(harness.HARNESS_DIR)}:{number}: {line.strip()}"
+        for path in _real_harness_files()
+        for number, line in enumerate(path.read_text().splitlines(), start=1)
+        if dated.search(line)
+    ]
+    assert hits == []
+
+
 def test_aisland_ships_the_six_commands_the_helper_and_the_rules() -> None:
     assert [name for _source, name in harness.shipped_files()] == [
         ".agents/workflows/commit-all.md",

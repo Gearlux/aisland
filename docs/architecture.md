@@ -1,7 +1,8 @@
 # aisland — architecture decisions
 
-Design rationale for aisland's mechanisms: *why* each exists, what it protects, and what a
-change would ripple into. Usage lives in [`../README.md`](../README.md) and the pages it indexes under `docs/`;
+For contributors: the decision log of aisland's development. Design rationale for aisland's mechanisms: *why* each
+exists, what it protects, and what a change would ripple into, with the dates and measurements that led there; the
+projects it measured on are named by role (`planner`, `trainer`, `corelib`, …), not by their names. Usage lives in [`../README.md`](../README.md) and the pages it indexes under `docs/`;
 the agent-facing rulebook lives in [`../AGENTS.md`](../AGENTS.md). These cross-link and never duplicate.
 
 ---
@@ -196,8 +197,8 @@ so the axis they differ on does not exist there.
 
 **Revision 2026-09-26 — the bit comes from PyPI, not from the registry.** The one bit used to be
 "is this dep `pypi`-SOURCED?", which is a statement about one machine's checkout, not about the
-dependency. Two failures followed from reading it: switching confluid to `local` to fix bugs made
-every consumer's committed CI install confluid from GitHub `main` (and switching back rewrote
+dependency. Two failures followed from reading it: switching corelib to `local` to fix bugs made
+every consumer's committed CI install corelib from GitHub `main` (and switching back rewrote
 them again — sixteen projects, twice, in one afternoon), and liquifai, released on PyPI but
 developed `local`, was built from GitHub `main` by every consumer. The user's ruling: CI "should
 always point to released packages, and to GitHub for non-released ones". So the scaffolder asks
@@ -257,7 +258,7 @@ introducing the mechanism changed no behaviour anywhere until a source was actua
   depend on whether the network happened to be up, so the run stops rather than guessing.
 - **A consumer builds against the RELEASE of a released dependency, never its `main`.** Using
   something a released dependency has only on `main` fails that consumer's CI until the release —
-  the accepted cost of the ruling (measured on day one: streamstudio requires `liquifai>=0.3.0`,
+  the accepted cost of the ruling (measured on day one: canvas requires `liquifai>=0.3.0`,
   and 0.3.0 exists only on liquifai's `dev/main`).
 - Discovery still does the heavy lifting: a `pypi`-sourced project's directory is empty, so
   `discover_projects()` drops it from the editable-install loop with no special-casing.
@@ -369,7 +370,7 @@ Generate the whole file on every `aisland setup` and every `aisland workspace co
     "folders": [
         { "name": "acme", "path": "." },
         { "name": "loggair", "path": "loggair" },
-        { "name": "confluid", "path": "confluid" },
+        { "name": "corelib", "path": "corelib" },
         { "name": "logs", "path": "../logs" }
     ],
     "settings": { "python.defaultInterpreterPath": "${workspaceFolder:acme}/.venv/bin/python" },
@@ -391,9 +392,9 @@ Generate the whole file on every `aisland setup` and every `aisland workspace co
 ### Context
 
 An AI client working in the workspace should check the environment, read test statistics, start Jenkins or MLflow
-and set the editor's colours without parsing terminal text. navigaitor is the workspace's MCP server for the ML
-libraries (confluid, liquifai, matrainer); the user ruled that aisland's commands never become navigaitor tools —
-aisland runs where navigaitor is not installed, and it installs the projects navigaitor needs. liquifai, which turns
+and set the editor's colours without parsing terminal text. Another project of the workspace serves its libraries'
+tools over MCP; the user ruled that aisland's commands never become that server's tools — aisland runs where that
+project is not installed, and it installs the projects that server needs. liquifai, which turns
 one signature into a command and a tool, is out for the same reason: `aisland setup` installs it.
 
 ### Decision
@@ -407,7 +408,7 @@ its command prints with `--json`, from the same function (`doctor.run_checks`, `
 `sources.describe`, `tunnel.store_payload`, `editor.*`). A service tool runs the `aisland` command as a subprocess
 (this interpreter, `-P`, the workspace root), so it starts a service exactly as a person does. The server drops
 the resources/prompts handlers so it advertises tools only; it needs no schema sanitizing (flat arguments), so it
-is not a copy of the `_LLMSafeMCPServer` the confluid-based servers share.
+is not a copy of the `_LLMSafeMCPServer` the corelib-based servers share.
 
 ### Consequences
 
@@ -430,7 +431,7 @@ is not a copy of the `_LLMSafeMCPServer` the confluid-based servers share.
 - Add a tool: a function returning one JSON object, in `_READING` or `_CHANGING`, its command's `--json` the same
   data; `tests/test_server.py::READ_ONLY`/`CHANGING` name it.
 - What must not change: no tool that prompts, runs for minutes or deletes; the extra stays optional; aisland's
-  tools stay out of navigaitor.
+  tools stay out of that server.
 
 ---
 
@@ -537,7 +538,7 @@ write-only: the only way to run it was to run `setup.sh`, which also provisions
 the venv, runs `aisland setup`, and rewrites the git config.
 
 Nobody runs a full provisioning script to refresh a tab-completion. So when 5b
-was added on 2026-07-27 to close a real gap (`aisland` and `streamstudio` had no
+was added on 2026-07-27 to close a real gap (`aisland` and `canvas` had no
 completion at all), it did not reach this workspace's own machine. The generated
 `.project.bashrc.completion` kept its 2026-07-02 content, `aisland <TAB>` kept
 doing nothing, and there was no signal anywhere — every *other* app completed
@@ -664,8 +665,8 @@ measured, one `aisland`, capped subshell, 8 s           peak processes spawned
   with the guard                                               0
 
 interactive shell, guard in place — completion still registers:
-  $ bash -ic "source .project.bashrc.completion; complete -p annotaide"
-  complete -o default -F _annotaide_completion annotaide
+  $ bash -ic "source .project.bashrc.completion; complete -p labels"
+  complete -o default -F _annotaide_completion labels
 ```
 
 ```bash
@@ -736,7 +737,7 @@ class _Command(click.Command):
 
 A workspace checkout accumulates gigabytes git never sees: `.venv/`, `build/`, `.mypy_cache/`,
 `lightning_logs/`, `runs/`, downloaded checkpoints. A real measurement while writing this:
-`sonair` alone carried **1.4 GiB across 48 ignored entries**, `aisland` another 1.4 GiB — all
+`vision` alone carried **1.4 GiB across 48 ignored entries**, `aisland` another 1.4 GiB — all
 invisible to `git status`.
 
 The tool that already exists for this is `git clean -Xdf`, and it was rejected for one
@@ -818,15 +819,15 @@ an emptied backup is removed). Two of its rules are the interesting ones:
 ### Example
 
 ```bash
-aisland clean sonair --dry-run     # the plan + which backups expire; nothing changes
-aisland clean sonair               # confirm, sweep, move
-aisland backups restore sonair     # put it back
+aisland clean vision --dry-run     # the plan + which backups expire; nothing changes
+aisland clean vision               # confirm, sweep, move
+aisland backups restore vision     # put it back
 aisland backups prune              # the sweep on its own, for a workspace nobody is cleaning
 ```
 
 ```text
-Moved 48 entries (1.4 GiB) into .../aisland/data/backups/sonair/20260804-164945
-Restore with:  cp -R .../backups/sonair/20260804-164945/files/. /home/you/acme/models/
+Moved 48 entries (1.4 GiB) into .../aisland/data/backups/vision/20260804-164945
+Restore with:  cp -R .../backups/vision/20260804-164945/files/. /home/you/acme/models/
 ```
 
 ```python
@@ -957,14 +958,14 @@ rule collected the transitive closure of "every workspace name in `project.depen
 extras group** of every reachable pyproject". Extras walk was justified for the scaffolded
 project itself (its CI does install `.[dev]`), but applying it transitively collected packages
 no install step would ever request: a signal-analysis app (since removed from the workspace)
-depended only on one sibling; that sibling's *dev* extra names `matrainer` and `annotaide`; matrainer's *torpaido* extra names `torpaido` —
+depended only on one sibling; that sibling's *dev* extra names `trainer` and `labels`; trainer's *compiler* extra names `compiler` —
 and CI installed all three, half-broken (`--no-deps`, their own deps never resolved), for a
-project that imports none of them. The same walk let annotaide's and that sibling's mutual
+project that imports none of them. The same walk let labels's and that sibling's mutual
 dev-extra references cycle back to the scaffolded project, so each pipeline pre-installed *its
 own* `main` branch over the checkout under test. A third latent defect hid beside these: specs
-were name-stripped with `re.split(r"[>=< ]", …)`, which cannot parse `matrainer[torch]>=0.1.0`
+were name-stripped with `re.split(r"[>=< ]", …)`, which cannot parse `trainer[torch]>=0.1.0`
 — the spec silently matched nothing, masked only because every consumer also declared a bare
-`matrainer>=0.1.0`.
+`trainer>=0.1.0`.
 
 ### Decision
 
@@ -973,7 +974,7 @@ The closure mirrors the install steps the templates themselves emit, node by nod
 - the **root** project contributes its base deps plus the extras its CI installs —
   `.[dev,<the committed selections' extras>]` and the best-effort `.[notebook]` step;
 - a **transitive** dep contributes its base deps plus *only* the extras the incoming
-  requirement named (`matrainer[keras]` walks matrainer's `keras` extra) — its other extras
+  requirement named (`trainer[keras]` walks trainer's `keras` extra) — its other extras
   are never requested by anything CI runs, so they contribute nothing;
 - the root's own distribution name is discarded from the result;
 - specs are parsed with `packaging.Requirement` (aisland's one new dependency), so
@@ -1089,17 +1090,17 @@ then the project's `dev` extra (plus selected framework/tracker extras), then it
 extra, then `jupyter nbconvert`. The venv those installs targeted is the one `aisland setup`
 provisions, where every workspace project is already editable-installed from its own checkout —
 so the installs changed nothing, but each one re-resolved the full dependency set against the
-configured indexes. Measured on 2026-09-13 on a slow VPN link: torpaido's `Initialize` took
+configured indexes. Measured on 2026-09-13 on a slow VPN link: compiler's `Initialize` took
 1430 s (`Resolved 82 packages in 11m 50s`, then 696 s more for the notebook extra) to reinstall
-only torpaido itself, recordstream's 830 s and app's 574 s, while the quality gates and tests
+only compiler itself, datasets's 830 s and app's 574 s, while the quality gates and tests
 that followed took about 12 s. The installs also serialised builds on the venv's exclusive lock
 (`Waiting to acquire exclusive lock for …/.venv`).
 
 A second queue sat in front of that one. The `<workspace>.local` orchestrator declared
 `agent { node { label 'built-in' } }`, holding one of the built-in node's two executors for its
 whole run although it only triggers jobs. Each "parallel" phase therefore ran its projects one
-at a time: app waited 875 s for recordstream, and annotaide and purifai showed
-`Waiting for next available executor` behind torpaido.
+at a time: app waited 875 s for datasets, and labels and cleaner showed
+`Waiting for next available executor` behind compiler.
 
 ### Decision
 
@@ -1109,7 +1110,7 @@ at a time: app waited 875 s for recordstream, and annotaide and purifai showed
   checkout as its source (`direct_url.json`, written for every editable install), else the build
   stops naming `aisland setup`. It reads the distribution rather than looking up the package, for
   two reasons: nothing is imported, and a project may ship its code inside another project's
-  package namespace (`raidar-ultralytics` installs `raidar/ultralytics/`), where a package lookup
+  package namespace (`detector-yolo` installs `detector/yolo/`), where a package lookup
   would resolve a sibling's checkout. It runs `python3 -P` — Jenkins runs inside the checkout,
   and without `-P` the working directory is first on `sys.path`, so a stale `<name>.egg-info`
   left there shadows the venv's record and a correctly-installed project fails (measured on
@@ -1138,7 +1139,7 @@ stage('Initialize') {
     steps {
         echo 'Validating Environment...'
         sh "${VENV_BIN}/python3 --version"
-        sh """${VENV_BIN}/python3 -P - 'torpaido' "${env.WORKSPACE_ROOT}/torpaido" <<'PY'
+        sh """${VENV_BIN}/python3 -P - 'compiler' "${env.WORKSPACE_ROOT}/compiler" <<'PY'
 import importlib.metadata, json, pathlib, sys
 dist, checkout = sys.argv[1], pathlib.Path(sys.argv[2]).resolve()
 try:
@@ -1155,8 +1156,8 @@ PY"""
 ```
 
 ```text
-torpaido -> /home/you/acme/torpaido                                                                              # exit 0
-torpaido is not installed from /home/you/acme/torpaido (found: file:///Users/you/other/torpaido) - run `aisland setup`   # exit 1
+compiler -> /home/you/acme/compiler                                                                              # exit 0
+compiler is not installed from /home/you/acme/compiler (found: file:///Users/you/other/compiler) - run `aisland setup`   # exit 1
 ```
 
 ### What you may change
@@ -1178,11 +1179,11 @@ The local orchestrator builds every project at 01:00 and waits for each build (`
 `wait: true`); nothing in the orchestrator or the project pipelines bounded that wait. On
 2026-10-14 the Slow Tests stage of one project's `.local` #13 ran 518.6 min (41 392 tests whose
 own clocks summed to 11 min; pytest's clock said 8:38:30) and passed; on 2026-10-15 the Unit Tests
-stage of `annotaide.local` #37 waited 108.9 min on a test that waits for a SIGINT Jenkins' background
+stage of `labels.local` #37 waited 108.9 min on a test that waits for a SIGINT Jenkins' background
 shell ignores, until a hand `kill` ended pytest (`Terminated: 15`, exit 143). Both held
 `acme.local` #36 "building" from 01:00 into the afternoon, and the morning report could only say
 "still building". The stage durations of the six 01:00 runs before (read from each build's
-pipeline-graph record) were small and steady: Unit Tests at most 6.0 min (streamstudio), Slow Tests
+pipeline-graph record) were small and steady: Unit Tests at most 6.0 min (canvas), Slow Tests
 at most 29.6 min, Verify Examples 0.5 min, Verify Notebooks 1.4 min, Initialize and
 the quality gates 0.2 min. The 35-48 min builds of some projects were executor queueing
 inside the build, not stage time.
@@ -1231,7 +1232,7 @@ running, holding an executor for the rest of the night, and its own record would
 - A project whose healthy run grows past its limit fails its nightly build with the line above
   until the number in `STAGE_LIMITS` is raised and every project re-scaffolded — the morning
   report names it, so it is never silent.
-- `aisland tests nightly` says `annotaide (timed out after 15 min)` for such a build, and its
+- `aisland tests nightly` says `labels (timed out after 15 min)` for such a build, and its
   markdown quotes the line under the project's heading.
 
 ### Example
@@ -1516,8 +1517,8 @@ happen in the runs nobody kept: the ones agents and developers make while they w
 ### Example
 
 ```console
-$ aisland tests report streamstudio
-streamstudio - the last 30 days: 4 local runs, 3 Jenkins builds
+$ aisland tests report canvas
+canvas - the last 30 days: 4 local runs, 3 Jenkins builds
 Fast run: 6m 10s (median of 2 whole runs; last 6m 02s) - budget 5m 00s, 1m 10s over
 
 Move to the slow run (never failed, slowest first) to fit 5m 00s:
@@ -1529,8 +1530,8 @@ Move to the slow run (never failed, slowest first) to fit 5m 00s:
 # What an MCP tool wrapping the report returns: the same object as data.
 from aisland.pytest_stats import build_report
 
-build_report("streamstudio", days=30).to_dict()
-# {"project": "streamstudio", "fast_run_seconds": 370.0, "to_slow": [{"test": "...", ...}], ...}
+build_report("canvas", days=30).to_dict()
+# {"project": "canvas", "fast_run_seconds": 370.0, "to_slow": [{"test": "...", ...}], ...}
 ```
 
 ### What you may change
@@ -1603,20 +1604,20 @@ before the `.venv` exists, and from a submodule's shell, where `aisland` is not 
 ### Example
 
 ```console
-$ git pull-all                       # both machines recorded navigaitor
+$ git pull-all                       # both machines recorded planner
 fetching the root and 25 submodules…
-navigaitor             merged origin/dev/main (1 commit)
-root                   pointer conflict navigaitor → 6cb3d7f (holds both sides)
+planner             merged origin/dev/main (1 commit)
+root                   pointer conflict planner → 6cb3d7f (holds both sides)
 root                   merged origin/dev/main (1 commit)
 ```
 
 ```bash
 # the settle rule, as git_pull_all.sh applies it to each conflicted gitlink
-ours=$(git rev-parse :2:navigaitor); theirs=$(git rev-parse :3:navigaitor)
-head=$(git -C navigaitor rev-parse HEAD)
-git -C navigaitor merge-base --is-ancestor "$ours" "$head" &&
-    git -C navigaitor merge-base --is-ancestor "$theirs" "$head" &&
-    git add navigaitor          # settled; otherwise it stays listed as CONFLICT
+ours=$(git rev-parse :2:planner); theirs=$(git rev-parse :3:planner)
+head=$(git -C planner rev-parse HEAD)
+git -C planner merge-base --is-ancestor "$ours" "$head" &&
+    git -C planner merge-base --is-ancestor "$theirs" "$head" &&
+    git add planner          # settled; otherwise it stays listed as CONFLICT
 ```
 
 ### What you may change
@@ -1790,13 +1791,13 @@ Fix: brew install openjdk@25
 
 ### Context
 
-A project that is not on PyPI (navigaitor, say) has to be installable on a machine that has
+A project that is not on PyPI (planner, say) has to be installable on a machine that has
 neither the workspace nor access to the workspace's GitHub repositories. Its dependencies are
-workspace projects of two kinds: some are on PyPI (confluid, recordstream), some are not (a
+workspace projects of two kinds: some are on PyPI (corelib, datasets), some are not (a
 sibling not yet released). The second kind has to travel with the project. And because those
 wheels are built from this checkout, they can use code that the PyPI releases of the first kind
-do not hold yet — measured on 2026-10-08: a sibling's module imported `recordstream.draws`, which
-recordstream 0.1.0a2 on PyPI lacks, so an install that resolves fine fails at `import`.
+do not hold yet — measured on 2026-10-08: a sibling's module imported `datasets.draws`, which
+datasets 0.1.0a2 on PyPI lacks, so an install that resolves fine fails at `import`.
 
 ### Decision
 
@@ -1832,7 +1833,7 @@ Rejected:
   would put a second version into the files, against the rule that the version lives once, in
   `pyproject.toml`. A reinstall is one documented command instead.
 - **Every workspace project by default.** Wheels the project never imports (aisland,
-  navigaitor, torpaido) would be shipped and committed on every rebuild. `--all` builds them on
+  planner, compiler) would be shipped and committed on every rebuild. `--all` builds them on
   request (next record).
 
 ### Consequences
@@ -1841,7 +1842,7 @@ Rejected:
   ship a wheel too many or one too few) and takes about 35 s with uv's cache warm.
 - The import check imports every module, because a module no package imports is otherwise
   never checked (measured 2026-10-08: importing only the outermost packages of a project with
-  unreleased dependencies found 2 modules missing `recordstream.draws`; importing every module
+  unreleased dependencies found 2 modules missing `datasets.draws`; importing every module
   found 9). The optional extras' modules, whose
   dependencies the empty venv does not install, are kept from failing the run by one rule: a
   package that fails, or any module missing a workspace project's module, is a break (exit 1);
@@ -1865,23 +1866,23 @@ Rejected:
 ### Example
 
 ```text
-$ aisland wheels navigaitor            # exit 0
+$ aisland wheels planner            # exit 0
 ...
-Installed navigaitor in an empty venv (its wheels + PyPI) and imported every module of its 1 package:
+Installed planner in an empty venv (its wheels + PyPI) and imported every module of its 1 package:
   17 modules imported
 
 Not imported, missing what no workspace project ships (an optional extra's?):
-  navigaitor.server         ModuleNotFoundError: No module named 'sonair'
-  navigaitor.visualisation  ModuleNotFoundError: No module named 'matplotlib'
+  planner.server         ModuleNotFoundError: No module named 'vision'
+  planner.visualisation  ModuleNotFoundError: No module named 'matplotlib'
 
-Behind, nothing breaks: confluid, liquifai, recordstream
+Behind, nothing breaks: corelib, liquifai, datasets
 ```
 
 ```python
 from aisland import wheels
 from aisland.projects import get_workspace_root
 
-report = wheels.vendor_wheels(get_workspace_root(), "navigaitor")
+report = wheels.vendor_wheels(get_workspace_root(), "planner")
 report.release_first      # []: a module missing a workspace project's module would name it here
 report.to_dict()["ok"]    # True: what an MCP tool would return
 ```
@@ -1902,14 +1903,14 @@ report.to_dict()["ok"]    # True: what an MCP tool would return
 ### Context
 
 Shipping only what PyPI lacks leaves the other machine at the mercy of the PyPI releases: on
-2026-10-08 a project's modules could not import because recordstream 0.1.0a2 on PyPI lacked
-`recordstream.draws`. The user asked for an option that ships the published dependencies as
+2026-10-08 a project's modules could not import because datasets 0.1.0a2 on PyPI lacked
+`datasets.draws`. The user asked for an option that ships the published dependencies as
 wheels too, and one that ships every workspace project. A wheel built from a checkout ahead of
 its release carries the SAME version as the release, and the old install line
 (`pip install --find-links wheels -e .`) then took PyPI's: measured 2026-10-09 in an empty venv,
-`pip install --find-links wheels recordstream` installed PyPI's 0.1.0a2 (`recordstream.draws`
-missing), while `uv pip install --find-links wheels recordstream` installed the folder's. Named
-by its file (`pip install --find-links wheels wheels/recordstream-0.1.0a2-py3-none-any.whl`), pip
+`pip install --find-links wheels datasets` installed PyPI's 0.1.0a2 (`datasets.draws`
+missing), while `uv pip install --find-links wheels datasets` installed the folder's. Named
+by its file (`pip install --find-links wheels wheels/datasets-0.1.0a2-py3-none-any.whl`), pip
 installed the folder's.
 
 ### Decision
@@ -1935,7 +1936,7 @@ installed the folder's.
 
 Rejected:
 - **`pip install wheels/*.whl`.** Under `--all` it would install every workspace project with its
-  dependencies (raidar and matrainer pull torch and Lightning).
+  dependencies (detector and trainer pull torch and Lightning).
 - **A local version label per build**, again (previous record): naming the files solves the
   same-version choice without a second version in the files.
 
@@ -1955,17 +1956,17 @@ Rejected:
 ### Example
 
 ```bash
-aisland wheels navigaitor --include-published
-python wheels/install.py --dry-run      # on the other machine, from navigaitor/
-# $ python -m pip install --find-links …/wheels -e …/navigaitor …/wheels/confluid-0.4.1-py3-none-any.whl …
+aisland wheels planner --include-published
+python wheels/install.py --dry-run      # on the other machine, from planner/
+# $ python -m pip install --find-links …/wheels -e …/planner …/wheels/corelib-0.4.1-py3-none-any.whl …
 ```
 
 ```python
 from aisland import wheels
 from aisland.projects import get_workspace_root
 
-report = wheels.vendor_wheels(get_workspace_root(), "navigaitor", scope="needed")
-[(b.project, b.on_pypi) for b in report.built][:2]   # [('confluid', '0.4.1'), ('liquifai', '0.3.1')]
+report = wheels.vendor_wheels(get_workspace_root(), "planner", scope="needed")
+[(b.project, b.on_pypi) for b in report.built][:2]   # [('corelib', '0.4.1'), ('liquifai', '0.3.1')]
 report.not_built                                      # []: a needed project without a checkout here would be listed
 ```
 
@@ -2023,16 +2024,16 @@ Rejected:
 ### Example
 
 ```bash
-aisland wheels build navigaitor --all --zip
-# … Zip: navigaitor/wheels/navigaitor-wheels.zip (…) — install it from the navigaitor folder with: python navigaitor-wheels.zip
-cd ~/src/navigaitor && python ~/Downloads/navigaitor-wheels.zip --dry-run   # the other machine
+aisland wheels build planner --all --zip
+# … Zip: planner/wheels/planner-wheels.zip (…) — install it from the planner folder with: python planner-wheels.zip
+cd ~/src/planner && python ~/Downloads/planner-wheels.zip --dry-run   # the other machine
 ```
 
 ```python
 from aisland import wheels
 from aisland.projects import get_workspace_root
 
-report = wheels.vendor_wheels(get_workspace_root(), "navigaitor", commit=True, make_zip=True)
+report = wheels.vendor_wheels(get_workspace_root(), "planner", commit=True, make_zip=True)
 report.committed, report.commit_note, report.zip_file
 ```
 
@@ -2152,8 +2153,8 @@ Rejected:
 ### Example
 
 ```bash
-aisland wheels build navigaitor --bundle
-# … Bundle: navigaitor/wheels/bundle/navigaitor_bundle-<version>-py3-none-any.whl (…) — … in one wheel …
+aisland wheels build planner --bundle
+# … Bundle: planner/wheels/bundle/navigaitor_bundle-<version>-py3-none-any.whl (…) — … in one wheel …
 pip install navigaitor_bundle-<version>-py3-none-any.whl   # the other machine
 ```
 
@@ -2161,7 +2162,7 @@ pip install navigaitor_bundle-<version>-py3-none-any.whl   # the other machine
 from aisland import wheels
 from aisland.projects import get_workspace_root
 
-report = wheels.vendor_wheels(get_workspace_root(), "navigaitor", bundle=True)
+report = wheels.vendor_wheels(get_workspace_root(), "planner", bundle=True)
 report.bundle.wheel, report.bundle.projects, report.bundle_import_failures
 ```
 
@@ -2281,9 +2282,9 @@ mistake the refusal exists to prevent.
 from aisland import wheels
 from aisland.projects import get_workspace_root
 
-report = wheels.vendor_wheels(get_workspace_root(), "navigaitor", scope="all", force=True)
+report = wheels.vendor_wheels(get_workspace_root(), "planner", scope="all", force=True)
 [(b.project, b.commit, b.uncommitted) for b in report.built if b.uncommitted]
-# [('navigaitor-dependency', '1a2b3c4+uncommitted', [' M pkg/module.py', '?? pkg/new.py'])]
+# [('planner-dependency', '1a2b3c4+uncommitted', [' M pkg/module.py', '?? pkg/new.py'])]
 ```
 
 ### What you may change
@@ -2329,7 +2330,7 @@ and a build per published project), and a person who wants no check wants neithe
 from aisland import wheels
 from aisland.projects import get_workspace_root
 
-report = wheels.vendor_wheels(get_workspace_root(), "navigaitor", scope="all", make_zip=True, check=False)
+report = wheels.vendor_wheels(get_workspace_root(), "planner", scope="all", make_zip=True, check=False)
 report.checked, report.ok, report.imported
 # (False, True, [])
 ```
@@ -3087,7 +3088,7 @@ separate check (`require_defined_declarations`) that named no line.
 
 ### Decision
 
-A selection is the projects': the one whose `[tool.aisland.selection.<name>]` has `question` defines it (matrainer
+A selection is the projects': the one whose `[tool.aisland.selection.<name>]` has `question` defines it (trainer
 asks `framework` and `tracker`), every project's `choices` are its menu, and discovery refuses a choice that is no
 extra, naming the file and the line. aisland keeps only `extras`. The choice is committed as `[workspace] <name> =
 [...]` in `workspace.toml` and chosen per machine as `aisland.<name>.selected`; each selection is a workspace-level
@@ -3121,7 +3122,7 @@ project that needs one framework outright keeps it as a base dependency rather t
 ### Example
 
 ```toml
-# matrainer/pyproject.toml — defines the selection
+# trainer/pyproject.toml — defines the selection
 [tool.aisland.selection.tracker]
 question = "Which experiment-tracking backends should this machine install?"
 choices = ["mlflow", "tensorboard", "aim", "clearml", "wandb"]
@@ -3196,8 +3197,8 @@ until `python wheels/install.py` had run by hand.
 
 The generated root `uv.toml` lists each activated project's `wheels/` folder (marked by its `wheels.yaml`) under
 `find-links`, relative to the file. Measured: uv resolves the relative path against the file's folder, from the root
-and from a folder below it; it installs a wheel only the folder has; and it takes the folder's `confluid-0.4.1` over
-PyPI's `confluid-0.4.1` whose files differ — pip, through `--find-links`, takes PyPI's. The user chose every such
+and from a folder below it; it installs a wheel only the folder has; and it takes the folder's `corelib-0.4.1` over
+PyPI's `corelib-0.4.1` whose files differ — pip, through `--find-links`, takes PyPI's. The user chose every such
 folder, tracked in git or not.
 
 ### Consequences
@@ -3287,7 +3288,7 @@ asking"); `aisland provision` is gone. There is no configure plugin: which proje
 $ aisland workspace provision
   TOOL                           HOW   PROJECTS      INSTALLED
   f1bonacc1/tap/process-compose  brew  aisland       yes
-  node                           brew  streamstudio  yes
+  node                           brew  canvas  yes
 ```
 
 ### What you may change
@@ -3304,7 +3305,7 @@ $ aisland workspace provision
 ### Context
 
 Every service was a class inside aisland, listed by hand in each of `aisland start|stop|status|info|reset`, whatever
-project actually used it (FiftyOne serves curaitor's datasets, Aim and ClearML matrainer's trackers). A workspace
+project actually used it (FiftyOne serves curator's datasets, Aim and ClearML trainer's trackers). A workspace
 without that project still carried the service, and adding one meant editing aisland.
 
 ### Decision
@@ -3318,15 +3319,15 @@ and may not take a name aisland uses. A moved service disappears with its projec
 
 ### Consequences
 
-- FiftyOne lives in curaitor (`curaitor/fiftyone_service.py`); its data folder stays `data/fiftyone/`.
+- FiftyOne lives in curator (`curator/fiftyone_service.py`); its data folder stays `data/fiftyone/`.
 - `aisland services start` no longer starts FiftyOne; `aisland services start fiftyone` does.
-- Finding the list imported each installed project's class (about 0.1 s for curaitor) until 2026-10-29, when the
+- Finding the list imported each installed project's class (about 0.1 s for curator) until 2026-10-29, when the
   listing stopped importing project code (record "Listing the services imports no project's code").
 
 ### Example
 
 ```python
-class FiftyOne:                      # curaitor/fiftyone_service.py — no aisland import
+class FiftyOne:                      # curator/fiftyone_service.py — no aisland import
     kind = "service"
 
     def start(self, ctx):
@@ -3341,15 +3342,15 @@ class FiftyOne:                      # curaitor/fiftyone_service.py — no aisla
 - What the context offers — when a real service needs more, never ahead of one.
 - Never: a service class that imports aisland, or a project's service started by default.
 
-**Amendment (2026-10-25): Aim and ClearML move to matrainer.** The two needed more than FiftyOne, so the class may
+**Amendment (2026-10-25): Aim and ClearML move to trainer.** The two needed more than FiftyOne, so the class may
 now declare `options` (Aim's `--repo`, offered beside `--port`) and `supervised = False` (ClearML's containers are
 Docker's, so its `info` stands alone), and the context gives `workspace_name`, `read_env()` (ClearML reuses the
 login it wrote) and `choose_command(selection, name)` — the command that adds a tracker keeping the ones chosen, so
 the "not installed" message is word for word aisland's. aisland keeps Jenkins, MLflow, Label Studio, Docker,
 SwiftBar and IQEngine.
 
-**Amendment (2026-10-26): Label Studio moves to annotaide, IQEngine to the signal project that reads SigMF.** aisland now keeps Jenkins,
-MLflow, Docker and SwiftBar alone. Label Studio is annotaide's `labelstudio` extra, installed only when named (it
+**Amendment (2026-10-26): Label Studio moves to labels, IQEngine to the signal project that reads SigMF.** aisland now keeps Jenkins,
+MLflow, Docker and SwiftBar alone. Label Studio is labels's `labelstudio` extra, installed only when named (it
 pins its own Django); its class asks git for the default user itself, so the context did not grow. IQEngine runs
 under Docker (`supervised = False`) with its own `stop`/`status`/`reset`, and its reset wipes no data — so a class
 may name the question `aisland <name> reset` asks first (`reset_question`), which `registry.declared` carries onto
@@ -3364,18 +3365,18 @@ class IQEngine:                      # the signal project's — no aisland impor
     reset_question = f"Remove the IQEngine container and the {image_ref()} image? (recordings are kept)"
 ```
 
-**Amendment (2026-10-28): MLflow moves to matrainer.** aisland keeps Jenkins, Docker and SwiftBar alone — the
+**Amendment (2026-10-28): MLflow moves to trainer.** aisland keeps Jenkins, Docker and SwiftBar alone — the
 services every workspace may want; a tracking server is the trackers' project's. It came out of the release review:
 aisland's own MLflow failed with `aisland workspace configure tracker set mlflow`, a command that exists only where a
 project defines the `tracker` selection, so in a workspace without that project its error named a command that is
-not there. As matrainer's class it exists only where that selection does, and `selection.missing_message` went with
+not there. As trainer's class it exists only where that selection does, and `selection.missing_message` went with
 it (`ctx.choose_command` is the one wording). Nothing the context offers had to grow. What changed for a user: `aisland
 mlflow` comes with the project; `aisland services start` without names no longer starts it (a project's service starts
 when named); `aisland mlflow ui <db>` is gone (`mlflow ui --backend-store-uri sqlite:///<db>` is the same). Its data
 folder is still `data/mlflow/`, so a store written before the move is served after it.
 
 ```python
-class MLflow:                        # matrainer's — no aisland import
+class MLflow:                        # trainer's — no aisland import
     kind = "service"
 
     def start(self, ctx: Any) -> None:
@@ -3705,7 +3706,7 @@ reads would never be in it); editing `.env` (`--missing` prints, the person past
 $ aisland workspace env-example
 ==> Wrote env.complete (67 variables from 26 projects)
 ==> Wrote env.example (0 variables from 0 projects)
-    no env.example: loggair, confluid, liquifai, …
+    no env.example: loggair, corelib, liquifai, …
 ```
 
 ### What you may change

@@ -198,8 +198,8 @@ None is needed; each changes one default. `env.complete` lists them with every v
 - [Remote machines](https://github.com/Gearlux/aisland/blob/main/docs/tunnel.md)
 - [Stability](https://github.com/Gearlux/aisland/blob/main/docs/stability.md) — what a release keeps, and what may
   change in any release
-- [Design decisions](https://github.com/Gearlux/aisland/blob/main/docs/architecture.md) — why each mechanism is the
-  way it is
+- [Design decisions](https://github.com/Gearlux/aisland/blob/main/docs/architecture.md) — for contributors: the
+  decision log, why each mechanism is the way it is
 
 The examples in [`examples/`](https://github.com/Gearlux/aisland/tree/main/examples) run as written and check what
 the pages show.

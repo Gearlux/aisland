@@ -73,7 +73,7 @@ flake8 .
 # invocation matches what GH Actions / Jenkins run.
 (cd "$WORKSPACE_ROOT" && source .venv/bin/activate && mypy "$PROJECT_DIR/")
 # The FAST run: a project that marks tests `slow` deselects them by default. The slow run
-# (`pytest -m slow`) is CI's — aisland rules → "Two Test Runs, The Fast One Within 5 Minutes" (user ruling 2026-10-05).
+# (`pytest -m slow`) is CI's — aisland rules → "Two Test Runs, The Fast One Within 5 Minutes".
 pytest
 ```
 

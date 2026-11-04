@@ -10,7 +10,7 @@ Run it inside the repository that owns ``<path>`` (a submodule's own folder for 
 
 Why not ``git apply --cached --unidiff-zero`` on a patch of the chosen hunks: git places a hunk with no context —
 a pure insertion — by its NEW-side line number, which counts the lines of the hunks left out, so an insertion after a
-left-out hunk lands that many lines too far down (2026-10-05: twice in real commits — a function read a variable the
+left-out hunk lands that many lines too far down (twice in real commits — a function read a variable the
 misplaced line was meant to set; README table rows landed at the end of the file).
 
 What this does instead: it takes the file as the INDEX holds it (HEAD, plus anything another session already

@@ -9,7 +9,7 @@ allowed-tools: [Bash(git pull-all:*), Bash(aisland workspace mirror sync:*), Bas
 
 Pushes the current branch of every repository — the submodules, then the root — after merging what origin has. It commits only what `/pull-all` commits (merges, recorded submodule pointers): run `/commit-all` or `/commit-session` first for your own work. It never merges into `main` (that is `/ship`).
 
-**No quality gates** (user ruling 2026-10-07: "push-all should not execute the gates (that is the /ship command)"): the committed work was checked when its task ended, and `/ship` runs the gates before it merges into `main`. The only checks on the way are `/pull-all`'s own, on a merge conflict it resolved by hand before committing it — which is why the formatters and `pytest` stay in `allowed-tools`.
+**No quality gates**: the committed work was checked when its task ended, and `/ship` runs the gates before it merges into `main`. The only checks on the way are `/pull-all`'s own, on a merge conflict it resolved by hand before committing it — which is why the formatters and `pytest` stay in `allowed-tools`.
 
 When the user invokes `/push-all`:
 

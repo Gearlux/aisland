@@ -13,7 +13,7 @@ When the user invokes `/pull-all`:
 
 1. **Run it** from the workspace root: `git pull-all`. Exit 0 → step 6.
 
-2. **Edits in the way** — `not merged: uncommitted edits to <files> would be overwritten`. The user's standing choice (2026-10-06) is to set them aside, merge and put them back; a stash rewrites those files, so coordinate first (aisland rules → "Sessions On This Machine Coordinate Before They Edit"):
+2. **Edits in the way** — `not merged: uncommitted edits to <files> would be overwritten`. The standing choice is to set them aside, merge and put them back; a stash rewrites those files, so coordinate first (aisland rules → "Sessions On This Machine Coordinate Before They Edit"):
    a. `ListAgents`; send each **busy** peer one message whose first line is `<your session name>: HOLD <repo>/<file>, … — /pull-all sets them aside to merge and puts them back`, naming every listed file. Wait for each `HOLDING` (`notify_when_idle: true`, never a polling loop). A peer that goes idle without answering, or no answer in about 5 minutes → tell the user which session and files, skip `--autostash` this round, and go on with step 3.
    b. `git pull-all --autostash`.
    c. When steps 3–4 are done, send the same peers `RESUME <files>`; name any file whose put-back clashed (step 4), so its owner re-reads it.

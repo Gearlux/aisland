@@ -198,8 +198,9 @@ def _commands(group: click.Group, path: Tuple[str, ...] = ("aisland",)) -> Itera
             yield " ".join(path + (name,)), command
 
 
-@pytest.mark.parametrize("page", [README, *_user_pages()], ids=lambda page: page.name)
+@pytest.mark.parametrize("page", [README, *_user_pages(), DOCS / "architecture.md"], ids=lambda page: page.name)
 def test_a_user_page_names_no_project_of_the_workspace(page: Path) -> None:
+    """The decision log too: it is published with the docs, and names a project it measured on by its role."""
     pattern = _WORKSPACE_NAME
     text = page.read_text(encoding="utf-8")
     if page.name == "services.md":
@@ -208,6 +209,22 @@ def test_a_user_page_names_no_project_of_the_workspace(page: Path) -> None:
         f"{page.name}:{number}: {line.strip()}"
         for number, line in enumerate(text.splitlines(), start=1)
         if pattern.search(line)
+    ]
+    assert hits == []
+
+
+@pytest.mark.parametrize(
+    "page",
+    [PROJECT / "CHANGELOG.md", *sorted(EXAMPLES.rglob("*.py"))],
+    ids=lambda page: page.name,
+)
+def test_the_changelog_and_the_examples_name_no_project_of_the_workspace(page: Path) -> None:
+    """The CHANGELOG is linked from PyPI and the examples are a page's runnable twin: both are read by anyone, so
+    they follow the user pages (aisland rules → "Docs Never Name Dependent Projects")."""
+    hits = [
+        f"{page.name}:{number}: {line.strip()}"
+        for number, line in enumerate(page.read_text(encoding="utf-8").splitlines(), start=1)
+        if _WORKSPACE_NAME.search(line)
     ]
     assert hits == []
 
