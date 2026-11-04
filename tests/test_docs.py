@@ -19,9 +19,10 @@ from typing import Dict, Iterator, List, Set, Tuple
 import click
 import pytest
 
-from aisland import ci_templates, wheels_unzip
+from aisland import ci_templates
 from aisland.cli import main
 from aisland.services import registry
+from aisland.wheels import unzip as wheels_unzip
 
 PROJECT = Path(__file__).resolve().parents[1]
 README = PROJECT / "README.md"

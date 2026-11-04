@@ -9,8 +9,9 @@ from typing import Any, Callable, Dict, Iterator, List
 
 import pytest
 
-from aisland import gitcmd, mirrors, wheels_prune
+from aisland import gitcmd, mirrors
 from aisland.errors import AislandError
+from aisland.wheels import prune as wheels_prune
 
 
 def test_git_captures_text_output_in_the_repository(tmp_path: Path) -> None:

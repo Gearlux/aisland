@@ -19,8 +19,9 @@ import dataclasses
 from pathlib import Path
 from typing import List, Optional, Sequence
 
-from aisland import locations, machine_config, pytest_stats, workspace_file
+from aisland import locations, machine_config, pytest_stats
 from aisland.errors import AislandError
+from aisland.workspace import file as workspace_file
 
 KEY = pytest_stats.RECORD_KEY
 

@@ -22,7 +22,8 @@ import subprocess
 import tempfile
 from pathlib import Path
 
-from aisland import tunnel_connect, tunnel_shell
+from aisland.tunnel import connect as tunnel_connect
+from aisland.tunnel import shell as tunnel_shell
 
 
 def main() -> None:

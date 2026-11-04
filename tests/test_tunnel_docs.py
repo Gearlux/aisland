@@ -20,7 +20,7 @@ from typing import Optional
 import click
 import pytest
 
-from aisland import tunnel_connect
+from aisland.tunnel import connect as tunnel_connect
 
 PROJECT = Path(__file__).resolve().parents[1]
 PAGE = PROJECT / "docs" / "tunnel.md"

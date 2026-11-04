@@ -1,5 +1,5 @@
 """`aisland tunnel …`: a VS Code Remote Tunnel to the machine aisland runs on (:mod:`aisland.tunnel`), and a terminal
-on a remote one through it (:mod:`aisland.tunnel_connect`).
+on a remote one through it (:mod:`aisland.tunnel.connect`).
 """
 
 import json
@@ -8,10 +8,10 @@ from typing import Optional, Tuple
 
 import click
 
-from aisland import tunnel as tunnel_mod
-from aisland import tunnel_connect as tunnel_connect_mod
 from aisland.cli._base import _Group
 from aisland.errors import AislandError
+from aisland.tunnel import connect as tunnel_connect_mod
+from aisland.tunnel import host as tunnel_mod
 
 # --- Remote Tunnel ---
 

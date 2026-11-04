@@ -28,8 +28,8 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional, Set, Tuple
 
 from aisland import __version__, atomic, gitmodules, locations
-from aisland.discovery import Where, key_line, table_line
 from aisland.errors import AislandError
+from aisland.toml_places import Where, key_line, table_line
 
 #: The file, at the workspace root.
 FILE_NAME = "workspace.toml"
@@ -204,7 +204,7 @@ def _header(name: str) -> str:
     """The how-to the file starts with: it is read on a machine that has no aisland yet."""
     return f"""\
 # {FILE_NAME} — the {name} workspace: its projects and its choices, committed.
-# Kept by `aisland setup` (aisland/aisland/workspace_file.py): it adds a new project, follows a changed url or folder
+# Kept by `aisland setup` (aisland/aisland/workspace/file.py): it adds a new project, follows a changed url or folder
 # and drops a project that is gone; the rest is yours to edit.
 # =========================================================================
 # A workspace aisland creates on a new machine. From the folder that will hold it:

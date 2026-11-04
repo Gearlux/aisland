@@ -34,7 +34,7 @@ from typing import List, Sequence, Union
 import click
 import yaml
 
-from aisland import failures, provision
+from aisland import console, failures, provision
 from aisland.errors import AislandError
 from aisland.services.base import BaseService, ServiceState, service_state, styled_state
 
@@ -170,11 +170,11 @@ class DockerService(BaseService):
                     + "\n  Mounts take effect when the VM boots. Restart it (this stops every running container):\n"
                     f"      aisland docker restart {flags}"
                 )
-            click.echo("Docker (Colima) is already running.")
+            console.echo("Docker (Colima) is already running.")
             self.configure_socket()
             return
 
-        click.echo("Starting Docker (Colima)...")
+        console.echo("Starting Docker (Colima)...")
         try:
             # Colima start itself backgrounds by default; we only check that it succeeds.
             # Colima persists these flags into its profile, so a later bare start keeps the mounts.
@@ -183,20 +183,20 @@ class DockerService(BaseService):
             # Ensure Docker socket is configured
             self.configure_socket()
 
-            click.echo("Docker (Colima) started successfully.")
+            console.echo("Docker (Colima) started successfully.")
         except subprocess.CalledProcessError as e:
             failures.report(f"Error starting Docker (Colima): {e}")
 
     def stop(self) -> None:
         """Stop the Docker engine via Colima."""
         if not self.is_running():
-            click.echo("Docker (Colima) is not running.")
+            console.echo("Docker (Colima) is not running.")
             return
 
-        click.echo("Stopping Docker (Colima)...")
+        console.echo("Stopping Docker (Colima)...")
         try:
             subprocess.check_call(["colima", "stop"])
-            click.echo("Docker (Colima) stopped.")
+            console.echo("Docker (Colima) stopped.")
         except subprocess.CalledProcessError as e:
             failures.report(f"Error stopping Docker (Colima): {e}")
 
@@ -209,27 +209,29 @@ class DockerService(BaseService):
     def status(self) -> None:
         """Display Docker engine status (its socket: :meth:`info`)."""
         state = self.state()["state"]
-        click.echo(f"  Docker (Colima)  : {styled_state(state, 'Not Installed' if state == 'not installed' else None)}")
+        console.echo(
+            f"  Docker (Colima)  : {styled_state(state, 'Not Installed' if state == 'not installed' else None)}"
+        )
 
     def info(self) -> None:
         """Show detailed Docker (Colima) configuration."""
-        click.echo(click.style("Docker (Colima):", bold=True))
+        console.echo(click.style("Docker (Colima):", bold=True))
         try:
             result = subprocess.run(["colima", "status"], capture_output=True, text=True)
             if result.returncode == 0:
-                click.echo(f"  Status        : {click.style('Running', fg='green')}")
+                console.echo(f"  Status        : {click.style('Running', fg='green')}")
             else:
-                click.echo(f"  Status        : {click.style('Stopped', fg='red')}")
+                console.echo(f"  Status        : {click.style('Stopped', fg='red')}")
             for line in result.stdout.splitlines():
                 line = line.strip()
                 if line:
-                    click.echo(f"  colima        : {line}")
+                    console.echo(f"  colima        : {line}")
         except FileNotFoundError:
-            click.echo(f"  Status        : {click.style('Not Installed', fg='yellow')}")
-            click.echo("  Install with  : brew install colima")
+            console.echo(f"  Status        : {click.style('Not Installed', fg='yellow')}")
+            console.echo("  Install with  : brew install colima")
             return
 
-        click.echo(
+        console.echo(
             "  VM mounts     : "
             + ", ".join(mount.spec for mount in self.configured_mounts())
             + "  (a container bind mount sees only these; add one with `aisland docker start --mount DIR[:w]`)"
@@ -238,14 +240,14 @@ class DockerService(BaseService):
         colima_socket_legacy = Path.home() / ".colima" / "docker.sock"
         colima_socket = colima_socket_default if colima_socket_default.exists() else colima_socket_legacy
         standard_socket = STANDARD_SOCKET
-        click.echo(f"  Colima socket : {colima_socket} " + ("(present)" if colima_socket.exists() else "(missing)"))
+        console.echo(f"  Colima socket : {colima_socket} " + ("(present)" if colima_socket.exists() else "(missing)"))
         link_info = ""
         if standard_socket.is_symlink():
             try:
                 link_info = f" -> {os.readlink(standard_socket)}"
             except OSError:
                 link_info = ""
-        click.echo(
+        console.echo(
             f"  Docker socket : {standard_socket}{link_info} "
             + ("(present)" if standard_socket.exists() or standard_socket.is_symlink() else "(missing)")
         )
@@ -264,7 +266,7 @@ class DockerService(BaseService):
             failures.warn(f"  - Warning: Colima socket not found at {colima_socket}")
             return
 
-        click.echo("Configuring Docker socket symlink...")
+        console.echo("Configuring Docker socket symlink...")
         try:
             if standard_socket.exists() or standard_socket.is_symlink():
                 if standard_socket.is_symlink() and os.readlink(standard_socket) == str(colima_socket):
@@ -283,29 +285,31 @@ class DockerService(BaseService):
                         f"sudo ln -s {colima_socket} {standard_socket}"
                     )
                     return
-                click.echo(f"  - Removing existing {standard_socket}...")
+                console.echo(f"  - Removing existing {standard_socket}...")
                 subprocess.run(["sudo", "rm", "-f", str(standard_socket)], check=True)
 
             # Create symlink (requires sudo for /var/run)
-            click.echo(f"  - Creating symlink: {standard_socket} -> {colima_socket}")
+            console.echo(f"  - Creating symlink: {standard_socket} -> {colima_socket}")
             subprocess.run(
                 ["sudo", "ln", "-s", str(colima_socket), str(standard_socket)],
                 check=True,
             )
-            click.echo("  - Socket configuration complete.")
+            console.echo("  - Socket configuration complete.")
         except subprocess.CalledProcessError as e:
             failures.report(f"  - Error configuring socket symlink: {e}")
-            click.echo("    (You may need to manually run: sudo ln -s " + str(colima_socket) + " /var/run/docker.sock)")
+            console.echo(
+                "    (You may need to manually run: sudo ln -s " + str(colima_socket) + " /var/run/docker.sock)"
+            )
 
     def reset(self) -> None:
         """Factory reset Colima (wipes all containers/images)."""
-        if click.confirm("Are you sure you want to delete ALL Docker data (containers, images, volumes)?"):
+        if console.confirm("Are you sure you want to delete ALL Docker data (containers, images, volumes)?"):
             if self.is_running():
                 self.stop()
-            click.echo("Deleting Colima instance...")
+            console.echo("Deleting Colima instance...")
             try:
                 subprocess.check_call(["colima", "delete"])
-                click.echo("Docker (Colima) reset complete.")
+                console.echo("Docker (Colima) reset complete.")
             except subprocess.CalledProcessError as e:
                 failures.report(f"Error resetting Docker (Colima): {e}")
 
@@ -344,10 +348,10 @@ class LinuxDockerService(BaseService):
             raise AislandError(f"Docker is not installed. Install Docker Engine: {DOCKER_ENGINE_INSTALL}")
         if not self.is_running():
             raise AislandError("the Docker engine is not running. Start it: sudo systemctl start docker")
-        click.echo("Docker engine is running.")
+        console.echo("Docker engine is running.")
 
     def stop(self) -> None:
-        click.echo(
+        console.echo(
             "Docker engine left running: it is the system's, not aisland's (sudo systemctl stop docker stops it)."
         )
 
@@ -359,20 +363,22 @@ class LinuxDockerService(BaseService):
 
     def status(self) -> None:
         state = self.state()["state"]
-        click.echo(f"  Docker (engine)  : {styled_state(state, 'Not Installed' if state == 'not installed' else None)}")
+        console.echo(
+            f"  Docker (engine)  : {styled_state(state, 'Not Installed' if state == 'not installed' else None)}"
+        )
 
     def info(self) -> None:
-        click.echo(click.style("Docker (engine):", bold=True))
+        console.echo(click.style("Docker (engine):", bold=True))
         if shutil.which("docker") is None:
-            click.echo(f"  Status        : {click.style('Not Installed', fg='yellow')}")
-            click.echo(f"  Install with  : {DOCKER_ENGINE_INSTALL}")
+            console.echo(f"  Status        : {click.style('Not Installed', fg='yellow')}")
+            console.echo(f"  Install with  : {DOCKER_ENGINE_INSTALL}")
             return
         running = self.is_running()
-        click.echo(
+        console.echo(
             f"  Status        : {click.style('Running', fg='green') if running else click.style('Stopped', fg='red')}"
         )
         if not running:
-            click.echo("  Start with    : sudo systemctl start docker")
+            console.echo("  Start with    : sudo systemctl start docker")
 
     def reset(self) -> None:
         raise AislandError(

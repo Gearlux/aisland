@@ -9,7 +9,8 @@ from typing import Iterator
 
 import pytest
 
-from aisland import downloads, wheels
+from aisland import downloads
+from aisland.wheels import build as wheels
 
 
 @pytest.fixture

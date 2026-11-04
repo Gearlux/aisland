@@ -16,7 +16,7 @@ from typing import Any, Dict, List, Optional, Sequence
 import pytest
 from click.testing import CliRunner
 
-from aisland import doctor
+from aisland import doctor, paths
 from aisland.cli import main
 from aisland.services import jenkins as jenkins_module
 from aisland.services import jenkins_java
@@ -364,7 +364,7 @@ def jenkins_bin(machine: Dict[str, Any], monkeypatch: pytest.MonkeyPatch) -> Dic
     """A JenkinsService whose bin dir holds the fake WAR, with downloads and the supervisor stubbed."""
     bin_dir = machine["tmp"] / "bin"
     make_war(bin_dir / "jenkins.war")
-    monkeypatch.setattr(jenkins_module, "BIN_DIR", bin_dir)
+    monkeypatch.setattr(paths, "bin_dir", lambda: bin_dir)
     monkeypatch.setattr(JenkinsService, "setup", lambda self: None)
     monkeypatch.setattr(JenkinsService, "check_credentials_and_print_instructions", lambda self, port: None)
     started: List[List[str]] = []

@@ -21,9 +21,7 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Mapping, Optional
 
-import click
-
-from aisland import projects, supervisor
+from aisland import console, projects, supervisor
 from aisland.errors import AislandError
 from aisland.selection import add_command
 from aisland.services.base import BaseService, ServiceState, service_state
@@ -82,7 +80,7 @@ class ServiceContext:
         return self._service.get_ports()
 
     def echo(self, text: str) -> None:
-        click.echo(text)
+        console.echo(text)
 
     def fail(self, message: str) -> None:
         """Stop the command with one ``Error: <message>`` line."""
@@ -107,7 +105,7 @@ class PluginService(BaseService):
         self.implementation.start(ServiceContext(self, port=port, background=background, options=options))
 
     def restart(self, **kwargs: Any) -> None:  # Any: launch's options, each typed there
-        click.echo(f"Restarting {self.name}...")
+        console.echo(f"Restarting {self.name}...")
         self.stop()
         self.launch(**kwargs)
 

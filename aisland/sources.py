@@ -32,7 +32,7 @@ Two configuration layers, mirroring the existing ``.gitmodules active`` +
 
 * **committed** — each project's ``source``, ``version`` and ``distribution`` (only where it differs from the
   project's name) in its ``[project."<name>"]`` table of ``<workspace>/workspace.toml``, a git source's ref being the
-  project's own ``branch`` (tracked, shared between machines; see :mod:`aisland.workspace_file`);
+  project's own ``branch`` (tracked, shared between machines; see :mod:`aisland.workspace.file`);
 * **per-machine** — ``git config --local aisland.source.<project>.source`` (and ``.branch`` / ``.version``), never
   committed; a missing ``.branch`` is the project's committed branch.
 
@@ -55,11 +55,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Dict, List, Literal, Optional, Tuple, cast, get_args
 
-import click
-
-from aisland import failures, gitcmd, locations, machine_config
+from aisland import console, failures, gitcmd, locations, machine_config
 from aisland import pyproject as pyproject_toml
-from aisland import workspace_file
 from aisland.editor_files import write_code_workspace
 from aisland.errors import AislandError
 from aisland.github import github_repository
@@ -68,6 +65,7 @@ from aisland.mcp_config import no_venv
 from aisland.projects import get_workspace_root, set_submodule_active, submodule_active_map
 from aisland.pypi import PypiInfo, PypiProject, points_at_owner, pypi_json
 from aisland.selection import editable_target
+from aisland.workspace import file as workspace_file
 
 logger = logging.getLogger(__name__)
 
@@ -155,7 +153,7 @@ def read_committed_sources(workspace_root: Path) -> Dict[str, ProjectSource]:
     """Each project of ``workspace.toml`` that has a ``source``; its ``branch`` is a git source's ref.
 
     An unknown kind is skipped with a warning naming its line; a file aisland cannot read is refused
-    (:class:`aisland.workspace_file.FileError`).
+    (:class:`aisland.workspace.file.FileError`).
     """
     result: Dict[str, ProjectSource] = {}
     for name, project in workspace_file.load(workspace_root).projects.items():
@@ -184,7 +182,7 @@ def write_committed_sources(workspace_root: Path, sources: Dict[str, ProjectSour
 
     Nothing is written twice: a ``distribution`` only where it differs from the project's name, a ``version`` only for
     ``pypi``; a git source's ref is the project's ``branch``. A project left with nothing but what a source gave it is
-    dropped (:func:`aisland.workspace_file.set_settings`).
+    dropped (:func:`aisland.workspace.file.set_settings`).
     """
     values: Dict[str, Dict[str, Optional[str]]] = {}
     for name, src in sources.items():
@@ -380,7 +378,7 @@ def apply_source(workspace_root: Path, project: str, source: ProjectSource, uv_c
     rel = str(path.relative_to(workspace_root))
 
     if source.kind == "local":
-        click.echo(f"==> {project}: local checkout @ {source.ref}")
+        console.echo(f"==> {project}: local checkout @ {source.ref}")
         set_submodule_active(workspace_root, project, True)
         if not (path / ".git").exists():
             if not _run(["git", "submodule", "update", "--init", rel], workspace_root):
@@ -390,7 +388,7 @@ def apply_source(workspace_root: Path, project: str, source: ProjectSource, uv_c
         # No ``-f``: a switch that would discard uncommitted work refuses, protecting it. The
         # bare ref relies on git's DWIM (--guess) to create a tracking branch from origin/<ref>.
         if not _run(["git", "switch", source.ref], path):
-            click.echo(f"  - {project}: left on its current branch; resolve local changes and re-run.", err=True)
+            console.echo(f"  - {project}: left on its current branch; resolve local changes and re-run.", err=True)
             return False
         # The SAME target `aisland setup` installs (dev extra + the selected framework/tracker
         # extras) — the bare directory used to drop every extra the machine had selected.
@@ -408,14 +406,14 @@ def apply_source(workspace_root: Path, project: str, source: ProjectSource, uv_c
             )
             return False
         target = pip_vcs_url(url, source.ref)
-        click.echo(f"==> {project}: github @ {source.ref} ({target})")
+        console.echo(f"==> {project}: github @ {source.ref} ({target})")
     else:
         target = ProjectSource(kind="pypi", version=source.version, distribution=distribution).requirement(project)
-        click.echo(f"==> {project}: pypi ({target})")
+        console.echo(f"==> {project}: pypi ({target})")
 
     if (path / ".git").exists():
         if not _run(["git", "submodule", "deinit", rel], workspace_root):
-            click.echo(
+            console.echo(
                 f"  - {project}: deinit refused; the venv was left untouched. "
                 f"{_deinit_remedy(workspace_root, path, rel)}",
                 err=True,
@@ -435,7 +433,7 @@ def apply_all(workspace_root: Path, uv_cmd: str) -> None:
     managed = sorted(set(committed) | set(_overridden_projects(workspace_root)))
     if not managed:
         return
-    click.echo(f"==> Applying per-project sources ({workspace_file.FILE_NAME} + local overrides)...")
+    console.echo(f"==> Applying per-project sources ({workspace_file.FILE_NAME} + local overrides)...")
     for project in managed:
         source = effective_source(workspace_root, project, committed)
         if source is not None:
@@ -586,7 +584,7 @@ def _checked_source(
         if published is None:
             failures.warn(f"  - Warning: {detail}; continuing without verifying '{distribution}'.")
         else:
-            click.echo(f"  - Verified {distribution} {detail} on PyPI (published from github.com/{owner}).")
+            console.echo(f"  - Verified {distribution} {detail} on PyPI (published from github.com/{owner}).")
         return ProjectSource(kind="pypi", version=version, distribution=distribution)
     listed = workspace_file.load(root).projects.get(project)
     branch = ref or (listed.branch if listed else None) or DEFAULT_REF  # no --branch: the project's own
@@ -606,12 +604,12 @@ def _record_source(
     sources that follow."""
     if machine_only:
         set_local_override(root, project, source)
-        click.echo(f"==> {project}: per-machine override set to {source.spec()} (nothing committed).")
+        console.echo(f"==> {project}: per-machine override set to {source.spec()} (nothing committed).")
         return committed
     set_local_override(root, project, None)
     committed = {**committed, project: source}
     path = write_committed_sources(root, committed)
-    click.echo(f"==> {project}: committed source set to {source.spec()} in {path.name}")
+    console.echo(f"==> {project}: committed source set to {source.spec()} in {path.name}")
     return committed
 
 
@@ -695,20 +693,20 @@ def unset_project_source(
 
     if machine_only:
         if local_override(root, project) is None:
-            click.echo(f"'{project}' has no per-machine override; nothing to clear.")
+            console.echo(f"'{project}' has no per-machine override; nothing to clear.")
             return 0
         set_local_override(root, project, None)
-        click.echo(f"==> {project}: per-machine override cleared (committed source still applies).")
+        console.echo(f"==> {project}: per-machine override cleared (committed source still applies).")
         return 0
 
     if project not in committed and local_override(root, project) is None:
-        click.echo(f"'{project}' is already unmanaged.")
+        console.echo(f"'{project}' is already unmanaged.")
         return 0
 
     set_local_override(root, project, None)
     committed.pop(project, None)
     path = write_committed_sources(root, committed)
-    click.echo(f"==> {project}: removed from {path.name} — now unmanaged.")
+    console.echo(f"==> {project}: removed from {path.name} — now unmanaged.")
 
     write_code_workspace(root)
     return 0
@@ -730,7 +728,7 @@ def apply_configured(project: Optional[str] = None, workspace_root: Optional[Pat
 
     source = effective_source(root, project)
     if source is None:
-        click.echo(f"'{project}' has no configured source — it is unmanaged. Nothing to apply.")
+        console.echo(f"'{project}' has no configured source — it is unmanaged. Nothing to apply.")
         return 0
     applied = apply_source(root, project, source, uv_cmd)
     write_code_workspace(root)

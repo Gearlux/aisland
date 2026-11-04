@@ -19,9 +19,10 @@ import git_filter_repo
 import pytest
 from click.testing import CliRunner
 
-from aisland import filter_repo, locations
-from aisland import wheels_prune as wp
+from aisland import locations
 from aisland.cli import main
+from aisland.wheels import filter_repo
+from aisland.wheels import prune as wp
 
 WHEEL = "wheels/models-0.1.0-py3-none-any.whl"
 

@@ -40,14 +40,25 @@ from typing import Any, Dict, Iterator, List, NotRequired, Optional, Tuple, Type
 import click
 import yaml
 
-from aisland import atomic, failures, provision
+from aisland import atomic, console, failures, paths, provision
 from aisland.errors import AislandError
-from aisland.paths import BIN_DIR, DATA_DIR
 from aisland.projects import get_workspace_root
 
-CONFIG_FILE = DATA_DIR / "process-compose.yaml"
-SOCKET_PATH = DATA_DIR / "process-compose.sock"
-SERVER_LOG = DATA_DIR / "process-compose.log"
+
+def config_file() -> Path:
+    """The desired-state document aisland writes and process-compose reads."""
+    return paths.data_dir() / "process-compose.yaml"
+
+
+def socket_path() -> Path:
+    """The supervisor's Unix socket."""
+    return paths.data_dir() / "process-compose.sock"
+
+
+def server_log() -> Path:
+    """The supervisor's own log."""
+    return paths.data_dir() / "process-compose.log"
+
 
 # TCP fallback for Windows, where unix domain sockets are not supported by
 # process-compose. Documented in the workspace .env.
@@ -91,7 +102,7 @@ def find_binary() -> Optional[str]:
     found = shutil.which("process-compose")
     if found:
         return found
-    vendored = BIN_DIR / "process-compose"
+    vendored = paths.bin_dir() / "process-compose"
     if vendored.exists():
         return str(vendored)
     return None
@@ -121,7 +132,7 @@ def _connection_args() -> List[str]:
     if os.name == "nt":
         port = int(os.environ.get("AISLAND_SUPERVISOR_PORT", str(DEFAULT_TCP_PORT)))
         return ["--port", str(port)]
-    return ["--use-uds", "--unix-socket", str(SOCKET_PATH)]
+    return ["--use-uds", "--unix-socket", str(socket_path())]
 
 
 def _run_client(
@@ -259,7 +270,7 @@ def is_server_running() -> bool:
     """True if the aisland process-compose server answers on its socket."""
     if find_binary() is None:
         return False
-    if os.name != "nt" and not SOCKET_PATH.exists():
+    if os.name != "nt" and not socket_path().exists():
         return False
     result = _run_client(["project", "state"])
     return result.returncode == 0
@@ -287,21 +298,21 @@ class ProcessState(TypedDict, total=False):
 
 def load_config() -> Dict[str, Any]:  # Any: the YAML document process-compose reads, nested as it defines
     """Read the desired-state document (empty skeleton if absent/corrupt)."""
-    if CONFIG_FILE.exists():
+    if config_file().exists():
         try:
-            data = yaml.safe_load(CONFIG_FILE.read_text())
+            data = yaml.safe_load(config_file().read_text())
             if isinstance(data, dict) and isinstance(data.get("processes"), dict):
                 return data
         except yaml.YAMLError as e:
-            failures.warn(f"  - Warning: {CONFIG_FILE} is unreadable ({e}); regenerating.")
+            failures.warn(f"  - Warning: {config_file()} is unreadable ({e}); regenerating.")
     return {"version": "0.5", "processes": {}}
 
 
 def save_config(config: Dict[str, object]) -> None:
     """Write the desired-state document with its provenance header."""
-    DATA_DIR.mkdir(parents=True, exist_ok=True)
+    paths.data_dir().mkdir(parents=True, exist_ok=True)
     body = yaml.safe_dump(config, sort_keys=True, default_flow_style=False)
-    atomic.write_text(CONFIG_FILE, _PROVENANCE_HEADER + body)
+    atomic.write_text(config_file(), _PROVENANCE_HEADER + body)
 
 
 def register_process(
@@ -403,7 +414,7 @@ def apply() -> None:
     """
     if is_server_running():
         result = _run_client(
-            ["project", "update", "-f", str(CONFIG_FILE)],
+            ["project", "update", "-f", str(config_file())],
             env={**os.environ, **read_workspace_env()},
         )
         if result.returncode != 0:
@@ -457,11 +468,11 @@ def _preflight_full_disk_access() -> None:
     if _tcc_full_disk_access_granted(binary) is not False:
         return
     keys = ", ".join(f"{key}={value}" for key, value in sorted(exposed.items()))
-    click.echo(
+    console.echo(
         click.style("WARNING: the supervisor binary has no macOS Full Disk Access grant.", fg="yellow", bold=True),
         err=True,
     )
-    click.echo(
+    console.echo(
         f"  {keys} point(s) at an external volume, but macOS attributes every supervised\n"
         "  service's file access to the process-compose binary (the daemon-tree root), so\n"
         "  Jenkins builds etc. will fail there with 'Operation not permitted'.\n"
@@ -478,18 +489,18 @@ def _start_server() -> None:
     """Start the detached process-compose server for the aisland project."""
     _preflight_full_disk_access()
     binary = ensure_binary()
-    DATA_DIR.mkdir(parents=True, exist_ok=True)
+    paths.data_dir().mkdir(parents=True, exist_ok=True)
     cmd = [
         binary,
         "up",
         "-f",
-        str(CONFIG_FILE),
+        str(config_file()),
         "--detached",
         # Keep the server alive when every process is stopped — service
         # start/stop must not tear the supervisor down between commands.
         "--keep-project",
         "--log-file",
-        str(SERVER_LOG),
+        str(server_log()),
         *_connection_args(),
     ]
     # cwd = workspace root so process-compose's default `.env` loading picks
@@ -531,7 +542,7 @@ def snapshot() -> Iterator[None]:
 
 def _client_reachable() -> bool:
     """The checks that cost no process: the binary and, off Windows, the socket file."""
-    return find_binary() is not None and (os.name == "nt" or SOCKET_PATH.exists())
+    return find_binary() is not None and (os.name == "nt" or socket_path().exists())
 
 
 def list_processes() -> Dict[str, ProcessState]:
@@ -608,11 +619,11 @@ def follow_logs(name: str, tail: int = 10) -> None:
 def shutdown_server() -> None:
     """Stop every supervised process and terminate the supervisor itself."""
     if not is_server_running():
-        click.echo("Supervisor (process-compose) is not running.")
+        console.echo("Supervisor (process-compose) is not running.")
         return
     result = _run_client(["down"])
     if result.returncode == 0:
-        click.echo("Supervisor (process-compose) stopped.")
+        console.echo("Supervisor (process-compose) stopped.")
     else:
         raise AislandError(f"stopping the supervisor failed: {result.stderr.strip()}")
 
@@ -620,7 +631,7 @@ def shutdown_server() -> None:
 def attach() -> None:
     """Attach the process-compose TUI to the running aisland server."""
     if not is_server_running():
-        click.echo("Supervisor (process-compose) is not running. Start a service first.")
+        console.echo("Supervisor (process-compose) is not running. Start a service first.")
         return
     binary = ensure_binary()
     subprocess.run([binary, "attach", *_connection_args()], check=False)
@@ -629,17 +640,17 @@ def attach() -> None:
 def print_status() -> None:
     """Print the supervisor state and its process table (for the CLI)."""
     if not is_server_running():
-        click.echo(f"  Supervisor      : {click.style('Stopped', fg='red')} (process-compose)")
+        console.echo(f"  Supervisor      : {click.style('Stopped', fg='red')} (process-compose)")
         return
-    click.echo(f"  Supervisor      : {click.style('Running', fg='green')} (process-compose)")
-    click.echo(f"    Config        : {CONFIG_FILE}")
-    click.echo(f"    Server log    : {SERVER_LOG}")
+    console.echo(f"  Supervisor      : {click.style('Running', fg='green')} (process-compose)")
+    console.echo(f"    Config        : {config_file()}")
+    console.echo(f"    Server log    : {server_log()}")
     for name, proc in sorted(list_processes().items()):
         status = proc.get("status", "?")
         ready = proc.get("is_ready", "-")
         color = "green" if proc.get("is_running") else "red"
         detail = f"(PID: {proc.get('pid')}, ready: {ready})" if proc.get("is_running") else ""
-        click.echo(f"    {name:<13} : {click.style(status, fg=color)} {detail}")
+        console.echo(f"    {name:<13} : {click.style(status, fg=color)} {detail}")
 
 
 def wait_for(name: str, running: bool, timeout: float = 30.0) -> Optional[ProcessState]:

@@ -72,6 +72,8 @@ the entry's environment:
 
 Every tool answers with one JSON object, and a refusal is the tool's error in the command's own
 words (`no installed VS Code theme is named 'Solarzed Dark' (did you mean 'Solarized Dark'?)`).
+A warning the command would print on stderr comes back in the object as `warnings`, a list of lines (the key is
+there only when there is one); a question the command would ask is refused, since no one is there to answer it.
 The first nine only read; the others change this machine and are marked as such for the
 client. What prompts, runs for minutes or deletes — `setup`, `clean`, `backups prune`, the
 `reset` commands, `jenkins init`, `source set` — is not a tool: run it yourself. Without the

@@ -16,7 +16,8 @@ from typing import Any, Dict, List
 
 import pytest
 
-from aisland import editor_files, harness, locations, projects, selection, sources, workspace_file
+from aisland import editor_files, harness, locations, projects, selection, sources
+from aisland.workspace import file as workspace_file
 
 
 def _project(folder: Path, name: str, extras: str = "dev") -> Path:

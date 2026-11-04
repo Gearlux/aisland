@@ -133,7 +133,7 @@ def test_start_hands_the_class_its_context_and_runs_what_it_asks(
 ) -> None:
     result = _run("acme-db", "start", "-b", "--port", "7100")
     assert result.exit_code == 0, result.output
-    assert _seen() == [("start", "acme-db", 7100, True, workspace, paths.DATA_DIR / "acme-db")]
+    assert _seen() == [("start", "acme-db", 7100, True, workspace, paths.data_dir() / "acme-db")]
     assert supervised == [
         {
             "start": "acme-db",

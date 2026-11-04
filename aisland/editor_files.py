@@ -9,9 +9,7 @@ import subprocess
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
-import click
-
-from aisland import editor, failures, git_exclude, locations, supervisor
+from aisland import console, editor, failures, git_exclude, locations, supervisor
 from aisland.paths import SERVICES_DIR
 from aisland.projects import (
     ProjectMetadata,
@@ -81,7 +79,7 @@ def write_pyrightconfig(workspace_root: Path, projects: List[ProjectMetadata]) -
     }
     out = workspace_root / "pyrightconfig.json"
     out.write_text(json.dumps(config, indent=4) + "\n")
-    click.echo(f"==> Wrote {out} ({len(extra_paths)} project paths)")
+    console.echo(f"==> Wrote {out} ({len(extra_paths)} project paths)")
 
     for project in projects:
         project_dir = Path(project["path"])
@@ -96,7 +94,7 @@ def write_pyrightconfig(workspace_root: Path, projects: List[ProjectMetadata]) -
         # Kept out of git with the editable install's metadata, in the project's own `.git/info/exclude`: a
         # `.gitignore` line would be a file to commit in every project (aisland.git_exclude).
         git_exclude.exclude(project_dir, ["pyrightconfig.json", "**/*.egg-info/"])
-    click.echo(f"==> Wrote per-project pyrightconfig.json into {len(projects)} project dir(s)")
+    console.echo(f"==> Wrote per-project pyrightconfig.json into {len(projects)} project dir(s)")
 
 
 def sync_mypy_path(workspace_root: Path, projects: List[ProjectMetadata]) -> None:
@@ -141,7 +139,7 @@ def sync_mypy_path(workspace_root: Path, projects: List[ProjectMetadata]) -> Non
 
     lines[line_no] = f"{key.rstrip()} = {separator.join(entries + missing)}"
     ini.write_text("\n".join(lines) + "\n")
-    click.echo(f"==> mypy.ini: added {', '.join(missing)} to mypy_path")
+    console.echo(f"==> mypy.ini: added {', '.join(missing)} to mypy_path")
 
 
 #: The settings and extension recommendations every machine's workspace file carries. The folder list is the only
@@ -210,19 +208,19 @@ def _loggair_log_dir(workspace_root: Path) -> Optional[Path]:
             timeout=60,
         )
     except subprocess.TimeoutExpired:
-        click.echo("  - Note: loggair did not report its log folder within 60 s; no log folder listed.")
+        console.echo("  - Note: loggair did not report its log folder within 60 s; no log folder listed.")
         return None
     if result.returncode != 0:
         # A workspace without loggair has no log folder to list, and nothing to be told about a tool it never used.
         if "No module named loggair" not in result.stderr:
-            click.echo("  - Note: `python -m loggair --json` failed; no log folder listed.")
+            console.echo("  - Note: `python -m loggair --json` failed; no log folder listed.")
         return None
     try:
         log_dir = json.loads(result.stdout).get("resolved", {}).get("log_dir")
     except json.JSONDecodeError:
         log_dir = None
     if not log_dir:
-        click.echo("  - Note: loggair's report names no log folder; no log folder listed.")
+        console.echo("  - Note: loggair's report names no log folder; no log folder listed.")
         return None
     return Path(log_dir)
 
@@ -297,5 +295,5 @@ def write_code_workspace(workspace_root: Path) -> Optional[Path]:
     if out.exists() and out.read_text() == text:
         return None
     out.write_text(text)
-    click.echo(f"==> Wrote {out.name} ({len(folders)} folders)")
+    console.echo(f"==> Wrote {out.name} ({len(folders)} folders)")
     return out

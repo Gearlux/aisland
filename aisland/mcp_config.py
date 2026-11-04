@@ -8,7 +8,7 @@ from typing import Dict, List, Optional, Required, TypedDict
 
 import click
 
-from aisland import failures, locations
+from aisland import console, failures, locations
 from aisland import pyproject as pyproject_toml
 from aisland.errors import AislandError
 from aisland.projects import discover_projects, get_workspace_root
@@ -120,7 +120,7 @@ def write_gemini_settings(workspace_root: Path, venv_bin: Path) -> None:
     out = gemini_dir / "settings.json"
     out.write_text(json.dumps({"mcpServers": _with_workspace_env(workspace_root, servers)}, indent=2) + "\n")
     listed = ", ".join(sorted(servers)) or "none"
-    click.echo(f"==> Wrote {out} ({len(servers)} MCP server(s): {listed})")
+    console.echo(f"==> Wrote {out} ({len(servers)} MCP server(s): {listed})")
 
 
 def write_mcp_json(workspace_root: Path, venv_bin: Path) -> None:
@@ -137,7 +137,7 @@ def write_mcp_json(workspace_root: Path, venv_bin: Path) -> None:
     out = workspace_root / ".mcp.json"
     out.write_text(json.dumps({"mcpServers": _with_workspace_env(workspace_root, servers)}, indent=2) + "\n")
     listed = ", ".join(sorted(servers)) or "none"
-    click.echo(f"==> Wrote {out} ({len(servers)} MCP server(s): {listed})")
+    console.echo(f"==> Wrote {out} ({len(servers)} MCP server(s): {listed})")
 
 
 def no_venv(workspace_root: Path) -> click.ClickException:

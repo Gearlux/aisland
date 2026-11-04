@@ -23,7 +23,7 @@ from typing import Any
 import click
 import pytest
 
-from aisland import installers, locations, manager
+from aisland import installers, locations, manager, paths
 
 
 def _current_arch() -> str:
@@ -129,8 +129,8 @@ def test_userspace_install_skips_when_already_installed(
     for name in ("node", "npm", "npx"):
         (bin_dir / name).write_text("stub")
 
-    monkeypatch.setattr(installers, "BIN_DIR", bin_dir)
-    monkeypatch.setattr(installers, "TOOLS_DIR", tmp_path / "tools")
+    monkeypatch.setattr(paths, "bin_dir", lambda: bin_dir)
+    monkeypatch.setattr(paths, "tools_dir", lambda: tmp_path / "tools")
 
     def _explode(*a: Any, **kw: Any) -> Any:
         raise AssertionError("nothing is downloaded when already installed")
@@ -167,8 +167,8 @@ def test_userspace_install_extracts_and_symlinks(
     the links are aisland's own mechanics: the debug log says them, the output shows the steps and the result."""
     bin_dir = tmp_path / "bin"
     tools_dir = tmp_path / "tools"
-    monkeypatch.setattr(installers, "BIN_DIR", bin_dir)
-    monkeypatch.setattr(installers, "TOOLS_DIR", tools_dir)
+    monkeypatch.setattr(paths, "bin_dir", lambda: bin_dir)
+    monkeypatch.setattr(paths, "tools_dir", lambda: tools_dir)
 
     # Build a fake upstream tarball mirroring the real Node layout.
     spec = installers.USERSPACE_TOOLS["node"]
@@ -214,8 +214,8 @@ def test_userspace_install_refuses_to_clobber_real_file(
     bin_dir = tmp_path / "bin"
     tools_dir = tmp_path / "tools"
     bin_dir.mkdir()
-    monkeypatch.setattr(installers, "BIN_DIR", bin_dir)
-    monkeypatch.setattr(installers, "TOOLS_DIR", tools_dir)
+    monkeypatch.setattr(paths, "bin_dir", lambda: bin_dir)
+    monkeypatch.setattr(paths, "tools_dir", lambda: tools_dir)
 
     # One of the binaries is a real file the user wrote themselves — leave it alone.
     (bin_dir / "node").write_text("USER-OWNED CONTENT")
@@ -256,8 +256,8 @@ def test_userspace_install_rejects_checksum_mismatch(
     and the bad tarball is deleted so a re-run re-downloads."""
     bin_dir = tmp_path / "bin"
     tools_dir = tmp_path / "tools"
-    monkeypatch.setattr(installers, "BIN_DIR", bin_dir)
-    monkeypatch.setattr(installers, "TOOLS_DIR", tools_dir)
+    monkeypatch.setattr(paths, "bin_dir", lambda: bin_dir)
+    monkeypatch.setattr(paths, "tools_dir", lambda: tools_dir)
 
     spec = installers.USERSPACE_TOOLS["node"]
     extract_subdir = _subdir(spec)
@@ -291,8 +291,8 @@ def test_userspace_install_rejects_tampered_cached_tarball(
     it is verified too, so a poisoned cache is rejected without re-downloading."""
     bin_dir = tmp_path / "bin"
     tools_dir = tmp_path / "tools"
-    monkeypatch.setattr(installers, "BIN_DIR", bin_dir)
-    monkeypatch.setattr(installers, "TOOLS_DIR", tools_dir)
+    monkeypatch.setattr(paths, "bin_dir", lambda: bin_dir)
+    monkeypatch.setattr(paths, "tools_dir", lambda: tools_dir)
 
     spec = installers.USERSPACE_TOOLS["node"]
     tarball_name = f"{_subdir(spec)}.tar.xz"
@@ -324,8 +324,8 @@ def test_userspace_install_warns_when_no_digest_pinned(
     """An unpinned tool still installs (backward-compatible) but loudly warns."""
     bin_dir = tmp_path / "bin"
     tools_dir = tmp_path / "tools"
-    monkeypatch.setattr(installers, "BIN_DIR", bin_dir)
-    monkeypatch.setattr(installers, "TOOLS_DIR", tools_dir)
+    monkeypatch.setattr(paths, "bin_dir", lambda: bin_dir)
+    monkeypatch.setattr(paths, "tools_dir", lambda: tools_dir)
 
     spec = installers.USERSPACE_TOOLS["node"]
     extract_subdir = _subdir(spec)
@@ -373,7 +373,7 @@ def test_a_clone_no_workspace_lists_copies_its_own_shell_init(monkeypatch: pytes
     monkeypatch.setattr(locations, "FROM_CHECKOUT", False)
     monkeypatch.setattr(locations, "PACKAGE_DIR", clone / "aisland")
     monkeypatch.setattr(locations, "CHECKOUT_DIR", clone)
-    monkeypatch.setattr(manager, "BASE_DIR", workspace / ".aisland")
+    monkeypatch.setattr(paths, "state_dir", lambda: workspace / ".aisland")
     manager.link_project_bashrc(workspace)
     assert (workspace / "project.bashrc").read_text() == "# the clone's shell init\n"
     assert os.readlink(workspace / "project.bashrc") == ".aisland/project.bashrc"
@@ -394,7 +394,7 @@ def test_link_project_bashrc_creates_symlink(monkeypatch: pytest.MonkeyPatch, tm
     target = aisland_dir / "project.bashrc"
     target.write_text("# fake aisland bashrc\n")
 
-    monkeypatch.setattr(manager, "BASE_DIR", aisland_dir)
+    monkeypatch.setattr(paths, "state_dir", lambda: aisland_dir)
     manager.link_project_bashrc(workspace)
 
     link = workspace / "project.bashrc"
@@ -413,7 +413,7 @@ def test_link_project_bashrc_idempotent(monkeypatch: pytest.MonkeyPatch, tmp_pat
     target.write_text("# fake aisland bashrc\n")
     (workspace / "project.bashrc").symlink_to("aisland/project.bashrc")
 
-    monkeypatch.setattr(manager, "BASE_DIR", aisland_dir)
+    monkeypatch.setattr(paths, "state_dir", lambda: aisland_dir)
     manager.link_project_bashrc(workspace)
 
     assert capsys.readouterr().out == ""
@@ -432,7 +432,7 @@ def test_link_project_bashrc_refuses_to_clobber_real_file(
     real_file = workspace / "project.bashrc"
     real_file.write_text("# USER's hand-edited bashrc\n")
 
-    monkeypatch.setattr(manager, "BASE_DIR", aisland_dir)
+    monkeypatch.setattr(paths, "state_dir", lambda: aisland_dir)
     manager.link_project_bashrc(workspace)
 
     assert real_file.read_text() == "# USER's hand-edited bashrc\n"
@@ -452,7 +452,7 @@ def test_link_project_bashrc_replaces_stale_symlink(monkeypatch: pytest.MonkeyPa
     stale_target.write_text("# stale\n")
     (workspace / "project.bashrc").symlink_to("old-bashrc")
 
-    monkeypatch.setattr(manager, "BASE_DIR", aisland_dir)
+    monkeypatch.setattr(paths, "state_dir", lambda: aisland_dir)
     manager.link_project_bashrc(workspace)
 
     link = workspace / "project.bashrc"
@@ -465,8 +465,8 @@ def test_node_downloads_the_build_of_this_machines_architecture_and_verifies_it(
 ) -> None:
     """Node names its builds x64 and arm64; an ARM machine gets the arm64 build, checked against its own digest."""
     monkeypatch.setattr(platform, "machine", lambda: machine)
-    monkeypatch.setattr(installers, "BIN_DIR", tmp_path / "bin")
-    monkeypatch.setattr(installers, "TOOLS_DIR", tmp_path / "tools")
+    monkeypatch.setattr(paths, "bin_dir", lambda: tmp_path / "bin")
+    monkeypatch.setattr(paths, "tools_dir", lambda: tmp_path / "tools")
     fetched = []
 
     def record(url: str, dst: Path) -> None:
@@ -483,8 +483,8 @@ def test_an_architecture_aisland_has_no_build_for_is_refused_before_any_download
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path, capsys: Any
 ) -> None:
     monkeypatch.setattr(platform, "machine", lambda: "riscv64")
-    monkeypatch.setattr(installers, "BIN_DIR", tmp_path / "bin")
-    monkeypatch.setattr(installers, "TOOLS_DIR", tmp_path / "tools")
+    monkeypatch.setattr(paths, "bin_dir", lambda: tmp_path / "bin")
+    monkeypatch.setattr(paths, "tools_dir", lambda: tmp_path / "tools")
 
     def explode(url: str, dst: Path) -> None:
         raise AssertionError("nothing is downloaded for an unknown architecture")
@@ -501,8 +501,8 @@ def test_a_half_unpacked_folder_from_an_interrupted_run_is_replaced(
 ) -> None:
     """An unpack killed half way left `tools/<tool>/` without its binaries; the next run unpacks again, whole."""
     bin_dir, tools_dir = tmp_path / "bin", tmp_path / "tools"
-    monkeypatch.setattr(installers, "BIN_DIR", bin_dir)
-    monkeypatch.setattr(installers, "TOOLS_DIR", tools_dir)
+    monkeypatch.setattr(paths, "bin_dir", lambda: bin_dir)
+    monkeypatch.setattr(paths, "tools_dir", lambda: tools_dir)
     spec = installers.USERSPACE_TOOLS["node"]
     staging = tmp_path / "upstream"
     staging.mkdir()

@@ -9,7 +9,7 @@ pseudo-terminal, starts the account's shell in it, and relays between the pipes 
 Two decisions follow from where it runs:
 
 * **Standard library only, run from its own source.** It is sent to the box as the text of a
-  ``python3 -c`` argument (:func:`aisland.tunnel_connect.remote_command`), because the box need not
+  ``python3 -c`` argument (:func:`aisland.tunnel.connect.remote_command`), because the box need not
   have aisland on the PATH the tunnel gives a program (measured: it had not) — only a Python. So
   nothing is installed there, nothing here may import from aisland, and nothing may need a Python
   newer than the box's (``from __future__ import annotations`` needs 3.7).

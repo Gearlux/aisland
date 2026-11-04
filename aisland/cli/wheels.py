@@ -8,10 +8,13 @@ from typing import List, Optional, Tuple
 import click
 from click.shell_completion import CompletionItem
 
-from aisland import wheels, wheels_files, wheels_prune, wheels_report
 from aisland.cli._base import _Group
 from aisland.errors import quiet_completion
 from aisland.projects import get_workspace_root
+from aisland.wheels import build as wheels
+from aisland.wheels import files as wheels_files
+from aisland.wheels import prune as wheels_prune
+from aisland.wheels import report as wheels_report
 
 # --- Wheels For A Project Installed Outside The Workspace ---
 

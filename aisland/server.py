@@ -18,9 +18,11 @@ What prompts (``setup``), runs for minutes or deletes (``clean``, ``backups prun
 ``source set``) stays a command. Every tool answers with one JSON object; a refusal is the tool's error, in the
 command's own words.
 
-A tool's code may print (``click.echo``): over stdio the SDK serves the protocol from a private copy of stdout and
-points the process's stdout at stderr, so a print, or a subprocess's output, lands in the client's log, never in the
-protocol.
+A tool's code says what it says through :mod:`aisland.console`, which each tool call collects
+(:func:`aisland.console.collecting`): what it says on stderr — a warning — comes back in the tool's object as
+``warnings``, the rest (the progress a person would watch) is dropped, and a question it asks is refused, since no one
+is there to answer. A stray ``print`` or a subprocess's output is still kept off the protocol: over stdio the SDK
+serves it from a private copy of stdout and points the process's stdout at stderr.
 
 NOTE: no ``from __future__ import annotations`` — the MCP server reads the live annotations to build each tool's
 argument schema.
@@ -31,17 +33,17 @@ import json
 import subprocess
 import sys
 from dataclasses import asdict
-from typing import Callable, Dict, List, Literal, Optional, ParamSpec, TypeVar
+from typing import Callable, Dict, List, Literal, Optional, ParamSpec, TypeVar, cast
 
 import click
 
-from aisland import cli, doctor, editor, editor_files, pytest_stats
+from aisland import cli, console, doctor, editor, editor_files, pytest_stats
 from aisland import sources as sources_mod
 from aisland import tracking
-from aisland import tunnel as tunnel_mod
 from aisland.errors import AislandError
 from aisland.projects import get_workspace_root
 from aisland.services import registry as service_registry
+from aisland.tunnel import host as tunnel_mod
 
 try:
     import mcp.types as mcp_types
@@ -85,8 +87,9 @@ class ToolRefusal(AislandError):
 
 
 def _refusals_reach_the_client(function: Callable[_Params, _Result]) -> Callable[_Params, _Result]:
-    """Raise an anticipated refusal — a :class:`ToolRefusal`, or aisland's own ``Error:`` (a
-    :class:`click.ClickException`) — as the SDK's ``ToolError``, the one exception whose words the client reads.
+    """Run the tool inside a collecting console, its warnings added to its object as ``warnings``; raise an
+    anticipated refusal — a :class:`ToolRefusal`, or aisland's own ``Error:`` (a :class:`click.ClickException`, a
+    question no one can answer among them) — as the SDK's ``ToolError``, the one exception whose words the client reads.
 
     From mcp 2.1 on, any other exception reaches the client as ``Error executing tool <name>`` alone, its text kept
     on the server: right for a crash, which is left to the SDK, wrong for "no installed VS Code theme is named …".
@@ -94,10 +97,14 @@ def _refusals_reach_the_client(function: Callable[_Params, _Result]) -> Callable
 
     @functools.wraps(function)
     def wrapper(*args: _Params.args, **kwargs: _Params.kwargs) -> _Result:
-        try:
-            return function(*args, **kwargs)
-        except (ToolRefusal, click.ClickException) as refusal:
-            raise ToolError(str(refusal)) from refusal
+        with console.collecting() as said:
+            try:
+                result = function(*args, **kwargs)
+            except (ToolRefusal, click.ClickException) as refusal:
+                raise ToolError(str(refusal)) from refusal
+        if said.err and isinstance(result, dict):
+            return cast(_Result, {**result, "warnings": said.err})
+        return result
 
     return wrapper
 
@@ -159,8 +166,8 @@ def tool_doctor() -> Dict[str, object]:
 def tool_tests_report(project: str, days: int = pytest_stats.DEFAULT_WINDOW_DAYS) -> Dict[str, object]:
     """A project's test runs over the last `days` days (`aisland tests report PROJECT --json`): its fast run
     against the 5-minute budget, the slowest tests, the tests that failed, and what to move between the runs."""
-    if not (pytest_stats.WORKSPACE_ROOT / project / "pyproject.toml").is_file():
-        raise ToolRefusal(f"no project {project!r} in the workspace {pytest_stats.WORKSPACE_ROOT}")
+    if not (pytest_stats.workspace_root() / project / "pyproject.toml").is_file():
+        raise ToolRefusal(f"no project {project!r} in the workspace {pytest_stats.workspace_root()}")
     report: Dict[str, object] = pytest_stats.build_report(project, days=days).to_dict()
     return report
 

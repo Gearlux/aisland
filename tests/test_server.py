@@ -23,12 +23,24 @@ from mcp.client.stdio import StdioServerParameters, stdio_client
 from mcp.server.lowlevel.server import NotificationOptions
 from mcp.server.mcpserver.exceptions import ToolError
 
-from aisland import cli, doctor, editor, editor_files, locations, mcp_config, projects, pytest_stats, server
+from aisland import (
+    cli,
+    console,
+    doctor,
+    editor,
+    editor_files,
+    failures,
+    locations,
+    mcp_config,
+    projects,
+    pytest_stats,
+    server,
+)
 from aisland import sources as sources_mod
 from aisland import supervisor
-from aisland import tunnel as tunnel_mod
 from aisland.services import docker, registry, swiftbar
 from aisland.services.base import ServiceState, service_state
+from aisland.tunnel import host as tunnel_mod
 from tests.test_editor import no_vscode, vscode  # noqa: F401  (fixtures)
 
 READ_ONLY = {
@@ -176,7 +188,7 @@ class _Report:
 def test_tests_report_is_what_the_command_prints_with_json(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     (tmp_path / "loggair").mkdir()
     (tmp_path / "loggair" / "pyproject.toml").write_text("[project]\nname = 'loggair'\n")
-    monkeypatch.setattr(pytest_stats, "WORKSPACE_ROOT", tmp_path)
+    monkeypatch.setattr(pytest_stats, "workspace_root", lambda: tmp_path)
     asked: List[Any] = []
 
     def build_report(project: str, days: int) -> _Report:
@@ -193,7 +205,7 @@ def test_tests_report_is_what_the_command_prints_with_json(tmp_path: Path, monke
 def test_tests_report_refuses_a_project_the_workspace_does_not_have(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    monkeypatch.setattr(pytest_stats, "WORKSPACE_ROOT", tmp_path)
+    monkeypatch.setattr(pytest_stats, "workspace_root", lambda: tmp_path)
     assert f"no project 'nothere' in the workspace {tmp_path}" in _error("tests_report", {"project": "nothere"})
 
 
@@ -512,6 +524,38 @@ def test_an_anticipated_refusal_reaches_the_client_as_a_tool_error_in_its_own_wo
         server._refusals_reach_the_client(refuses)()
 
 
+def test_a_warning_the_tools_code_gives_comes_back_in_its_object(capsys: pytest.CaptureFixture[str]) -> None:
+    """The tool's progress lines are dropped and its warnings kept: the server's stdout is the protocol."""
+
+    def warns() -> Dict[str, object]:
+        console.echo("==> Reading the editor's settings")
+        failures.warn("  - Warning: ignoring aisland.editor.color: not a colour")
+        return {"theme": "Default Dark+"}
+
+    assert server._refusals_reach_the_client(warns)() == {
+        "theme": "Default Dark+",
+        "warnings": ["  - Warning: ignoring aisland.editor.color: not a colour"],
+    }
+    assert capsys.readouterr() == ("", "")
+
+
+def test_a_tool_that_says_nothing_on_stderr_has_no_warnings_key() -> None:
+    def quiet() -> Dict[str, object]:
+        console.echo("progress")
+        return {"ok": True}
+
+    assert server._refusals_reach_the_client(quiet)() == {"ok": True}
+
+
+def test_a_question_inside_a_tool_is_refused_in_its_own_words() -> None:
+    def asks() -> Dict[str, object]:
+        console.confirm("Delete every backup?")
+        return {}
+
+    with pytest.raises(ToolError, match="no one is here to answer: Delete every backup?"):
+        server._refusals_reach_the_client(asks)()
+
+
 def test_a_crash_is_left_to_the_sdk() -> None:
     def crashes() -> None:
         raise KeyError("pid")
@@ -533,7 +577,7 @@ def test_without_the_mcp_extra_the_command_says_what_to_install() -> None:
 def test_over_stdio_a_print_goes_to_stderr_and_the_tools_still_answer(tmp_path: Path) -> None:
     """The real process, as a client starts it: a tool whose code prints does not corrupt the protocol."""
     script = (
-        "import click; from aisland import tunnel; "
+        "import click; from aisland.tunnel import host as tunnel; "
         "tunnel.load_store = lambda: (click.echo('noise on stdout'), [])[1]; "
         "from aisland.server import main; main()"
     )

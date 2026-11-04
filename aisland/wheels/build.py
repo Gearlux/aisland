@@ -46,7 +46,7 @@ lacks; ``--include-published`` every project the target needs that has a checkou
 PyPI too (the wheel holds the commit, not the release); ``--all`` every workspace project that has a
 checkout here, needed or not. Beside the wheels go ``wheels.yaml`` — each wheel, its commit, whether
 the target needs it, and ``install:``, the user's choice, kept across reruns — and ``install.py``,
-the one generic installer (:mod:`aisland.wheels_install`, copied under a generated header) that
+the one generic installer (:mod:`aisland.wheels.install`, copied under a generated header) that
 reads it and names each chosen wheel by its FILE: pip takes a wheel it finds only through
 ``--find-links`` from PyPI instead when both have the version (measured 2026-10-09), and takes a
 wheel named by its file over PyPI's. The empty-venv check runs that script.
@@ -54,7 +54,7 @@ wheel named by its file over PyPI's. The empty-venv check runs that script.
 The folder is the machine's, not the repository's: each run writes ``wheels/.gitignore`` holding ``*``,
 so git never sees it — unless the run is told ``--commit``, which then commits ``wheels/`` itself (the zip
 excepted) once the empty-venv check passed. ``aisland wheels zip`` packs the folder into
-``<project>-wheels.zip`` with a ``__main__.py`` (:mod:`aisland.wheels_unzip`), so the other machine — which has
+``<project>-wheels.zip`` with a ``__main__.py`` (:mod:`aisland.wheels.unzip`), so the other machine — which has
 no aisland — unpacks and installs it with ``python <project>-wheels.zip``; ``aisland wheels install`` runs the
 same zip into a named interpreter.
 
@@ -77,21 +77,23 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Dict, List, Literal, Optional, Sequence, Set, Tuple
 
-import click
 from packaging.requirements import InvalidRequirement, Requirement
 from packaging.utils import canonicalize_name
 from packaging.version import InvalidVersion, Version
 
-from aisland import downloads
+from aisland import console, downloads
 from aisland import pyproject as pyproject_toml
-from aisland import wheels_bundle, wheels_check, wheels_extra, wheels_scrub
 from aisland.errors import AislandError
 from aisland.github import GitHubRepository, project_repositories
 from aisland.installers import ensure_uv_in_venv
 from aisland.projects import get_workspace_name, workspace_folders
 from aisland.pypi import PypiFile, PypiInfo, PypiProject, points_at_owner, pypi_json
 from aisland.sources import read_committed_sources
-from aisland.wheels_check import (
+from aisland.wheels import bundle as wheels_bundle
+from aisland.wheels import check as wheels_check
+from aisland.wheels import extra as wheels_extra
+from aisland.wheels import scrub as wheels_scrub
+from aisland.wheels.check import (
     attribute_failure,
     install_and_import,
     install_bundle_and_import,
@@ -100,7 +102,7 @@ from aisland.wheels_check import (
     wheel_differences,
     wheel_modules,
 )
-from aisland.wheels_files import (
+from aisland.wheels.files import (
     GITIGNORE,
     IGNORE_ALL,
     IGNORE_ZIP,
@@ -117,7 +119,7 @@ from aisland.wheels_files import (
     write_wheels,
     write_zip,
 )
-from aisland.wheels_report import (
+from aisland.wheels.report import (
     BuiltWheel,
     BundleWheel,
     ImportFailure,
@@ -486,7 +488,7 @@ class WheelsPlan:
     scope covers that have no checkout here; ``published`` the needed projects taken from PyPI, checked against it.
     ``on_github`` is whether the target's own remote is on GitHub; for one that is not, ``hidden_names`` (the
     workspace's name and its projects' GitHub owners) are what its wheels' metadata must not carry
-    (:mod:`aisland.wheels_scrub`).
+    (:mod:`aisland.wheels.scrub`).
     """
 
     projects: Dict[str, WorkspaceProject]
@@ -506,7 +508,7 @@ class WheelsPlan:
 
 @dataclass(frozen=True)
 class _Extra:
-    """The extra a run writes into the target's ``pyproject.toml`` (:mod:`aisland.wheels_extra`): ``--extra NAME``, or
+    """The extra a run writes into the target's ``pyproject.toml`` (:mod:`aisland.wheels.extra`): ``--extra NAME``, or
     the one the file's generated block names (``remembered``); ``left`` is that block's extra when the run leaves it
     as it is, ``command`` the extra the regenerate command names."""
 
@@ -564,7 +566,7 @@ def vendor_wheels(
     the empty-venv install; ``include_project`` (``--include-project``) builds the project's own wheel too;
     ``bundle`` (``--bundle``) merges the project's own wheel and the needed wheels into one, written into
     ``wheels/bundle/`` and checked alone in an empty venv of its own; ``extra`` (``--extra NAME``) writes the extra
-    NAME, which installs every wheel built, into the target's ``pyproject.toml`` (:mod:`aisland.wheels_extra`). See
+    NAME, which installs every wheel built, into the target's ``pyproject.toml`` (:mod:`aisland.wheels.extra`). See
     the module docstring.
 
     Every refusal comes before the first build, in this order: the flags, the plan (what the target needs and PyPI
@@ -775,7 +777,7 @@ def _build_one(
     changes = dirty.get(project.name, [])
     if changes:
         sha += "+uncommitted"
-    click.echo(f"==> Building {project.name} ({branch} {sha})", err=True)
+    console.echo(f"==> Building {project.name} ({branch} {sha})", err=True)
     export = export_worktree if changes else export_head
     timestamp = export(project.path, scratch / "src" / project.name)
     wheel = build_wheel(uv, scratch / "src" / project.name, scratch / "wheels", timestamp)
@@ -859,7 +861,7 @@ def _check(
         for project in plan.published
     ]
 
-    click.echo(f"==> Installing {target.name} in an empty venv and importing every module", err=True)
+    console.echo(f"==> Installing {target.name} in an empty venv and importing every module", err=True)
     if built.own_wheel is not None:
         target_wheel = built.own_wheel
     else:
@@ -874,7 +876,7 @@ def _check(
     install_error, failures, imported = install_and_import(uv, target.path, folder, packages, scratch)
     checked = _Checked(compared, new_names, install_error, failures, imported, packages)
     if bundle_path is not None:
-        click.echo(f"==> Installing the bundle {bundle_path.name} alone in an empty venv", err=True)
+        console.echo(f"==> Installing the bundle {bundle_path.name} alone in an empty venv", err=True)
         checked.bundle_install_error, checked.bundle_failures, checked.bundle_imported = install_bundle_and_import(
             uv, target.path, bundle_path, packages, scratch / "bundle"
         )
@@ -951,7 +953,7 @@ def _write_bundle(
     folder: Path,
     command: str,
 ) -> Path:
-    """Merge the target's wheel and the wheels it needs into ``<folder>/bundle/`` (:mod:`aisland.wheels_bundle`).
+    """Merge the target's wheel and the wheels it needs into ``<folder>/bundle/`` (:mod:`aisland.wheels.bundle`).
 
     A wheel ``--all`` built that the target does not need stays out. What the bundle requires is read from the
     ``pyproject.toml`` of each project inside it.
@@ -976,7 +978,7 @@ def _write_bundle(
     )
     distribution = wheels_bundle.BUNDLE_NAME.format(distribution=target.distribution)
     rows = "\n".join(f"| {b.project} | {b.distribution} | {b.version} | {b.branch} {b.commit} |" for _, _, b in members)
-    header = "\n".join(provenance_header("", command, "aisland/aisland/wheels.py (_write_bundle)"))
+    header = "\n".join(provenance_header("", command, "aisland/aisland/wheels/build.py (_write_bundle)"))
     description = f"""\
 <!--
 {header}
@@ -1075,7 +1077,7 @@ def _compare(
         owners.setdefault(project.distribution.replace("-", "_"), project.distribution)
         note = f"PyPI has no pure-Python wheel of {pypi_version} to compare"
         return PublishedDependency(project.name, project.distribution, pypi_version, None, [], note)
-    click.echo(f"==> Comparing {project.name} with PyPI {pypi_version}", err=True)
+    console.echo(f"==> Comparing {project.name} with PyPI {pypi_version}", err=True)
     remote = _download(str(entry["url"]), scratch / "pypi" / str(entry["filename"]))
     owners.update({module: project.distribution for module in wheel_modules(remote)})
     if not project.checked_out:

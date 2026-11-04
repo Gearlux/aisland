@@ -14,11 +14,11 @@ from typing import Dict, List, Optional, Tuple
 
 import pytest
 
-from aisland import wheels as w
-from aisland import wheels_files
-from aisland import wheels_install as wi
 from aisland.errors import AislandError
-from aisland.wheels_scrub import scrub_metadata, scrub_wheel
+from aisland.wheels import build as w
+from aisland.wheels import files as wheels_files
+from aisland.wheels import install as wi
+from aisland.wheels.scrub import scrub_metadata, scrub_wheel
 from tests.test_wheels import _commit, _project, _pypi, _workspace
 
 _NAMES = ("acme", "acmeorg")

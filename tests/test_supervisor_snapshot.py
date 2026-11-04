@@ -27,7 +27,7 @@ def server(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> List[List[str]]:
     """A supervisor whose socket exists; every client call is recorded and answered."""
     socket = tmp_path / "process-compose.sock"
     socket.touch()
-    monkeypatch.setattr(supervisor, "SOCKET_PATH", socket)
+    monkeypatch.setattr(supervisor, "socket_path", lambda: socket)
     monkeypatch.setattr(supervisor, "find_binary", lambda: "process-compose")
     asked: List[List[str]] = []
 
@@ -57,7 +57,7 @@ def test_a_failed_list_is_no_server(server: List[List[str]], monkeypatch: pytest
 
 
 def test_without_a_socket_nothing_is_asked(server: List[List[str]], monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr(supervisor, "SOCKET_PATH", Path("/nonexistent/process-compose.sock"))
+    monkeypatch.setattr(supervisor, "socket_path", lambda: Path("/nonexistent/process-compose.sock"))
     assert supervisor.list_processes() == {} and supervisor.get_ports("jenkins") == []
     assert server == []
 

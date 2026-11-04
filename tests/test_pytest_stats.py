@@ -17,9 +17,8 @@ from typing import Dict, List, Sequence, Tuple
 import pytest
 from click.testing import CliRunner
 
-from aisland import locations, pytest_stats
+from aisland import locations, paths, pytest_stats
 from aisland.cli import main
-from aisland.paths import DATA_DIR
 from tests.workspace_layout import needs_workspace
 
 pytest_plugins = ["pytester"]
@@ -92,8 +91,8 @@ def project(pytester: pytest.Pytester, monkeypatch: pytest.MonkeyPatch) -> Path:
     (proj / "tests").mkdir(parents=True)
     (proj / "pyproject.toml").write_text(_PYPROJECT)
     (proj / "tests" / "test_a.py").write_text(_TESTS)
-    monkeypatch.setattr(pytest_stats, "WORKSPACE_ROOT", root)
-    monkeypatch.setattr(pytest_stats, "STATS_DIR", root / "stats")
+    monkeypatch.setattr(pytest_stats, "workspace_root", lambda: root)
+    monkeypatch.setattr(pytest_stats, "stats_folder", lambda: root / "stats")
     # These tests run inside the local Jenkins too, where `JENKINS_URL` is set and the plugin records nothing.
     monkeypatch.delenv("JENKINS_URL", raising=False)
     monkeypatch.chdir(proj)
@@ -202,7 +201,7 @@ def test_a_run_outside_the_workspace_records_nothing(
 ) -> None:
     """A project folder that is not a direct child of the workspace root — a test's own tmp project — is no run of
     a workspace project."""
-    monkeypatch.setattr(pytest_stats, "WORKSPACE_ROOT", tmp_path / "elsewhere")
+    monkeypatch.setattr(pytest_stats, "workspace_root", lambda: tmp_path / "elsewhere")
     _run(pytester)
     assert not (pytester.path / "stats").exists()
 
@@ -261,7 +260,7 @@ def test_a_stats_folder_that_cannot_be_written_costs_one_line_never_the_runs_res
 ) -> None:
     blocker = pytester.path / "stats-is-a-file"
     blocker.write_text("")
-    monkeypatch.setattr(pytest_stats, "STATS_DIR", blocker)
+    monkeypatch.setattr(pytest_stats, "stats_folder", lambda: blocker)
     result = _run(pytester)
     assert result.ret == pytest.ExitCode.TESTS_FAILED
     result.stdout.fnmatch_lines(["aisland test stats: this run was not recorded (*"])
@@ -314,11 +313,12 @@ def test_the_plugin_is_declared_as_a_pytest11_entry_point() -> None:
 
 
 @needs_workspace
+@pytest.mark.real_workspace
 def test_the_records_live_in_aislands_data_folder() -> None:
     """The module resolves the folder itself (no `aisland.manager` import in every pytest start); it must agree."""
-    assert pytest_stats.STATS_DIR == DATA_DIR / "test-stats"
-    assert pytest_stats.JENKINS_JOBS_DIR == DATA_DIR / "jenkins" / "jobs"
-    assert pytest_stats.WORKSPACE_ROOT == DATA_DIR.parent.parent
+    assert pytest_stats.stats_folder() == paths.data_dir() / "test-stats"
+    assert pytest_stats.jenkins_jobs_folder() == paths.data_dir() / "jenkins" / "jobs"
+    assert pytest_stats.workspace_root() == paths.data_dir().parent.parent
 
 
 # --------------------------------------------------------------------------
@@ -375,7 +375,10 @@ def _jenkins(jobs: Path, number: int, when: datetime, cases: Sequence[Tuple[str,
 
 
 @pytest.fixture
-def stores(tmp_path: Path) -> Tuple[Path, Path]:
+def stores(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Tuple[Path, Path]:
+    """The local records and the Jenkins jobs, in a workspace of the test's own (the report reads its recording
+    switch from the workspace's `workspace.toml`)."""
+    monkeypatch.setattr(locations, "workspace_root", lambda: tmp_path)
     return tmp_path / "stats", tmp_path / "jobs"
 
 
@@ -669,9 +672,9 @@ def test_the_text_report_without_records_says_how_to_make_one(stores: Tuple[Path
 def cli_workspace(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     (tmp_path / "proj").mkdir()
     (tmp_path / "proj" / "pyproject.toml").write_text(_PYPROJECT)
-    monkeypatch.setattr(pytest_stats, "WORKSPACE_ROOT", tmp_path)
-    monkeypatch.setattr(pytest_stats, "STATS_DIR", tmp_path / "stats")
-    monkeypatch.setattr(pytest_stats, "JENKINS_JOBS_DIR", tmp_path / "jobs")
+    monkeypatch.setattr(pytest_stats, "workspace_root", lambda: tmp_path)
+    monkeypatch.setattr(pytest_stats, "stats_folder", lambda: tmp_path / "stats")
+    monkeypatch.setattr(pytest_stats, "jenkins_jobs_folder", lambda: tmp_path / "jobs")
     return tmp_path
 
 

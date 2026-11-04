@@ -16,9 +16,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, AbstractSet, Dict, List, Optional
 from xml.sax.saxutils import escape
 
-import click
-
-from aisland import failures, gitcmd
+from aisland import console, failures, gitcmd
 from aisland import pyproject as pyproject_toml
 from aisland import supervisor
 from aisland.ci_scaffold import registers_slow_marker
@@ -51,12 +49,12 @@ def init_pipelines(service: "JenkinsService", project_name: Optional[str] = None
 
     projects = _projects_to_seed(get_workspace_root(), project_name, local)
     if not projects:
-        click.echo("No projects with the required Jenkinsfile found to initialize.")
+        console.echo("No projects with the required Jenkinsfile found to initialize.")
         return
 
     jobs_dir = home / "jobs"
     jobs_dir.mkdir(parents=True, exist_ok=True)
-    click.echo(f"Initializing Jenkins pipelines for {len(projects)} project(s)...")
+    console.echo(f"Initializing Jenkins pipelines for {len(projects)} project(s)...")
     for project_path in projects:
         _seed_project_job(home, jobs_dir, project_path, local)
 
@@ -69,17 +67,17 @@ def init_pipelines(service: "JenkinsService", project_name: Optional[str] = None
     setup_dashboard_view(home)
     setup_global_properties(home)
 
-    if local and click.confirm(
+    if local and console.confirm(
         "Allow anonymous read access? (the nightly report, the SwiftBar menu and the scaffold's linter read Jenkins "
         "without logging in; the login and CSRF protection stay)"
     ):
         allow_anonymous_read(home)
 
-    click.echo("Starting Jenkins to load the new plugins, pipelines, and globalProperties...")
+    console.echo("Starting Jenkins to load the new plugins, pipelines, and globalProperties...")
     service.launch(background=True)
     if plugins_changed:
-        click.echo("Jenkins plugins updated.")
-    click.echo("Jenkins started in the background.")
+        console.echo("Jenkins plugins updated.")
+    console.echo("Jenkins started in the background.")
 
 
 def _projects_to_seed(workspace_root: Path, project_name: Optional[str], local: bool) -> List[Path]:
@@ -114,17 +112,17 @@ def _seed_project_job(home: Path, jobs_dir: Path, project_path: Path, local: boo
             return
         config_xml = local_job_config(project_path.name, jenkinsfile_path.read_text(), project_path)
         (project_job_dir / "config.xml").write_text(config_xml)
-        click.echo(f"  - Seeded local job (embedded script): {project}")
+        console.echo(f"  - Seeded local job (embedded script): {project}")
         return
 
     # Standard Multibranch Pipeline for remote jobs
     remote_url = _get_git_remote(project_path)
     if not remote_url:
-        click.echo(f"  - Skipping {project}: Could not determine Git remote.")
+        console.echo(f"  - Skipping {project}: Could not determine Git remote.")
         return
     cred_id = _find_credentials(home, remote_url)
     (project_job_dir / "config.xml").write_text(_multibranch_config(project, remote_url, cred_id))
-    click.echo(f"  - Seeded job: {project} (Remote: {remote_url}, CredID: {cred_id})")
+    console.echo(f"  - Seeded job: {project} (Remote: {remote_url}, CredID: {cred_id})")
 
 
 def _multibranch_config(project: str, remote_url: str, cred_id: str) -> str:
@@ -193,7 +191,7 @@ def _stop_with_a_config_xml(service: "JenkinsService", home: Path) -> None:
     # Solution: warm-start Jenkins to materialize config.xml, then stop
     # it before mutating the file, then cold-start for real.
     if not service.is_running():
-        click.echo("Warm-starting Jenkins to generate baseline config.xml...")
+        console.echo("Warm-starting Jenkins to generate baseline config.xml...")
         service.launch(background=True)
         config_file = home / "config.xml"
         deadline = time.time() + 90
@@ -310,7 +308,7 @@ def _create_orchestrator_job(home: Path, local: bool, initialized_projects: List
     project_job_dir = home / "jobs" / job_name
     project_job_dir.mkdir(parents=True, exist_ok=True)
     (project_job_dir / "config.xml").write_text(_orchestrator_config(pipeline_script, description, local))
-    click.echo(f"  - Seeded orchestrator job: {job_name}")
+    console.echo(f"  - Seeded orchestrator job: {job_name}")
 
 
 def _build_phases(install_order: List[ProjectMetadata], initialized_projects: List[str]) -> Dict[int, List[str]]:
@@ -534,7 +532,7 @@ pipeline {{
     job_dir = home / "jobs" / job_name
     job_dir.mkdir(parents=True, exist_ok=True)
     (job_dir / "config.xml").write_text(config_xml)
-    click.echo(f"  - Seeded nightly check job: {job_name}")
+    console.echo(f"  - Seeded nightly check job: {job_name}")
 
 
 #: The jobs the dashboard shows: the branches the ecosystem is built from, and every job of the local pipeline.
@@ -549,7 +547,7 @@ def setup_dashboard_view(home: Path, name: Optional[str] = None) -> None:
 
     config_file = home / "config.xml"
     if not config_file.exists():
-        click.echo("  - Jenkins config.xml not found. Skipping view setup until first run.")
+        console.echo("  - Jenkins config.xml not found. Skipping view setup until first run.")
         return
     try:
         tree = ET.parse(config_file)
@@ -598,13 +596,13 @@ def _dashboard_view(views: ET.Element, name: str) -> ET.Element:
     for view in views:
         existing = view.findtext("name") or ""
         if existing.endswith(" Ecosystem Dashboard"):
-            click.echo(f"  - Renaming stale dashboard view '{existing}' -> '{name}' (workspace was renamed).")
+            console.echo(f"  - Renaming stale dashboard view '{existing}' -> '{name}' (workspace was renamed).")
             for field in ("name", "title"):
                 element = view.find(field)
                 if element is not None:
                     element.text = name
             return view
-    click.echo(f"  - Creating '{name}' view (branches: main, dev/main, *.local) with Build Monitor View plugin...")
+    console.echo(f"  - Creating '{name}' view (branches: main, dev/main, *.local) with Build Monitor View plugin...")
     view = ET.SubElement(views, _BUILD_MONITOR_VIEW)
     view.set("plugin", "build-monitor-plugin")
     _view_basics(view, name)
@@ -685,7 +683,7 @@ def setup_global_properties(home: Path) -> None:
     if dotenv_vars:
         logger.debug("read %d key(s) from %s", len(dotenv_vars), dotenv_path)
     else:
-        click.echo("  - No workspace .env found; skipping injection.")
+        console.echo("  - No workspace .env found; skipping injection.")
 
     # Computed keys come first so a typo'd .env can't override the workspace
     # path or the forced-Node24 toggle. ** dotenv_vars adds the remainder.
@@ -703,9 +701,9 @@ def setup_global_properties(home: Path) -> None:
         ET.SubElement(tree_map, "string").text = key
         ET.SubElement(tree_map, "string").text = value
         if key in computed_keys:
-            click.echo(f"  - Added global Jenkins property: {key}={value}")
+            console.echo(f"  - Added global Jenkins property: {key}={value}")
         else:
-            click.echo(f"  - Added global Jenkins property: {key}=<from .env>")
+            console.echo(f"  - Added global Jenkins property: {key}=<from .env>")
 
     tree.write(config_file, encoding="UTF-8", xml_declaration=True)
 
@@ -728,10 +726,10 @@ def allow_anonymous_read(home: Path) -> None:
     auth_strategy = root.find("authorizationStrategy")
     deny_anon = auth_strategy.find("denyAnonymousReadAccess") if auth_strategy is not None else None
     if deny_anon is None:
-        click.echo("  - Anonymous read access: config.xml has no setting for it; left as it is.")
+        console.echo("  - Anonymous read access: config.xml has no setting for it; left as it is.")
         return
     deny_anon.text = "false"
-    click.echo("  - Enabled anonymous read access.")
+    console.echo("  - Enabled anonymous read access.")
     tree.write(config_file, encoding="UTF-8", xml_declaration=True)
 
 
@@ -739,26 +737,26 @@ def remove_pipelines(home: Path, project_name: Optional[str] = None) -> None:
     """Remove one or all project pipelines from Jenkins."""
     jobs_dir = home / "jobs"
     if not jobs_dir.exists():
-        click.echo("No Jenkins jobs directory found.")
+        console.echo("No Jenkins jobs directory found.")
         return
 
     if project_name:
         project_job_dir = jobs_dir / project_name
         if project_job_dir.exists():
-            click.echo(f"Removing Jenkins pipeline for project '{project_name}'...")
+            console.echo(f"Removing Jenkins pipeline for project '{project_name}'...")
             shutil.rmtree(project_job_dir)
-            click.echo(f"  - Removed: {project_name}")
+            console.echo(f"  - Removed: {project_name}")
         else:
             failures.report(
                 f"  - Error: Jenkins job for project '{project_name}' not found.",
             )
     else:
-        click.echo("Removing ALL project pipelines from Jenkins...")
+        console.echo("Removing ALL project pipelines from Jenkins...")
         for project_job_dir in jobs_dir.iterdir():
             if project_job_dir.is_dir() and (project_job_dir / "config.xml").exists():
                 shutil.rmtree(project_job_dir)
-                click.echo(f"  - Removed: {project_job_dir.name}")
-        click.echo("All project pipelines removed. Please restart Jenkins if it was already running.")
+                console.echo(f"  - Removed: {project_job_dir.name}")
+        console.echo("All project pipelines removed. Please restart Jenkins if it was already running.")
 
 
 def _project_has_slow_tests(project_dir: Path) -> bool:

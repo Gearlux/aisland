@@ -23,9 +23,9 @@ import pytest
 
 from aisland import ci_scaffold, gitcmd, locations, pypi
 from aisland import sources as s
-from aisland import workspace_file
 from aisland.errors import AislandError
 from aisland.services.jenkins import JenkinsService
+from aisland.workspace import file as workspace_file
 
 # --- the model ----------------------------------------------------------------------------
 

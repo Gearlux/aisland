@@ -1,8 +1,8 @@
 """The files `aisland wheels build` writes into ``<project>/wheels/`` beside the wheels, and the zip of that folder.
 
 ``README.md`` (what each wheel was built from, how to install), ``wheels.yaml`` (each wheel and its ``install:``,
-the user's choice, kept across reruns), ``install.py`` (:mod:`aisland.wheels_install` under a generated header) and
-the ``.gitignore``; ``aisland wheels zip`` packs the folder with a ``__main__.py`` (:mod:`aisland.wheels_unzip`), and
+the user's choice, kept across reruns), ``install.py`` (:mod:`aisland.wheels.install` under a generated header) and
+the ``.gitignore``; ``aisland wheels zip`` packs the folder with a ``__main__.py`` (:mod:`aisland.wheels.unzip`), and
 ``aisland wheels install`` runs that zip into a named interpreter. The run that decides what goes in is
 :mod:`aisland.wheels`.
 """
@@ -17,10 +17,12 @@ import zipfile
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple
 
-from aisland import wheels_bundle, wheels_install, wheels_unzip
 from aisland.errors import AislandError
-from aisland.wheels_install import WheelsFileError, read_wheels
-from aisland.wheels_report import BuiltWheel, NotBuilt, WheelsScope, provenance_header, regenerate_command
+from aisland.wheels import bundle as wheels_bundle
+from aisland.wheels import install as wheels_install
+from aisland.wheels import unzip as wheels_unzip
+from aisland.wheels.install import WheelsFileError, read_wheels
+from aisland.wheels.report import BuiltWheel, NotBuilt, WheelsScope, provenance_header, regenerate_command
 
 #: The folder inside the project that receives the wheels; the install line names it.
 WHEELS_DIR = "wheels"
@@ -34,7 +36,7 @@ README_NAME = "README.md"
 WHEELS_YAML = wheels_install.WHEELS_FILE
 
 
-#: The generic installer written beside the wheels (a copy of :mod:`aisland.wheels_install`).
+#: The generic installer written beside the wheels (a copy of :mod:`aisland.wheels.install`).
 INSTALL_SCRIPT = "install.py"
 
 
@@ -232,7 +234,7 @@ def render_readme(
     """
     flag = extra if command_extra == "" else command_extra
     command = regenerate_command(target, scope, project_wheel is not None, flag)
-    header = "\n".join(provenance_header("", command, "aisland/aisland/wheels_files.py (render_readme)"))
+    header = "\n".join(provenance_header("", command, "aisland/aisland/wheels/files.py (render_readme)"))
     title, intro = _title_and_intro(target, scope, commits)
     how = _how_to_install(target, project_wheel, extra)
     table = _wheel_table(built + ([project_wheel] if project_wheel else []), commits)
@@ -282,7 +284,7 @@ def render_wheels_yaml(
     lines = [_HEADER_RULE.rstrip("\n")]
     # The header's first line, said for this one generated file the user DOES edit: its `install:` values.
     lines += ["# AUTO-GENERATED FILE — edit only the `install:` values (a rerun keeps them)"]
-    lines += provenance_header("# ", command, "aisland/aisland/wheels_files.py (render_wheels_yaml)")[1:]
+    lines += provenance_header("# ", command, "aisland/aisland/wheels/files.py (render_wheels_yaml)")[1:]
     lines += [
         _HEADER_RULE.rstrip("\n"),
         "# install.py installs the wheels marked `install: true`, then",
@@ -319,7 +321,7 @@ def render_wheels_yaml(
 def render_install_script(
     target: str, scope: WheelsScope, include_project: bool = False, extra: Optional[str] = None
 ) -> str:
-    """``wheels/install.py``: :mod:`aisland.wheels_install` unchanged, under a generated header.
+    """``wheels/install.py``: :mod:`aisland.wheels.install` unchanged, under a generated header.
 
     The template's own header (between its first two rule lines) says it is the template; the copy's
     names the command that wrote it.
@@ -327,17 +329,17 @@ def render_install_script(
     template = Path(wheels_install.__file__).read_text(encoding="utf-8")
     shebang, _template_header, rest = template.split(_HEADER_RULE, 2)
     command = regenerate_command(target, scope, include_project, extra)
-    header = provenance_header("# ", command, "aisland/aisland/wheels_install.py (copied unchanged below this header)")
+    header = provenance_header("# ", command, "aisland/aisland/wheels/install.py (copied unchanged below this header)")
     return shebang + _HEADER_RULE + "\n".join(header) + "\n" + _HEADER_RULE + rest
 
 
 def render_unzip_script(target: str, standalone: bool = False) -> str:
-    """A zip's ``__main__.py``: :mod:`aisland.wheels_unzip` under a generated header, naming ``target`` and whether
+    """A zip's ``__main__.py``: :mod:`aisland.wheels.unzip` under a generated header, naming ``target`` and whether
     the zip installs the project's own wheel (``standalone``: it then runs from any folder)."""
     template = Path(wheels_unzip.__file__).read_text(encoding="utf-8")
     shebang, _template_header, rest = template.split(_HEADER_RULE, 2)
     header = provenance_header(
-        "# ", f"aisland wheels zip {target}", "aisland/aisland/wheels_unzip.py (copied below this header)"
+        "# ", f"aisland wheels zip {target}", "aisland/aisland/wheels/unzip.py (copied below this header)"
     )
     for placeholder, value in (
         ('PROJECT = "<project>"', f"PROJECT = {json.dumps(target)}"),

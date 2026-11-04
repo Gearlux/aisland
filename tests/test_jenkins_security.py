@@ -13,6 +13,7 @@ from pathlib import Path
 
 import pytest
 
+from aisland import paths
 from aisland.services import base, jenkins_jobs
 from aisland.services.jenkins import JenkinsService
 
@@ -22,7 +23,7 @@ PASSWORD = "0123456789abcdef0123456789abcdef"
 @pytest.fixture
 def service(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> JenkinsService:
     """A Jenkins whose initial admin password is written, running on 9080."""
-    monkeypatch.setattr(base, "DATA_DIR", tmp_path)
+    monkeypatch.setattr(paths, "data_dir", lambda: tmp_path)
     monkeypatch.setattr(JenkinsService, "get_ports", lambda self: [9080])
     monkeypatch.setattr(JenkinsService, "is_running", lambda self: True)
     monkeypatch.setattr(base.BaseService, "status", lambda self: None)

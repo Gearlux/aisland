@@ -36,7 +36,8 @@ and what to do about it. A patch release (0.1.0 → 0.1.1) changes none of it.
   `ref`), `unreleased_owners`, `token_owner`, `token_secret`, `stage_limits`, `runner_limits`, `actions`,
   `timed_out_message`, `workspace`, `jenkins_url`, `node_tests`. A later release may add facts; it removes or renames none.
 - **The tools of `aisland-mcp`** ([mcp](mcp.md)): their names, their arguments and the keys of the JSON object each
-  returns — for `services_status`, the same object `aisland services status --json` prints.
+  returns — for `services_status`, the same object `aisland services status --json` prints — and `warnings`, the
+  lines a tool warned on stderr, there when it did.
 - **The project order** `aisland workspace projects` prints, dependencies first: what a script that walks the
   projects reads, in place of an import of aisland.
 - **The environment variables** the README's table lists, and what each one does.

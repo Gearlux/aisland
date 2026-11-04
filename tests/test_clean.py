@@ -27,7 +27,7 @@ import click
 import pytest
 from click.testing import CliRunner
 
-from aisland import clean
+from aisland import clean, console, paths
 from aisland.cli import main
 from aisland.cli import toplevel as cli_toplevel
 from aisland.errors import AislandError
@@ -212,7 +212,7 @@ def test_a_project_with_nothing_ignored_creates_no_backup(workspace: Path) -> No
 
 
 def test_declining_the_confirmation_moves_nothing(workspace: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr(clean.click, "confirm", lambda *args, **kwargs: False)
+    monkeypatch.setattr(console, "confirm", lambda *args, **kwargs: False)
 
     assert clean.clean_project("proj", workspace_root=workspace, data_dir=workspace / "data", now=NOW) == 0
     assert (workspace / "proj" / "build").exists()
@@ -457,7 +457,7 @@ def test_the_cli_rejects_a_negative_retention_window() -> None:
 
 def test_a_refusal_reaches_the_shell_as_exit_1(workspace: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(clean, "get_workspace_root", lambda: workspace)
-    monkeypatch.setattr(clean, "DATA_DIR", workspace / "data")
+    monkeypatch.setattr(paths, "data_dir", lambda: workspace / "data")
 
     result = CliRunner().invoke(main, ["clean", "nope"])
 
@@ -643,7 +643,7 @@ def test_force_replaces_a_directory_too(workspace: Path) -> None:
 def test_declining_the_force_confirmation_restores_nothing(workspace: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     _run(workspace)
     (workspace / "proj" / "run.log").write_text("rebuilt\n")
-    monkeypatch.setattr(clean.click, "confirm", lambda *args, **kwargs: False)
+    monkeypatch.setattr(console, "confirm", lambda *args, **kwargs: False)
 
     exit_code = clean.restore_backup("proj", force=True, workspace_root=workspace, data_dir=workspace / "data")
 
@@ -999,7 +999,7 @@ def test_a_prune_dry_run_deletes_nothing(workspace: Path, capsys: pytest.Capture
 
 def test_declining_the_prune_confirmation_deletes_nothing(workspace: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     old = _seed_backup(workspace, "proj", 8)
-    monkeypatch.setattr(clean.click, "confirm", lambda *args, **kwargs: False)
+    monkeypatch.setattr(console, "confirm", lambda *args, **kwargs: False)
 
     assert clean.prune_store(data_dir=workspace / "data", now=NOW) == 0
     assert old.exists()

@@ -16,11 +16,11 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Dict, List, Optional
 
-import click
-
-from aisland import gitcmd, local_workspace, machine_config, tracking, workspace_file
+from aisland import console, gitcmd, machine_config, tracking
 from aisland.projects import submodule_active_map
 from aisland.sources import detached_projects
+from aisland.workspace import file as workspace_file
+from aisland.workspace import local as local_workspace
 
 #: The project's setting in ``workspace.toml`` and the last part of this machine's ``aisland.active.<project>.active``.
 ACTIVE_KEY = "active"
@@ -71,12 +71,12 @@ def resolve(root: Path, non_interactive: bool) -> None:
     defaults = optional(root)
     if not defaults:
         return
-    click.echo("==> Resolving optional project activation...")
+    console.echo("==> Resolving optional project activation...")
     for project, default in defaults.items():
         choice = machine_choice(root, project)
         if non_interactive and choice is not None:
             continue
-        answer = click.confirm(
+        answer = console.confirm(
             f"  Activate '{project}'? (clone + install)", default=default if choice is None else choice
         )
         set_machine_choice(root, project, answer)
@@ -101,15 +101,15 @@ def reconcile(root: Path) -> List[str]:
 
     Then each project's ``ignore`` is written from its tracking (:mod:`aisland.tracking`) — git's own key in
     ``.git/config`` is gone after a deinit —, each untracked project on no branch is put on its branch, and a local
-    workspace (:mod:`aisland.local_workspace`) commits
+    workspace (:mod:`aisland.workspace.local`) commits
     ``.gitmodules`` and the projects added."""
     stuck = _reconcile(root)
     for change in tracking.apply(root):
-        click.echo(f"  - {change.line()}")
+        console.echo(f"  - {change.line()}")
     for line in tracking.follow_branches(root):
-        click.echo(f"  - {line}")
+        console.echo(f"  - {line}")
     for line in local_workspace.settle(root).lines():
-        click.echo(f"  - {line}")
+        console.echo(f"  - {line}")
     return stuck
 
 
@@ -122,36 +122,36 @@ def _reconcile(root: Path) -> List[str]:
     detached = detached_projects(root)
     names = _submodule_names(root)
     stuck: List[str] = []
-    click.echo("==> Bringing the project folders in line with their activation...")
+    console.echo("==> Bringing the project folders in line with their activation...")
     for project in listed.projects.values():
         want = effective(root, project.name) and project.name not in detached
         name = names.get(project.path)
         checked_out = (root / project.path / ".git").exists()
         if want and not checked_out:
             if name is not None:
-                click.echo(f"  - init {project.path} (active)")
+                console.echo(f"  - init {project.path} (active)")
                 done = gitcmd.git(root, "submodule", "update", "--init", project.path)
             elif project.url is not None:
-                click.echo(f"  - add {project.path} (active)")
+                console.echo(f"  - add {project.path} (active)")
                 branch = ["-b", project.branch] if project.branch else []
                 # A local workspace's `.gitignore` ignores everything: git adds the path only with `-f`.
                 force = ["-f"] if local_workspace.is_local(root) else []
                 done = gitcmd.git(root, "submodule", "add", "-q", *force, *branch, "--", project.url, project.path)
                 name = _submodule_names(root).get(project.path)
             else:
-                click.echo(f"    skip {project.path}: active, but workspace.toml gives it no url to clone from.")
+                console.echo(f"    skip {project.path}: active, but workspace.toml gives it no url to clone from.")
                 stuck.append(project.name)
                 continue
             if done.returncode != 0:
-                click.echo(
+                console.echo(
                     f"    skip {project.path}: {done.stderr.strip().splitlines()[-1] if done.stderr else 'failed'}"
                 )
                 stuck.append(project.name)
         elif not want and checked_out and name is not None:
-            click.echo(f"  - deinit {project.path} (inactive)")
+            console.echo(f"  - deinit {project.path} (inactive)")
             # No ``-f``: a deinit that would discard uncommitted work refuses, protecting it.
             if gitcmd.git(root, "submodule", "deinit", project.path).returncode != 0:
-                click.echo(f"    skip {project.name}: deinit refused; resolve local changes and re-run.")
+                console.echo(f"    skip {project.name}: deinit refused; resolve local changes and re-run.")
                 stuck.append(project.name)
         if name is None:
             continue
@@ -189,7 +189,7 @@ def _known(root: Path, project: str) -> bool:
     projects = workspace_file.load(root).projects
     if project in projects:
         return True
-    click.echo(
+    console.echo(
         f"Error: '{project}' is no project of {workspace_file.FILE_NAME} (the projects: {', '.join(projects)})",
         err=True,
     )
@@ -211,10 +211,10 @@ def set_active(root: Path, project: str, active: bool, machine_only: bool) -> in
         return 1
     if machine_only:
         set_machine_choice(root, project, active)
-        click.echo(f"==> {project}: {'active' if active else 'inactive'} on this machine (nothing committed)")
+        console.echo(f"==> {project}: {'active' if active else 'inactive'} on this machine (nothing committed)")
     else:
         _write_default(root, project, active)
-        click.echo(f"==> {project}: optional, {'on' if active else 'off'} by default (in {workspace_file.FILE_NAME})")
+        console.echo(f"==> {project}: optional, {'on' if active else 'off'} by default (in {workspace_file.FILE_NAME})")
     return 1 if project in reconcile(root) else 0
 
 
@@ -224,8 +224,8 @@ def unset_active(root: Path, project: str, machine_only: bool) -> int:
         return 1
     if machine_only:
         set_machine_choice(root, project, None)
-        click.echo(f"==> {project}: this machine follows the committed default again")
+        console.echo(f"==> {project}: this machine follows the committed default again")
     else:
         _write_default(root, project, None)
-        click.echo(f"==> {project}: always part of the workspace")
+        console.echo(f"==> {project}: always part of the workspace")
     return 1 if project in reconcile(root) else 0

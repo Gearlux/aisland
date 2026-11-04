@@ -17,7 +17,7 @@ from typing import Optional
 import click
 import pytest
 
-from aisland import wheels as w
+from aisland.wheels import build as w
 
 _BUILD_SYSTEM = '[build-system]\nrequires = ["setuptools>=61"]\nbuild-backend = "setuptools.build_meta"\n'
 

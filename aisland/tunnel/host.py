@@ -53,7 +53,7 @@ from urllib.parse import parse_qs, urlparse
 import click
 from click.shell_completion import CompletionItem
 
-from aisland import downloads
+from aisland import console, downloads
 from aisland.errors import AislandError, quiet_completion
 
 #: The relay the tunnel dials out to; also what the doctor check probes.
@@ -237,7 +237,7 @@ def install_cli(tarball: Optional[Path] = None, force: bool = False) -> Path:
 
     asset = cli_asset()
     url = CLI_DOWNLOAD_URL.format(asset=asset)
-    click.echo(f"Fetching the VS Code CLI ({asset})…")
+    console.echo(f"Fetching the VS Code CLI ({asset})…")
     with tempfile.TemporaryDirectory() as tmp:
         downloaded = Path(tmp) / "vscode_cli.tar.gz"
         try:
@@ -670,11 +670,11 @@ def parse_workspace_url(text: str) -> Workspace:
 
 def _ask_name(exact: str, stripped: str) -> str:
     """Ask which of the two names the tunnel carries, defaulting to the machine's own form."""
-    click.echo(
+    console.echo(
         f"The address names '{exact}', but a remote machine usually names its own tunnel "
         f"'{stripped}' (its workspace name, without the environment suffix)."
     )
-    return str(click.prompt("Tunnel name", type=click.Choice([exact, stripped]), default=stripped))
+    return str(console.prompt("Tunnel name", type=click.Choice([exact, stripped]), default=stripped))
 
 
 def resolve_target(target: Optional[str] = None, name: Optional[str] = None, ask: bool = True) -> Workspace:

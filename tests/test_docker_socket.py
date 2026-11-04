@@ -14,15 +14,15 @@ from typing import List
 
 import pytest
 
-from aisland import provision
-from aisland.services import base, docker
+from aisland import paths, provision
+from aisland.services import docker
 from aisland.services.docker import DockerService
 
 
 @pytest.fixture
 def sockets(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> List[List[str]]:
     """Colima's socket under a scratch HOME, the standard one a link to another engine's; every `sudo` recorded."""
-    monkeypatch.setattr(base, "DATA_DIR", tmp_path / "data")
+    monkeypatch.setattr(paths, "data_dir", lambda: tmp_path / "data")
     monkeypatch.setattr(docker.Path, "home", lambda: tmp_path)
     (tmp_path / docker.COLIMA_PROFILE_DIR).mkdir(parents=True)
     (tmp_path / docker.COLIMA_PROFILE_DIR / "docker.sock").touch()

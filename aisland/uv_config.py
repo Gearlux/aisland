@@ -7,10 +7,9 @@ import tomllib
 from pathlib import Path
 from typing import Dict, List
 
-import click
 from packaging.requirements import InvalidRequirement, Requirement
 
-from aisland import failures
+from aisland import console, failures
 from aisland import pyproject as pyproject_toml
 from aisland.projects import ProjectMetadata
 
@@ -159,4 +158,4 @@ def write_root_uv_toml(workspace_root: Path, activated: List[ProjectMetadata]) -
     out.write_text(_emit_uv_toml(merged))
     extra = len(merged.get("extra-index-url", []) or [])
     wheels = f"; {len(folders)} wheels folder(s)" if folders else ""
-    click.echo(f"==> Wrote {out} (base + {n_merged} project uv.toml; {extra} extra index URL(s){wheels})")
+    console.echo(f"==> Wrote {out} (base + {n_merged} project uv.toml; {extra} extra index URL(s){wheels})")

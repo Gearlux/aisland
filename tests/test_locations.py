@@ -105,16 +105,16 @@ def test_from_a_checkout_the_folder_you_run_in_and_the_variable_change_nothing(
 
 
 @needs_workspace
+@pytest.mark.real_workspace
 def test_from_a_checkout_the_state_stays_in_aislands_own_folder() -> None:
-    assert paths.BASE_DIR == AISLAND_PROJECT
-    assert paths.DATA_DIR == AISLAND_PROJECT / "data"
-    assert paths.BIN_DIR == AISLAND_PROJECT / "bin"
-    assert paths.TOOLS_DIR == AISLAND_PROJECT / "tools"
-    assert supervisor.DATA_DIR == AISLAND_PROJECT / "data"
-    assert supervisor.BIN_DIR == AISLAND_PROJECT / "bin"
-    assert pytest_stats.WORKSPACE_ROOT == WORKSPACE
-    assert pytest_stats.STATS_DIR == AISLAND_PROJECT / "data" / "test-stats"
-    assert pytest_stats.JENKINS_JOBS_DIR == AISLAND_PROJECT / "data" / "jenkins" / "jobs"
+    assert paths.state_dir() == AISLAND_PROJECT
+    assert paths.data_dir() == AISLAND_PROJECT / "data"
+    assert paths.bin_dir() == AISLAND_PROJECT / "bin"
+    assert paths.tools_dir() == AISLAND_PROJECT / "tools"
+    assert supervisor.config_file() == AISLAND_PROJECT / "data" / "process-compose.yaml"
+    assert pytest_stats.workspace_root() == WORKSPACE
+    assert pytest_stats.stats_folder() == AISLAND_PROJECT / "data" / "test-stats"
+    assert pytest_stats.jenkins_jobs_folder() == AISLAND_PROJECT / "data" / "jenkins" / "jobs"
 
 
 def test_jenkins_finds_the_root_the_way_the_rest_of_aisland_does() -> None:

@@ -20,9 +20,9 @@ from typing import Dict, List, Optional
 
 import click
 import pytest
+from click.testing import CliRunner
 
-from aisland import installers, locations, manager, provision, supervisor
-from aisland.services import base
+from aisland import cli, console, installers, locations, manager, paths, provision, supervisor
 
 
 @pytest.fixture
@@ -53,7 +53,7 @@ def _terminal(monkeypatch: pytest.MonkeyPatch, answer: Optional[bool]) -> List[s
         asked.append(question)
         return bool(answer)
 
-    monkeypatch.setattr(provision.click, "confirm", _confirm)
+    monkeypatch.setattr(console, "confirm", _confirm)
     return asked
 
 
@@ -78,9 +78,12 @@ def test_setup_installs_the_projects_tools_and_nothing_of_aislands_own(
 
 
 def test_the_provision_command_still_installs_everything(
-    tmp_path: Path, macos: None, installs: Dict[str, List[object]]
+    tmp_path: Path, macos: None, installs: Dict[str, List[object]], monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    provision.install(_workspace(tmp_path))
+    root = _workspace(tmp_path)
+    monkeypatch.setattr(locations, "workspace_root", lambda: root)
+    result = CliRunner().invoke(cli.main, ["workspace", "provision", "install"])
+    assert result.exit_code == 0, result.output
     assert installs["brew"] == [sorted({"graphviz", *provision.AISLAND_TOOLS["brew"]})]
     assert installs["java"] == ["java"]
 
@@ -169,7 +172,7 @@ def test_docker_without_colima_is_refused_and_installs_nothing(
 ) -> None:
     from aisland.services import docker
 
-    monkeypatch.setattr(base, "DATA_DIR", tmp_path)
+    monkeypatch.setattr(paths, "data_dir", lambda: tmp_path)
     monkeypatch.setattr(docker.shutil, "which", lambda name: None)
     engine = docker.DockerService()
     monkeypatch.setattr(engine, "is_running", lambda: False)
@@ -184,7 +187,7 @@ def test_swiftbar_without_the_app_is_refused(
 ) -> None:
     from aisland.services import swiftbar
 
-    monkeypatch.setattr(base, "DATA_DIR", tmp_path)
+    monkeypatch.setattr(paths, "data_dir", lambda: tmp_path)
     monkeypatch.setattr(swiftbar, "swiftbar_installed", lambda: False)
     _terminal(monkeypatch, None)
     with pytest.raises(click.ClickException, match="Install it: brew install swiftbar"):
@@ -196,7 +199,7 @@ def test_jenkins_asks_before_it_downloads_its_war(
 ) -> None:
     from aisland.services import jenkins
 
-    monkeypatch.setattr(base, "DATA_DIR", tmp_path)
+    monkeypatch.setattr(paths, "data_dir", lambda: tmp_path)
     service = jenkins.JenkinsService()
     service.war_file = tmp_path / "bin" / "jenkins.war"
 
@@ -221,7 +224,7 @@ def test_jenkins_asks_before_it_installs_java(
 ) -> None:
     from aisland.services import jenkins
 
-    monkeypatch.setattr(base, "DATA_DIR", tmp_path)
+    monkeypatch.setattr(paths, "data_dir", lambda: tmp_path)
 
     class _NoJava:
         runtime = None
@@ -259,16 +262,12 @@ def test_jenkins_asks_before_it_installs_java(
 def test_check_without_act_fails_that_gate_naming_the_command(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, macos: None
 ) -> None:
-    from click.testing import CliRunner
-
-    from aisland.cli import main
-
     monkeypatch.setattr(locations, "workspace_root", lambda: tmp_path)
     (tmp_path / ".venv" / "bin").mkdir(parents=True)
     project = tmp_path / "app"
     (project / ".github" / "workflows").mkdir(parents=True)
     (project / "pyproject.toml").write_text('[project]\nname = "app"\nversion = "0.1.0"\n')
     monkeypatch.setenv("PATH", "/usr/bin:/bin")
-    result = CliRunner().invoke(main, ["check", "act", "app"])
+    result = CliRunner().invoke(cli.main, ["check", "act", "app"])
     assert result.exit_code == 1
     assert "act is not installed — brew install act" in result.output

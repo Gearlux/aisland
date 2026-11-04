@@ -8,8 +8,8 @@ import pytest
 
 from aisland import discovery
 from aisland import pyproject as pyproject_toml
-from aisland import wheels_extra
 from aisland.errors import AislandError
+from aisland.wheels import extra as wheels_extra
 
 BROKEN = '[project]\nname = "app"\nversion = \n'
 

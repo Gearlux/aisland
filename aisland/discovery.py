@@ -37,6 +37,7 @@ from aisland import pyproject as pyproject_toml
 from aisland.errors import AislandError
 from aisland.installers import USERSPACE_TOOLS
 from aisland.projects import workspace_folders
+from aisland.toml_places import Where, key_line, table_line
 
 #: The entry-point group a project's code plugins are declared in.
 ENTRY_POINT_GROUP = "aisland.plugins"
@@ -66,17 +67,6 @@ PluginState = Literal["installed", "not installed"]
 
 class DeclarationError(AislandError, ValueError):
     """A declaration aisland cannot use; the message names the file and the line."""
-
-
-@dataclass(frozen=True)
-class Where:
-    """A place in a project's ``pyproject.toml``: the file, and the line of the table (``None`` when not found)."""
-
-    file: Path
-    line: Optional[int]
-
-    def __str__(self) -> str:
-        return f"{self.file}:{self.line}" if self.line else str(self.file)
 
 
 @dataclass(frozen=True)
@@ -155,33 +145,6 @@ class Discovery:
     system_tools: List[SystemTool] = field(default_factory=list)
     #: The programs the projects declare as click commands (``[tool.aisland] click-commands``), each once.
     click_commands: List[str] = field(default_factory=list)
-
-
-# --- locating a table in the text ----------------------------------------------------------------------------------
-
-
-def _part(name: str) -> str:
-    """One dotted-key part as a pattern: bare, or quoted either way."""
-    escaped = re.escape(name)
-    return rf'(?:{escaped}|"{escaped}"|\'{escaped}\')'
-
-
-def table_line(text: str, *parts: str) -> Optional[int]:
-    """The 1-based line of the table header ``[a.b.c]`` (spaces and quoting allowed), or None."""
-    dotted = r"\s*\.\s*".join(_part(part) for part in parts)
-    pattern = re.compile(rf"^\s*\[\s*{dotted}\s*\]")
-    for number, line in enumerate(text.splitlines(), start=1):
-        if pattern.match(line):
-            return number
-    return None
-
-
-def key_line(text: str, header: int, key: str) -> Optional[int]:
-    """The line of ``key = …`` below the table header on line ``header``: the table's own, since valid TOML keeps a
-    table's keys under its header and cannot define the key again in a later table."""
-    pattern = re.compile(rf"^\s*{_part(key)}\s*=")
-    lines = text.splitlines()[header:]
-    return next((number for number, line in enumerate(lines, start=header + 1) if pattern.match(line)), None)
 
 
 # --- stage 1 --------------------------------------------------------------------------------------------------------

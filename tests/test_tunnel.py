@@ -30,9 +30,10 @@ import click
 import pytest
 from click.testing import CliRunner
 
-from aisland import downloads, locations, tunnel
+from aisland import downloads, locations
 from aisland.cli import main
 from aisland.errors import AislandError
+from aisland.tunnel import host as tunnel
 
 
 @pytest.fixture(autouse=True)

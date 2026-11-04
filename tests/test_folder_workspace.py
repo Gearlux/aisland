@@ -13,8 +13,9 @@ from pathlib import Path
 import click
 import pytest
 
-from aisland import locations, projects, pytest_stats, sources, wheels
+from aisland import locations, projects, pytest_stats, sources
 from aisland.errors import AislandError
+from aisland.wheels import build as wheels
 
 
 def _project(folder: Path, name: str, deps: str = "") -> Path:
@@ -103,7 +104,7 @@ def test_a_wheel_of_a_project_outside_git_is_refused(acme: Path, monkeypatch: py
 
 
 def test_a_test_run_of_a_folder_project_is_recorded(acme: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr(pytest_stats, "WORKSPACE_ROOT", acme)
+    monkeypatch.setattr(pytest_stats, "workspace_root", lambda: acme)
     assert pytest_stats._is_workspace_project(acme / "beta") is True
     assert pytest_stats._is_workspace_project(acme / "docs") is False
     assert pytest_stats._is_workspace_project(acme / "beta" / "src") is False

@@ -7,8 +7,7 @@ from typing import Any, Dict, List, Literal, Optional, Sequence, TypedDict
 
 import click
 
-from aisland import failures, supervisor
-from aisland.paths import DATA_DIR
+from aisland import console, failures, paths, supervisor
 from aisland.projects import get_workspace_root
 
 #: What a service's state can be: ``not installed`` (its program is missing), ``not supported`` (not on this platform),
@@ -52,8 +51,8 @@ class BaseService:
 
     def __init__(self, name: str) -> None:
         self.name = name
-        self.service_data_dir = DATA_DIR / name
-        self.log_file = DATA_DIR / f"{name}.log"
+        self.service_data_dir = paths.data_dir() / name
+        self.log_file = paths.data_dir() / f"{name}.log"
         self.service_data_dir.mkdir(parents=True, exist_ok=True)
 
     def is_running(self) -> bool:
@@ -96,11 +95,11 @@ class BaseService:
             readiness: Optional HTTP readiness probe ``{"port": int, "path": str}``.
         """
         if self.is_running():
-            click.echo(f"{self.name.capitalize()} is already running (PID: {self.get_pid()}).")
+            console.echo(f"{self.name.capitalize()} is already running (PID: {self.get_pid()}).")
             return
         if readiness is not None and self._port_taken(readiness["port"]):
             return
-        click.echo(f"Starting {self.name.capitalize()}...")
+        console.echo(f"Starting {self.name.capitalize()}...")
         self._register_and_apply(cmd, self._process_env(env), readiness)
         outcome, state = supervisor.wait_for_outcome(self.name)
         if outcome == "failed":
@@ -113,10 +112,10 @@ class BaseService:
             )
             return
         assert state is not None  # ready/running/pending all carry a state
-        click.echo(f"{self.name.capitalize()} started (PID: {state.get('pid')})")
+        console.echo(f"{self.name.capitalize()} started (PID: {state.get('pid')})")
         if outcome == "pending":
-            click.echo(f"  - Still initializing (readiness probe pending) — check 'aisland {self.name} status'.")
-        click.echo(f"Logs: {self.log_file}")
+            console.echo(f"  - Still initializing (readiness probe pending) — check 'aisland {self.name} status'.")
+        console.echo(f"Logs: {self.log_file}")
         if not background:
             self._follow_then_stop()
 
@@ -168,21 +167,21 @@ class BaseService:
 
     def _follow_then_stop(self) -> None:
         """Stream the service's log until Ctrl+C, then stop the service (the old foreground meaning)."""
-        click.echo(f"Following logs — press Ctrl+C to stop {self.name.capitalize()}...")
+        console.echo(f"Following logs — press Ctrl+C to stop {self.name.capitalize()}...")
         try:
             supervisor.follow_logs(self.name)
         except KeyboardInterrupt:
             pass
-        click.echo("")
+        console.echo("")
         self.stop()
 
     def stop(self) -> None:
         """Stop the running service (disable it in the desired state)."""
         if not self.is_running():
-            click.echo(f"{self.name.capitalize()} is not running.")
+            console.echo(f"{self.name.capitalize()} is not running.")
             return
 
-        click.echo(f"Stopping {self.name.capitalize()} (PID: {self.get_pid()})...")
+        console.echo(f"Stopping {self.name.capitalize()} (PID: {self.get_pid()})...")
         # Disable + apply (not a bare `process stop`): the desired-state
         # document must record the stop, or the next config update would
         # resurrect the process.
@@ -192,7 +191,7 @@ class BaseService:
         if state is not None and state.get("is_running"):
             failures.report(f"Error: {self.name.capitalize()} did not stop in time.")
             return
-        click.echo(f"{self.name.capitalize()} stopped.")
+        console.echo(f"{self.name.capitalize()} stopped.")
 
         # Post-flight: children that escaped the supervisor's process group
         # (e.g. workers re-parented after their launcher died) can survive a
@@ -233,7 +232,7 @@ class BaseService:
             if state["ready"]:
                 extras.append(f"ready: {state['ready']}")
             detail = f"({', '.join(extras)})"
-        click.echo(f"  {self.name.capitalize():<15} : {styled_state(state['state'])} {detail}")
+        console.echo(f"  {self.name.capitalize():<15} : {styled_state(state['state'])} {detail}")
 
     def info(self) -> None:
         """Display detailed service information.
@@ -243,23 +242,23 @@ class BaseService:
         print service-specific details (URLs, credentials, config paths) via
         ``super().info()``.
         """
-        click.echo(click.style(f"{self.name.capitalize()}:", bold=True))
+        console.echo(click.style(f"{self.name.capitalize()}:", bold=True))
         running = self.is_running()
         status_str = click.style("Running", fg="green") if running else click.style("Stopped", fg="red")
-        click.echo(f"  Status        : {status_str}")
+        console.echo(f"  Status        : {status_str}")
         if running:
             pid = self.get_pid()
-            click.echo(f"  PID           : {pid}")
+            console.echo(f"  PID           : {pid}")
             ports = self.get_ports()
             if ports:
-                click.echo(f"  Listening port: {', '.join(str(p) for p in ports)}")
-        click.echo(f"  Data dir      : {self.service_data_dir}")
-        click.echo(f"  Log file      : {self.log_file}")
-        click.echo(f"  Supervisor    : process-compose ({supervisor.CONFIG_FILE})")
+                console.echo(f"  Listening port: {', '.join(str(p) for p in ports)}")
+        console.echo(f"  Data dir      : {self.service_data_dir}")
+        console.echo(f"  Log file      : {self.log_file}")
+        console.echo(f"  Supervisor    : process-compose ({supervisor.config_file()})")
 
     def restart(self, **kwargs: Any) -> None:  # Any: launch's options, each typed by the subclass
         """Restart the service."""
-        click.echo(f"Restarting {self.name}...")
+        console.echo(f"Restarting {self.name}...")
         self.stop()
         # We assume launch is the method to start with default/stored config
         # Individual services might need to override this if launch signatures differ significantly
@@ -279,11 +278,11 @@ class BaseService:
             supervisor.apply()
 
         if self.service_data_dir.exists():
-            click.echo(f"Wiping data for {self.name} at {self.service_data_dir}...")
+            console.echo(f"Wiping data for {self.name} at {self.service_data_dir}...")
             shutil.rmtree(self.service_data_dir)
             self.service_data_dir.mkdir(parents=True, exist_ok=True)
 
         if self.log_file.exists():
             self.log_file.unlink()
 
-        click.echo(f"{self.name.capitalize()} data reset.")
+        console.echo(f"{self.name.capitalize()} data reset.")

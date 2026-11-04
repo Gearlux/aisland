@@ -19,7 +19,8 @@ from typing import List, Optional
 import pytest
 from click.testing import CliRunner
 
-from aisland import activation, cli, locations, manager, workspace_file
+from aisland import activation, cli, console, locations, manager
+from aisland.workspace import file as workspace_file
 
 _AUTHOR = {"GIT_AUTHOR_NAME": "t", "GIT_AUTHOR_EMAIL": "t@t", "GIT_COMMITTER_NAME": "t", "GIT_COMMITTER_EMAIL": "t@t"}
 
@@ -120,7 +121,7 @@ def answers(monkeypatch: pytest.MonkeyPatch) -> List[str]:
         asked.append(f"{text} [{'Y/n' if default else 'y/N'}]")
         return default
 
-    monkeypatch.setattr(activation.click, "confirm", confirm)
+    monkeypatch.setattr(console, "confirm", confirm)
     return asked
 
 

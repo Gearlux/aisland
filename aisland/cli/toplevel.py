@@ -223,9 +223,9 @@ def tests_report(project: str, days: int, as_json: bool) -> None:
     aisland tests report models --days 90
     aisland tests report models --json
     """
-    if not (pytest_stats.WORKSPACE_ROOT / project / "pyproject.toml").is_file():
+    if not (pytest_stats.workspace_root() / project / "pyproject.toml").is_file():
         raise click.BadParameter(
-            f"no project {project!r} in the workspace {pytest_stats.WORKSPACE_ROOT}", param_hint="PROJECT"
+            f"no project {project!r} in the workspace {pytest_stats.workspace_root()}", param_hint="PROJECT"
         )
     report = pytest_stats.build_report(project, days=days)
     click.echo(json.dumps(report.to_dict(), indent=2) if as_json else pytest_stats.render_report(report))

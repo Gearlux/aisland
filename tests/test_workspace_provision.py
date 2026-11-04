@@ -22,7 +22,7 @@ from typing import Dict, List
 import pytest
 from click.testing import CliRunner, Result
 
-from aisland import cli, discovery, installers, locations, manager, provision
+from aisland import cli, discovery, installers, locations, manager, paths, provision
 
 
 def _workspace(tmp_path: Path, projects: Dict[str, str]) -> Path:
@@ -193,7 +193,7 @@ def test_on_linux_the_listing_is_the_userspace_tools(tmp_path: Path, monkeypatch
     bin_dir.mkdir()
     for binary in installers.USERSPACE_TOOLS["process-compose"]["binaries"]:
         (bin_dir / binary).write_text("")
-    monkeypatch.setattr(provision, "BIN_DIR", bin_dir)
+    monkeypatch.setattr(paths, "bin_dir", lambda: bin_dir)
     rows = json.loads(_run(_workspace(tmp_path, {"editor": EDITOR}), monkeypatch, "--json").output)["rows"]
     assert rows == [
         {"tool": "node", "how": "userspace", "projects": "editor", "installed": "no"},

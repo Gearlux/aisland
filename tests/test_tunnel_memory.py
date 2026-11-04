@@ -25,8 +25,9 @@ from unittest.mock import patch
 import pytest
 from click.testing import CliRunner
 
-from aisland import locations, tunnel
+from aisland import locations
 from aisland.cli import main
+from aisland.tunnel import host as tunnel
 
 #: An address whose path segment IS the tunnel name — nothing to disambiguate.
 URL = "https://example.invalid/sandbox-4821/?folder=/mnt/workspace"

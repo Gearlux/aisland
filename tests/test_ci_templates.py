@@ -12,8 +12,10 @@ from pathlib import Path
 import pytest
 from click.testing import CliRunner
 
-from aisland import ci_scaffold, ci_templates, cli, locations, workspace_check, workspace_file
+from aisland import ci_scaffold, ci_templates, cli, locations
 from aisland.services.jenkins import JenkinsService
+from aisland.workspace import check as workspace_check
+from aisland.workspace import file as workspace_file
 
 #: A company's Jenkinsfile: a shared library, a pod agent, a private index — and a Groovy list of maps, which Jinja's
 #: own `{{ }}` would not have read past.

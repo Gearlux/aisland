@@ -8,8 +8,10 @@ from typing import Any, List
 
 import pytest
 
-from aisland import gitmodules, local_workspace, projects, workspace_file
+from aisland import gitmodules, projects
 from aisland.gitmodules import Submodule
+from aisland.workspace import file as workspace_file
+from aisland.workspace import local as local_workspace
 
 GITMODULES = """\
 [submodule "loggair"]

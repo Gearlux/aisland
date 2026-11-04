@@ -18,21 +18,21 @@ import click
 from aisland import (
     activation,
     clones,
+    console,
     env_example,
     failures,
     locations,
     machine_config,
+    paths,
     provision,
     selection,
-    workspace_check,
-    workspace_file,
 )
 from aisland.editor_files import sync_mypy_path, write_code_workspace, write_pyrightconfig
 from aisland.harness import install_harness
 from aisland.installers import ensure_uv_in_venv
 from aisland.mcp_config import no_venv, write_gemini_settings, write_mcp_json
 from aisland.mirrors import apply_all as apply_mirrors
-from aisland.paths import BASE_DIR, SERVICES_DIR
+from aisland.paths import SERVICES_DIR
 from aisland.projects import (
     ProjectMetadata,
     get_install_order,
@@ -43,6 +43,8 @@ from aisland.projects import (
 from aisland.selection import PLAYWRIGHT_BROWSER, axes, browser_install_command, resolve_for_setup
 from aisland.sources import apply_all
 from aisland.uv_config import write_root_uv_toml
+from aisland.workspace import check as workspace_check
+from aisland.workspace import file as workspace_file
 
 logger = logging.getLogger(__name__)
 
@@ -62,14 +64,14 @@ def _run_installs(workspace_root: Path, uv_cmd: str, projects: List[ProjectMetad
         blocked = sorted({dep for n in names for dep in adj[n] if dep in failed or dep in skipped} - set(names))
         if blocked:
             for n in names:
-                click.echo(f"==> Skipping {n}: its dependency {', '.join(blocked)} did not install.")
+                console.echo(f"==> Skipping {n}: its dependency {', '.join(blocked)} did not install.")
             skipped.extend(names)
             continue
         # Each target carries every extra the project DECLARES, narrowed to what the machine SELECTED
         # (shared with `aisland workspace configure source … local`, so the two installs cannot drift).
         targets = [selection.editable_target(workspace_root, p["path"], p["name"]) for p in group]
         suffix = " — a dependency cycle, installed together" if len(group) > 1 else ""
-        click.echo(f"==> Installing {', '.join(names)} ({' '.join(targets)}){suffix}...")
+        console.echo(f"==> Installing {', '.join(names)} ({' '.join(targets)}){suffix}...")
         cmd = [uv_cmd, "pip", "install"] + [arg for t in targets for arg in ("-e", t)]
         try:
             # Run from the workspace root so uv reads the generated root uv.toml (the merged
@@ -107,7 +109,7 @@ def link_project_bashrc(workspace_root: Path) -> None:
     but refuses to clobber a real file — that would silently destroy the user's
     customizations if they ever predated this migration.
     """
-    target = BASE_DIR / "project.bashrc"
+    target = paths.state_dir() / "project.bashrc"
     link = workspace_root / "project.bashrc"
     if not locations.FROM_CHECKOUT:
         _copy_packaged_bashrc(target)
@@ -130,7 +132,7 @@ def link_project_bashrc(workspace_root: Path) -> None:
 
     rel = os.path.relpath(target, workspace_root)
     os.symlink(rel, link)
-    click.echo(f"==> Linked {link} -> {rel}")
+    console.echo(f"==> Linked {link} -> {rel}")
 
 
 def write_generated_env_example(workspace_root: Path) -> None:
@@ -140,11 +142,11 @@ def write_generated_env_example(workspace_root: Path) -> None:
     try:
         written = env_example.write(workspace_root)
     except click.ClickException as error:
-        click.echo(f"==> env.complete and env.example not written: {error.message}")
+        console.echo(f"==> env.complete and env.example not written: {error.message}")
         return
     for kind, result in written.items():
         if result.changed:
-            click.echo(f"==> Wrote {env_example.FILE_NAMES[kind]} ({env_example.counts(result)})")
+            console.echo(f"==> Wrote {env_example.FILE_NAMES[kind]} ({env_example.counts(result)})")
 
 
 def setup_workspace(non_interactive: bool = False, install_all: bool = False) -> None:
@@ -171,20 +173,20 @@ def setup_workspace(non_interactive: bool = False, install_all: bool = False) ->
     # 0c. The agent harness: aisland's commands and generic rules in `.agents/` (aisland.harness) — linked from a
     #     checkout, copied from a wheel. Before provisioning, which can stop a setup half-way.
     for line in install_harness(workspace_root):
-        click.echo(f"  - {line}")
+        console.echo(f"  - {line}")
 
     # 0c'. A clone of the workspace's folder that .gitmodules does not list: added as a submodule, never asked about
     #      (aisland.clones), before workspace.toml, discovery and the installs read the projects.
 
     for line in clones.add_unlisted(workspace_root):
-        click.echo(f"  - {line}")
+        console.echo(f"  - {line}")
 
     # 0d. workspace.toml: its projects brought in line with .gitmodules (or the clones) — a new one added, a changed
     #     url or folder followed, a gone one dropped — then each key no part of aisland reads named (a typo).
     for line in workspace_file.refresh(workspace_root):
-        click.echo(f"  - {line}")
+        console.echo(f"  - {line}")
     for line in workspace_check.unknown_keys(workspace_root):
-        click.echo(line, err=True)
+        console.echo(line, err=True)
 
     # 1. The system tools the workspace needs (aisland's own and the projects' sys-dependencies).
     provision.install(workspace_root, aislands_own=False)
@@ -210,7 +212,7 @@ def setup_workspace(non_interactive: bool = False, install_all: bool = False) ->
     apply_mirrors(workspace_root)
 
     # 2. Dependency Discovery (now reflects the active checkouts)
-    click.echo(f"==> Resolving workspace dependency graph in {workspace_root}...")
+    console.echo(f"==> Resolving workspace dependency graph in {workspace_root}...")
     install_order = get_install_order(workspace_root)
 
     # 2b. Editor config — generate pyrightconfig.json so Pyright/Pylance resolve
@@ -232,7 +234,7 @@ def setup_workspace(non_interactive: bool = False, install_all: bool = False) ->
             workspace_root, non_interactive, axis, select_all=install_all and axis.from_defined_extras
         )
         if selected:
-            click.echo(f"==> {axis.name}: {', '.join(selected)}")
+            console.echo(f"==> {axis.name}: {', '.join(selected)}")
 
     # 2c. Generated root uv.toml — workspace base merged with each activated project's uv.toml,
     #     so a private index (a company's artifact repository) is present ONLY when that
@@ -249,9 +251,9 @@ def setup_workspace(non_interactive: bool = False, install_all: bool = False) ->
     # Python provisioning (editable installs): cycles together, dependents of a failure skipped.
     failed, skipped = _run_installs(workspace_root, uv_cmd, install_order)
     if failed or skipped:
-        click.echo(f"==> {len(failed)} project(s) failed to install: {', '.join(failed) or '-'}")
+        console.echo(f"==> {len(failed)} project(s) failed to install: {', '.join(failed) or '-'}")
         if skipped:
-            click.echo(f"==> {len(skipped)} skipped because a dependency failed: {', '.join(skipped)}")
+            console.echo(f"==> {len(skipped)} skipped because a dependency failed: {', '.join(skipped)}")
 
     for project in install_order:
         if project["name"] in failed or project["name"] in skipped:
@@ -262,7 +264,7 @@ def setup_workspace(non_interactive: bool = False, install_all: bool = False) ->
         project_dir = project["path"]
         browser = browser_install_command(project_dir / "pyproject.toml", venv_bin)
         if browser:
-            click.echo(f"==> Installing Playwright's {PLAYWRIGHT_BROWSER} for {project['name']}...")
+            console.echo(f"==> Installing Playwright's {PLAYWRIGHT_BROWSER} for {project['name']}...")
             try:
                 logger.debug("running %s (in %s)", " ".join(browser), project_dir)
                 subprocess.check_call(browser, cwd=project_dir)
@@ -289,7 +291,7 @@ def setup_workspace(non_interactive: bool = False, install_all: bool = False) ->
     #    so a recreated venv or a new aisland is pointed at by the next setup; a newly activated submodule gets them.
     install_git_aliases(workspace_root)
 
-    click.echo("==> Workspace setup complete!")
+    console.echo("==> Workspace setup complete!")
 
 
 #: The script that installs the workspace git aliases (`git pull-all`, `git push-all`, ...), shipped in the package.
@@ -311,6 +313,6 @@ def install_git_aliases(workspace_root: Path, quiet: bool = False) -> bool:
     )
     if result.returncode != 0:
         if quiet:
-            click.echo((result.stdout or "") + (result.stderr or ""), nl=False)
+            console.echo((result.stdout or "") + (result.stderr or ""), nl=False)
         failures.report(f"  - Error: installing the git aliases failed (bash {SETUP_GIT_SCRIPT} {workspace_root}).")
     return result.returncode == 0

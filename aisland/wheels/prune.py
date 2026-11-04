@@ -31,7 +31,7 @@ commits, merges, local tags and stash rewritten on top as they are), puts the ch
 was origin's landed on the commit origin's record names, shrinks the clone the same way and, like the prune, moves
 the root's pointer to the rewritten twin of the commit it records — also in a clone a reset already brought over.
 
-git-filter-repo runs through :mod:`aisland.filter_repo`, which reads the git config NUL-separated: a value over
+git-filter-repo runs through :mod:`aisland.wheels.filter_repo`, which reads the git config NUL-separated: a value over
 several lines stops git-filter-repo's own reader.
 """
 
@@ -50,9 +50,9 @@ from typing import Dict, List, Optional, Sequence, Set, Tuple
 
 from aisland import gitcmd
 from aisland.errors import AislandError
-from aisland.wheels import find_target, workspace_projects
-from aisland.wheels_files import WHEELS_DIR
-from aisland.wheels_report import human_size
+from aisland.wheels.build import find_target, workspace_projects
+from aisland.wheels.files import WHEELS_DIR
+from aisland.wheels.report import human_size
 
 #: Where origin keeps the record of every prune: a chain of commits, one per prune, never a branch or a tag.
 PRUNE_REF = "refs/wheels-prune/map"
@@ -301,14 +301,14 @@ def _blob_bytes(repo: Path, blobs: Sequence[str]) -> int:
 
 
 def _filter_repo() -> List[str]:
-    """The command that runs git-filter-repo with this interpreter — through :mod:`aisland.filter_repo`, which reads
+    """The command that runs git-filter-repo with this interpreter — through :mod:`aisland.wheels.filter_repo`, which reads
     a config value of several lines — or a refusal naming the extra."""
     if importlib.util.find_spec("git_filter_repo") is None:
         raise PruneError(
             f"rewriting history needs git-filter-repo, which aisland's [{EXTRA}] extra installs: "
             f"uv pip install 'aisland[{EXTRA}]'"
         )
-    return [sys.executable, "-m", "aisland.filter_repo"]
+    return [sys.executable, "-m", "aisland.wheels.filter_repo"]
 
 
 def _restore_command(repo: Path, bundle: Path) -> str:

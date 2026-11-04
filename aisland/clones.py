@@ -22,7 +22,9 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import List, Optional
 
-from aisland import gitcmd, local_workspace, locations, tracking, workspace_file
+from aisland import gitcmd, locations, tracking
+from aisland.workspace import file as workspace_file
+from aisland.workspace import local as local_workspace
 
 
 @dataclass(frozen=True)

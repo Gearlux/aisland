@@ -34,9 +34,10 @@ from typing import Dict, List, Mapping, Optional
 
 import jinja2
 
-from aisland import locations, workspace_file
-from aisland.discovery import Where, key_line, table_line
+from aisland import locations
 from aisland.errors import AislandError
+from aisland.toml_places import Where, key_line, table_line
+from aisland.workspace import file as workspace_file
 
 logger = logging.getLogger(__name__)
 

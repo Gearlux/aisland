@@ -2,7 +2,7 @@
 
 A workspace, as aisland sees it, is a git repository whose projects are folders holding a ``pyproject.toml`` —
 usually submodules. ``aisland setup`` then needs a ``.venv`` at the root and reads, when they exist,
-``workspace.toml`` (its projects and their settings, kept current by setup: :mod:`aisland.workspace_file`),
+``workspace.toml`` (its projects and their settings, kept current by setup: :mod:`aisland.workspace.file`),
 ``.env`` (exported by ``project.bashrc``) and ``mypy.ini`` (its ``mypy_path`` kept complete).
 ``init`` writes the starting files, runs ``git init``, adds each project of a ``--from`` file and each ``--add``
 repository as a submodule, writes ``workspace.toml`` and installs the workspace git aliases. It works the same
@@ -19,7 +19,7 @@ exception is ``--rewrite <file>``: each starting file it names is written again 
 as ``<file>.bak``; in an existing repository that is all init does, and it is refused beside any other option.
 
 Two choices of the root's, each its own flag: ``--local`` makes a new root repository that tracks only the projects
-(:mod:`aisland.local_workspace`: its ``.gitignore`` ignores everything, ``.gitmodules`` and the projects are its first
+(:mod:`aisland.workspace.local`: its ``.gitignore`` ignores everything, ``.gitmodules`` and the projects are its first
 commit), and ``--untracked`` makes the root record none of its projects' commits (:mod:`aisland.tracking`).
 """
 
@@ -35,13 +35,15 @@ from typing import Dict, List, Literal, Optional, Sequence, Tuple, get_args
 
 import click
 
-from aisland import atomic, env_example, gitcmd, local_workspace, locations, tracking, workspace_file
+from aisland import atomic, console, env_example, gitcmd, locations, tracking
 from aisland.errors import AislandError
 from aisland.harness import install_harness
 from aisland.harness import sets as harness_sets
 from aisland.harness import summary as harness_summary
 from aisland.manager import install_git_aliases
 from aisland.projects import get_workspace_name
+from aisland.workspace import file as workspace_file
+from aisland.workspace import local as local_workspace
 
 #: The files ``init`` starts a workspace with, in the order it writes them; ``--rewrite`` takes only these.
 StartingFile = Literal[".gitignore", ".env", "mypy.ini", "vscode-init-bash.sh"]
@@ -52,7 +54,7 @@ VSCODE_INIT_BASH = locations.PACKAGE_DIR / "templates" / "vscode-init-bash.sh"
 
 _HEADER = """\
 # =========================================================================
-# Written by: aisland workspace init (aisland/aisland/workspace.py)
+# Written by: aisland workspace init (aisland/aisland/workspace/init.py)
 # A starting point that is yours to edit. Written over only on request: aisland workspace init . --rewrite <file>
 # =========================================================================
 """
@@ -135,7 +137,7 @@ _INDENT = "      "
 
 def _say(text: str) -> None:
     """A progress line. It goes to stderr, so stdout holds the report alone (``init … > report.txt``)."""
-    click.echo(text, err=True)
+    console.echo(text, err=True)
 
 
 def _add_submodule(
@@ -174,11 +176,11 @@ def _add_submodule(
                 continue
             said.append(line)
             if terminal:
-                click.echo(f"{_REDRAW}{_INDENT}{line[:width]}", err=True, nl=False)
+                console.echo(f"{_REDRAW}{_INDENT}{line[:width]}", err=True, nl=False)
     if pending.strip():
         said.append(pending.strip())
     if terminal and said:
-        click.echo(_REDRAW, err=True, nl=False)
+        console.echo(_REDRAW, err=True, nl=False)
     if process.wait() != 0:
         message = "\n".join(line for line in said if not _GIT_PROGRESS.match(line)) or "\n".join(said)
         raise AislandError(f"{step}: could not add {url} as a submodule: {message}")
@@ -298,9 +300,9 @@ def init_workspace(
         raise AislandError("in an existing repository --rewrite writes its files and nothing else: run it on its own.")
     _refuse_a_bak_in_the_way(root, rewrite)
     if existing and rewrite:
-        click.echo(f"==> Rewrote in {root}")
+        console.echo(f"==> Rewrote in {root}")
         for row in _write_starting_files(root, rewrite, only_rewrite=True):
-            click.echo(row)
+            console.echo(row)
         return
     if existing and local:
         raise AislandError(f"{root} is already a git repository: --local makes a new one that only this machine has.")
@@ -386,11 +388,11 @@ def _build(
         made = ", ".join(settled.committed) if settled.error is None else f"not made: {settled.error}"
         rows.append(_row("first commit", made))
 
-    click.echo(f"==> {'Set up' if existing else 'Created'} workspace {get_workspace_name(root)} in {root}")
+    console.echo(f"==> {'Set up' if existing else 'Created'} workspace {get_workspace_name(root)} in {root}")
     for row in rows:
-        click.echo(row)
-    click.echo("Next:")
-    click.echo(f"    cd {root}")
+        console.echo(row)
+    console.echo("Next:")
+    console.echo(f"    cd {root}")
     if not runs_from_venv_of(root):
-        click.echo("    uv venv --seed .venv && .venv/bin/pip install aisland")
-    click.echo("    .venv/bin/aisland setup")
+        console.echo("    uv venv --seed .venv && .venv/bin/pip install aisland")
+    console.echo("    .venv/bin/aisland setup")

@@ -297,7 +297,7 @@ def test_the_cli_prints_the_report_as_json_and_exits_one_on_a_failure(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     monkeypatch.setattr(nightly, "datetime", _ClockAtNow)
-    monkeypatch.setattr(nightly, "NIGHTLY_DIR", tmp_path)
+    monkeypatch.setattr(nightly, "report_dir", lambda: tmp_path)
     monkeypatch.setattr(nightly, "jenkins_url", lambda: "http://jenkins.test/")
     monkeypatch.setattr(nightly, "JenkinsApi", lambda url: _night())
     monkeypatch.setattr(nightly, "orchestrator_job", lambda: "ws.local")

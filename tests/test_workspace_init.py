@@ -22,8 +22,9 @@ from typing import Tuple
 import pytest
 from click.testing import CliRunner, Result
 
-from aisland import workspace, workspace_file
 from aisland.cli import main
+from aisland.workspace import file as workspace_file
+from aisland.workspace import init as workspace
 
 FILES = [".gitignore", ".env", "mypy.ini", "vscode-init-bash.sh"]
 HARNESS = [".agents", ".claude", "AGENTS.md", "CLAUDE.md", "GEMINI.md"]

@@ -12,8 +12,10 @@ from typing import Dict
 import pytest
 from click.testing import CliRunner
 
-from aisland import cli, harness, workspace_check, workspace_file
+from aisland import cli, harness
 from aisland.cli import workspace as cli_workspace
+from aisland.workspace import check as workspace_check
+from aisland.workspace import file as workspace_file
 
 
 def _write(path: Path, text: str) -> Path:

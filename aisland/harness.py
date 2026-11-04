@@ -57,10 +57,10 @@ from typing import Dict, List, Literal, Optional, Tuple, TypedDict
 
 from aisland import atomic, git_exclude, gitcmd, locations
 from aisland import pyproject as pyproject_toml
-from aisland import workspace_file
-from aisland.discovery import Where, key_line, table_line
 from aisland.errors import AislandError
 from aisland.projects import workspace_folders
+from aisland.toml_places import Where, key_line, table_line
+from aisland.workspace import file as workspace_file
 
 logger = logging.getLogger(__name__)
 

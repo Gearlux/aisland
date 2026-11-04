@@ -1,13 +1,13 @@
 """Every module of the package imports first, on its own: no module-level import cycle.
 
-The package keeps its imports at the top of each module; the two that would close a cycle stay in their function and
-say so (``projects.get_workspace_name`` → ``workspace_file``, ``provision.install`` → ``services.jenkins``). A cycle
+The package keeps every import of its own modules at the top: no function imports aisland to hide a cycle. A cycle
 shows only when the module that starts it is imported FIRST, so each module is imported with no ``aisland`` module
 loaded before it.
 """
 
 from __future__ import annotations
 
+import ast
 import json
 import subprocess
 import sys
@@ -54,3 +54,22 @@ def test_every_module_imports_first_on_its_own() -> None:
     )
     assert result.returncode == 0, result.stderr
     assert json.loads(result.stdout.strip().splitlines()[-1]) == {}
+
+
+def test_no_function_imports_a_module_of_aisland() -> None:
+    """An import inside a function is how a cycle hides from the test above; the package has none."""
+    hidden = []
+    for path in sorted(PACKAGE.rglob("*.py")):
+        for function in ast.walk(ast.parse(path.read_text(encoding="utf-8"))):
+            if not isinstance(function, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                continue
+            for node in ast.walk(function):
+                if isinstance(node, ast.ImportFrom):
+                    names = [node.module or ""]
+                elif isinstance(node, ast.Import):
+                    names = [alias.name for alias in node.names]
+                else:
+                    continue
+                if any(name == "aisland" or name.startswith("aisland.") for name in names):
+                    hidden.append(f"{path.relative_to(PACKAGE.parent)}:{node.lineno}")
+    assert hidden == []

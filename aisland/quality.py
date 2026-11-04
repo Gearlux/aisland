@@ -7,7 +7,7 @@ from typing import Dict, List, Optional, Set, Tuple
 
 import click
 
-from aisland import provision
+from aisland import console, provision
 from aisland.errors import AislandError
 from aisland.mcp_config import no_venv
 from aisland.projects import discover_projects, get_project_metadata, get_workspace_root
@@ -57,15 +57,15 @@ def _run_gate(tool: str, cmd: List[str], cwd: Path, env: Dict[str, str], venv_bi
             missing = f"act is not installed — {provision.install_command('act')}"
         else:
             missing = f"{cmd[0]} is not installed in {venv_bin.parent} (install the project's dev extra: aisland setup)"
-        click.echo(f"  [{click.style('FAIL', fg='red')}] {tool} — {missing}")
+        console.echo(f"  [{click.style('FAIL', fg='red')}] {tool} — {missing}")
         return False
     if run.returncode == 0:
-        click.echo(f"  [{click.style('PASS', fg='green')}] {tool}")
+        console.echo(f"  [{click.style('PASS', fg='green')}] {tool}")
         return True
-    click.echo(f"  [{click.style('FAIL', fg='red')}] {tool}")
-    click.echo(f"--- {tool} Output ---")
-    click.echo(run.stdout.rstrip("\n"))
-    click.echo("-----------------------")
+    console.echo(f"  [{click.style('FAIL', fg='red')}] {tool}")
+    console.echo(f"--- {tool} Output ---")
+    console.echo(run.stdout.rstrip("\n"))
+    console.echo("-----------------------")
     return False
 
 
@@ -104,7 +104,7 @@ def run_quality_gates(arg1: Optional[str] = None, arg2: Optional[str] = None, wr
     for project in projects:
         project_dir = project["path"]
         name = project["name"]
-        click.echo(f"==> Checking {name} at {project_dir}...")
+        console.echo(f"==> Checking {name} at {project_dir}...")
         passed = True
         for tool, cmd, in_project in _gates(project_dir, workspace_root, write):
             if target_tool and tool != target_tool:
@@ -115,10 +115,10 @@ def run_quality_gates(arg1: Optional[str] = None, arg2: Optional[str] = None, wr
 
     # Summary table
     if len(results) > 1:
-        click.echo("\nQuality Gate Summary:")
+        console.echo("\nQuality Gate Summary:")
         for name, success in results:
             status = click.style("SUCCESS", fg="green") if success else click.style("FAILURE", fg="red")
-            click.echo(f"  {name:<25} : {status}")
+            console.echo(f"  {name:<25} : {status}")
 
     failed = [name for name, success in results if not success]
     if failed:

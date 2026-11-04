@@ -26,9 +26,9 @@ from click.testing import CliRunner, Result
 
 from aisland import cli, configure, locations
 from aisland import selection as s
-from aisland import workspace_file
 from aisland.discovery import DeclarationError
 from aisland.projects import get_workspace_root
+from aisland.workspace import file as workspace_file
 from tests.workspace_layout import needs_workspace
 
 QUESTION = "Which ML frameworks should this machine install?"

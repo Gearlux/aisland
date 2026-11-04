@@ -43,9 +43,8 @@ from typing import Any, Dict, Iterator, List, Mapping, Optional, Sequence, Set, 
 
 import click
 
-from aisland import gitcmd
+from aisland import console, gitcmd, paths
 from aisland.errors import AislandError
-from aisland.paths import DATA_DIR
 from aisland.projects import get_workspace_root
 from aisland.sources import known_projects, project_path
 
@@ -113,9 +112,9 @@ class Backup:
         return self.path.parent.name
 
 
-def backup_root(data_dir: Path = DATA_DIR) -> Path:
-    """Directory holding every backup, for every project."""
-    return data_dir / BACKUP_DIRNAME
+def backup_root(data_dir: Optional[Path] = None) -> Path:
+    """Directory holding every backup, for every project: in ``data_dir``, else aisland's data folder."""
+    return (data_dir or paths.data_dir()) / BACKUP_DIRNAME
 
 
 # --- discovery ----------------------------------------------------------------------------
@@ -354,7 +353,7 @@ def clean_project(
     dry_run: bool = False,
     assume_yes: bool = False,
     workspace_root: Optional[Path] = None,
-    data_dir: Path = DATA_DIR,
+    data_dir: Optional[Path] = None,
     now: Optional[datetime] = None,
 ) -> int:
     """Move ``project``'s git-ignored content into a dated backup, then sweep old backups.
@@ -383,16 +382,16 @@ def clean_project(
     expired = prune_backups(store, keep_days, now=now, dry_run=True)
 
     if dry_run:
-        click.echo(f"\nWould move the above into {destination}")
+        console.echo(f"\nWould move the above into {destination}")
         _report_pruned(expired, keep_days, dry_run=True)
-        click.echo("\nDry run — nothing was moved or deleted.")
+        console.echo("\nDry run — nothing was moved or deleted.")
         return 0
 
     if entries and not assume_yes:
-        click.echo(f"\nEverything above moves into {destination} and is deleted after {keep_days} days.")
+        console.echo(f"\nEverything above moves into {destination} and is deleted after {keep_days} days.")
         total = _human(sum(entry.bytes for entry in entries))
-        if not click.confirm(f"Move {len(entries)} entries ({total}) out of {project}?"):
-            click.echo("Nothing was moved.")
+        if not console.confirm(f"Move {len(entries)} entries ({total}) out of {project}?"):
+            console.echo("Nothing was moved.")
             return 0
 
     # Sweep first: on a machine that is out of disk — the reason to run this at all — the
@@ -409,18 +408,18 @@ def clean_project(
 
 def _show_entries(project: str, project_dir: Path, entries: List[Entry], store: Path) -> None:
     """List what a clean of ``project`` would move, with each entry's files and size and the totals."""
-    click.echo(click.style(f"Git-ignored content in {project} ({project_dir})", bold=True))
+    console.echo(click.style(f"Git-ignored content in {project} ({project_dir})", bold=True))
     if not entries:
-        click.echo("  (nothing ignored — the checkout is already clean)")
+        console.echo("  (nothing ignored — the checkout is already clean)")
     for entry in entries:
         label = entry.rel + ("/" if entry.is_dir else "")
-        click.echo(f"  {label:<48} {entry.files:>8} files  {_human(entry.bytes):>10}")
+        console.echo(f"  {label:<48} {entry.files:>8} files  {_human(entry.bytes):>10}")
     if entries:
         total_bytes = sum(entry.bytes for entry in entries)
         total_files = sum(entry.files for entry in entries)
-        click.echo(f"  {'':<48} {total_files:>8} files  {_human(total_bytes):>10}  in {len(entries)} entries")
+        console.echo(f"  {'':<48} {total_files:>8} files  {_human(total_bytes):>10}  in {len(entries)} entries")
     if store.resolve().is_relative_to(project_dir.resolve()):
-        click.echo(f"\nNote: the backup store ({store}) lives inside this project and is preserved.")
+        console.echo(f"\nNote: the backup store ({store}) lives inside this project and is preserved.")
 
 
 def _move_entries(entries: List[Entry], destination: Path) -> Tuple[List[Entry], List[Tuple[Entry, str]]]:
@@ -434,7 +433,7 @@ def _move_entries(entries: List[Entry], destination: Path) -> Tuple[List[Entry],
             shutil.move(str(entry.path), str(target))
         except (OSError, shutil.Error) as exc:
             failed.append((entry, str(exc)))
-            click.echo(click.style(f"  ! could not move {entry.rel}: {exc}", fg="red"), err=True)
+            console.echo(click.style(f"  ! could not move {entry.rel}: {exc}", fg="red"), err=True)
         else:
             moved.append(entry)
     return moved, failed
@@ -444,13 +443,13 @@ def _report_moved(
     project: str, project_dir: Path, destination: Path, moved: List[Entry], failed: List[Tuple[Entry, str]]
 ) -> None:
     """Say what moved where, how to put it back, and what could not be moved."""
-    click.echo(f"\nMoved {len(moved)} entries ({_human(sum(entry.bytes for entry in moved))}) into {destination}")
+    console.echo(f"\nMoved {len(moved)} entries ({_human(sum(entry.bytes for entry in moved))}) into {destination}")
     # Both forms are printed on purpose: the command is the one to reach for, and the `cp` is
     # the one that still works when this code is the thing that broke.
-    click.echo(f"Restore with:  aisland backups restore {project}")
-    click.echo(f"          or:  cp -R {destination / PAYLOAD_DIRNAME}/. {project_dir}/")
+    console.echo(f"Restore with:  aisland backups restore {project}")
+    console.echo(f"          or:  cp -R {destination / PAYLOAD_DIRNAME}/. {project_dir}/")
     if failed:
-        click.echo(click.style(f"{len(failed)} entries could not be moved (left in place).", fg="red"), err=True)
+        console.echo(click.style(f"{len(failed)} entries could not be moved (left in place).", fg="red"), err=True)
 
 
 def _report_pruned(expired: List[Backup], keep_days: int, *, dry_run: bool) -> None:
@@ -459,9 +458,9 @@ def _report_pruned(expired: List[Backup], keep_days: int, *, dry_run: bool) -> N
         return
     verb = "Would delete" if dry_run else "Deleted"
     freed = sum(backup.bytes for backup in expired)
-    click.echo(f"\n{verb} {len(expired)} backup(s) older than {keep_days} days ({_human(freed)}):")
+    console.echo(f"\n{verb} {len(expired)} backup(s) older than {keep_days} days ({_human(freed)}):")
     for backup in expired:
-        click.echo(f"  {backup.path}")
+        console.echo(f"  {backup.path}")
 
 
 def _write_manifest(
@@ -679,16 +678,16 @@ def _plan_restore(payload: Path, project_dir: Path, wanted: Sequence[str], *, fo
 
 def _announce(plan: _RestorePlan, backup: Backup, project: str, project_dir: Path) -> None:
     """Say what the restore will do, one line per entry."""
-    click.echo(click.style(f"Restoring {backup.path.name} into {project} ({project_dir})", bold=True))
+    console.echo(click.style(f"Restoring {backup.path.name} into {project} ({project_dir})", bold=True))
     for rel, _source, destination in plan.pending:
         verb = "replace" if _exists(destination) else "restore"
-        click.echo(f"  {verb:<8} {rel}")
+        console.echo(f"  {verb:<8} {rel}")
     for rel in plan.duplicate:
-        click.echo(f"  {'already':<8} {rel}  (identical in the project — dropping the backup's copy)")
+        console.echo(f"  {'already':<8} {rel}  (identical in the project — dropping the backup's copy)")
     for rel in plan.occupied:
-        click.echo(f"  {'skip':<8} {rel}  (the project has a DIFFERENT one — use --force to replace it)")
+        console.echo(f"  {'skip':<8} {rel}  (the project has a DIFFERENT one — use --force to replace it)")
     for rel in plan.missing:
-        click.echo(click.style(f"  {'gone':<8} {rel}  (not in the payload)", fg="red"), err=True)
+        console.echo(click.style(f"  {'gone':<8} {rel}  (not in the payload)", fg="red"), err=True)
 
 
 def _move_back(plan: _RestorePlan, payload: Path) -> Tuple[Set[str], List[Tuple[str, str]]]:
@@ -705,7 +704,7 @@ def _move_back(plan: _RestorePlan, payload: Path) -> Tuple[Set[str], List[Tuple[
             shutil.move(str(source), str(destination))
         except (OSError, shutil.Error) as exc:
             failed.append((rel, str(exc)))
-            click.echo(click.style(f"  ! could not restore {rel}: {exc}", fg="red"), err=True)
+            console.echo(click.style(f"  ! could not restore {rel}: {exc}", fg="red"), err=True)
         else:
             restored.add(rel)
             _prune_empty_parents(source, payload)
@@ -742,7 +741,7 @@ def restore_backup(
     dry_run: bool = False,
     assume_yes: bool = False,
     workspace_root: Optional[Path] = None,
-    data_dir: Path = DATA_DIR,
+    data_dir: Optional[Path] = None,
 ) -> int:
     """Move a backup's content back into ``project``.
 
@@ -773,12 +772,12 @@ def restore_backup(
 
     _announce(plan, backup, project, project_dir)
     if dry_run:
-        click.echo("\nDry run — nothing was restored.")
+        console.echo("\nDry run — nothing was restored.")
         return 1 if plan.occupied or plan.missing else 0
 
     replacing = plan.replacing
-    if replacing and not assume_yes and not click.confirm(f"Replace {len(replacing)} existing path(s) in {project}?"):
-        click.echo("Nothing was restored.")
+    if replacing and not assume_yes and not console.confirm(f"Replace {len(replacing)} existing path(s) in {project}?"):
+        console.echo("Nothing was restored.")
         return 1
 
     restored, failed = _move_back(plan, payload)
@@ -787,11 +786,11 @@ def restore_backup(
     if restored:
         _forget_restored(backup, restored)
 
-    click.echo(f"\nRestored {moved} entries into {project_dir}")
+    console.echo(f"\nRestored {moved} entries into {project_dir}")
     if plan.duplicate:
-        click.echo(f"{len(plan.duplicate)} were already there identically; the backup's copies were dropped.")
+        console.echo(f"{len(plan.duplicate)} were already there identically; the backup's copies were dropped.")
     if plan.occupied:
-        click.echo(
+        console.echo(
             f"{len(plan.occupied)} left in the backup because the project has a different one (--force replaces)."
         )
     return 1 if plan.occupied or plan.missing or failed else 0
@@ -801,7 +800,7 @@ def list_store(
     project: Optional[str] = None,
     *,
     keep_days: int = DEFAULT_KEEP_DAYS,
-    data_dir: Path = DATA_DIR,
+    data_dir: Optional[Path] = None,
     now: Optional[datetime] = None,
 ) -> int:
     """Print every backup in the store, newest first, with when it expires.
@@ -820,11 +819,11 @@ def list_store(
     backups = [item for item in read_backups(store) if project is None or item.project == project]
     if not backups:
         scope = f" for '{project}'" if project else ""
-        click.echo(f"No backups{scope} under {store}.")
-        click.echo(f"Take one with: aisland clean {project or '<project>'}")
+        console.echo(f"No backups{scope} under {store}.")
+        console.echo(f"Take one with: aisland clean {project or '<project>'}")
         return 0
 
-    click.echo(
+    console.echo(
         click.style(f"  {'PROJECT':<22} {'BACKUP':<17} {'AGE':>5} {'SIZE':>10} {'ENTRIES':>8}  EXPIRES", bold=True)
     )
     for backup in reversed(backups):  # newest first — the one a restore defaults to is on top
@@ -832,12 +831,12 @@ def list_store(
         remaining = keep_days - age_days
         expires = "next run" if remaining <= 0 else f"in {remaining}d"
         entries = str(len(backup.entries)) if backup.entries else "?"
-        click.echo(
+        console.echo(
             f"  {backup.project:<22} {backup.path.name:<17} {str(age_days) + 'd':>5} "
             f"{_human(backup.bytes):>10} {entries:>8}  {expires}"
         )
-    click.echo(f"\n  {len(backups)} backup(s), {_human(sum(item.bytes for item in backups))} under {store}")
-    click.echo(f"  Restore the newest:  aisland backups restore {backups[-1].project}")
+    console.echo(f"\n  {len(backups)} backup(s), {_human(sum(item.bytes for item in backups))} under {store}")
+    console.echo(f"  Restore the newest:  aisland backups restore {backups[-1].project}")
     return 0
 
 
@@ -846,7 +845,7 @@ def prune_store(
     keep_days: int = DEFAULT_KEEP_DAYS,
     dry_run: bool = False,
     assume_yes: bool = False,
-    data_dir: Path = DATA_DIR,
+    data_dir: Optional[Path] = None,
     now: Optional[datetime] = None,
 ) -> int:
     """Apply the retention window to the whole store, without cleaning anything.
@@ -871,18 +870,18 @@ def prune_store(
     store = backup_root(data_dir)
     expired = prune_backups(store, keep_days, now=now, dry_run=True)
     if not expired:
-        click.echo(f"Nothing older than {keep_days} days under {store}.")
+        console.echo(f"Nothing older than {keep_days} days under {store}.")
         return 0
 
     _report_pruned(expired, keep_days, dry_run=True)
     freed = sum(backup.bytes for backup in expired)
     if dry_run:
-        click.echo("\nDry run — nothing was deleted.")
+        console.echo("\nDry run — nothing was deleted.")
         return 0
-    if not assume_yes and not click.confirm(f"Delete {len(expired)} backup(s) ({_human(freed)})?"):
-        click.echo("Nothing was deleted.")
+    if not assume_yes and not console.confirm(f"Delete {len(expired)} backup(s) ({_human(freed)})?"):
+        console.echo("Nothing was deleted.")
         return 0
 
     prune_backups(store, keep_days, now=now)
-    click.echo(f"Deleted {len(expired)} backup(s), freed {_human(freed)}.")
+    console.echo(f"Deleted {len(expired)} backup(s), freed {_human(freed)}.")
     return 0

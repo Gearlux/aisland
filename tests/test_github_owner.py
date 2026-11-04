@@ -20,12 +20,12 @@ import pytest
 
 from aisland import ci_scaffold, locations, projects
 from aisland import sources as s
-from aisland import wheels as w
 from aisland.ci_scaffold import discover_github_projects, is_private_repo
 from aisland.errors import AislandError
 from aisland.github import GitHubRepository, github_repository, project_repositories
 from aisland.pypi import released_on_pypi
 from aisland.services.jenkins import JenkinsService
+from aisland.wheels import build as w
 
 
 def _project(root: Path, name: str, deps: list[str]) -> None:
@@ -220,7 +220,7 @@ def test_a_project_off_github_is_never_installed_from_github(acme: Path, pypi: D
 
 def _wheels_extra(root: Path, project: str, deps: list[str], covered: list[str]) -> None:
     """``project``'s pyproject with the block `aisland wheels build --extra wheels` writes, covering ``covered``."""
-    from aisland.wheels_extra import BEGIN, END
+    from aisland.wheels.extra import BEGIN, END
 
     listed = ", ".join(f'"{d}"' for d in deps)
     wheels = ", ".join(f'"{d}"' for d in covered)

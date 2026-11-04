@@ -11,7 +11,7 @@ only: everything else imports it.
 
 from __future__ import annotations
 
-import click
+from aisland import console
 
 _reported = 0
 
@@ -19,14 +19,14 @@ _reported = 0
 def report(message: str) -> None:
     """Print ``message`` (an ``Error:`` line) to stderr and mark this run failed; the caller goes on."""
     global _reported
-    click.echo(message, err=True)
+    console.echo(message, err=True)
     _reported += 1
 
 
 def warn(message: str) -> None:
     """Print ``message`` (a ``Warning:`` line) to stderr; the run is not failed. Never stdout: a command's output
     is what a script reads (``--json``), and a warning in it would break the reading."""
-    click.echo(message, err=True)
+    console.echo(message, err=True)
 
 
 def reported() -> int:

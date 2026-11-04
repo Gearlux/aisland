@@ -28,13 +28,10 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Dict, List, Optional, Set, Tuple
 
-import click
-
-from aisland import discovery, installers
+from aisland import console, discovery, installers, paths
 from aisland.discovery import ToolKind
 from aisland.errors import AislandError
 from aisland.installers import USERSPACE_TOOLS
-from aisland.paths import BIN_DIR
 
 #: aisland's own tools, by how they are installed:
 #:
@@ -109,7 +106,7 @@ def _brew_installed() -> Set[str]:
 def _installed(tool: Tool, brewed: Set[str]) -> bool:
     if tool.kind == "brew":
         return tool.name.rsplit("/", 1)[-1] in brewed  # a tap-qualified formula is listed by its own name
-    return all((BIN_DIR / binary).exists() for binary in USERSPACE_TOOLS[tool.name]["binaries"])
+    return all((paths.bin_dir() / binary).exists() for binary in USERSPACE_TOOLS[tool.name]["binaries"])
 
 
 def rows(root: Path) -> List[Dict[str, str]]:
@@ -134,30 +131,25 @@ def nothing_here() -> str:
 
 def install(root: Path, aislands_own: bool = True) -> None:
     """Install every tool this machine needs: ``aisland workspace provision install`` (everything) and ``aisland
-    setup`` (``aislands_own=False``: the projects' declarations only — aisland's own come when a feature needs one)."""
-    click.echo(f"==> Installing the system tools the workspace needs ({root})...")
+    setup`` (``aislands_own=False``: the projects' declarations only — aisland's own come when a feature needs one).
+    Jenkins' Java is no tool of this list (its WAR names the Java it runs on): the provision command installs it after
+    this, through :meth:`aisland.services.jenkins.JenkinsService.provision_java`."""
+    console.echo(f"==> Installing the system tools the workspace needs ({root})...")
     needed = tools(root, aislands_own)
     kind = this_platform()
     if kind is None:
-        click.echo(f"  - {nothing_here()}")
+        console.echo(f"  - {nothing_here()}")
         return
     names = {tool.name for tool in needed}
     if not names:
-        click.echo("  - none: no project declares a system tool")
+        console.echo("  - none: no project declares a system tool")
         return
     if kind == "brew":
-        click.echo(f"  - Homebrew: {', '.join(sorted(names))}")
+        console.echo(f"  - Homebrew: {', '.join(sorted(names))}")
         installers.install_brew_packages(names)
         installers.offer_shell_switch(names)
-        if not aislands_own:
-            return
-        # Jenkins' Java is no declared formula: the WAR names the Java it runs on (services/jenkins_java.py).
-        # Imported here: services.jenkins imports this module.
-        from aisland.services.jenkins import JenkinsService
-
-        JenkinsService().provision_java()
         return
-    click.echo(f"  - aisland's downloads: {', '.join(sorted(names))}")
+    console.echo(f"  - aisland's downloads: {', '.join(sorted(names))}")
     for name in sorted(names):
         installers.install_userspace_tool(name)
 
@@ -170,7 +162,7 @@ def _can_ask() -> bool:
 def agree(question: str, default: bool = True) -> bool:
     """``question`` asked in a terminal (``default`` the answer a bare Enter gives); False, without asking, when no
     one is there to answer."""
-    return _can_ask() and click.confirm(question, default=default)
+    return _can_ask() and console.confirm(question, default=default)
 
 
 def _formula(name: str) -> str:

@@ -10,8 +10,8 @@ from typing import Iterator, List
 
 import pytest
 
-from aisland import failures
-from aisland.services import base, jenkins
+from aisland import failures, paths
+from aisland.services import jenkins
 
 WAR = b"PK-a-war-that-is-not-jenkins"
 
@@ -25,7 +25,7 @@ def clean_slate() -> Iterator[None]:
 
 @pytest.fixture
 def service(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> jenkins.JenkinsService:
-    monkeypatch.setattr(base, "DATA_DIR", tmp_path)
+    monkeypatch.setattr(paths, "data_dir", lambda: tmp_path)
     war = jenkins.JenkinsService()
     war.war_file = tmp_path / "bin" / "jenkins.war"
     return war

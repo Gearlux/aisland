@@ -40,14 +40,25 @@ from aisland import locations
 if TYPE_CHECKING:
     import pytest
 
-# Resolved exactly as `aisland.paths` resolves `DATA_DIR`, through `aisland.locations` (standard library only;
-# pinned by `tests/test_pytest_stats.py::test_the_records_live_in_aislands_data_folder`).
-#: The workspace root.
-WORKSPACE_ROOT = locations.workspace_root()
-#: One folder per project, one JSON-lines file per day.
-STATS_DIR = locations.state_dir() / "data" / "test-stats"
-#: The local Jenkins' job folders (`<project>.local`, `<project>`), each build's JUnit record in it.
-JENKINS_JOBS_DIR = locations.state_dir() / "data" / "jenkins" / "jobs"
+# Resolved exactly as `aisland.paths.data_dir` is, through `aisland.locations` (standard library only; pinned by
+# `tests/test_pytest_stats.py::test_the_records_live_in_aislands_data_folder`), and asked each time: the MCP server
+# outlives a change of workspace, and a test points the workspace elsewhere.
+
+
+def workspace_root() -> Path:
+    """The workspace root."""
+    return locations.workspace_root()
+
+
+def stats_folder() -> Path:
+    """One folder per project, one JSON-lines file per day."""
+    return locations.state_dir() / "data" / "test-stats"
+
+
+def jenkins_jobs_folder() -> Path:
+    """The local Jenkins' job folders (`<project>.local`, `<project>`), each build's JUnit record in it."""
+    return locations.state_dir() / "data" / "jenkins" / "jobs"
+
 
 #: `aisland workspace test-stats on|off` (aisland/recording.py writes it): a project's `test-stats = false` and the
 #: workspace's `[workspace] test-stats = false` in `workspace.toml`; this machine's `aisland.test-stats.<project>.record`
@@ -113,11 +124,11 @@ def _start_recording(config: "pytest.Config") -> None:
     # and keeps its own JUnit record, which `build_report` reads; recording the run here would count it twice.
     if os.environ.get("JENKINS_URL"):
         return
-    if not locations.is_workspace(WORKSPACE_ROOT) or not _is_workspace_project(Path(config.rootpath)):
+    if not locations.is_workspace(workspace_root()) or not _is_workspace_project(Path(config.rootpath)):
         return
-    if not records(WORKSPACE_ROOT, Path(config.rootpath).name):
+    if not records(workspace_root(), Path(config.rootpath).name):
         return
-    config.pluginmanager.register(_Recorder(config, STATS_DIR), "aisland_test_stats_recorder")
+    config.pluginmanager.register(_Recorder(config, stats_folder()), "aisland_test_stats_recorder")
 
 
 def _is_workspace_project(folder: Path) -> bool:
@@ -127,7 +138,7 @@ def _is_workspace_project(folder: Path) -> bool:
     A test's own tmp project (`pytester`, a subprocess in `tmp_path`) is not one: its inner pytest run is no run of
     the project.
     """
-    root = WORKSPACE_ROOT.resolve()
+    root = workspace_root().resolve()
     return folder.resolve().parent == root and (folder / "pyproject.toml").is_file()
 
 
@@ -451,17 +462,17 @@ def build_report(
     for it would be one nobody can make. The failures keep every test, gone or not — they are history."""
     now = now or datetime.now().astimezone()
     cutoff = now - timedelta(days=days)
-    runs, local = _local_records((stats_dir or STATS_DIR) / project, cutoff)
-    builds, ci = _jenkins_records(project, jenkins_jobs_dir or JENKINS_JOBS_DIR, cutoff)
+    runs, local = _local_records((stats_dir or stats_folder()) / project, cutoff)
+    builds, ci = _jenkins_records(project, jenkins_jobs_dir or jenkins_jobs_folder(), cutoff)
     tallies = _tallies(local + ci)
-    switch = recording(WORKSPACE_ROOT, project)
+    switch = recording(workspace_root(), project)
 
     fast = sorted(
         (r for r in runs if r.leg == "fast" and r.whole and r.exit in _COMPLETE_EXITS),
         key=lambda r: r.at,
     )
     fast_seconds = statistics.median(r.seconds for r in fast[-BASELINE_RUNS:]) if fast else None
-    folder = project_dir or WORKSPACE_ROOT / project
+    folder = project_dir or workspace_root() / project
     present = _Present(folder)
     ran_last = {r.nodeid for r in local if fast and r.at == fast[-1].at}
     tallies = [

@@ -25,7 +25,7 @@ import click
 import pytest
 import yaml
 
-from aisland import supervisor
+from aisland import paths, supervisor
 
 
 @pytest.fixture(autouse=True)
@@ -38,10 +38,10 @@ def _own_workspace(empty_workspace: Path) -> Path:
 def isolated_config(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     """Point the supervisor's generated files at a throwaway directory."""
     config = tmp_path / "process-compose.yaml"
-    monkeypatch.setattr(supervisor, "DATA_DIR", tmp_path)
-    monkeypatch.setattr(supervisor, "CONFIG_FILE", config)
-    monkeypatch.setattr(supervisor, "SOCKET_PATH", tmp_path / "process-compose.sock")
-    monkeypatch.setattr(supervisor, "SERVER_LOG", tmp_path / "process-compose.log")
+    monkeypatch.setattr(paths, "data_dir", lambda: tmp_path)
+    monkeypatch.setattr(supervisor, "config_file", lambda: config)
+    monkeypatch.setattr(supervisor, "socket_path", lambda: tmp_path / "process-compose.sock")
+    monkeypatch.setattr(supervisor, "server_log", lambda: tmp_path / "process-compose.log")
     return config
 
 
@@ -346,7 +346,7 @@ def test_start_process_command_shape(isolated_config: Path) -> None:
 
 
 def test_find_binary_prefers_path_then_vendored(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr(supervisor, "BIN_DIR", tmp_path)
+    monkeypatch.setattr(paths, "bin_dir", lambda: tmp_path)
     with patch("aisland.supervisor.shutil.which", return_value="/on/path/process-compose"):
         assert supervisor.find_binary() == "/on/path/process-compose"
     with patch("aisland.supervisor.shutil.which", return_value=None):

@@ -23,8 +23,6 @@ from aisland import (
     recording,
     tracking,
 )
-from aisland import workspace as workspace_mod
-from aisland import workspace_check
 from aisland.cli import configure as configure_cli
 from aisland.cli import editor as editor_cli
 from aisland.cli._base import (
@@ -38,6 +36,9 @@ from aisland.cli._base import (
 from aisland.errors import AislandError
 from aisland.mirrors import run_sync
 from aisland.projects import get_install_order, get_workspace_root, workspace_folders
+from aisland.services.jenkins import JenkinsService
+from aisland.workspace import check as workspace_check
+from aisland.workspace import init as workspace_mod
 
 # --- Workspace Commands ---
 
@@ -305,6 +306,9 @@ def workspace_provision_install() -> None:
     """Install every system tool this machine needs: aisland's own and the projects' sys-dependencies."""
 
     provision.install(_configure_root())
+    if provision.this_platform() == "brew":
+        # Jenkins' Java is no declared formula: the WAR names the Java it runs on (services/jenkins_java.py).
+        JenkinsService().provision_java()
 
 
 @workspace_group.group("harness", cls=_Group, invoke_without_command=True)

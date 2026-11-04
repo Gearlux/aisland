@@ -35,8 +35,10 @@ import click
 import pytest
 from click.testing import CliRunner
 
-from aisland import tunnel, tunnel_connect, tunnel_shell
 from aisland.cli import main
+from aisland.tunnel import connect as tunnel_connect
+from aisland.tunnel import host as tunnel
+from aisland.tunnel import shell as tunnel_shell
 
 FAKE = Path(__file__).with_name("fake_devtunnel.py")
 

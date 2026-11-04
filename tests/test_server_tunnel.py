@@ -19,7 +19,7 @@ import pytest
 from mcp.client import Client
 
 from aisland import server
-from aisland import tunnel as tunnel_mod
+from aisland.tunnel import host as tunnel_mod
 
 
 def _result(name: str, args: Optional[Dict[str, Any]] = None) -> Any:

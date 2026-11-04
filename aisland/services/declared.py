@@ -13,9 +13,7 @@ from __future__ import annotations
 
 from typing import Optional
 
-import click
-
-from aisland import supervisor
+from aisland import console, supervisor
 from aisland.discovery import Service
 from aisland.services.base import BaseService
 
@@ -39,7 +37,7 @@ class DeclaredService(BaseService):
     def info(self) -> None:
         """What runs, where it is declared, and its address."""
         super().info()
-        click.echo(f"  Command       : {' '.join(self.declared.command)}")
-        click.echo(f"  Declared in   : {self.declared.where}")
+        console.echo(f"  Command       : {' '.join(self.declared.command)}")
+        console.echo(f"  Declared in   : {self.declared.where}")
         if self.declared.port is not None:
-            click.echo(f"  URL           : http://localhost:{self.declared.port}")
+            console.echo(f"  URL           : http://localhost:{self.declared.port}")

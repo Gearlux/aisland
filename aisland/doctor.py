@@ -31,10 +31,12 @@ from typing import Callable, List, Optional, Tuple
 import click
 from packaging.version import InvalidVersion, Version
 
-from aisland import locations, tunnel, tunnel_connect
+from aisland import console, locations
 from aisland.services.docker import DockerService
 from aisland.services.jenkins import JenkinsService
 from aisland.services.jenkins_java import JenkinsJava
+from aisland.tunnel import connect as tunnel_connect
+from aisland.tunnel import host as tunnel
 
 #: The OpenCV variant the workspace keeps. Both distributions install the SAME files
 #: (`cv2/cv2.abi3.so` + `cv2/.dylibs/*` appear in BOTH RECORDs) with different bundled native
@@ -663,18 +665,18 @@ def run_doctor() -> int:
         0 when every check passed, 1 otherwise — so a CI step can gate on it.
     """
     results = run_checks()
-    click.echo(f"Environment doctor — {sys.executable}")
+    console.echo(f"Environment doctor — {sys.executable}")
     for result in results:
         mark = "✓" if result.ok else "✗"
-        click.echo(f"  {mark} {result.name:16} {result.detail}")
+        console.echo(f"  {mark} {result.name:16} {result.detail}")
         if not result.ok and result.remedy:
-            click.echo(f"      fix: {result.remedy}")
+            console.echo(f"      fix: {result.remedy}")
 
     failed = [result for result in results if not result.ok]
     if failed:
-        click.echo(f"\n{len(failed)} of {len(results)} checks failed.")
+        console.echo(f"\n{len(failed)} of {len(results)} checks failed.")
         return 1
-    click.echo(f"\nAll {len(results)} checks passed.")
+    console.echo(f"\nAll {len(results)} checks passed.")
     return 0
 
 

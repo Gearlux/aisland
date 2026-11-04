@@ -9,8 +9,8 @@ from typing import Any, List
 
 import pytest
 
-from aisland import locations
-from aisland.services import base, swiftbar
+from aisland import console, locations, paths
+from aisland.services import swiftbar
 
 _REAL_RUN = subprocess.run
 
@@ -33,8 +33,8 @@ def workspace(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     (data / "jenkins" / "jobs" / "lib").mkdir(parents=True)
     (data / "jenkins" / "jobs" / "app.local").mkdir(parents=True)
     monkeypatch.setattr(locations, "workspace_root", lambda: root)
-    monkeypatch.setattr(base, "DATA_DIR", tmp_path / "state")
-    monkeypatch.setattr(swiftbar, "DATA_DIR", data)
+    monkeypatch.setattr(paths, "data_dir", lambda: tmp_path / "state")
+    monkeypatch.setattr(paths, "data_dir", lambda: data)
     monkeypatch.setattr(swiftbar.platform, "system", lambda: "Darwin")
     monkeypatch.setattr(swiftbar.JenkinsService, "url", lambda self: "http://localhost:9080")
     return root
@@ -60,7 +60,7 @@ def commands(monkeypatch: pytest.MonkeyPatch) -> List[List[str]]:
 def test_the_scripts_watch_each_projects_jobs_and_repository_dependencies_first(
     workspace: Path, commands: List[List[str]], monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
-    monkeypatch.setattr(swiftbar.click, "confirm", lambda *a, **k: False)
+    monkeypatch.setattr(console, "confirm", lambda *a, **k: False)
     bar = swiftbar.SwiftBarService()
 
     bar.init_scripts()
@@ -83,7 +83,7 @@ def test_the_scripts_watch_each_projects_jobs_and_repository_dependencies_first(
 def test_a_yes_points_swiftbar_at_the_scripts_and_starts_it_again(
     workspace: Path, commands: List[List[str]], monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    monkeypatch.setattr(swiftbar.click, "confirm", lambda *a, **k: True)
+    monkeypatch.setattr(console, "confirm", lambda *a, **k: True)
     bar = swiftbar.SwiftBarService()
 
     bar.init_scripts()

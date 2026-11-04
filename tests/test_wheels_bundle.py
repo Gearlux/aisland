@@ -1,4 +1,4 @@
-"""Tests for `aisland wheels build <project> --bundle` (aisland/wheels_bundle.py and its use in aisland/wheels.py):
+"""Tests for `aisland wheels build <project> --bundle` (aisland/wheels/bundle.py and its use in aisland/wheels/build.py):
 the project and the wheels it needs merged into one wheel that plain `pip install` installs.
 
 Three groups: what the bundle requires (pure functions over hand-written requirements), the merge (over wheels
@@ -22,10 +22,11 @@ import pytest
 from click.testing import CliRunner
 from packaging.requirements import Requirement
 
-from aisland import wheels as w
-from aisland import wheels_bundle as wb
-from aisland import wheels_files, wheels_report
 from aisland.cli import main
+from aisland.wheels import build as w
+from aisland.wheels import bundle as wb
+from aisland.wheels import files as wheels_files
+from aisland.wheels import report as wheels_report
 
 from . import test_wheels
 from .test_wheels import _commit, _end_to_end_workspace, _project, _report, _wheel, offline_uv

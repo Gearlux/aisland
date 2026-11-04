@@ -15,10 +15,11 @@ from typing import Callable, Dict, List, Optional, cast
 import click
 from click.shell_completion import CompletionItem
 
-from aisland import discovery, failures, locations, tracking, workspace_file
+from aisland import discovery, failures, locations, tracking
 from aisland.errors import AislandError, quiet_completion
 from aisland.projects import get_workspace_root
 from aisland.services import registry as service_registry
+from aisland.workspace import file as workspace_file
 
 #: The commands that run outside a workspace: creating one, installing a project's wheels elsewhere, the tunnel —
 #: which exists to be run on a remote box that has no workspace at all —, the doctor, which checks the machine and

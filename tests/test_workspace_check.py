@@ -12,7 +12,8 @@ from pathlib import Path
 import pytest
 from click.testing import CliRunner
 
-from aisland import cli, locations, workspace_check
+from aisland import cli, locations
+from aisland.workspace import check as workspace_check
 
 
 @pytest.fixture

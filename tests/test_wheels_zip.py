@@ -20,9 +20,10 @@ import pytest
 from click.testing import CliRunner
 
 from aisland import locations
-from aisland import wheels as w
-from aisland import wheels_files, wheels_report
 from aisland.cli import main
+from aisland.wheels import build as w
+from aisland.wheels import files as wheels_files
+from aisland.wheels import report as wheels_report
 
 from .test_wheels import TestTheRunWithFakedBuilds, _commit, _git, _project, _pypi, _report, _workspace
 

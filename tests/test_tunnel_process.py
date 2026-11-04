@@ -17,7 +17,7 @@ from unittest.mock import patch
 
 import pytest
 
-from aisland import tunnel
+from aisland.tunnel import host as tunnel
 from tests.test_tunnel import _cli_archive
 
 

@@ -19,8 +19,8 @@ import zipfile
 from pathlib import Path
 from typing import Callable, Dict, List, Optional, Set, Tuple
 
-from aisland.wheels_files import INSTALL_SCRIPT
-from aisland.wheels_report import ImportRun, ModuleFailure, PublishedDependency
+from aisland.wheels.files import INSTALL_SCRIPT
+from aisland.wheels.report import ImportRun, ModuleFailure, PublishedDependency
 
 #: Where uv finds PyPI, for the builds and the empty-venv install. Empty = uv's own default
 #: (pypi.org, or the index the user's uv configuration names). A test points it at a local folder.

@@ -107,7 +107,7 @@ class ImportFailure:
 
 @dataclass
 class BundleWheel:
-    """The one wheel ``--bundle`` merged: the project and the wheels it needs (:mod:`aisland.wheels_bundle`)."""
+    """The one wheel ``--bundle`` merged: the project and the wheels it needs (:mod:`aisland.wheels.bundle`)."""
 
     #: The file, relative to the workspace.
     wheel: str

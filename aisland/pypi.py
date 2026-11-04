@@ -3,7 +3,7 @@
 :func:`pypi_json` is the one request; :func:`points_at_owner` is the provenance marker (a release whose metadata names
 the GitHub owner of the project's own remote is the project's, not a stranger's of the same global name). What
 ``aisland workspace configure source`` and ``aisland wheels`` ask of the document is theirs
-(:func:`aisland.sources._pypi_provenance`, :func:`aisland.wheels.pypi_state`).
+(:func:`aisland.sources._pypi_provenance`, :func:`aisland.wheels.build.pypi_state`).
 """
 
 from __future__ import annotations

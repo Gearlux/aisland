@@ -6,6 +6,7 @@ from typing import Dict, List, Optional, Tuple, TypedDict
 
 from aisland import gitcmd, gitmodules, locations, machine_config
 from aisland import pyproject as pyproject_toml
+from aisland.workspace import file as workspace_file
 
 
 def get_workspace_root() -> Path:
@@ -17,8 +18,6 @@ def get_workspace_root() -> Path:
 def get_workspace_name(root: Optional[Path] = None) -> str:
     """The workspace's name: ``[workspace] name`` in its ``workspace.toml``, else its origin's repository name, else
     its folder's name. It names the editor file, the Jenkins jobs and the how-to's ``--prompt``."""
-    from aisland import workspace_file  # local: workspace_file imports discovery, which imports this module
-
     root = root or get_workspace_root()
     named = workspace_file.name_of(root)
     if named:

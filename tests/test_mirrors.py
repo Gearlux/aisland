@@ -30,7 +30,7 @@ from click.testing import CliRunner
 from aisland import locations
 from aisland import mirrors as m
 from aisland.cli import main as cli_main
-from aisland.workspace_file import FILE_NAME
+from aisland.workspace.file import FILE_NAME
 
 BRANCH = "dev/main"
 

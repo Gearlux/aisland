@@ -19,15 +19,15 @@ The package is `aisland/`. A command is a click function in `aisland/cli/` that 
 
 | area | modules |
 |---|---|
-| The workspace and its file | `projects`, `locations`, `paths`, `workspace`, `workspace_file`, `workspace_check`, `clones`, `local_workspace`, `gitmodules`, `pyproject`, `discovery` |
+| The workspace and its file | `projects`, `locations`, `paths`, `workspace/` (`init`, `file`, `check`, `local`), `clones`, `gitmodules`, `pyproject`, `toml_places` (a table's line in a TOML file), `discovery` |
 | What a project or a machine chooses | `activation`, `selection`, `sources`, `tracking`, `mirrors`, `recording`, `configure`, `machine_config` (this machine's `git config --local`) |
 | Setting a machine up | `manager`, `provision`, `installers`, `downloads`, `editor_files`, `editor`, `mcp_config`, `uv_config`, `env_example`, `completion`, `harness` |
 | Services | `services/` (`base`, `registry`, `plugin`, `declared`, `jenkins`, `docker`, `swiftbar`), `supervisor` |
 | CI and tests | `ci_scaffold`, `ci_templates` (the sets under `templates/`), `quality`, `pytest_stats`, `nightly` |
-| Wheels | `wheels` and the `wheels_*` modules |
-| Reaching a remote machine | `tunnel`, `tunnel_connect`, `tunnel_shell` |
-| Diagnosis and housekeeping | `doctor`, `clean`, `filter_repo`, `git_exclude`, `notebook_utils`, `css_colors` |
-| Shared plumbing | `gitcmd` (every git call), `downloads` (every file fetch), `pypi` (PyPI's JSON document and the release question), `github` (a project's repository from its remote), `errors`, `failures`, `server` (the MCP server) |
+| Wheels | `wheels/` (`build`, the run, and `report`, `files`, `check`, `bundle`, `extra`, `scrub`, `prune` with `filter_repo`, `install`, `unzip`) |
+| Reaching a remote machine | `tunnel/` (`host`, `connect`, `shell`) |
+| Diagnosis and housekeeping | `doctor`, `clean`, `git_exclude`, `notebook_utils`, `css_colors` |
+| Shared plumbing | `gitcmd` (every git call), `downloads` (every file fetch), `pypi` (PyPI's JSON document and the release question), `github` (a project's repository from its remote), `errors`, `failures`, `console` (what library code says and asks), `atomic` (a file written whole or not at all), `server` (the MCP server) |
 
 ### The decisions
 
@@ -295,7 +295,7 @@ def _dep_is_released(dep: str) -> bool:
   kinds (the click `Choice`, the docs table) derives from it via `get_args` — do not restate the
   set anywhere.
 - The committed keys are additive: a new per-project key is fine, as a string scalar in the project's
-  table, written through `workspace_file.set_settings` (as `write_committed_sources` does) and listed in
+  table, written through `workspace.file.set_settings` (as `write_committed_sources` does) and listed in
   `sources.COMMITTED_KEYS`, so `workspace_check` does not name it as unknown.
 - A new kind must decide two things before anything else: does it carry a `ref` (`REF_KINDS`) and
   does it leave a working tree (`DETACHED_KINDS`). Every call site branches on those, not on the
@@ -1801,7 +1801,7 @@ datasets 0.1.0a2 on PyPI lacks, so an install that resolves fine fails at `impor
 
 ### Decision
 
-`aisland wheels <project>` (`aisland/wheels.py`, user choice 2026-10-08: an aisland command
+`aisland wheels <project>` (`aisland/wheels/build.py`, user choice 2026-10-08: an aisland command
 rather than a root script; only what the project needs; both checks below):
 
 - **What it needs** is the closure of its `[project] dependencies` over the workspace's
@@ -1926,7 +1926,7 @@ installed the folder's.
   rerun reads the file it replaces and keeps every `install:` the user set (user choice); a file
   it cannot read stops the run at its line before anything is built, because rewriting it would
   drop the choices.
-- **`install.py` is one generic script** (`aisland/wheels_install.py`, copied under a generated
+- **`install.py` is one generic script** (`aisland/wheels/install.py`, copied under a generated
   header): it reads `wheels.yaml`, chooses (`install: true` by default, `--all`, `--needed`,
   `--only`) and runs ONE `pip install --find-links wheels -e <project> <each chosen wheel's file>`
   in the interpreter running it — the file names are what make the folder's wheels win. It
@@ -1972,7 +1972,7 @@ report.not_built                                      # []: a needed project wit
 
 ### What you may change
 
-- The script's flags and the YAML's fields, together with `aisland/wheels_install.py`'s
+- The script's flags and the YAML's fields, together with `aisland/wheels/install.py`'s
   `read_wheels` (the one reader both sides use) and both test files.
 - What must not change: the install names each chosen wheel by its file; the check runs the
   shipped script; a rerun keeps the user's `install:` values; a dirty project is refused in
@@ -2000,7 +2000,7 @@ already-tracked wheels untracked.
   empty-venv check passed, and only that path (`git commit -- wheels`): another session's staged or
   unstaged work in the project stays out. The message names the build command. The zip is never
   committed.
-- **`aisland wheels zip` packs the folder with a generated `__main__.py`** (`aisland/wheels_unzip.py`,
+- **`aisland wheels zip` packs the folder with a generated `__main__.py`** (`aisland/wheels/unzip.py`,
   standard library only), so `python <project>-wheels.zip` unpacks into `./wheels` and runs its
   `install.py` with the rest of the line. It refuses a folder whose `pyproject.toml` names another
   project before unpacking anything. Members are written in name order with one fixed time, so a zip of
@@ -2370,10 +2370,13 @@ One standard-library module, `aisland.locations`, decides, and every path asks i
   checkout's own folder. The cwd and `AISLAND_WORKSPACE` are not read.
 - **From a wheel**, `AISLAND_WORKSPACE` when set, else `find_workspace` (the next record: a folder of
   projects is a workspace too); the state in `<root>/.aisland/`.
-- **Nothing raises at import.** The module constants (`paths.DATA_DIR`, `supervisor.BIN_DIR`, the
-  pytest plugin's `STATS_DIR`) are computed once per process; outside a workspace they fall back to
-  the cwd, and the CLI's top-level group refuses every command that works on a workspace before it
-  writes anything. Creating a workspace (`aisland workspace init`) and installing wheels elsewhere
+- **Nothing raises at import, and no path is fixed then.** The state's folders are functions
+  (`paths.data_dir()`, `supervisor.config_file()`, the pytest plugin's `stats_folder()`), asked each time
+  through `locations.state_dir()`; outside a workspace they fall back to the cwd, and the CLI's top-level
+  group refuses every command that works on a workspace before it writes anything. (They were module
+  constants until 2026-11-04: a process that outlived a change of workspace, and a test that pointed the
+  root elsewhere, kept the folders of the workspace found at import — the pytest plugin's report tests read
+  the real workspace's recording switch that way.) Creating a workspace (`aisland workspace init`) and installing wheels elsewhere
   run anywhere.
 - **What a wheel cannot find beside itself, it carries.** The editor template, the git scripts and
   `init`'s templates are package data; `project.bashrc` stays at `aisland/project.bashrc` (its place
@@ -2406,7 +2409,7 @@ when a git repository already marks one).
 ```text
 $ aisland workspace init acme            # aisland from a wheel
 ==> Created workspace acme in /Users/you/acme
-$ cd acme/models && python -c 'from aisland import paths; print(paths.DATA_DIR)'
+$ cd acme/models && python -c 'from aisland import paths; print(paths.data_dir())'
 /Users/you/acme/.aisland/data
 $ git config alias.pull-all
 !GIT_PULL_ALL_ROOT="$(git rev-parse --show-superproject-working-tree --show-toplevel | head -n 1)" bash "/Users/you/acme/.venv/lib/python3.13/site-packages/aisland/git/git_pull_all.sh"
@@ -2576,7 +2579,7 @@ same.
   workspace is an alias. Every reader of the workspace's projects skips it — `projects.discover_projects` (which
   recurses with the workspace root, so a link inside a project is judged against the workspace),
   `projects.workspace_folders`, `harness._project_folders`, `sources.known_projects`,
-  `workspace_file.workspace_projects`.
+  `workspace.file.workspace_projects`.
   The folder it names is found under its own name.
 - A link to a folder OUTSIDE the workspace is no alias: it is how a checkout kept elsewhere joins the workspace.
 - Both sides are resolved, so a workspace entered through a link of its own (`~/acme -> /build/acme`) tells
@@ -2693,10 +2696,10 @@ stdin echoed back through `cat`.
   account the box's tunnel runs under, `devtunnel list -j` lists that tunnel (label `vscode-server-launcher`, its
   name as another label) and `connect <id>` forwards its ports to `localhost` on the same numbers — it has no option
   to choose another. aisland starts that forward per session and stops it when the shell ends.
-- **The client is aisland's** (`tunnel_connect.py`): MessagePack over the forwarded port — `spawn`, then
+- **The client is aisland's** (`tunnel/connect.py`): MessagePack over the forwarded port — `spawn`, then
   `streams_started`, `stream_data`, `stream_ended` and the spawn's result `{message, exit_code}`. `msgpack` is the
   `[connect]` extra: only the connecting machine needs it.
-- **A real terminal on the far side, from a helper sent as source** (`tunnel_shell.py`): `spawn` gives pipes, so the
+- **A real terminal on the far side, from a helper sent as source** (`tunnel/shell.py`): `spawn` gives pipes, so the
   program spawned is `python3 -c <the helper's source>`, which opens a pseudo-terminal and runs the account's shell
   (from its password entry — `$SHELL` is empty there) in the home folder or `--cwd`. The box needs a Python and
   nothing else; the helper imports only the standard library. Its stdin is framed — one-byte kind, four-byte length —
@@ -2723,18 +2726,18 @@ stdin echoed back through `cat`.
 ```python
 from aisland import tunnel_connect, tunnel_shell
 
-tunnel_connect.remote_command(24, 80, "/mnt/workspace")
+tunnel.connect.remote_command(24, 80, "/mnt/workspace")
 # ('sh', ['-c', 'for p in python3 python; do … exec "$p" -c "$0" "$@"; done; …', '<helper source>', '24', '80',
 #         '/mnt/workspace'])
-tunnel_shell.encode_resize(33, 111)    # b'r\x00\x00\x00\x04\x00!\x00o' — a window size on the helper's stdin
+tunnel.shell.encode_resize(33, 111)    # b'r\x00\x00\x00\x04\x00!\x00o' — a window size on the helper's stdin
 ```
 
 ### What you may change
 
-- The helper's frame kinds (add one with its handler in `tunnel_shell.relay` and a test in
+- The helper's frame kinds (add one with its handler in `tunnel.shell.relay` and a test in
   `tests/test_tunnel_connect.py`), and `HANGUP_AFTER_S`.
 - The forward, for another way through the relay to port 31545 — `connect`'s refusals and tests stay.
-- Never: an import outside the standard library in `tunnel_shell.py`
+- Never: an import outside the standard library in `tunnel/shell.py`
   (`::test_the_helper_runs_on_a_python_without_site_packages`), or reusing a forward aisland did not start.
 
 ---
@@ -2818,7 +2821,7 @@ workspace in a second format.
 
 One file, `workspace.toml`, at the root and committed, shaped like `.gitmodules`: the how-to comments, `[workspace]`,
 then a `[project."<name>"]` per project with `path`, `url` and `branch`. `aisland setup` keeps the projects current
-(`workspace_file.refresh`): new ones added, a changed url or path followed, a branch written once kept (a project
+(`workspace.file.refresh`): new ones added, a changed url or path followed, a branch written once kept (a project
 the workspace lacks: the amendment below). `init --from` clones from it and copies it in. `export` is gone. The later
 steps of the redesign moved `config.toml`'s settings into the same tables, each a key of the plugin that owns it.
 
@@ -2849,14 +2852,14 @@ branch = "dev/main"
 ```
 ```python
 from aisland import workspace, workspace_file
-workspace_file.refresh(Path("~/work/acme").expanduser())   # ['workspace.toml: added models']
+workspace.file.refresh(Path("~/work/acme").expanduser())   # ['workspace.toml: added models']
 workspace.init_workspace(Path("acme2"), from_file=Path("~/work/acme/workspace.toml").expanduser())
 ```
 
 ### What you may change
 
-- The how-to comments (`workspace_file._header`) and the wording of `refresh`'s lines.
-- A new key of a project belongs to a plugin of the redesign, never to `workspace_file.py`.
+- The how-to comments (`workspace.file._header`) and the wording of `refresh`'s lines.
+- A new key of a project belongs to a plugin of the redesign, never to `workspace/file.py`.
 
 **Amendment (2026-10-28, release review): a row with a url is a project to add, and setup leaves projects clean.**
 Writing `[project."lib"]` with a url into the file and running setup dropped the row as "no longer in the workspace" —
@@ -2938,7 +2941,7 @@ the `active` choices, mirrors) and a `git pull-all` typed in the root.
 ### Decision
 
 Two independent choices. `init --local` makes a new root that tracks only `.gitmodules` and the projects (`.gitignore`
-`/*`, marked `aisland.workspace.local` in `.git/config`, the first commit made by `local_workspace.settle`, which
+`/*`, marked `aisland.workspace.local` in `.git/config`, the first commit made by `workspace.local.settle`, which
 commits `.gitmodules` and the projects again whenever they change). Tracking is per project, git's own
 `ignore = all`: `aisland workspace track unset|set [PROJECT…] [--machine-only]` writes the committed choice to
 `workspace.toml` (`track = false`) and `.gitmodules`, or this machine's to `aisland.track.<project>.track` and
@@ -3233,7 +3236,7 @@ and the how-to used the folder's name even where the origin gave another.
 ### Decision
 
 `[workspace] name` in `workspace.toml` comes first, then the origin, then the folder, read in one place
-(`projects.get_workspace_name` through `workspace_file.name_of`); the how-to uses the file's name too. A name must be
+(`projects.get_workspace_name` through `workspace.file.name_of`); the how-to uses the file's name too. A name must be
 one plain name; a selection may not be called `name`, since a selection's choice is committed under its own name in
 the same table.
 
@@ -3446,7 +3449,7 @@ lock` resolves every extra, so the sources are locked too (`{ path = … }` in p
 ### Decision
 
 `aisland wheels build … --extra NAME` writes both pieces into the target's `pyproject.toml` between marker lines
-(`wheels_extra.py`): the extra at the end of `[project.optional-dependencies]`, the sources at the end of
+(`wheels/extra.py`): the extra at the end of `[project.optional-dependencies]`, the sources at the end of
 `[tool.uv.sources]` (each table appended when missing). A rerun removes what is between the markers and writes it
 again, so the file is byte-identical when nothing changed and a hand edit outside the markers survives. Everything is
 checked before any build: NAME must be in `[tool.aisland] manual-extras` (taken by `aisland setup`, the wheels would
@@ -3536,7 +3539,7 @@ to be fixable afterwards.
 
 - **What goes:** every blob ever under `wheels/**.whl` that no tip of this clone's branches and tags or origin's
   branches holds (origin's tags are fetched first and must equal this clone's). Nothing else is touched.
-- **How:** git-filter-repo (`prune` extra, run as `python -m aisland.filter_repo`) with `--strip-blobs-with-ids`,
+- **How:** git-filter-repo (`prune` extra, run as `python -m aisland.wheels.filter_repo`) with `--strip-blobs-with-ids`,
   `--partial`, `--prune-empty never`, `--prune-degenerate never` and `--preserve-commit-hashes`. With these the
   rewrite is a function of each commit alone: no commit disappears and no message changes, so a second clone
   stripping the same blobs gets the same ids (measured: identical ids, an unpushed commit carried on top). That is
@@ -3573,7 +3576,7 @@ an edit was refused. Afterwards the root still recorded the old commit (`32da69a
 would fetch back. The user ruled that `aisland wheels reset <project>` must work whatever the clone's state,
 tracked or untracked.
 
-- **The config:** git-filter-repo runs as `python -m aisland.filter_repo`, which replaces its one config reader by
+- **The config:** git-filter-repo runs as `python -m aisland.wheels.filter_repo`, which replaces its one config reader by
   one over `git config --list --null` (a value may hold newlines, a key may have none) and calls its own `main`.
   The user's config is never rewritten. A test pins that git-filter-repo still has the reader it replaces.
 - **Changes no commit holds:** a `git stash create` commit in `refs/wheels-prune/set-aside`, rewritten with the
@@ -3623,7 +3626,7 @@ For a target not in `github.project_repositories` (the same test the CI scaffold
 - writes `wheels.yaml` without `commit:` and the README without its Branch and Commit columns, its intro saying
   "its last commit" (`render_readme` / `render_wheels_yaml`, `commits=False`); `install.py` never read either;
 - rewrites every wheel it built, the target's own included, before anything else sees it
-  (`wheels_scrub.scrub_wheel`): METADATA without its description (body, `Description`, `Description-Content-Type`),
+  (`wheels.scrub.scrub_wheel`): METADATA without its description (body, `Description`, `Description-Content-Type`),
   without the URL fields (`Project-URL`, `Home-page`, `Download-URL`) naming `github.com`, and without the author and
   maintainer fields naming the workspace's name or a GitHub owner of its projects (`WheelsPlan.hidden_names`); RECORD's
   line for METADATA follows, every other member is copied with its own time and attributes.
@@ -3646,7 +3649,7 @@ GitHub URLs are right on PyPI).
 ```python
 from pathlib import Path
 
-from aisland.wheels_scrub import scrub_wheel
+from aisland.wheels.scrub import scrub_wheel
 
 scrub_wheel(Path("app/wheels/models-0.1.0-py3-none-any.whl"), ("acme", "acmeorg"))
 # True: its METADATA lost the README, the github.com Project-URLs and "Author: Acme"
@@ -4060,7 +4063,7 @@ the very thing such a repository must not reveal. Two such projects had these li
 ### Decision
 
 For a project off GitHub the unreleased dependencies come from the wheels it commits: the extra
-`aisland wheels build --extra <name>` writes (its block is found by `wheels_extra.remembered_extra`) joins the install
+`aisland wheels build --extra <name>` writes (its block is found by `wheels.extra.remembered_extra`) joins the install
 line, and no git-URL line is written. A dependency no wheel of that extra holds, or a project with no such extra, is
 refused before any file is written, naming the dependencies and the command that ships them. A released dependency
 resolves from PyPI as before.
@@ -4485,7 +4488,7 @@ take many minutes and is healthy.
   and `network_env()` — `GIT_TERMINAL_PROMPT=0`. git then gives up after 60 s without a byte (`Operation too slow.
   Less than 1 bytes/sec transferred the last 60 seconds`), whatever the transfer's length.
 - `gitcmd.git(network=True)` adds it to its overall limit; the runners whose behaviour differs (`mirrors._git`,
-  `wheels_prune._run`) add it with no overall limit; `gitcmd.fetch` is the best-effort fetch with the guard alone.
+  `wheels.prune._run`) add it with no overall limit; `gitcmd.fetch` is the best-effort fetch with the guard alone.
 - git has such a setting over HTTP(S) only. Over SSH a silent server is bounded by ssh's own `ServerAliveInterval`;
   aisland does not set `core.sshCommand`, which is the user's.
 - The doctor's probes and the tunnel's sign-in question got limits too (`doctor.PROBE_SECONDS`,
@@ -4651,8 +4654,8 @@ ran its whole `aisland wheels build` in `vendor_wheels`, 277 lines with 83 branc
   home; only `init_pipelines` takes the service, which it stops and starts around them. `services/jenkins.py` keeps
   the service itself (456 lines).
 - `vendor_wheels` is a driver over the run's phases: a frozen `WheelsPlan` of what the target needs and what PyPI has,
-  then the extra, the builds, the folder, the checks, the commit. `wheels_report.py`, `wheels_files.py` and
-  `wheels_check.py` take the report, the files beside the wheels and the checks; they import nothing of `wheels.py`.
+  then the extra, the builds, the folder, the checks, the commit. `wheels/report.py`, `wheels/files.py` and
+  `wheels/check.py` take the report, the files beside the wheels and the checks; they import nothing of `wheels.py`.
 - The code moved unchanged, by script, every multi-line string checked byte for byte; a private name another module
   now uses became public (`provenance_header`, `ZIP_TIME`, `PYPI_INDEX_ARGS`, `owner_of`, `write_wheels`, …).
 
@@ -4661,8 +4664,8 @@ ran its whole `aisland wheels build` in `vendor_wheels`, 277 lines with 83 branc
 What a user sees is unchanged: every command's `--help` (163 commands in the workspace aisland is developed in) is
 byte for byte what `cli.py` printed. The generated files that named their generator by path now name the new one:
 `Jenkinsfile.local`'s limit line (`STAGE_LIMITS in aisland/ci_scaffold.py`) and the wheels folder's `README.md` and
-`wheels.yaml` headers (`wheels_files.py`) change on their next regeneration. Tests patch the module whose code makes
-the call: `ci_scaffold.is_private_repo`, `jenkins_jobs.setup_global_properties`, `wheels_check.PYPI_INDEX_ARGS`, and
+`wheels.yaml` headers (`wheels/files.py`) change on their next regeneration. Tests patch the module whose code makes
+the call: `ci_scaffold.is_private_repo`, `jenkins_jobs.setup_global_properties`, `wheels.check.PYPI_INDEX_ARGS`, and
 the workspace root through `locations.workspace_root`, never a name bound in one CLI module. In earlier records
 `cli._X` is now `aisland/cli/_base.py`'s `_X`, `jenkins.scaffold_pipelines` is `ci_scaffold.scaffold`, and
 `services/jenkins.py`'s limits and actions are `ci_scaffold.py`'s.

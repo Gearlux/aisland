@@ -3,7 +3,7 @@
 git-filter-repo 2.47.0, the newest release, reads ``git config --list`` line by line as ``key=value``. A value
 written over several lines (an alias of the user's, or one of aisland's own before 2026-10-29) and a key with no
 value stop it with ``ValueError: dictionary update sequence element #N has length 1`` before it changes anything.
-``aisland wheels prune`` and ``aisland wheels reset`` run it as ``python -m aisland.filter_repo …``: :func:`main`
+``aisland wheels prune`` and ``aisland wheels reset`` run it as ``python -m aisland.wheels.filter_repo …``: :func:`main`
 replaces that one reader by :func:`config_settings` and hands every argument to git-filter-repo's own ``main``. The
 user's config is never touched.
 """

@@ -18,7 +18,7 @@ import pytest
 from click.testing import CliRunner
 
 import aisland
-from aisland import failures, locations, manager, supervisor
+from aisland import failures, locations, manager, paths, supervisor
 from aisland.cli import main
 from aisland.errors import AislandError
 from aisland.projects import get_project_metadata
@@ -88,7 +88,9 @@ def test_the_next_command_starts_with_no_failure(monkeypatch: pytest.MonkeyPatch
 
 
 def test_every_exception_aisland_defines_is_an_aisland_error_and_the_builtin_it_stands_for() -> None:
-    from aisland import discovery, editor, nightly, pypi, server, wheels_prune, workspace_file
+    from aisland import discovery, editor, nightly, pypi, server
+    from aisland.wheels import prune as wheels_prune
+    from aisland.workspace import file as workspace_file
 
     assert issubclass(discovery.DeclarationError, (AislandError, ValueError))
     for error, builtin in (
@@ -176,7 +178,7 @@ def test_a_bug_in_aisland_keeps_its_traceback(monkeypatch: pytest.MonkeyPatch) -
 
 @pytest.fixture
 def service(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> base.BaseService:
-    monkeypatch.setattr(base, "DATA_DIR", tmp_path)
+    monkeypatch.setattr(paths, "data_dir", lambda: tmp_path)
     monkeypatch.setattr(supervisor, "get_process", lambda name: None)
     return base.BaseService("demo")
 
@@ -211,7 +213,7 @@ def test_a_service_that_does_not_stop_in_time_is_reported(
 def test_docker_that_fails_to_start_is_reported(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     from aisland.services import docker
 
-    monkeypatch.setattr(base, "DATA_DIR", tmp_path)
+    monkeypatch.setattr(paths, "data_dir", lambda: tmp_path)
     engine = docker.DockerService()
     monkeypatch.setattr(engine, "is_running", lambda: False)
     monkeypatch.setattr(docker.shutil, "which", lambda name: f"/usr/local/bin/{name}")  # colima and docker are there
@@ -227,7 +229,7 @@ def test_docker_that_fails_to_start_is_reported(monkeypatch: pytest.MonkeyPatch,
 def test_swiftbar_that_fails_to_launch_is_reported(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     from aisland.services import swiftbar
 
-    monkeypatch.setattr(base, "DATA_DIR", tmp_path)
+    monkeypatch.setattr(paths, "data_dir", lambda: tmp_path)
     bar = swiftbar.SwiftBarService()
     monkeypatch.setattr(bar, "_require_macos", lambda: True)
     monkeypatch.setattr(swiftbar, "swiftbar_installed", lambda: True)
@@ -326,7 +328,7 @@ def test_scaffolding_a_folder_without_pyproject_exits_1(tmp_path: Path, monkeypa
 def test_a_jenkins_download_that_fails_is_reported(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     from aisland.services import jenkins
 
-    monkeypatch.setattr(base, "DATA_DIR", tmp_path)
+    monkeypatch.setattr(paths, "data_dir", lambda: tmp_path)
     service = jenkins.JenkinsService()
     service.war_file = tmp_path / "bin" / "jenkins.war"
 
@@ -345,7 +347,7 @@ def _plugin_manager_setup(
     network is unreachable. Returns the URLs downloaded."""
     from aisland.services import jenkins
 
-    monkeypatch.setattr(jenkins, "BIN_DIR", tmp_path)
+    monkeypatch.setattr(paths, "bin_dir", lambda: tmp_path)
     service = jenkins.JenkinsService()
     service.war_file = tmp_path / "jenkins.war"
     service.war_file.write_text("")

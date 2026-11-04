@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # =========================================================================
 # THE TEMPLATE of every <project>/wheels/install.py — edit it here, never in a copy.
-# Source: aisland/aisland/wheels_install.py
+# Source: aisland/aisland/wheels/install.py
 # =========================================================================
 """Install the wheels of this folder, then the project above it, editable — or its own wheel, when listed.
 

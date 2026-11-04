@@ -26,9 +26,9 @@ The workspace's dev-infrastructure CLI, `aisland` (click, the `aisland/cli/` pac
   (`network=True`: no credential prompt, 60 s default limit; `check=True`: an `AislandError` naming the command);
   `read(repo, *args)` is what git prints, or `None` when it cannot answer, and `remote_url(repo)` an origin's address.
   A new git call uses these, never a bare `subprocess.run(["git", …])`. The ones that keep their own runner differ in
-  behaviour: `wheels.py`, `workspace_file.py` (`git -C`), `mirrors.py` (no overall limit on a push), `wheels_prune.py`,
+  behaviour: `wheels/build.py`, `workspace/file.py` (`git -C`), `mirrors.py` (no overall limit on a push), `wheels/prune.py`,
   `sources._run` (git's output reaches the terminal), `workspace._add_submodule` (clone progress),
-  `filter_repo.py` and `pytest_stats.py` (they run where aisland is not). **Every git command that reaches a remote gives up on one that stops sending**:
+  `wheels/filter_repo.py` and `pytest_stats.py` (they run where aisland is not). **Every git command that reaches a remote gives up on one that stops sending**:
   `gitcmd.network_options()` (`http.lowSpeedLimit=1`, `http.lowSpeedTime=STALL_SECONDS`) and `network_env()`, through
   `git(network=True)`, the helpers above or `gitcmd.fetch` (best-effort, no overall limit). A transfer may be long, so
   the guard is never an overall limit (ssh's `ServerAliveInterval` bounds SSH). Never a bare
@@ -48,6 +48,11 @@ The workspace's dev-infrastructure CLI, `aisland` (click, the `aisland/cli/` pac
   (`tests/test_machine_config.py`). `.gitmodules` keeps `gitmodules.py`; `pytest_stats.py` reads its own keys with the
   standard library.
 - **`locations.py`**: where the workspace and the state are (standard library only: the pytest plugin imports it).
+  **`paths.py`**: the state's folders as functions — `state_dir()`, `bin_dir()`, `data_dir()`, `tools_dir()` — asked
+  each time, never a module constant fixed at import (a long-running process or a test may point the workspace
+  elsewhere); a module calls them as `paths.data_dir()`, so `locations.state_dir` moves them all, and a module's own
+  file under them is a function too (`supervisor.config_file()`, `nightly.report_dir()`,
+  `pytest_stats.stats_folder()`) (`tests/test_locations.py`).
 - **`manager.py`** [manager-split]: `aisland setup` runs its steps in order — provisioning, activation, editable
   installs (`_run_installs`), the generated workspace files, the git aliases — and each step's code is a module of its
   own (`projects.py`, `installers.py`, `paths.py`, `services/base.py`, `editor_files.py`, `mcp_config.py`,
@@ -63,9 +68,9 @@ The workspace's dev-infrastructure CLI, `aisland` (click, the `aisland/cli/` pac
   `@pytest.mark.real_workspace`. An `aisland` a test starts as its own process is not covered (from a checkout it finds
   the real root by its place): pass its folder another way or run a read-only command
   (`tests/test_no_real_workspace.py`).
-- **`workspace.py`**: `aisland workspace init <folder>` sets up a new workspace or an existing repository in place
+- **`workspace/`** — `init.py`: `aisland workspace init <folder>` sets up a new workspace or an existing repository in place
   (`--local`, `--untracked`; the file: "Workspace root and paths").
-- **`local_workspace.py`**: a local workspace (`init --local`) is a root repository that tracks only the projects:
+- **`workspace/local.py`**: a local workspace (`init --local`) is a root repository that tracks only the projects:
   `.gitignore` `/*`, `.gitmodules` and the projects committed, marked by `aisland.workspace.local` in `.git/config`
   (never a tracked file: the root is no one else's). `settle` commits `.gitmodules` and the projects' paths — nothing
   else staged — at init, after every `activation.reconcile` and after `track set|unset`; a commit git refuses is said,
@@ -77,7 +82,7 @@ The workspace's dev-infrastructure CLI, `aisland` (click, the `aisland/cli/` pac
   link, in a workspace with `.gitmodules` or a local root. `git submodule add -b <its branch> <its origin> <folder>`
   keeps it as it is (`-f` only in a local root); a refused add is said and setup goes on. Its tracking is
   `tracking.apply`'s (the workspace's `[workspace] track`, this machine's `aisland.track.default`), never inferred from
-  the other projects. It runs before `workspace_file.refresh`.
+  the other projects. It runs before `workspace.file.refresh`.
 - **`tracking.py`**: `aisland workspace track set|unset|status [PROJECT…]` — whether the root records a project's
   commits. Committed: the project's `track = false` in `workspace.toml` (written as `ignore = all` in `.gitmodules`);
   this machine: `aisland.track.<project>.track` (written as git's `submodule.<name>.ignore` in `.git/config`, which
@@ -92,7 +97,7 @@ The workspace's dev-infrastructure CLI, `aisland` (click, the `aisland/cli/` pac
   changes nothing** and **`track status` only reads** (`tests/test_tracking.py`, `tests/test_workspace_init.py`).
 - **`recording.py`**: `aisland workspace test-stats on|off` ("Test-run statistics"). **`env_example.py`**
   [env-example]: `aisland workspace env-example [--missing]` and `env-test` ("Generated and committed workspace
-  files"). **`workspace_file.py`** [workspace-file]: `workspace.toml`, kept current by `aisland setup` (`refresh`).
+  files"). **`workspace/file.py`** [workspace-file]: `workspace.toml`, kept current by `aisland setup` (`refresh`).
   **`server.py`**: `aisland-mcp`, aisland's MCP server (the `[mcp]` extra), a chosen set of tools listed in `.mcp.json`
   by setup's discovery. **`discovery.py`** [declarations]: what the projects declare to aisland. **`editor.py`**: this
   machine's VS Code theme and colours (`css_colors.py`: the CSS names). **`configure.py`**: `aisland workspace
@@ -103,25 +108,25 @@ The workspace's dev-infrastructure CLI, `aisland` (click, the `aisland/cli/` pac
   workspace project; `aisland tests report` reads it beside the Jenkins builds' JUnit results. **`nightly.py`**:
   `aisland tests nightly`, the morning report of the orchestrator's nightly runs (`aisland/data/nightly/<date>.md`, a
   notification, exit 1 on a bad night), run by the `<workspace>.nightly-check` Jenkins job.
-- **`wheels.py`**: `aisland wheels` ("`aisland wheels`"). `vendor_wheels` is a driver over the run's phases
+- **`wheels/`** — `build.py`: `aisland wheels` ("`aisland wheels`"). `vendor_wheels` is a driver over the run's phases
   [module-split]: `_plan` (a frozen `WheelsPlan`), `_choose_extra`, `_build_all`, `_write_folder`, `_check` (or
   `_unchecked` under `--no-check`), `_commit_or_note`; every refusal comes before the first build, in that order. The
-  run's other parts are modules of their own: `wheels_report.py`, `wheels_files.py`, `wheels_check.py`,
-  `wheels_bundle.py`, `wheels_extra.py`, `wheels_scrub.py`, `wheels_prune.py` (with `filter_repo.py`), and
-  `wheels_install.py` / `wheels_unzip.py` (standard library only: they run where aisland is not). A name the run patches in a test is patched
-  where it is CALLED: `wheels.build_wheel`, `wheels.install_and_import`, but `wheels_check.PYPI_INDEX_ARGS`, which both
+  run's other parts are modules of their own: `wheels/report.py`, `wheels/files.py`, `wheels/check.py`,
+  `wheels/bundle.py`, `wheels/extra.py`, `wheels/scrub.py`, `wheels/prune.py` (with `wheels/filter_repo.py`), and
+  `wheels/install.py` / `wheels/unzip.py` (standard library only: they run where aisland is not). A name the run patches in a test is patched
+  where it is CALLED: `wheels.build_wheel`, `wheels.install_and_import`, but `wheels.check.PYPI_INDEX_ARGS`, which both
   modules read from there.
-- **`tunnel.py`**: `aisland tunnel` — a VS Code Remote Tunnel to the machine aisland runs on. One detached process with
+- **`tunnel/`** — `host.py`: `aisland tunnel` — a VS Code Remote Tunnel to the machine aisland runs on. One detached process with
   a pidfile, NOT a `BaseService` (the remote box has no process-compose) and not in `aisland services start`;
   workspace-free (`_WORKSPACE_FREE`). State is PER MACHINE, `~/.aisland/tunnel` (`AISLAND_TUNNEL_HOME` overrides it),
   never derived from the working directory. `code tunnel` is passed NO account option (the sign-in runs first,
   separately). The pidfile's pid is the tunnel only while its command line names `cli_path()` (`_is_tunnel`): after
   a reboot the number may be any process's, which is never signalled; the CLI is unpacked to a `.part` file and moved
   into place whole (`tests/test_tunnel_process.py`). Every reader of the remembered-workspaces file treats a bad file as empty.
-- **`tunnel_connect.py` + `tunnel_shell.py`** [tunnel-terminal]: `aisland tunnel connect`, a terminal through the SAME
+- **`tunnel/connect.py` + `tunnel/shell.py`** [tunnel-terminal]: `aisland tunnel connect`, a terminal through the SAME
   VS Code tunnel (no sshd on the box, no second tunnel): `devtunnel connect` forwards its control port 31545 and
-  aisland's MessagePack client (`msgpack`, the `[connect]` extra) `spawn`s `tunnel_shell.py` FROM ITS SOURCE
-  (`python3 -c`), which runs the account's shell in a pseudo-terminal — interactive, NOT a login shell. `tunnel_shell.py`
+  aisland's MessagePack client (`msgpack`, the `[connect]` extra) `spawn`s `tunnel/shell.py` FROM ITS SOURCE
+  (`python3 -c`), which runs the account's shell in a pseudo-terminal — interactive, NOT a login shell. `tunnel/shell.py`
   imports the standard library only (the box has a Python, not aisland). A taken port 31545 is refused, never reused;
   the forward aisland starts is always stopped; raw mode is entered with `TCSADRAIN`, never `tty.setraw`'s default
   flush. `tests/fake_devtunnel.py` speaks the VS Code CLI's control protocol and changes with it. The user page is
@@ -149,11 +154,11 @@ naming the PID is the only signal). All service state lives under `<workspace>/a
   discovery re-raises its words as a `DeclarationError`), `load(path)` (a file already found and checked; tomllib's own
   errors), `name(path)`. `gitmodules.py`: `read(root)`, a frozen `Submodule` (`name`, `path`, `url`, `branch`,
   `active`) per submodule with a `path`, from ONE `git config -f .gitmodules --get-regexp` process (a key written twice
-  is read as git reads it, the last value); `projects.submodule_active_map`, `workspace_file.submodules` and
-  `local_workspace.submodule_names` are views over it; single-key `--get` reads and writes (`tracking`,
+  is read as git reads it, the last value); `projects.submodule_active_map`, `workspace.file.submodules` and
+  `workspace.local.submodule_names` are views over it; single-key `--get` reads and writes (`tracking`,
   `mirrors.primary_url`, `sources.remote_url`, `activation`) stay where they are. A new reader adds a view, never a
   second `tomllib.load` of a `pyproject.toml` or a second `--get-regexp`. Exceptions: the standard-library-only modules
-  (`wheels_install.py`, `wheels_unzip.py`, `tunnel_shell.py`, `pytest_stats.py`, `locations.py`) and `harness/`, which
+  (`wheels/install.py`, `wheels/unzip.py`, `tunnel/shell.py`, `pytest_stats.py`, `locations.py`) and `harness/`, which
   run where aisland is not installed; other TOML files (`workspace.toml`, `uv.toml`, a template set's `template.toml`)
   keep their readers (`tests/test_pyproject.py`, `tests/test_gitmodules.py`).
 
@@ -165,7 +170,13 @@ naming the PID is the only signal). All service state lives under `<workspace>/a
   the command finishes, and `cli._base._WorkspaceGroup.invoke` turns the run into exit 1, also over a command's own
   `SystemExit(0)`; a non-zero code of its own is kept. Never `click.echo("Error…")` and return: scripts, CI and the MCP
   server read the exit status (`tests/test_errors_exit_one.py`).
-- **A warning goes to stderr through `failures.warn`**, never `click.echo("  - Warning: …")`: it fails nothing and
+- **Library code speaks through `console.py`, never click itself.** `console.echo(…, err=)`, `console.confirm`,
+  `console.prompt` go to the console in charge: click's terminal (`Terminal`) for a command, a `Collector` inside
+  `console.collecting()` for each MCP tool call — its stderr lines come back as the tool object's `warnings`, the rest
+  is dropped, and a question raises `NoOneToAsk` (an `AislandError`), never a guessed answer. Only `aisland/cli/` and
+  `console.py` call `click.echo`/`confirm`/`prompt`; `click.style` stays anywhere. A test answers a question by
+  patching `console.confirm` (`tests/test_console.py`, `tests/test_server.py`).
+- **A warning goes to stderr through `failures.warn`**, never `console.echo("  - Warning: …")`: it fails nothing and
   stays off stdout, which a script reads (`--json`)
   (`tests/test_configure.py::test_a_warning_goes_to_stderr_and_leaves_the_json_whole`).
 - **One exception root, and `--debug`.** [errors-root] Library code raises `AislandError` — never
@@ -183,11 +194,11 @@ naming the PID is the only signal). All service state lives under `<workspace>/a
 ## Diagnostics and types
 
 - **A diagnostic is `logging.getLogger(__name__).debug(...)`, shown by `--debug`; results and progress stay
-  `click.echo`.** [debug-log] A module that reports aisland's own mechanics no user acts on (a cached download reused,
+  `console.echo`.** [debug-log] A module that reports aisland's own mechanics no user acts on (a cached download reused,
   a digest that matched, a step with nothing to do, which file was read, which command ran) logs it at debug with the
   standard library's `logging` — never loguru or loggair. `aisland --debug` (`cli._base._show_debug_log`) puts ONE
   handler on the `aisland` logger for the run (`aisland: <module>: <message>` on stderr) and takes it off when the run
-  ends; without it nothing below WARNING shows. `click.echo` keeps the command's result, the progress a person watches
+  ends; without it nothing below WARNING shows. `console.echo` keeps the command's result, the progress a person watches
   (`==>` steps, `[OK] Created …`), a question, a warning the operator must act on and anything a script or test
   parses; when unsure, it stays output. A line moved to debug is asserted through `caplog` at DEBUG; use `%`-style
   arguments, no work before the call (`tests/test_debug_log.py`).
@@ -202,11 +213,12 @@ naming the PID is the only signal). All service state lives under `<workspace>/a
   names what it holds — never a bare `dict`, `set`, `List[dict]` or `CompletedProcess`. The project records setup
   passes around are `projects.ProjectMetadata`, a client file's servers `mcp_config.McpServer`; a test builds a record
   with `tests/records.py::project_metadata`.
-- **Imports sit at the top of each module** (aisland rules → "Top-Level Imports"). The two that would close a cycle stay
-  in their function and say so — `projects.get_workspace_name` → `workspace_file`, `provision.install` →
-  `services.jenkins` — and a standalone script's optional library stays lazy (`wheels_install.py`'s PyYAML,
-  `filter_repo.py`'s git-filter-repo). `tests/test_imports.py` imports every module first with none loaded before it, so
-  a new cycle fails there.
+- **Imports sit at the top of each module, and no function imports aisland** (aisland rules → "Top-Level Imports"). A
+  cycle is broken by moving the shared piece down, never by a lazy import: `toml_places.py` (`Where`, `table_line`,
+  `key_line`) is a leaf every TOML reader imports, and Jenkins' Java is installed by the `workspace provision install`
+  command, above both `provision` and `services.jenkins`. A standalone script's optional library stays lazy
+  (`wheels/install.py`'s PyYAML, `wheels/filter_repo.py`'s git-filter-repo). `tests/test_imports.py` imports every module
+  first with none loaded before it, and fails on an aisland import inside a function.
 
 ## Workspace root and paths
 
@@ -259,10 +271,10 @@ naming the PID is the only signal). All service state lives under `<workspace>/a
   from the project folder beside the package
   (`tests/test_packaging.py::test_the_wheel_carries_every_file_of_the_package`).
 - **The workspace's name is `[workspace] name` in `workspace.toml`, else its origin's repository, else its folder.**
-  `projects.get_workspace_name` is the one reader (`workspace_file.name_of`); it names `<name>.code-workspace`, the
+  `projects.get_workspace_name` is the one reader (`workspace.file.name_of`); it names `<name>.code-workspace`, the
   Jenkins jobs, the nightly report, the how-to and `init`'s first line. A name that is no plain name is refused naming
   its line; discovery refuses a selection called `name` (`tests/test_workspace_file.py`).
-- **A workspace is written down in `workspace.toml`, shaped like `.gitmodules`.** [workspace-file] `workspace_file.py`:
+- **A workspace is written down in `workspace.toml`, shaped like `.gitmodules`.** [workspace-file] `workspace/file.py`:
   the how-to comments, `[workspace]`, then a `[project."<name>"]` per project — `path` (its folder; the name when left
   out), `url`, `branch`; other keys of a project are kept as written. `aisland setup` keeps it current (`refresh`, from
   `.gitmodules` or the clones): a new project added, a changed url or path followed, a project the workspace lacks
@@ -276,9 +288,9 @@ naming the PID is the only signal). All service state lives under `<workspace>/a
   `tests/test_workspace_init.py`,
   `tests/test_activation.py::test_setup_clones_a_project_written_into_the_file_by_hand`).
   - **The file carries its `format` and names a key nobody reads.** [workspace-format] `render` writes `[workspace]
-    format = 1` first (`workspace_file.FORMAT`); `read` takes a file without it as format 1, refuses a newer one naming
+    format = 1` first (`workspace.file.FORMAT`); `read` takes a file without it as format 1, refuses a newer one naming
     the line and `pip install --upgrade aisland`, and a value that is no whole number.
-    `workspace_check.unknown_keys` names every key no part of aisland reads — a project's (`workspace_file.PROJECT_KEYS`
+    `workspace.check.unknown_keys` names every key no part of aisland reads — a project's (`workspace.file.PROJECT_KEYS`
     and each plugin's: `sources.COMMITTED_KEYS`, `mirrors.MIRROR_KEY`, `activation.ACTIVE_KEY`, `tracking.TRACK_KEY`,
     `pytest_stats.RECORD_KEY`), the workspace's (`name`, `format`, `track`, `test-stats`, every selection) — with its
     line and the closest key; `setup`, `workspace show` and `workspace configure` print them on stderr and go on. **A
@@ -423,7 +435,7 @@ naming the PID is the only signal). All service state lives under `<workspace>/a
 - Jenkins (and its plugin manager) runs on the Java its WAR accepts, by FULL path — never the bare `java` on PATH.
   `services/jenkins_java.py` probes each installed JDK, newest first, with `java -jar jenkins.war --version`; no Java
   version is written into aisland and the bare `openjdk` formula is never one of aisland's tools. On macOS
-  `provision.install` (never setup) and `aisland jenkins start`, after asking, install the `openjdk@N` the WAR names
+  `aisland workspace provision install` (never setup) and `aisland jenkins start`, after asking, install the `openjdk@N` the WAR names
   (`tests/test_jenkins_java.py`,
   `tests/test_workspace_provision.py::test_aisland_never_needs_the_floating_openjdk_formula`).
 
@@ -461,7 +473,7 @@ Root `AGENTS.md` "Two Test Runs". [test-stats] (`tests/test_pytest_stats.py`,
   `aisland.test-stats.<project>.record`, which wins; a committed switch drops this machine's choice for what it names.
   The plugin reads it with the standard library (`pytest_stats.recording`; a file it cannot read = recorded) and the
   report says a project is off with the command that turns it on [test-stats-switch] (`tests/test_recording.py`).
-- The data folder is resolved like `paths.DATA_DIR`; after touching the entry point, `uv pip install -e ./aisland
+- The data folder is resolved like `paths.data_dir()`; after touching the entry point, `uv pip install -e ./aisland
   --no-deps`. A nodeid and CI's JUnit `classname::name` meet through `junit_address`, pytest's own mapping.
 - The report proposes moves; nothing moves a test between legs but an edit to its `@pytest.mark.slow` (or a
   `FAST_SAMPLE`). Never deselect by history at collection time. It proposes only tests the project still has
@@ -750,7 +762,7 @@ A bare `::` pin in this section is in `tests/test_jenkins_scaffold.py`.
 - **A project that does not live on GitHub never names one in its CI files** (a company's repository must not reveal
   the workspace it is developed in). For a project whose folder is not in `github.project_repositories`, the
   unreleased dependencies are never git-URL lines: they come from the wheels it commits, through the extra `aisland
-  wheels build --extra` writes (`wheels_extra.remembered_extra`); a dependency no wheel of that extra holds — or no
+  wheels build --extra` writes (`wheels.extra.remembered_extra`); a dependency no wheel of that extra holds — or no
   such extra — refuses the scaffold, naming the dependencies and `aisland wheels build <project> --extra <name>
   --commit`, before any file is written (`tests/test_github_owner.py`).
 - **`Jenkinsfile.local` installs nothing.** `Initialize` only checks, with `python3 -P`, that the project's
@@ -879,7 +891,7 @@ A bare `::` pin in this section is in `tests/test_jenkins_scaffold.py`.
   reported `already` and dropped. `_same_content` compares bytes, never size+mtime. Manifest paths are validated
   (`_safe_rel`). `backups prune` confirms first.
 
-## `aisland wheels` (`wheels.py`)
+## `aisland wheels` (`wheels/`)
 
 An aisland command, only the named project's closure, both checks; each flag's mechanism is a decision record in
 `docs/architecture.md`. The invariants: [wheels] (`tests/test_wheels.py`)
@@ -905,41 +917,41 @@ An aisland command, only the named project's closure, both checks; each flag's m
   nothing behind, nobody blamed) (`TestTheRunWithFakedBuilds`, `TestEndToEnd`).
 - What is built is a scope (`WheelsScope`): the default ships what PyPI lacks, `--include-published` every needed
   project with a checkout, `--all` every workspace project with one; a dirty one is refused in every scope.
-- `install.py` (a copy of `wheels_install.py`) names each chosen wheel by its FILE — pip takes PyPI's same-version
+- `install.py` (a copy of `wheels/install.py`) names each chosen wheel by its FILE — pip takes PyPI's same-version
   wheel over one it only finds through `--find-links`; never go back to `--find-links` alone
   (`tests/test_wheels_install.py`). `wheels.yaml`'s `install:` values are the user's (a rerun keeps them; an unreadable
-  file stops the run at its line before any build); `wheels_install.read_wheels` is its one reader.
+  file stops the run at its line before any build); `wheels.install.read_wheels` is its one reader.
 - The folder is git-ignored (`wheels/.gitignore`: `*`) unless `--commit`, which commits `wheels/` ITSELF — that path
   only, only after a passing check, never the zip; a tracked folder without `--commit` is reported with its `git rm -r
   --cached`, never untracked by the command (`tests/test_wheels_zip.py::TestGit`).
 - **A target not on GitHub gets a folder that says nothing of GitHub** (root rule "A Bitbucket Project Never Names
   acme Or The GitHub Projects") [wheels-off-github]: for a target not in `github.project_repositories`, `wheels.yaml`
-  and the README carry no branch or commit, and every wheel built is scrubbed (`wheels_scrub.scrub_wheel`) of its
+  and the README carry no branch or commit, and every wheel built is scrubbed (`wheels.scrub.scrub_wheel`) of its
   METADATA's description, its URL fields naming `github.com` and its author/maintainer fields naming the workspace or
   a GitHub owner (`WheelsPlan.hidden_names`), RECORD following; code, requirements and entry points stay as built, and
   a target on GitHub gets byte-identical files (`tests/test_wheels_scrub.py`).
 - `aisland wheels` is a group (`build`, `zip`, `install`); an unknown first word is `build`'s project. The zip runs with
-  plain `python` (`wheels_unzip.py`, standard library only), refuses another project's folder before unpacking and is
+  plain `python` (`wheels/unzip.py`, standard library only), refuses another project's folder before unpacking and is
   byte-identical for an unchanged folder; `install` refuses the workspace's `.venv` (`tests/test_wheels_zip.py`).
 - `--include-project`: the target's OWN wheel, kept OUT of `built` (`WheelsReport.project_wheel`) and listed LAST in
   `wheels.yaml`; `install.py` installs it in place of `-e ..` while its `install:` is true (`--no-project` drops both);
   the check installs that wheel, never a second build; a folder that installs its own wheel zips with `STANDALONE =
   True`. Without the flag every file is byte-identical.
-- `--bundle`: ONE merged wheel `<project>-bundle` in `wheels/bundle/` (`wheels_bundle.py`; pip knows only that name —
+- `--bundle`: ONE merged wheel `<project>-bundle` in `wheels/bundle/` (`wheels/bundle.py`; pip knows only that name —
   accepted); its requirements come from each bundled project's `pyproject.toml`, never METADATA; an unsatisfied
   requirement, a non-pure wheel, a path with two contents, an entry point with two targets and `dynamic` dependencies
   are REFUSED, never resolved. The bundle is checked alone, its failures exit 1 and block `--commit`; the zip never
   holds it. Without the flag every file is byte-identical and a stale bundle is removed
   (`tests/test_wheels_bundle.py`).
 - `--extra NAME` writes the extra and a `[tool.uv.sources]` entry per wheel into the target's `pyproject.toml`, between
-  marker lines a rerun replaces and nothing outside them changes (`wheels_extra.py`); REFUSED before any build: an
+  marker lines a rerun replaces and nothing outside them changes (`wheels/extra.py`); REFUSED before any build: an
   extra NAME missing from `[tool.aisland] manual-extras`, a hand-written extra or source for a built wheel, a broken
   marker, each naming its line; `--commit` refuses a `pyproject.toml` with changes of its own. A flag, never tied to
   `--include-project`. **The block is remembered** (`remembered_extra`): a build without `--extra` and without
   `--include-project` keeps it current; with `--include-project` and no `--extra` it is left and the report says so;
   another name beside the block is refused. A project without the block gets byte-identical files
   (`tests/test_wheels_extra.py`).
-- **`aisland wheels prune` / `reset`** (`wheels_prune.py`, `tests/test_wheels_prune.py`) [wheels-prune]:
+- **`aisland wheels prune` / `reset`** (`wheels/prune.py`, `tests/test_wheels_prune.py`) [wheels-prune]:
   - What goes is exactly the `wheels/**.whl` blobs no tip holds — this clone's branches and tags, origin's branches;
     every kept tip's tree is checked unchanged after the rewrite. Without `--apply` nothing changes.
   - The strip is git-filter-repo with `--prune-empty never --prune-degenerate never --preserve-commit-hashes`, so it is
@@ -958,7 +970,7 @@ An aisland command, only the named project's closure, both checks; each flag's m
     `refs/wheels-prune/set-aside` (`git stash create`), are rewritten with the refs and applied back with `--index` —
     never `git stash push/pop` (filter-repo moves `refs/stash` without its reflog); a failure keeps the ref and names
     the command. Never add a refusal back to `reset`; `prune --apply` keeps its refusals (it pushes).
-  - git-filter-repo runs as `python -m aisland.filter_repo` (`filter_repo.py`), which reads the config with `--null`:
+  - git-filter-repo runs as `python -m aisland.wheels.filter_repo` (`wheels/filter_repo.py`), which reads the config with `--null`:
     2.47.0's own reader dies on a value of several lines. Never rewrite the user's config to suit it. Reflogs expire for
     every ref but `refs/stash`, symbolic refs included; a detached HEAD is carried through `refs/wheels-prune/head`.
 - **A project whose setuptools discovery would take `wheels/` for a package is refused before anything is built
@@ -970,9 +982,9 @@ An aisland command, only the named project's closure, both checks; each flag's m
   checked out here; `zip` only those with a `wheels.yaml`). It reads folders and `pyproject.toml` only and an
   unreadable workspace offers nothing (`tests/test_wheels.py::TestShellCompletion`).
 - Tests reach no network: the end-to-end tests run the real uv with `UV_OFFLINE=1`, a fresh cache, and
-  `wheels_check.PYPI_INDEX_ARGS` pointed at a local folder (`offline_uv`); the pip tests run with
+  `wheels.check.PYPI_INDEX_ARGS` pointed at a local folder (`offline_uv`); the pip tests run with
   `PIP_CONFIG_FILE=/dev/null` against a local PEP 503 index. A wheel a test writes by hand
-  (`tests/test_wheels.py::_wheel`) gives every member one fixed time (`wheels_files.ZIP_TIME`), as a real build stamps
+  (`tests/test_wheels.py::_wheel`) gives every member one fixed time (`wheels.files.ZIP_TIME`), as a real build stamps
   its commit's.
 
 ## Workspace git aliases (`setup_git.sh`, `git_pull_all.sh`)
@@ -992,7 +1004,7 @@ An aisland command, only the named project's closure, both checks; each flag's m
   `tests/test_submodule_active_map.py`).
 - **A link to a folder inside the workspace is a short name, never a project.** [aliases] Every reader of the
   workspace's projects skips a folder for which `locations.is_alias(folder, workspace)` holds (`discover_projects`,
-  `workspace_folders`, `harness._project_folders`, `sources.known_projects`, `workspace_file.workspace_projects`); a new
+  `workspace_folders`, `harness._project_folders`, `sources.known_projects`, `workspace.file.workspace_projects`); a new
   reader does the same, never an `is_symlink` test of its own. A link to a folder OUTSIDE the workspace stays a
   project. The generated `.code-workspace` names such a folder by its link (`locations.alias_names`), its `path` the
   real folder; `workspace.toml` writes it as the project's `path` (`tests/test_symlinked_folders.py`).

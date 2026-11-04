@@ -10,7 +10,7 @@ import re
 from pathlib import Path
 from typing import Dict, NamedTuple, Optional
 
-from aisland import workspace_file
+from aisland.workspace import file as workspace_file
 
 #: A GitHub remote in each spelling git accepts: ``git@github.com:owner/repo``, ``ssh://git@github.com/owner/repo``
 #: and ``https://github.com/owner/repo`` (a user before the host too: ``https://user@github.com/owner/repo``),
@@ -42,7 +42,7 @@ def project_repositories(workspace_root: Path) -> Dict[str, GitHubRepository]:
     """Each project folder whose remote is on GitHub, and that repository.
 
     The remote is the submodule's in ``.gitmodules``, or a clone's ``origin`` in a workspace without one
-    (:func:`aisland.workspace_file.workspace_projects`). A project's GitHub owner is what makes it, and its PyPI
+    (:func:`aisland.workspace.file.workspace_projects`). A project's GitHub owner is what makes it, and its PyPI
     release, the workspace's own: no organisation is written into aisland.
     """
     repositories: Dict[str, GitHubRepository] = {}

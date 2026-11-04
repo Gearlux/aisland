@@ -6,9 +6,8 @@ from typing import Any, List, Optional, Tuple
 
 import click
 
-from aisland import failures, gitcmd, locations, provision
+from aisland import console, failures, gitcmd, locations, paths, provision
 from aisland.github import github_repository
-from aisland.paths import DATA_DIR
 from aisland.projects import discover_projects, get_project_metadata, get_workspace_root
 from aisland.services.base import BaseService, ServiceState, service_state, styled_state
 from aisland.services.jenkins import JenkinsService
@@ -58,7 +57,7 @@ class SwiftBarService(BaseService):
         ``os.name`` is NOT a valid guard — Linux is also ``"posix"``.
         """
         if platform.system() != "Darwin":
-            click.echo("SwiftBar is only supported on macOS — skipping.")
+            console.echo("SwiftBar is only supported on macOS — skipping.")
             return False
         return True
 
@@ -112,22 +111,22 @@ class SwiftBarService(BaseService):
         """Scan workspace and generate SwiftBar scripts for Jenkins and GitHub."""
         if not self._require_macos():
             return
-        click.echo(f"Initializing SwiftBar scripts in {self.plugins_dir}...")
+        console.echo(f"Initializing SwiftBar scripts in {self.plugins_dir}...")
         jenkins_projects, github_repos = self._monitored(get_workspace_root())
-        click.echo(f"  - Monitored Jenkins jobs: {', '.join(jenkins_projects)}")
-        click.echo(f"  - Monitored GitHub repos: {', '.join(github_repos)}")
+        console.echo(f"  - Monitored Jenkins jobs: {', '.join(jenkins_projects)}")
+        console.echo(f"  - Monitored GitHub repos: {', '.join(github_repos)}")
         self._generate_jenkins_script(jenkins_projects)
         self._generate_github_script(github_repos)
-        click.echo("SwiftBar scripts initialized.")
-        if click.confirm(f"Do you want to point SwiftBar directly to {self.plugins_dir}?"):
+        console.echo("SwiftBar scripts initialized.")
+        if console.confirm(f"Do you want to point SwiftBar directly to {self.plugins_dir}?"):
             self._use_plugins_dir()
         else:
-            click.echo(f"\nPlease manually point SwiftBar to: {self.plugins_dir}")
+            console.echo(f"\nPlease manually point SwiftBar to: {self.plugins_dir}")
 
     def _monitored(self, workspace_root: Path) -> Tuple[List[str], List[str]]:
         """The Jenkins jobs and the GitHub repositories the menu watches: each project's, dependencies before
         dependents, then the workspace root's (no project, but it has jobs and a remote too)."""
-        jobs_dir = DATA_DIR / "jenkins" / "jobs"
+        jobs_dir = paths.data_dir() / "jenkins" / "jobs"
         jenkins_projects: List[str] = []
         github_repos: List[str] = []
         for folder in [*self._dependency_ordered_projects(workspace_root), workspace_root]:
@@ -146,7 +145,7 @@ class SwiftBarService(BaseService):
                 subprocess.run([*defaults, key, str(self.plugins_dir)], check=True)
             subprocess.run([*defaults, "MakePluginExecutable", "-bool", "YES"], check=True)
             subprocess.run([*defaults, "DisabledPlugins", "-array", "CLAUDE.md", "AGENTS.md", "GEMINI.md"], check=True)
-            click.echo(f"  - SwiftBar configured to use: {self.plugins_dir}")
+            console.echo(f"  - SwiftBar configured to use: {self.plugins_dir}")
             # The URL scheme as well, so a running app makes its bookmark of the folder.
             subprocess.run(["open", "-g", f"swiftbar://changePluginsDirectory?path={self.plugins_dir}"], check=False)
             self.launch()
@@ -160,10 +159,10 @@ class SwiftBarService(BaseService):
         if not swiftbar_installed():
             provision.ask_to_install("swiftbar")
 
-        click.echo("Starting SwiftBar...")
+        console.echo("Starting SwiftBar...")
         try:
             subprocess.run(["open", "-a", "SwiftBar"], check=True)
-            click.echo("  - SwiftBar launched.")
+            console.echo("  - SwiftBar launched.")
         except subprocess.CalledProcessError as e:
             failures.report(f"  - Error launching SwiftBar: {e}")
 
@@ -172,10 +171,10 @@ class SwiftBarService(BaseService):
         if not self._require_macos():
             return
 
-        click.echo("Stopping SwiftBar...")
+        console.echo("Stopping SwiftBar...")
         try:
             subprocess.run(["pkill", "SwiftBar"], check=False)
-            click.echo("  - SwiftBar stopped.")
+            console.echo("  - SwiftBar stopped.")
         except OSError as e:
             failures.report(f"  - Error stopping SwiftBar: {e}")
 
@@ -198,10 +197,10 @@ class SwiftBarService(BaseService):
             try:
                 current = subprocess.check_output(["defaults", "read", "com.ameba.SwiftBar", key], text=True).strip()
                 if current == str(self.plugins_dir):
-                    click.echo(f"Clearing SwiftBar {key} setting (was {self.plugins_dir})...")
+                    console.echo(f"Clearing SwiftBar {key} setting (was {self.plugins_dir})...")
                     self.stop()
                     subprocess.run(["defaults", "delete", "com.ameba.SwiftBar", key], check=True)
-                    click.echo(f"  - SwiftBar {key} configuration cleared.")
+                    console.echo(f"  - SwiftBar {key} configuration cleared.")
             except subprocess.CalledProcessError:
                 # Key might not exist or app not installed
                 pass
@@ -226,27 +225,27 @@ class SwiftBarService(BaseService):
         """Display SwiftBar status."""
         state = self.state()["state"]
         words = "Not supported (macOS only)" if state == "not supported" else None
-        click.echo(f"  Swiftbar        : {styled_state(state, words)}")
+        console.echo(f"  Swiftbar        : {styled_state(state, words)}")
 
     def info(self) -> None:
         """Show detailed SwiftBar configuration."""
-        click.echo(click.style("Swiftbar:", bold=True))
+        console.echo(click.style("Swiftbar:", bold=True))
         if platform.system() != "Darwin":
-            click.echo(f"  Status        : {click.style('Not supported (macOS only)', fg='yellow')}")
+            console.echo(f"  Status        : {click.style('Not supported (macOS only)', fg='yellow')}")
             return
         try:
             subprocess.check_output(["pgrep", "SwiftBar"])
-            click.echo(f"  Status        : {click.style('Running', fg='green')}")
+            console.echo(f"  Status        : {click.style('Running', fg='green')}")
         except (subprocess.CalledProcessError, FileNotFoundError):
-            click.echo(f"  Status        : {click.style('Stopped', fg='red')}")
-        click.echo(f"  Plugins dir   : {self.plugins_dir}")
+            console.echo(f"  Status        : {click.style('Stopped', fg='red')}")
+        console.echo(f"  Plugins dir   : {self.plugins_dir}")
         if self.plugins_dir.exists():
             scripts = sorted(p.name for p in self.plugins_dir.iterdir() if p.is_file())
             if scripts:
-                click.echo(f"  Plugin scripts: {', '.join(scripts)}")
+                console.echo(f"  Plugin scripts: {', '.join(scripts)}")
             else:
-                click.echo("  Plugin scripts: (none — run `aisland swiftbar init`)")
-        click.echo(f"  App support   : {Path.home() / 'Library' / 'Application Support' / 'SwiftBar'}")
+                console.echo("  Plugin scripts: (none — run `aisland swiftbar init`)")
+        console.echo(f"  App support   : {Path.home() / 'Library' / 'Application Support' / 'SwiftBar'}")
 
     def _generate_jenkins_script(self, projects: List[str]) -> None:
         """Generate the Jenkins status script."""
@@ -254,18 +253,18 @@ class SwiftBarService(BaseService):
 
         # Resolve JENKINS_HOME relative to aisland data
         # aisland/aisland/services/swiftbar.py -> aisland/data/jenkins
-        jenkins_home = DATA_DIR / "jenkins"
+        jenkins_home = paths.data_dir() / "jenkins"
 
         # Check for read access
         if not os.access(jenkins_home, os.R_OK):
-            click.echo(
+            console.echo(
                 click.style(
                     f"  [WARNING] No read access to Jenkins home: {jenkins_home}",
                     fg="yellow",
                 )
             )
-            click.echo("            The SwiftBar script might not display project status correctly.")
-            click.echo("            Please check your terminal's permissions for the 'aisland' data directory.")
+            console.echo("            The SwiftBar script might not display project status correctly.")
+            console.echo("            Please check your terminal's permissions for the 'aisland' data directory.")
 
         content = _render_script(
             "jenkins_status.sh",
@@ -276,7 +275,7 @@ class SwiftBarService(BaseService):
         )
         script_path.write_text(content)
         script_path.chmod(0o755)
-        click.echo(f"  - Generated {script_path.name}")
+        console.echo(f"  - Generated {script_path.name}")
 
     def _generate_github_script(self, github_repos: List[str]) -> None:
         """Generate the GitHub status script."""
@@ -285,4 +284,4 @@ class SwiftBarService(BaseService):
         content = _render_script("gh_status.sh", repos="\\n".join(github_repos))
         script_path.write_text(content)
         script_path.chmod(0o755)
-        click.echo(f"  - Generated {script_path.name}")
+        console.echo(f"  - Generated {script_path.name}")

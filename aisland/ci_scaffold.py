@@ -21,9 +21,8 @@ import click
 from packaging.requirements import InvalidRequirement, Requirement
 from packaging.utils import canonicalize_name
 
-from aisland import ci_templates, gitcmd
+from aisland import ci_templates, console, gitcmd
 from aisland import pyproject as pyproject_toml
-from aisland import wheels_extra
 from aisland.errors import AislandError
 from aisland.github import GitHubRepository, project_repositories
 from aisland.projects import get_project_metadata, get_workspace_name, get_workspace_root
@@ -35,6 +34,7 @@ from aisland.selection import dev_extra_names
 from aisland.selection import extras_for as sel_extras_for
 from aisland.selection import read_committed as sel_committed
 from aisland.sources import DEFAULT_REF, read_committed_sources
+from aisland.wheels import extra as wheels_extra
 
 #: Every GitHub Action a generated ``ci.yml`` uses — the ONE place their versions live. Each is a
 #: MAJOR tag whose ``action.yml`` declares ``using: node24`` (2026-09-26: GitHub annotated every run
@@ -231,7 +231,7 @@ def project_facts(workspace_root: Path, project_name: str, jenkins_url: str) -> 
     pyproject_path = project_path / "pyproject.toml"
     distribution = get_project_metadata(pyproject_path)["name"]
     package = package_folder(project_path, distribution)
-    click.echo(f"Scaffolding CI/CD for {project_name} (Package: {package})...")
+    console.echo(f"Scaffolding CI/CD for {project_name} (Package: {package})...")
 
     # Internal dependencies — discovered, not hardcoded: every workspace project whose remote is on GitHub, by its
     # distribution name, with the repository a runner installs it from. Adding a new workspace project is a
@@ -482,14 +482,14 @@ def _write(path: Path, content: str, desc: str, force: bool, jenkins_url: str) -
     """Write one CI file, keeping one that exists unless ``force``. A Jenkinsfile is checked by the Jenkins linter
     BEFORE it is written, so a broken template is caught at scaffold time, not when a build fails hours later."""
     if path.exists() and not force:
-        click.echo(f"  [SKIP] {desc} already exists. Use --force to overwrite.")
+        console.echo(f"  [SKIP] {desc} already exists. Use --force to overwrite.")
         return
     if desc.startswith("Jenkinsfile") and not _validates(content, desc, jenkins_url):
-        click.echo(click.style(f"  [ABORT] Not writing {desc} — fix the template.", fg="red"))
+        console.echo(click.style(f"  [ABORT] Not writing {desc} — fix the template.", fg="red"))
         raise AislandError(f"Template produced invalid {desc}")
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(content)
-    click.echo(f"  [OK] Created {desc}")
+    console.echo(f"  [OK] Created {desc}")
 
 
 def _validates(content: str, desc: str, jenkins_url: str) -> bool:
@@ -502,7 +502,7 @@ def _validates(content: str, desc: str, jenkins_url: str) -> bool:
             crumb_data = json.loads(resp.read().decode())
         crumb_header = {crumb_data["crumbRequestField"]: crumb_data["crumb"]}
     except (urllib.error.URLError, OSError, TimeoutError, KeyError):
-        click.echo(f"  [WARN] Jenkins not reachable — skipped validation of {desc}.")
+        console.echo(f"  [WARN] Jenkins not reachable — skipped validation of {desc}.")
         return True
 
     try:
@@ -518,10 +518,10 @@ def _validates(content: str, desc: str, jenkins_url: str) -> bool:
         with urllib.request.urlopen(req, timeout=10) as resp:
             result = resp.read().decode().strip()
     except urllib.error.URLError as e:
-        click.echo(f"  [WARN] Linter call failed ({e}); skipped validation of {desc}.")
+        console.echo(f"  [WARN] Linter call failed ({e}); skipped validation of {desc}.")
         return True
 
     if result.startswith("Jenkinsfile successfully validated"):
         return True
-    click.echo(click.style(f"  [FAIL] {desc} did not validate:\n{result}", fg="red"))
+    console.echo(click.style(f"  [FAIL] {desc} did not validate:\n{result}", fg="red"))
     return False

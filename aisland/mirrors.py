@@ -55,10 +55,9 @@ from pathlib import Path
 from typing import Dict, List, Literal, Optional, Tuple
 from urllib.parse import urlparse
 
-import click
-
-from aisland import failures, gitcmd, machine_config, workspace_file
+from aisland import console, failures, gitcmd, machine_config
 from aisland.projects import get_workspace_root, submodule_active_map
+from aisland.workspace import file as workspace_file
 
 #: The project's setting this module owns in its ``[project."<name>"]`` table of ``workspace.toml``, and the last part
 #: of this machine's ``aisland.mirror.<project>.mirror``.
@@ -315,21 +314,23 @@ def set_mirror(
     url = url.strip()
     subs = _submodules(root)
     if project not in subs:
-        click.echo(f"Error: '{project}' is not a submodule of this workspace; a mirror is set per submodule.", err=True)
+        console.echo(
+            f"Error: '{project}' is not a submodule of this workspace; a mirror is set per submodule.", err=True
+        )
         return 1
     if not url:
-        click.echo("Error: the mirror URL is empty.", err=True)
+        console.echo("Error: the mirror URL is empty.", err=True)
         return 1
     primary = primary_url(root, project)
     if _same_repo(url, primary):
-        click.echo(f"Error: {url} is {project}'s primary (.gitmodules); a mirror is a second host.", err=True)
+        console.echo(f"Error: {url} is {project}'s primary (.gitmodules); a mirror is a second host.", err=True)
         return 1
     rel = subs[project]
     path = root / rel
     if _has_checkout(path):
         foreign = _foreign_remote(path, url)
         if foreign:
-            click.echo(
+            console.echo(
                 f"Error: {project} already has a remote named `{MIRROR_REMOTE}` ({foreign}) that aisland did not "
                 f"create. Rename it first: git -C {rel} remote rename {MIRROR_REMOTE} <another-name>",
                 err=True,
@@ -346,15 +347,15 @@ def set_mirror(
         where = f"recorded in {workspace_file.FILE_NAME} (commit it)"
     apply_mirror(root, project)
 
-    click.echo(f"==> {project}: mirror → {url}")
+    console.echo(f"==> {project}: mirror → {url}")
     remote = f"remote `{MIRROR_REMOTE}` added to {rel}" if _has_checkout(path) else "no checkout yet"
-    click.echo(f"    {where}; {remote}")
+    console.echo(f"    {where}; {remote}")
     branches = ", ".join(MIRRORED_BRANCHES)
-    click.echo(
+    console.echo(
         f"    Note: each sync copies {project}'s {branches}, every other branch checked out here and tags from {host_of(primary)} to {host_of(url)}"
         " — make sure its code may live there."
     )
-    click.echo(f"    Push to it with: aisland workspace mirror sync {project}")
+    console.echo(f"    Push to it with: aisland workspace mirror sync {project}")
     return 0
 
 
@@ -370,9 +371,9 @@ def unset_mirror(project: str, machine_only: bool = False, workspace_root: Optio
     apply_mirror(root, project)
     url = effective_mirror(root, project)
     if url:
-        click.echo(f"==> {project}: mirror → {url} (the committed one)")
+        console.echo(f"==> {project}: mirror → {url} (the committed one)")
     else:
-        click.echo(f"==> {project}: no mirror")
+        console.echo(f"==> {project}: no mirror")
     return 0
 
 
@@ -552,18 +553,18 @@ def run_sync(project: Optional[str] = None) -> int:
     """``aisland workspace mirror sync``: push and report. Exit 1 when anything was refused or failed."""
     results = sync(project)
     if not results:
-        click.echo("No mirrors configured. Set one with: aisland workspace configure mirror set <project> <url>")
+        console.echo("No mirrors configured. Set one with: aisland workspace configure mirror set <project> <url>")
         return 0
     for result in results:
-        click.echo(f"==> {result.project} → {result.url}")
+        console.echo(f"==> {result.project} → {result.url}")
         if result.state == "skipped":
-            click.echo(f"    skipped: {result.note}")
+            console.echo(f"    skipped: {result.note}")
             continue
         if result.state == "failed":
-            click.echo(f"    FAILED: {result.note}")
+            console.echo(f"    FAILED: {result.note}")
         width = max([10, *(len(ref.ref) + 2 for ref in result.refs)])
         for ref in result.refs:
-            click.echo(_sync_line(ref, width))
+            console.echo(_sync_line(ref, width))
     return 1 if any(r.state in ("refused", "failed") for r in results) else 0
 
 

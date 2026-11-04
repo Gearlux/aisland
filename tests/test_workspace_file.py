@@ -18,7 +18,8 @@ from typing import List, Optional
 
 import pytest
 
-from aisland import __version__, editor_files, locations, manager, projects, workspace_file
+from aisland import __version__, editor_files, locations, manager, projects
+from aisland.workspace import file as workspace_file
 
 _AUTHOR = {"GIT_AUTHOR_NAME": "t", "GIT_AUTHOR_EMAIL": "t@t", "GIT_COMMITTER_NAME": "t", "GIT_COMMITTER_EMAIL": "t@t"}
 

@@ -279,10 +279,10 @@ print(json.dumps({
     "package": locations.PACKAGE_DIR.as_posix(),
     "from_checkout": locations.FROM_CHECKOUT,
     "root": projects.get_workspace_root().as_posix(),
-    "data": paths.DATA_DIR.as_posix(),
-    "bin": paths.BIN_DIR.as_posix(),
-    "supervisor": supervisor.DATA_DIR.as_posix(),
-    "stats": pytest_stats.STATS_DIR.as_posix(),
+    "data": paths.data_dir().as_posix(),
+    "bin": paths.bin_dir().as_posix(),
+    "supervisor": supervisor.config_file().parent.as_posix(),
+    "stats": pytest_stats.stats_folder().as_posix(),
     "template": editor_files.CODE_WORKSPACE_TEMPLATE.is_file(),
 }))
 """

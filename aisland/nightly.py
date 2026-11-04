@@ -26,14 +26,18 @@ from datetime import date, datetime, timedelta
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Protocol, Tuple
 
+from aisland import paths
 from aisland.errors import AislandError
-from aisland.paths import DATA_DIR
 from aisland.projects import get_workspace_name
 from aisland.services.jenkins import JenkinsService
 from aisland.services.jenkins_jobs import NIGHTLY_CRON
 
-#: One report per check, `<date>.md`; git-ignored like all of `aisland/data/`.
-NIGHTLY_DIR = DATA_DIR / "nightly"
+
+def report_dir() -> Path:
+    """Where the reports are written: one per check, `<date>.md`; git-ignored like all of `aisland/data/`."""
+    return paths.data_dir() / "nightly"
+
+
 #: The cause Jenkins gives a build its timer started — the orchestrator's 01:00 run (`NIGHTLY_CRON`).
 TIMER_CAUSE = "hudson.triggers.TimerTrigger$TimerTriggerCause"
 #: A notification's length limit: mobile and desktop banners cut what is longer.
@@ -360,7 +364,7 @@ def run_nightly(
 ) -> Tuple[NightlyReport, int]:
     """Report the nightly runs since the previous report: write the file, notify when needed; 0 when all is well."""
     now = now or datetime.now().astimezone()
-    folder = nightly_dir or NIGHTLY_DIR
+    folder = nightly_dir or report_dir()
     since = report_window(folder, now)
     report = build_report(api or JenkinsApi(jenkins_url()), orchestrator or orchestrator_job(), since, now)
     path = folder / f"{now:%Y-%m-%d}.md"

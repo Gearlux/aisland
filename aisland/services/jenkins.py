@@ -16,11 +16,10 @@ from typing import Set
 
 import click
 
-from aisland import failures, provision
+from aisland import console, failures, paths, provision
 from aisland.downloads import download, sha256
 from aisland.errors import AislandError
 from aisland.installers import install_brew_packages
-from aisland.paths import BIN_DIR
 from aisland.projects import get_workspace_root
 from aisland.services.base import BaseService
 from aisland.services.jenkins_java import JenkinsJava, choose_java, find_runtimes, newest_versioned_formula
@@ -69,8 +68,8 @@ class JenkinsService(BaseService):
 
     def __init__(self) -> None:
         super().__init__("jenkins")
-        self.war_file = BIN_DIR / "jenkins.war"
-        self.manager_jar = BIN_DIR / f"jenkins-plugin-manager-{self.MANAGER_VERSION}.jar"
+        self.war_file = paths.bin_dir() / "jenkins.war"
+        self.manager_jar = paths.bin_dir() / f"jenkins-plugin-manager-{self.MANAGER_VERSION}.jar"
 
     def ensure_war(self) -> bool:
         """Download the pinned Jenkins WAR unless one is already in the bin dir; return whether it is there now. A WAR
@@ -110,7 +109,7 @@ class JenkinsService(BaseService):
                 choice = self.resolve_java()
             if choice.runtime is None:
                 raise AislandError(choice.refusal().removeprefix("Error: "))
-        click.echo(choice.describe())
+        console.echo(choice.describe())
         return choice.runtime.java
 
     def ensure_war_asking(self) -> bool:
@@ -133,9 +132,9 @@ class JenkinsService(BaseService):
         installed next. Never exits: a failed WAR download or a machine left without an
         accepted Java is reported, and the rest of setup goes on.
         """
-        click.echo("==> Choosing the Java Jenkins runs on...")
+        console.echo("==> Choosing the Java Jenkins runs on...")
         if not self.ensure_war():
-            click.echo("  - Skipped: without the Jenkins WAR there is no asking which Java it runs on.")
+            console.echo("  - Skipped: without the Jenkins WAR there is no asking which Java it runs on.")
             return
         choice = self.resolve_java()
         installed: Set[str] = set()
@@ -143,14 +142,14 @@ class JenkinsService(BaseService):
             formula = choice.formula or newest_versioned_formula()
             if formula is None or formula in installed:
                 break
-            click.echo(f"  - {choice.problem()}.")
+            console.echo(f"  - {choice.problem()}.")
             install_brew_packages({formula})
             installed.add(formula)
             choice = self.resolve_java()
         if choice.runtime is None:
-            click.echo(choice.refusal())
+            console.echo(choice.refusal())
             return
-        click.echo(f"  - {choice.describe()}.")
+        console.echo(f"  - {choice.describe()}.")
 
     def setup(self) -> None:
         """Download the Jenkins WAR (once the user agrees) and the plugin manager. A failed download is reported: the
@@ -179,7 +178,7 @@ class JenkinsService(BaseService):
                 missing.append(plugin)
 
         if missing:
-            click.echo(f"  - Missing plugins: {', '.join(missing)}")
+            console.echo(f"  - Missing plugins: {', '.join(missing)}")
             return False
         return True
 
@@ -214,11 +213,11 @@ class JenkinsService(BaseService):
         try:
             # Run the manager tool. It handles dependencies and version resolution.
             # We capture output to keep it clean unless there's an error.
-            click.echo("  - Downloading necessary Jenkins plugins...")
+            console.echo("  - Downloading necessary Jenkins plugins...")
             logger.debug("running %s", " ".join(cmd))
             result = subprocess.run(cmd, check=True, capture_output=True, text=True)
             if "Installed" in result.stdout or "Done" in result.stdout:
-                click.echo("  - Jenkins plugins and dependencies synchronized.")
+                console.echo("  - Jenkins plugins and dependencies synchronized.")
             return True
         except subprocess.CalledProcessError as e:
             failures.report(f"  - Error installing plugins: {e.stderr}")
@@ -272,17 +271,17 @@ class JenkinsService(BaseService):
                 pass
 
         if not has_creds:
-            click.echo("\n" + "=" * 65)
-            click.echo(" Jenkins Initial Setup / Missing Credentials ".center(65, "="))
-            click.echo("=" * 65)
-            click.echo("No Git credentials found. To allow Jenkins to pull code:")
-            click.echo("  1. Open Jenkins at " + click.style(f"http://localhost:{port}", fg="blue", bold=True))
+            console.echo("\n" + "=" * 65)
+            console.echo(" Jenkins Initial Setup / Missing Credentials ".center(65, "="))
+            console.echo("=" * 65)
+            console.echo("No Git credentials found. To allow Jenkins to pull code:")
+            console.echo("  1. Open Jenkins at " + click.style(f"http://localhost:{port}", fg="blue", bold=True))
             if self.admin_password_file.exists():
-                click.echo(f"  2. Unlock it with the password in {self.admin_password_file}")
-            click.echo("  3. Navigate to: Manage Jenkins -> Credentials -> System ->")
-            click.echo("     Global credentials -> Add Credentials")
-            click.echo("  4. Add your Git username/password or SSH key.")
-            click.echo(
+                console.echo(f"  2. Unlock it with the password in {self.admin_password_file}")
+            console.echo("  3. Navigate to: Manage Jenkins -> Credentials -> System ->")
+            console.echo("     Global credentials -> Add Credentials")
+            console.echo("  4. Add your Git username/password or SSH key.")
+            console.echo(
                 "     "
                 + click.style(
                     "CRITICAL: You MUST set the ID field to 'aisland-github'",
@@ -290,16 +289,16 @@ class JenkinsService(BaseService):
                     bold=True,
                 )
             )
-            click.echo(
+            console.echo(
                 "  5. Run " + click.style("aisland jenkins init", fg="green") + " to install plugins and populate jobs."
             )
-            click.echo("=" * 65 + "\n")
+            console.echo("=" * 65 + "\n")
 
     def launch(self, port: int = DEFAULT_PORT, background: bool = False) -> None:
         """Start the Jenkins server."""
         self.setup()
         java = self.java_asking()
-        click.echo(f"Jenkins: http://localhost:{port}")
+        console.echo(f"Jenkins: http://localhost:{port}")
         self.check_credentials_and_print_instructions(port)
 
         # Suppress Java 25+ warnings for terminal deprecation and illegal access
@@ -325,14 +324,14 @@ class JenkinsService(BaseService):
         ]
         workspace_root = get_workspace_root()
         venv_bin = workspace_root / ".venv" / "bin"
-        # BIN_DIR (aisland/bin) hosts symlinks to userspace-installed tools like
+        # The bin folder (aisland/bin) hosts symlinks to userspace-installed tools like
         # node/npm/npx (see installers.install_userspace_tool). Putting it on
         # Jenkins' PATH means every job inherits these without per-Jenkinsfile
         # plumbing. Order: venv first (its `python`/`uv` shadow any system ones),
         # then aisland-vendored tools, then whatever the parent shell exposed.
         env = {
             "JENKINS_HOME": str(self.service_data_dir),
-            "PATH": f"{venv_bin}:{BIN_DIR}:{os.environ.get('PATH', '')}",
+            "PATH": f"{venv_bin}:{paths.bin_dir()}:{os.environ.get('PATH', '')}",
         }
 
         # /login answers 200 as soon as the Jenkins web UI is up (even while
@@ -349,7 +348,7 @@ class JenkinsService(BaseService):
         """Show extended Jenkins status."""
         super().status()
         if self.is_running() and self.admin_password_file.exists():
-            click.echo(f"    Initial admin password: in {self.admin_password_file}")
+            console.echo(f"    Initial admin password: in {self.admin_password_file}")
 
     def url(self) -> str:
         """Where Jenkins answers: the port it runs on, else :attr:`DEFAULT_PORT` (it is not running, or not here)."""
@@ -359,28 +358,28 @@ class JenkinsService(BaseService):
     def info(self) -> None:
         """Show detailed Jenkins configuration."""
         super().info()
-        click.echo(f"  URL           : {self.url()}")
-        click.echo(f"  JENKINS_HOME  : {self.service_data_dir}")
-        click.echo(f"  WAR file      : {self.war_file}")
+        console.echo(f"  URL           : {self.url()}")
+        console.echo(f"  JENKINS_HOME  : {self.service_data_dir}")
+        console.echo(f"  WAR file      : {self.war_file}")
         if self.war_file.exists():
-            click.echo(f"  Java          : {self.resolve_java().describe()}")
-        click.echo(f"  Plugin manager: {self.manager_jar}")
-        click.echo(f"  Plugins dir   : {self.service_data_dir / 'plugins'}")
-        click.echo(f"  Jobs dir      : {self.service_data_dir / 'jobs'}")
+            console.echo(f"  Java          : {self.resolve_java().describe()}")
+        console.echo(f"  Plugin manager: {self.manager_jar}")
+        console.echo(f"  Plugins dir   : {self.service_data_dir / 'plugins'}")
+        console.echo(f"  Jobs dir      : {self.service_data_dir / 'jobs'}")
         if self.admin_password_file.exists():
-            click.echo("  Admin user    : admin")
-            click.echo(f"  Admin password: in {self.admin_password_file}")
+            console.echo("  Admin user    : admin")
+            console.echo(f"  Admin password: in {self.admin_password_file}")
         else:
-            click.echo("  Admin password: (not yet generated — start Jenkins to create it)")
+            console.echo("  Admin password: (not yet generated — start Jenkins to create it)")
         creds_file = self.service_data_dir / "credentials.xml"
-        click.echo(f"  Credentials   : {creds_file} " + ("(present)" if creds_file.exists() else "(not configured)"))
+        console.echo(f"  Credentials   : {creds_file} " + ("(present)" if creds_file.exists() else "(not configured)"))
 
     def safe_restart(self) -> None:
         """Issue a safeRestart command to Jenkins."""
         if not self.is_running():
             return
 
-        click.echo("  - Issuing Safe Restart to Jenkins (waiting for active jobs)...")
+        console.echo("  - Issuing Safe Restart to Jenkins (waiting for active jobs)...")
         url = self.url()
 
         if self.admin_password_file.exists():
@@ -407,12 +406,12 @@ class JenkinsService(BaseService):
                     req.add_header(k, v)
                 with urllib.request.urlopen(req, timeout=5):
                     pass
-                click.echo("  - Safe Restart initiated. Jenkins will reload soon.")
+                console.echo("  - Safe Restart initiated. Jenkins will reload soon.")
                 return
             except (OSError, ValueError) as e:  # no answer, a refusal (HTTPError is an OSError), no JSON
-                click.echo(f"  - Safe Restart API failed: {e}. Falling back to process restart.")
+                console.echo(f"  - Safe Restart API failed: {e}. Falling back to process restart.")
         else:
-            click.echo("  - Missing API credentials. Falling back to process restart.")
+            console.echo("  - Missing API credentials. Falling back to process restart.")
 
         self.stop()
         self.launch(background=True)
@@ -427,7 +426,7 @@ def _fetch_pinned(what: str, url: str, target: Path, digest: str) -> bool:
     if target.exists():
         return True
     target.parent.mkdir(parents=True, exist_ok=True)
-    click.echo(f"Downloading {what} from {url}...")
+    console.echo(f"Downloading {what} from {url}...")
     part = target.with_name(target.name + ".part")
     try:
         download(url, part)
@@ -443,5 +442,5 @@ def _fetch_pinned(what: str, url: str, target: Path, digest: str) -> bool:
         part.unlink(missing_ok=True)
         failures.report(f"Error downloading {what}: {e}")
         return False
-    click.echo(f"  - {what} download complete.")
+    console.echo(f"  - {what} download complete.")
     return True

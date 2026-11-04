@@ -32,8 +32,10 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Dict, List, Literal, Optional, Sequence, Tuple
 
-from aisland import gitcmd, local_workspace, machine_config, workspace_file
+from aisland import gitcmd, machine_config
 from aisland.errors import AislandError
+from aisland.workspace import file as workspace_file
+from aisland.workspace import local as local_workspace
 
 TRACK_KEY = "track"
 

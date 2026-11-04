@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # =========================================================================
 # THE TEMPLATE of every <project>-wheels.zip's __main__.py — edit it here, never in a copy.
-# Source: aisland/aisland/wheels_unzip.py
+# Source: aisland/aisland/wheels/unzip.py
 # =========================================================================
 """Unpack this zip's wheels into the project's ``wheels/`` folder, then run its ``install.py``.
 

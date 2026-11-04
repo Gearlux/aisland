@@ -9,10 +9,11 @@ from typing import Callable, Dict, List, Optional, Sequence, Tuple
 import click
 from click.shell_completion import CompletionItem
 
-from aisland import configure, locations, selection, workspace_check
+from aisland import configure, locations, selection
 from aisland.cli._base import _Command, _complete_workspace_projects, _configure_root, _Group
 from aisland.errors import quiet_completion
 from aisland.projects import get_workspace_root
+from aisland.workspace import check as workspace_check
 
 
 def _plugin_group(plugin: configure.Plugin) -> click.Group:

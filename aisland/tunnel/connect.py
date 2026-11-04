@@ -16,7 +16,7 @@ So this side needs a way through the relay to that port, and a client of its mes
   forwards its ports to ``localhost`` — on the SAME numbers, it has no option to choose. Nothing is
   added on the box and no second tunnel exists.
 * **The client is ours**, MessagePack over that port (``msgpack``, the ``[connect]`` extra — only this
-  side needs it): ``spawn`` the helper :mod:`aisland.tunnel_shell` from its own source, then relay.
+  side needs it): ``spawn`` the helper :mod:`aisland.tunnel.shell` from its own source, then relay.
   ``spawn`` gives a program pipes, not a terminal, so the helper opens one there and a frame on its
   stdin carries either keystrokes or a window size.
 
@@ -46,9 +46,9 @@ from pathlib import Path
 from types import FrameType, ModuleType
 from typing import TYPE_CHECKING, Callable, Dict, Iterator, List, Mapping, Optional, Tuple
 
-from aisland import tunnel_shell
 from aisland.errors import AislandError, quiet_completion
-from aisland.tunnel import state_dir
+from aisland.tunnel import shell as tunnel_shell
+from aisland.tunnel.host import state_dir
 
 if TYPE_CHECKING:
     import click
@@ -233,7 +233,7 @@ def complete_tunnel(
 ) -> List[CompletionItem]:
     """Shell completion for ``connect``: the names of the last list, with id and state as help.
 
-    Like :func:`aisland.tunnel.complete_workspace` it answers from a file only — no network on a TAB —
+    Like :func:`aisland.tunnel.host.complete_workspace` it answers from a file only — no network on a TAB —
     and an unreadable file offers nothing rather than breaking the shell's TAB.
     """
     # click is imported here, not at the top: this module runs where only the connection is wanted.

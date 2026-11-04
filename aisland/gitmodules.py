@@ -2,8 +2,8 @@
 
 Three modules each parsed the file with a ``git config --get-regexp`` process of their own — the projects with
 their ``active`` key (:func:`aisland.projects.submodule_active_map`), the ``workspace.toml`` rows with their url and
-branch (:func:`aisland.workspace_file.submodules`), a local workspace's ``{path: name}``
-(:func:`aisland.local_workspace.submodule_names`) — and each folded git's lines its own way. :func:`read` asks git
+branch (:func:`aisland.workspace.file.submodules`), a local workspace's ``{path: name}``
+(:func:`aisland.workspace.local.submodule_names`) — and each folded git's lines its own way. :func:`read` asks git
 once for every key those readers use and folds the lines one way; the three are views over it.
 
 Every ``aisland`` command reads the submodules (discovery lists the projects through them), so it stays ONE

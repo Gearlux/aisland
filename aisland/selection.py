@@ -36,15 +36,14 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Dict, List, Optional, Sequence, Set, Tuple
 
-import click
 from packaging.requirements import InvalidRequirement, Requirement
 
-from aisland import discovery, failures, machine_config
+from aisland import console, discovery, failures, machine_config
 from aisland import pyproject as pyproject_toml
-from aisland import workspace_file
 from aisland.errors import AislandError
 from aisland.installers import ensure_uv_in_venv
 from aisland.projects import discover_projects, get_install_order, get_project_metadata
+from aisland.workspace import file as workspace_file
 
 logger = logging.getLogger(__name__)
 
@@ -264,15 +263,15 @@ def editable_target(root: Path, project_dir: Path, project_name: str) -> str:
 def prompt_for(root: Path, choices: Sequence[str], axis: Axis) -> List[str]:
     """Ask the selection's question; answers are names or 1-based numbers, and a blank one is EVERYTHING — a fresh
     setup should work before it is trimmed."""
-    click.echo(f"\n==> {axis.question}")
+    console.echo(f"\n==> {axis.question}")
     offered = declarations(root, axis)
     only_named = manual(root, axis)
     for index, name in enumerate(choices, start=1):
         users = [project for project, names in offered.items() if name in names]
         mark = " (only when named)" if name in only_named else ""
-        click.echo(f"      [{index}] {name:<12} {', '.join(sorted(users))}{mark}")
+        console.echo(f"      [{index}] {name:<12} {', '.join(sorted(users))}{mark}")
     blank = "all but those only when named" if only_named & set(choices) else "all"
-    answer = click.prompt(
+    answer = console.prompt(
         f"    Select (names or numbers, comma/space separated; blank = {blank})", default="", show_default=False
     )
     return parse_selection(answer, choices, axis, blank=[name for name in choices if name not in only_named])
@@ -323,11 +322,11 @@ def resolve_for_setup(
         return list(existing), False
     if non_interactive:
         left_out = f"; only when named: {', '.join(only_named)}" if only_named else ""
-        click.echo(f"==> Nothing chosen for {axis.name}; installing all ({', '.join(everything)}){left_out}.")
+        console.echo(f"==> Nothing chosen for {axis.name}; installing all ({', '.join(everything)}){left_out}.")
         chosen = everything
     else:
         chosen = prompt_for(root, choices, axis)
-        click.echo(f"  - {axis.name} = {', '.join(chosen) or '(none)'} (in {workspace_file.FILE_NAME})")
+        console.echo(f"  - {axis.name} = {', '.join(chosen) or '(none)'} (in {workspace_file.FILE_NAME})")
     write_committed(root, axis.name, chosen)
     return chosen, True
 
@@ -375,12 +374,12 @@ def apply_selection(root: Path, axis: Axis, uv_cmd: Optional[str] = None) -> int
         if not declared(project["path"] / "pyproject.toml", axis):
             continue
         target = editable_target(root, project["path"], project["name"])
-        click.echo(f"==> Installing {project['name']} ({target})...")
+        console.echo(f"==> Installing {project['name']} ({target})...")
         try:
             logger.debug("running %s pip install -e %s (in %s)", uv, target, root)
             subprocess.check_call([uv, "pip", "install", "-e", target], cwd=root)
         except subprocess.CalledProcessError as exc:
-            click.echo(f"  - Error: Failed to install {project['name']}: {exc}", err=True)
+            console.echo(f"  - Error: Failed to install {project['name']}: {exc}", err=True)
             failures += 1
     return failures
 
@@ -394,7 +393,7 @@ def set_selection(root: Path, axis: Axis, names: Sequence[str], machine_only: bo
     choices = available(root, axis)
     unknown = [name for name in names if name not in choices]
     if unknown:
-        click.echo(
+        console.echo(
             f"Error: no project offers {axis.one} {unknown[0]!r} (the choices: {', '.join(choices) or 'none'})",
             err=True,
         )
@@ -408,14 +407,14 @@ def _write_choice(root: Path, axis: Axis, chosen: Sequence[str], machine_only: b
     shown = ", ".join(chosen) or "(none)"
     if machine_only:
         set_machine_choice(root, axis.name, chosen)
-        click.echo(f"==> {axis.name} = {shown} on this machine (nothing committed)")
+        console.echo(f"==> {axis.name} = {shown} on this machine (nothing committed)")
         return
     write_committed(root, axis.name, chosen)
-    click.echo(f"==> {axis.name} = {shown} (in {workspace_file.FILE_NAME})")
+    console.echo(f"==> {axis.name} = {shown} (in {workspace_file.FILE_NAME})")
     machine = machine_choice(root, axis.name)
     if machine is not None:
-        click.echo(f"  - Note: this machine's choice ({', '.join(machine) or 'none'}) still wins here;")
-        click.echo(f"    drop it with: {_command(axis, 'unset', '--machine-only')}")
+        console.echo(f"  - Note: this machine's choice ({', '.join(machine) or 'none'}) still wins here;")
+        console.echo(f"    drop it with: {_command(axis, 'unset', '--machine-only')}")
 
 
 def unset_selection(root: Path, axis: Axis, machine_only: bool, names: Sequence[str] = ()) -> int:
@@ -428,10 +427,10 @@ def unset_selection(root: Path, axis: Axis, machine_only: bool, names: Sequence[
         return _drop_names(root, axis, names, machine_only)
     set_machine_choice(root, axis.name, None)
     if machine_only:
-        click.echo(f"==> {axis.name}: this machine follows {workspace_file.FILE_NAME} again")
+        console.echo(f"==> {axis.name}: this machine follows {workspace_file.FILE_NAME} again")
     else:
         write_committed(root, axis.name, None)
-        click.echo(f"==> {axis.name}: nothing chosen; setup asks again")
+        console.echo(f"==> {axis.name}: nothing chosen; setup asks again")
     if effective(root, axis.name) is None:
         return 0
     return apply_selection(root, axis)

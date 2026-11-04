@@ -13,12 +13,9 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import AbstractSet, Dict, List, NotRequired, Optional, TypedDict
 
-import click
-
-from aisland import failures, locations
+from aisland import console, failures, locations, paths
 from aisland.downloads import download, sha256
 from aisland.errors import AislandError
-from aisland.paths import BIN_DIR, TOOLS_DIR
 
 logger = logging.getLogger(__name__)
 
@@ -106,11 +103,11 @@ def install_brew_packages(packages: AbstractSet[str]) -> None:
     env["HOMEBREW_NO_AUTO_UPDATE"] = "1"
 
     for pkg in sorted(packages):
-        click.echo(f"==> Installing {pkg} via Homebrew...")
+        console.echo(f"==> Installing {pkg} via Homebrew...")
         try:
             logger.debug("running brew install --quiet %s (HOMEBREW_NO_AUTO_UPDATE=1)", pkg)
             subprocess.check_call(["brew", "install", "--quiet", pkg], env=env)
-            click.echo(f"  - {pkg} installed successfully.")
+            console.echo(f"  - {pkg} installed successfully.")
         except subprocess.CalledProcessError as e:
             failures.report(f"  - Error: Failed to install {pkg}: {e}")
 
@@ -133,7 +130,7 @@ class _Release:
 
     @property
     def extract_root(self) -> Path:
-        return TOOLS_DIR / self.extract_subdir
+        return paths.tools_dir() / self.extract_subdir
 
     @property
     def bin_dir(self) -> Path:
@@ -170,13 +167,13 @@ def _release(name: str) -> Optional[_Release]:
 def _fetch(release: _Release) -> Optional[Path]:
     """The release's archive in ``tools/cache/``, downloaded unless a non-empty copy is there; ``None`` (reported) when
     the download fails."""
-    cache_dir = TOOLS_DIR / "cache"
+    cache_dir = paths.tools_dir() / "cache"
     cache_dir.mkdir(parents=True, exist_ok=True)
     tarball = cache_dir / Path(release.url).name
     if tarball.exists() and tarball.stat().st_size > 0:
         logger.debug("using cached tarball %s", tarball)
         return tarball
-    click.echo(f"==> Downloading {release.name} {release.version} from {release.url}...")
+    console.echo(f"==> Downloading {release.name} {release.version} from {release.url}...")
     try:
         download(release.url, tarball)
     except OSError as e:
@@ -222,8 +219,8 @@ def _unpack(release: _Release, tarball: Path) -> bool:
     interrupted leaves no half folder that later runs would take for a finished one. A flat archive has no top-level
     folder of its own and becomes the release's folder itself; a subdir-style one (node) brings its own.
     """
-    click.echo(f"==> Extracting {tarball.name} into {release.extract_root}...")
-    scratch = Path(tempfile.mkdtemp(prefix=f".{release.name}-", dir=TOOLS_DIR))
+    console.echo(f"==> Extracting {tarball.name} into {release.extract_root}...")
+    scratch = Path(tempfile.mkdtemp(prefix=f".{release.name}-", dir=paths.tools_dir()))
     try:
         with tarfile.open(tarball, "r:*") as tf:
             # `filter="data"` is the safe default in py3.14+ — block links/devices outside dest.
@@ -246,7 +243,7 @@ def _link(release: _Release) -> None:
     """Link each of the release's binaries into ``bin/``: a stale link replaced, a real file never overwritten."""
     for binary in release.binaries:
         src = release.bin_dir / binary
-        dst = BIN_DIR / binary
+        dst = paths.bin_dir() / binary
         if not src.exists():
             failures.warn(f"  - Warning: {src} missing in extracted tarball; skipping.")
             continue
@@ -274,9 +271,9 @@ def install_userspace_tool(name: str) -> None:
     release = _release(name)
     if release is None:
         return
-    BIN_DIR.mkdir(parents=True, exist_ok=True)
-    if all((BIN_DIR / b).exists() for b in release.binaries):
-        logger.debug("%s %s already installed (symlinks present in %s)", name, release.version, BIN_DIR)
+    paths.bin_dir().mkdir(parents=True, exist_ok=True)
+    if all((paths.bin_dir() / b).exists() for b in release.binaries):
+        logger.debug("%s %s already installed (symlinks present in %s)", name, release.version, paths.bin_dir())
         return
     tarball = _fetch(release)
     if tarball is None or not _verified(release, tarball):
@@ -288,8 +285,8 @@ def install_userspace_tool(name: str) -> None:
         failures.report(f"  - Error: Expected {release.bin_dir} to exist after extraction.")
         return
     _link(release)
-    click.echo(f"==> {name} {release.version} installed under {release.extract_root}.")
-    click.echo(f"  - Ensure {BIN_DIR} is on PATH (project.bashrc handles this).")
+    console.echo(f"==> {name} {release.version} installed under {release.extract_root}.")
+    console.echo(f"  - Ensure {paths.bin_dir()} is on PATH (project.bashrc handles this).")
 
 
 def offer_shell_switch(required_pkgs: AbstractSet[str]) -> None:
@@ -317,8 +314,10 @@ def offer_shell_switch(required_pkgs: AbstractSet[str]) -> None:
     if current_shell == new_bash:
         return  # Already using brew bash — nothing to do.
 
-    click.echo(f"\n==> Modern bash is installed at {new_bash}, but your login shell is {current_shell or '(unknown)'}.")
-    if not click.confirm("    Switch your login shell to the new bash?", default=False):
+    console.echo(
+        f"\n==> Modern bash is installed at {new_bash}, but your login shell is {current_shell or '(unknown)'}."
+    )
+    if not console.confirm("    Switch your login shell to the new bash?", default=False):
         return
 
     # /etc/shells gate: chsh refuses any shell not listed there.
@@ -327,9 +326,9 @@ def offer_shell_switch(required_pkgs: AbstractSet[str]) -> None:
     if shells_path.exists():
         listed = new_bash in shells_path.read_text().splitlines()
     if not listed:
-        click.echo(f"  - {new_bash} is not in /etc/shells (chsh requires it).")
-        if not click.confirm("    Add it now? (requires sudo)", default=True):
-            click.echo("  - Skipping shell switch.")
+        console.echo(f"  - {new_bash} is not in /etc/shells (chsh requires it).")
+        if not console.confirm("    Add it now? (requires sudo)", default=True):
+            console.echo("  - Skipping shell switch.")
             return
         try:
             # `sudo tee -a` is the canonical pattern for appending to a
@@ -341,18 +340,18 @@ def offer_shell_switch(required_pkgs: AbstractSet[str]) -> None:
                 stdout=subprocess.DEVNULL,
                 check=True,
             )
-            click.echo(f"  - Added {new_bash} to {shells_path}.")
+            console.echo(f"  - Added {new_bash} to {shells_path}.")
         except subprocess.CalledProcessError as e:
-            click.echo(f"  - Failed to update {shells_path}: {e}")
+            console.echo(f"  - Failed to update {shells_path}: {e}")
             return
 
-    click.echo("==> Running chsh (will prompt for your USER password, not sudo)...")
+    console.echo("==> Running chsh (will prompt for your USER password, not sudo)...")
     try:
         subprocess.check_call(["chsh", "-s", new_bash])
-        click.echo(f"  - Login shell switched to {new_bash}.")
-        click.echo("  - Open a new terminal window for it to take effect.")
+        console.echo(f"  - Login shell switched to {new_bash}.")
+        console.echo("  - Open a new terminal window for it to take effect.")
     except subprocess.CalledProcessError as e:
-        click.echo(f"  - chsh failed: {e}")
+        console.echo(f"  - chsh failed: {e}")
 
 
 def ensure_uv_in_venv(venv_bin: Path) -> str:
@@ -375,7 +374,7 @@ def ensure_uv_in_venv(venv_bin: Path) -> str:
         remedy = "Re-run aisland/setup.sh." if locations.FROM_CHECKOUT else "Recreate it with `uv venv --seed .venv`."
         raise AislandError(f"{pip_path} not found. Cannot bootstrap uv; the venv is broken. {remedy}")
 
-    click.echo(f"==> Bootstrapping uv into {venv_bin}...")
+    console.echo(f"==> Bootstrapping uv into {venv_bin}...")
     logger.debug("running %s install --quiet --upgrade uv", pip_path)
     subprocess.check_call([str(pip_path), "install", "--quiet", "--upgrade", "uv"])
     return str(uv_path)

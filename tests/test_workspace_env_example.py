@@ -231,7 +231,7 @@ def test_missing_with_everything_mentioned_says_so(root: Path) -> None:
 
 
 def test_the_workspace_gitignore_ignores_both_generated_files() -> None:
-    from aisland import workspace
+    from aisland.workspace import init as workspace
 
     lines = workspace._GITIGNORE.splitlines()
     assert "/env.complete" in lines and "/env.example" in lines
@@ -275,7 +275,7 @@ def test_a_second_heading_gets_a_blank_line_above_it(tmp_path: Path, monkeypatch
 
 
 def test_init_seeds_dotenv_from_env_example_and_keeps_an_existing_one(root: Path) -> None:
-    from aisland import workspace
+    from aisland.workspace import init as workspace
 
     files = workspace._starting_files(root)
     assert files[".env"] == env_example.render(env_example.collect(root, "example"))
@@ -285,14 +285,14 @@ def test_init_seeds_dotenv_from_env_example_and_keeps_an_existing_one(root: Path
 
 
 def test_init_without_a_short_list_seeds_from_env_complete(root: Path) -> None:
-    from aisland import workspace
+    from aisland.workspace import init as workspace
 
     (root / "lib" / env_example.EXAMPLE).unlink()
     assert "# APP_LEVEL=INFO" in workspace._starting_files(root)[".env"]
 
 
 def test_init_without_projects_writes_the_short_template(tmp_path: Path) -> None:
-    from aisland import workspace
+    from aisland.workspace import init as workspace
 
     assert workspace._starting_files(tmp_path)[".env"] == workspace._ENV
 

@@ -1,4 +1,4 @@
-"""Tests for the install script `aisland wheels` writes into `<project>/wheels/` (aisland/wheels_install.py).
+"""Tests for the install script `aisland wheels` writes into `<project>/wheels/` (aisland/wheels/install.py).
 
 Unit tests drive `main(..., folder=...)` with `--dry-run` over a hand-written `wheels.yaml`; one test runs the
 script with the real pip, offline, to prove the measured rule it rests on: a wheel named by its file wins over
@@ -17,7 +17,7 @@ from typing import Dict, List
 
 import pytest
 
-from aisland import wheels_install as wi
+from aisland.wheels import install as wi
 
 _YAML = """\
 # a comment the user may keep
