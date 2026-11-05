@@ -39,6 +39,7 @@ from __future__ import annotations
 
 import datetime
 import importlib.util
+import shlex
 import shutil
 import subprocess
 import sys
@@ -49,8 +50,8 @@ from typing import Dict, List, Optional, Sequence, Set, Tuple
 
 from aisland import gitcmd
 from aisland.errors import AislandError
-from aisland.wheels.build import find_target, workspace_projects
 from aisland.wheels.files import WHEELS_DIR
+from aisland.wheels.projects import find_target, workspace_projects
 from aisland.wheels.report import human_size
 
 #: Where origin keeps the record of every prune: a chain of commits, one per prune, never a branch or a tag.
@@ -242,8 +243,11 @@ def _detached_head(repo: Path) -> Optional[str]:
 
 
 def _check_repository(repo: Path, name: str) -> None:
-    if _run(repo, "rev-parse", "--is-inside-work-tree").returncode != 0:
+    top = _run(repo, "rev-parse", "--show-toplevel")
+    if top.returncode != 0:
         raise PruneError(f"{name} is in no git repository; there is no history to prune.")
+    if Path(top.stdout.strip()).resolve() != repo.resolve():
+        raise PruneError(f"{name} is no repository of its own: {repo} is inside {top.stdout.strip()}.")
     if _run(repo, "remote", "get-url", "origin").returncode != 0:
         raise PruneError(f"{name} has no remote 'origin'; a prune rewrites origin's history with this clone's.")
 
@@ -308,11 +312,12 @@ def _filter_repo() -> List[str]:
             f"rewriting history needs git-filter-repo, which aisland's [{EXTRA}] extra installs: "
             f"uv pip install 'aisland[{EXTRA}]'"
         )
-    return [sys.executable, "-m", "aisland.wheels.filter_repo"]
+    return [sys.executable, "-P", "-m", "aisland.wheels.filter_repo"]  # -P: the clone's folder is no import path
 
 
 def _restore_command(repo: Path, bundle: Path) -> str:
-    return f"git -C {repo} fetch --update-head-ok {bundle} '+refs/*:refs/*' && git -C {repo} reset --hard"
+    at = shlex.quote(str(repo))
+    return f"git -C {at} fetch --update-head-ok {shlex.quote(str(bundle))} '+refs/*:refs/*' && git -C {at} reset --hard"
 
 
 def _backup(repo: Path) -> Tuple[Path, str]:
@@ -623,7 +628,8 @@ def _set_aside(repo: Path) -> List[str]:
 
 
 def _put_back_command(repo: Path) -> str:
-    return f"git -C {repo} stash apply --index {_SET_ASIDE_REF} && git -C {repo} update-ref -d {_SET_ASIDE_REF}"
+    at = shlex.quote(str(repo))
+    return f"git -C {at} stash apply --index {_SET_ASIDE_REF} && git -C {at} update-ref -d {_SET_ASIDE_REF}"
 
 
 def _put_back(repo: Path, name: str) -> None:

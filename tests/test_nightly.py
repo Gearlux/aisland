@@ -14,8 +14,8 @@ from typing import Any, Dict, List, Optional
 import pytest
 from click.testing import CliRunner
 
-from aisland import nightly
-from aisland.ci_scaffold import TIMED_OUT_MESSAGE
+from aisland.ci import nightly
+from aisland.ci.ci_scaffold import TIMED_OUT_MESSAGE
 from aisland.cli import main
 from aisland.services import jenkins_jobs
 from aisland.services.jenkins import JenkinsService

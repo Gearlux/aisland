@@ -67,7 +67,7 @@ the entry's environment:
 | `track_status(projects)` | `aisland workspace track status --json`: per project whether the root records its commits, whose choice that is and whether git agrees; `track set\|unset` stay commands |
 | `editor_themes`, `editor_colors(part)` | the VS Code themes here, the CSS colour names, this window's choice |
 | `editor_set_theme(name)`, `editor_set_color(role, color, area)`, `editor_unset(what)` | `aisland workspace theme\|color set\|unset` |
-| `service_start(name)`, `service_stop(name)`, `service_restart(name)` | `aisland <name> start\|stop\|restart` for any service of the workspace — aisland's own or one a project brings — in the background where it runs under the supervisor |
+| `service_start(name)`, `service_stop(name)`, `service_restart(name)` | `aisland services start\|stop\|restart <name>` for any service of the workspace — aisland's own or one a project brings — in the background where it runs under the supervisor |
 | `tunnel_start(name, provider, cli)`, `tunnel_stop()` | `aisland tunnel start\|stop --json`; a sign-in still pending is answered at once with the code to hand over |
 
 Every tool answers with one JSON object, and a refusal is the tool's error in the command's own

@@ -1,4 +1,4 @@
-"""The VS Code workspace file is generated per machine (`aisland.editor_files.write_code_workspace`).
+"""The VS Code workspace file is generated per machine (`aisland.setup.editor_files.write_code_workspace`).
 
 Covers what the file holds — the workspace, every project checked out on THIS machine in dependency order,
 loggair's log folder when it exists, then the template's settings and extensions — the header's regenerate line,
@@ -18,9 +18,10 @@ from typing import Any, Dict, List, Optional
 import click
 import pytest
 
-from aisland import editor_files, projects
-from aisland import sources as s
 from aisland.errors import AislandError
+from aisland.setup import editor_files
+from aisland.workspace import projects
+from aisland.workspace import sources as s
 
 
 def _project(root: Path, folder: str, name: Optional[str] = None, deps: Optional[List[str]] = None) -> None:

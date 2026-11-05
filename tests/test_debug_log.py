@@ -19,11 +19,12 @@ import click
 import pytest
 from click.testing import CliRunner
 
-from aisland import cli, gitcmd, gitmodules, locations
+from aisland import cli, gitcmd, locations
 from aisland import pyproject as pyproject_toml
 from aisland.cli import _base as cli_base
 from aisland.services import docker, jenkins_jobs
 from aisland.services.jenkins import JenkinsService
+from aisland.workspace import gitmodules
 
 
 def _with_command(monkeypatch: pytest.MonkeyPatch, name: str, body: Callable[[], None]) -> None:
@@ -223,7 +224,7 @@ def test_reading_a_pyproject_says_which_file_and_why_one_declares_nothing(
 def test_the_template_set_chosen_and_its_variables_are_logged(
     tmp_path: Path, debug_log: pytest.LogCaptureFixture
 ) -> None:
-    from aisland import ci_templates
+    from aisland.ci import ci_templates
 
     chosen = ci_templates.choice(tmp_path, "app")
     assert [line for line in debug_log.messages if "template set" in line] == [
@@ -246,7 +247,7 @@ def test_the_template_set_chosen_and_its_variables_are_logged(
 def test_the_log_says_who_named_the_template_set(
     tmp_path: Path, debug_log: pytest.LogCaptureFixture, text: str, project: str, chooser: str
 ) -> None:
-    from aisland import ci_templates
+    from aisland.ci import ci_templates
 
     (tmp_path / "workspace.toml").write_text(text)
     ci_templates.choice(tmp_path, project)

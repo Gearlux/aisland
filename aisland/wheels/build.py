@@ -8,21 +8,19 @@ recent enough — the wheels are built from this checkout, so they may use code 
 
 The run, in order:
 
-1. **What the project needs** (:func:`dependency_closure`): the workspace projects its
+1. **What the project needs** (:func:`aisland.wheels.projects.dependency_closure`): the workspace projects its
    ``[project] dependencies`` reach, their own dependencies and the extras a requirement names
    followed, every environment marker INCLUDED — the wheels serve another machine, whose
    platform is not this one's.
-2. **On PyPI or not** (:func:`pypi_state`): published = a version under the name whose metadata
-   points at ``github.com/<owner>/`` — the owner of the project's own remote — and has a file that is not yanked. Pre-releases COUNT
-   (recordstream 0.1.0a2: pip takes it when no final release exists), which is where this
-   question differs from :func:`aisland.pypi.released_on_pypi`, the CI scaffolder's. A
-   stranger's package under the same name is not ours — and is reported, because pip takes the
-   higher version of the two.
-3. **The wheels** (:func:`export_head`, :func:`build_wheel`): each from an export of the
+2. **On PyPI or not** (:func:`aisland.wheels.published.pypi_state`): published = a version under the name
+   whose metadata points at ``github.com/<owner>/`` — the owner of the project's own remote — and has a file
+   that is not yanked, pre-releases COUNTING; a stranger's package under the same name is not ours — and is
+   reported, because pip takes the higher version of the two.
+3. **The wheels** (:mod:`aisland.wheels.export`, :func:`build_wheel`): each from an export of the
    project's last COMMIT, never its folder — a setuptools ``build/lib`` left in a checkout puts
    files the project deleted long ago into the wheel (measured 2026-10-08). A project with
    uncommitted changes is refused, so no one ships a change believing it is in — unless the run is
-   told ``--force`` (:func:`export_worktree`): such a project is then built from its files as they
+   told ``--force``: such a project is then built from its files as they
    are, those git ignores left out, its commit written ``<sha>+uncommitted`` and its changed files
    listed in the report; ``--force`` never goes with ``--commit``, since no commit reproduces those
    wheels. The folder's old ``*.whl`` go; anything else in it stays. Unchanged sources rebuild byte
@@ -65,34 +63,26 @@ shape an MCP tool returns.
 from __future__ import annotations
 
 import fnmatch
-import io
 import json
 import os
-import shutil
 import subprocess
 import sys
-import tarfile
 import tempfile
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Dict, List, Literal, Optional, Sequence, Set, Tuple
+from typing import Dict, List, Optional, Sequence, Set, Tuple
 
-from packaging.requirements import InvalidRequirement, Requirement
-from packaging.utils import canonicalize_name
 from packaging.version import InvalidVersion, Version
 
-from aisland import console, downloads, gitcmd
-from aisland import pyproject as pyproject_toml
+from aisland import console, gitcmd
 from aisland.errors import AislandError
 from aisland.github import GitHubRepository, project_repositories
-from aisland.installers import ensure_uv_in_venv
-from aisland.projects import get_workspace_name, workspace_folders
-from aisland.pypi import PypiFile, PypiInfo, PypiProject, points_at_owner, pypi_json
-from aisland.sources import read_committed_sources
-from aisland.wheels import bundle as wheels_bundle
+from aisland.pypi import PypiProject
+from aisland.setup.installers import ensure_uv_in_venv
 from aisland.wheels import check as wheels_check
 from aisland.wheels import extra as wheels_extra
 from aisland.wheels import scrub as wheels_scrub
+from aisland.wheels.bundle import bundle_entry, write_bundle
 from aisland.wheels.check import (
     attribute_failure,
     install_and_import,
@@ -102,6 +92,7 @@ from aisland.wheels.check import (
     wheel_differences,
     wheel_modules,
 )
+from aisland.wheels.export import export_head, export_worktree
 from aisland.wheels.files import (
     GITIGNORE,
     IGNORE_ALL,
@@ -119,9 +110,10 @@ from aisland.wheels.files import (
     write_wheels,
     write_zip,
 )
+from aisland.wheels.projects import WorkspaceProject, dependency_closure, find_target, workspace_projects
+from aisland.wheels.published import PypiState, download_wheel, latest_version, pure_wheel, pypi_state
 from aisland.wheels.report import (
     BuiltWheel,
-    BundleWheel,
     ImportFailure,
     ModuleFailure,
     NotBuilt,
@@ -129,169 +121,11 @@ from aisland.wheels.report import (
     WheelsReport,
     WheelsScope,
     bundle_command,
-    provenance_header,
     regenerate_command,
 )
+from aisland.workspace.projects import get_workspace_name
 
-#: PyPI's answer for a project: this workspace's release, none, or a stranger's package under the name.
-PypiState = Literal["published", "absent", "foreign"]
-
-
-@dataclass(frozen=True)
-class WorkspaceProject:
-    """One submodule of the workspace that is a Python project.
-
-    Args:
-        name: Its folder (= its ``.gitmodules`` path), the name a user types.
-        distribution: Its distribution name (``acme-tools`` for a folder ``acme``).
-        path: Its folder on this machine.
-        pyproject: Its parsed ``pyproject.toml``; ``None`` when the folder is empty (a detached
-            source or an inactive submodule) — then ``distribution`` comes from ``workspace.toml``,
-            or is the folder name.
-    """
-
-    name: str
-    distribution: str
-    path: Path
-    pyproject: Optional[pyproject_toml.Table]
-
-    @property
-    def checked_out(self) -> bool:
-        """Whether this machine has its source."""
-        return self.pyproject is not None
-
-
-# --- the workspace's projects and what a project needs -----------------------------------------
-
-
-def workspace_projects(workspace_root: Path) -> Dict[str, WorkspaceProject]:
-    """Every submodule that is a Python project (without ``.gitmodules``: every project folder), keyed by canonical
-    distribution name.
-
-    An empty folder is kept (``pyproject=None``): a requirement on it must be told apart from a
-    requirement on something outside the workspace.
-    """
-    registry = read_committed_sources(workspace_root)
-    projects: Dict[str, WorkspaceProject] = {}
-    for _name, relative, _active in workspace_folders(workspace_root):
-        path = workspace_root / relative
-        pyproject_file = path / "pyproject.toml"
-        if pyproject_file.is_file():
-            data = pyproject_toml.load(pyproject_file)
-            distribution = (data.get("project") or {}).get("name")
-            if not distribution:
-                continue
-            projects[canonicalize_name(distribution)] = WorkspaceProject(relative, distribution, path, data)
-        else:
-            source = registry.get(relative)
-            distribution = source.distribution if source and source.distribution else relative
-            projects[canonicalize_name(distribution)] = WorkspaceProject(relative, distribution, path, None)
-    return projects
-
-
-def _requirements(project: WorkspaceProject, extra: Optional[str]) -> List[Requirement]:
-    """``project``'s base dependencies (``extra=None``) or one extra's, parsed."""
-    table = (project.pyproject or {}).get("project") or {}
-    if extra is None:
-        raw = table.get("dependencies")
-    else:
-        raw = (table.get("optional-dependencies") or {}).get(extra)
-    requirements = []
-    for spec in raw or []:
-        try:
-            requirements.append(Requirement(spec))
-        except InvalidRequirement as error:
-            raise AislandError(f"{project.name}/pyproject.toml: cannot read the requirement {spec!r}: {error}")
-    return requirements
-
-
-def dependency_closure(projects: Dict[str, WorkspaceProject], target: WorkspaceProject) -> List[WorkspaceProject]:
-    """The workspace projects ``target`` needs, sorted by folder name, ``target`` excluded.
-
-    Base dependencies always; an extra only when a requirement names it (``confluid[pydantic]``);
-    markers ignored, so a project needed on one platform only is still in.
-    """
-    root = canonicalize_name(target.distribution)
-    queue: List[Tuple[str, Optional[str]]] = [(root, None)]
-    done: Set[Tuple[str, Optional[str]]] = set()
-    while queue:
-        item = queue.pop()
-        if item in done:
-            continue
-        done.add(item)
-        key, extra = item
-        for requirement in _requirements(projects[key], extra):
-            dependency = canonicalize_name(requirement.name)
-            if dependency in projects:
-                queue.append((dependency, None))
-                queue.extend((dependency, e) for e in requirement.extras)
-    needed = {key for key, _ in done} - {root}
-    return sorted((projects[key] for key in needed), key=lambda p: p.name)
-
-
-def pypi_state(distribution: str, owner: Optional[str]) -> Tuple[PypiState, Optional[PypiProject]]:
-    """Whether PyPI has ``distribution`` as THIS workspace's project, with PyPI's JSON when it answered.
-
-    The workspace's project is the release whose metadata names ``github.com/<owner>/``, the owner of the project's
-    own remote; a project whose remote is not on GitHub (``owner`` None) has no release aisland can tell apart from a
-    stranger's (``foreign``).
-
-    Raises ``click.ClickException`` when PyPI cannot be reached: a guess would either ship a
-    wheel PyPI already serves or leave out one it does not.
-    """
-    status, payload = pypi_json(distribution)
-    if status == "missing":
-        return "absent", None
-    if status == "unreachable":
-        raise AislandError(f"cannot tell whether {distribution} is on PyPI: {payload}. Retry when it answers.")
-    project: PypiProject = payload
-    info: PypiInfo = project.get("info") or {}
-    if not points_at_owner(info, owner):
-        return "foreign", project
-    for files in (project.get("releases") or {}).values():
-        if any(not f.get("yanked", False) for f in files or []):
-            return "published", project
-    return "absent", None
-
-
-# --- building and reading wheels -------------------------------------------------------------
-
-
-def export_head(project_dir: Path, dest: Path) -> int:
-    """Write ``project_dir``'s last commit into ``dest`` — what a wheel is built from.
-
-    Returns the commit's time (seconds since the epoch), the timestamp its wheel carries.
-    """
-    archive = subprocess.run(["git", "-C", str(project_dir), "archive", "--format=tar", "HEAD"], capture_output=True)
-    if archive.returncode != 0:
-        reason = archive.stderr.decode(errors="replace").strip()
-        raise AislandError(f"{project_dir.name}: cannot export its last commit: {reason}")
-    dest.mkdir(parents=True, exist_ok=True)
-    with tarfile.open(fileobj=io.BytesIO(archive.stdout)) as tar:
-        tar.extractall(dest, filter="data")
-    return int(gitcmd.git(project_dir, "log", "-1", "--format=%ct", "HEAD").stdout.strip())
-
-
-def export_worktree(project_dir: Path, dest: Path) -> int:
-    """Write ``project_dir``'s files as they are into ``dest`` — what ``--force`` builds a dirty project from.
-
-    The files are the ones git tracks and the untracked ones it does not ignore: a deleted file is gone,
-    a new one is in, and an ignored setuptools ``build/lib`` stays out, as it does from a commit. Returns the
-    last commit's time, so a rerun over unchanged files builds the same wheel.
-    """
-    listed = gitcmd.git(project_dir, "ls-files", "-z", "--cached", "--others", "--exclude-standard")
-    if listed.returncode != 0:
-        raise AislandError(f"{project_dir.name}: cannot list its files: {listed.stderr.strip()}")
-    for relative in sorted(set(filter(None, listed.stdout.split("\0")))):
-        source = project_dir / relative
-        # A deleted file is still listed (it is in the index), and a nested repository is a folder: neither is
-        # copied, as `git archive` carries neither.
-        if not source.is_file() and not source.is_symlink():
-            continue
-        target = dest / relative
-        target.parent.mkdir(parents=True, exist_ok=True)
-        shutil.copy2(source, target, follow_symlinks=False)
-    return int(gitcmd.git(project_dir, "log", "-1", "--format=%ct", "HEAD").stdout.strip())
+# --- building wheels -------------------------------------------------------------------------
 
 
 def build_wheel(uv: str, source_dir: Path, out_dir: Path, timestamp: Optional[int] = None) -> Path:
@@ -319,43 +153,11 @@ def _wheel_version(wheel: Path) -> str:
     return wheel.name.split("-")[1]
 
 
-def _download(url: str, dest: Path) -> Path:
-    dest.parent.mkdir(parents=True, exist_ok=True)
-    downloads.download(url, dest)
-    return dest
-
-
-def _pure_wheel(payload: PypiProject) -> Optional[PypiFile]:
-    """The pure-Python wheel among PyPI's files of its latest version."""
-    entries: List[PypiFile] = payload.get("urls") or []
-    for entry in entries:
-        if entry.get("packagetype") == "bdist_wheel" and str(entry.get("filename", "")).endswith("-none-any.whl"):
-            return entry
-    return None
-
-
 # --- the run ---------------------------------------------------------------------------------
 
 
 def _uv(workspace_root: Path) -> str:
     return ensure_uv_in_venv(workspace_root / ".venv" / "bin")
-
-
-def find_target(projects: Dict[str, WorkspaceProject], workspace_root: Path, name: str) -> WorkspaceProject:
-    for project in projects.values():
-        if project.name == name:
-            break
-    else:
-        found = projects.get(canonicalize_name(name))
-        if found is None:
-            raise AislandError(f"no project {name!r} in the workspace {workspace_root}")
-        project = found
-    if not project.checked_out:
-        raise AislandError(
-            f"{project.name} is not checked out on this machine (its folder is empty). "
-            f"Activate it with: aisland workspace configure active set {project.name} true --machine-only"
-        )
-    return project
 
 
 def _package_folders(path: Path) -> List[str]:
@@ -450,11 +252,6 @@ def _refuse_uncommitted(
         problems.append("Commit or stash them, then run this again — or pass --force to build them with these changes.")
         raise AislandError("\n".join(problems))
     return dirty
-
-
-def _pypi_version(payload: Optional[PypiProject]) -> str:
-    info: PypiInfo = (payload or {}).get("info") or {}
-    return str(info.get("version") or "")
 
 
 @dataclass(frozen=True)
@@ -626,7 +423,7 @@ def vendor_wheels(
         tracked_warning=tracked_warning,
         checked=check,
         project_wheel=project_wheel,
-        bundle=_bundle_entry(bundle_path, workspace_root, target, built.entries),
+        bundle=bundle_entry(bundle_path, workspace_root, target, built.entries),
         bundle_install_error=checked.bundle_install_error,
         bundle_import_failures=bundle_import_failures,
         bundle_imported=checked.bundle_imported,
@@ -691,7 +488,7 @@ def _plan(workspace_root: Path, project_name: str, scope: WheelsScope) -> Wheels
             NotBuilt(
                 p.name,
                 (
-                    f"no checkout here — taken from PyPI {_pypi_version(states[p.name][1])}"
+                    f"no checkout here — taken from PyPI {latest_version(states[p.name][1])}"
                     if p.name in needed_names
                     else "no checkout here"
                 ),
@@ -786,7 +583,7 @@ def _build_one(
         sha,
         wheel.name,
         needed=project.name in plan.needed_names or project is plan.target,
-        on_pypi=_pypi_version(payload) if state == "published" else None,
+        on_pypi=latest_version(payload) if state == "published" else None,
         uncommitted=changes,
     )
     return wheel, entry
@@ -833,8 +630,16 @@ def _write_folder(
     bundle_path: Optional[Path] = None
     if options.bundle and built.own_wheel is not None and built.own_entry is not None:
         command = bundle_command(target.name, scope, include_project, chosen.command)
-        bundle_path = _write_bundle(
-            plan.projects, target, built.own_wheel, built.own_entry, built.wheels, built.entries, folder, command
+        bundle_path = write_bundle(
+            plan.projects,
+            target,
+            built.own_wheel,
+            built.own_entry,
+            built.wheels,
+            built.entries,
+            folder,
+            command,
+            ZIP_TIME,
         )
     return extra_changed, bundle_path
 
@@ -884,7 +689,7 @@ def _unchecked(plan: WheelsPlan) -> _Checked:
     return _Checked(
         [
             PublishedDependency(
-                p.name, p.distribution, _pypi_version(plan.states[p.name][1]), None, [], "not compared (--no-check)"
+                p.name, p.distribution, latest_version(plan.states[p.name][1]), None, [], "not compared (--no-check)"
             )
             for p in plan.published
         ]
@@ -939,83 +744,6 @@ def _classify(
     return breaks, [f for f in every_failure if f not in breaks]
 
 
-def _write_bundle(
-    projects: Dict[str, WorkspaceProject],
-    target: WorkspaceProject,
-    own_wheel: Path,
-    own_entry: BuiltWheel,
-    staged: List[Path],
-    built: List[BuiltWheel],
-    folder: Path,
-    command: str,
-) -> Path:
-    """Merge the target's wheel and the wheels it needs into ``<folder>/bundle/`` (:mod:`aisland.wheels.bundle`).
-
-    A wheel ``--all`` built that the target does not need stays out. What the bundle requires is read from the
-    ``pyproject.toml`` of each project inside it.
-    """
-    inside = [(wheel, b) for wheel, b in zip(staged, built) if b.needed]
-    members = [(target, own_wheel, own_entry)] + [
-        (projects[canonicalize_name(b.distribution)], wheel, b) for wheel, b in inside
-    ]
-    for project, _, _ in members:
-        if "dependencies" in ((project.pyproject or {}).get("project") or {}).get("dynamic", []):
-            raise AislandError(
-                f"{project.name}/pyproject.toml declares its dependencies dynamic; a bundle reads them from "
-                "[project] dependencies"
-            )
-    tables = [((p.pyproject or {}).get("project") or {}) for p, _, _ in members]
-    requires = wheels_bundle.bundle_requirements(
-        lambda name, extra: _requirements(projects[name], extra),
-        canonicalize_name(target.distribution),
-        list((tables[0].get("optional-dependencies") or {}).keys()),
-        {canonicalize_name(b.distribution): b.version for _, _, b in members},
-        [str(t["requires-python"]) for t in tables if "requires-python" in t],
-    )
-    distribution = wheels_bundle.BUNDLE_NAME.format(distribution=target.distribution)
-    rows = "\n".join(f"| {b.project} | {b.distribution} | {b.version} | {b.branch} {b.commit} |" for _, _, b in members)
-    header = "\n".join(provenance_header("", command, "aisland/aisland/wheels/build.py (_write_bundle)"))
-    description = f"""\
-<!--
-{header}
--->
-# {distribution}
-
-{target.name} and the workspace projects it needs, in one wheel. Inside it pip knows only the name
-`{distribution}`: none of the projects below is installed under its own name.
-
-| Project | Distribution | Version | Commit |
-| --- | --- | --- | --- |
-{rows}
-"""
-    metadata = wheels_bundle.render_metadata(
-        distribution,
-        own_entry.version,
-        f"{target.name} and the workspace projects it needs, in one wheel",
-        requires,
-        description,
-    )
-    parts = [wheels_bundle.BundlePart(b.project, b.distribution, wheel) for _, wheel, b in members]
-    return wheels_bundle.merge_wheels(
-        parts, distribution, own_entry.version, metadata, folder / wheels_bundle.BUNDLE_DIR, ZIP_TIME
-    )
-
-
-def _bundle_entry(
-    bundle: Optional[Path], workspace_root: Path, target: WorkspaceProject, built: List[BuiltWheel]
-) -> Optional[BundleWheel]:
-    """The report's line for the bundle ``--bundle`` wrote (``None`` without one)."""
-    if bundle is None:
-        return None
-    return BundleWheel(
-        wheel=str(bundle.relative_to(workspace_root)),
-        distribution=wheels_bundle.BUNDLE_NAME.format(distribution=target.distribution),
-        version=bundle.name.split("-")[1],
-        projects=[target.name] + [b.project for b in built if b.needed],
-        bytes=bundle.stat().st_size,
-    )
-
-
 def _commit_wheels(target: WorkspaceProject, command: str, also: Sequence[str] = ()) -> Optional[str]:
     """Commit ``wheels/`` in the target — that path and ``also`` (``--extra``'s ``pyproject.toml``) only, whatever
     else is staged or changed — and return the commit's short SHA, or ``None`` when they hold nothing new."""
@@ -1045,7 +773,7 @@ def zip_wheels(workspace_root: Path, project_name: str) -> Path:
 
 def _clash(project: WorkspaceProject, payload: PypiProject, version: str) -> List[str]:
     """The warning for a name PyPI gives to another project, when pip would take theirs."""
-    theirs = _pypi_version(payload)
+    theirs = latest_version(payload)
     try:
         if Version(theirs) < Version(version):
             return []
@@ -1067,14 +795,14 @@ def _compare(
 ) -> PublishedDependency:
     """``project``'s PyPI wheel against the one its checkout builds; records whose modules are whose and
     the names only the checkout's changed files use (``new_names``, for :func:`attribute_failure`)."""
-    pypi_version = _pypi_version(payload)
-    entry = _pure_wheel(payload)
+    pypi_version = latest_version(payload)
+    entry = pure_wheel(payload)
     if entry is None:
         owners.setdefault(project.distribution.replace("-", "_"), project.distribution)
         note = f"PyPI has no pure-Python wheel of {pypi_version} to compare"
         return PublishedDependency(project.name, project.distribution, pypi_version, None, [], note)
     console.echo(f"==> Comparing {project.name} with PyPI {pypi_version}", err=True)
-    remote = _download(str(entry["url"]), scratch / "pypi" / str(entry["filename"]))
+    remote = download_wheel(entry, scratch / "pypi" / str(entry["filename"]))
     owners.update({module: project.distribution for module in wheel_modules(remote)})
     if not project.checked_out:
         return PublishedDependency(project.name, project.distribution, pypi_version, None, [], "no checkout here")

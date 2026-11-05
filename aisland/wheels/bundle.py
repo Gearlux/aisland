@@ -37,6 +37,8 @@ from packaging.specifiers import SpecifierSet
 from packaging.utils import canonicalize_name
 
 from aisland.errors import AislandError
+from aisland.wheels.projects import WorkspaceProject, requirements
+from aisland.wheels.report import BuiltWheel, BundleWheel, provenance_header
 
 #: The folder inside ``<project>/wheels/`` that receives the bundle. A subfolder, so neither the zip (which packs
 #: the folder's files) nor the run's ``*.whl`` cleanup of the folder ever takes it for one of the separate wheels.
@@ -305,7 +307,7 @@ def _add_dist_info(members: _Members, info: str, distribution: str, metadata: st
         members.add(f"{info}/top_level.txt", top_level, _REGULAR, distribution)
 
 
-def _write_bundle(
+def _write_wheel(
     files: Dict[str, Tuple[bytes, int, str]], info: str, bundle: Path, date_time: Tuple[int, int, int, int, int, int]
 ) -> None:
     """Write ``files`` and their RECORD into ``bundle``, every member stamped ``date_time``, by way of a ``.partial``
@@ -354,5 +356,84 @@ def merge_wheels(
         raise AislandError("the wheels cannot share one bundle:\n" + "\n".join(f"    {c}" for c in members.clashes))
     _add_dist_info(members, info, distribution, metadata)
     bundle = out_dir / name
-    _write_bundle(members.files, info, bundle, date_time)
+    _write_wheel(members.files, info, bundle, date_time)
     return bundle
+
+
+# --- the run's bundle ------------------------------------------------------------------------
+
+
+def write_bundle(
+    projects: Dict[str, WorkspaceProject],
+    target: WorkspaceProject,
+    own_wheel: Path,
+    own_entry: BuiltWheel,
+    staged: List[Path],
+    built: List[BuiltWheel],
+    folder: Path,
+    command: str,
+    date_time: Tuple[int, int, int, int, int, int],
+) -> Path:
+    """Merge the target's wheel and the wheels it needs into ``<folder>/bundle/``, every member stamped ``date_time``.
+
+    A wheel ``--all`` built that the target does not need stays out. What the bundle requires is read from the
+    ``pyproject.toml`` of each project inside it.
+    """
+    inside = [(wheel, b) for wheel, b in zip(staged, built) if b.needed]
+    members = [(target, own_wheel, own_entry)] + [
+        (projects[canonicalize_name(b.distribution)], wheel, b) for wheel, b in inside
+    ]
+    for project, _, _ in members:
+        if "dependencies" in ((project.pyproject or {}).get("project") or {}).get("dynamic", []):
+            raise AislandError(
+                f"{project.name}/pyproject.toml declares its dependencies dynamic; a bundle reads them from "
+                "[project] dependencies"
+            )
+    tables = [((p.pyproject or {}).get("project") or {}) for p, _, _ in members]
+    requires = bundle_requirements(
+        lambda name, extra: requirements(projects[name], extra),
+        canonicalize_name(target.distribution),
+        list((tables[0].get("optional-dependencies") or {}).keys()),
+        {canonicalize_name(b.distribution): b.version for _, _, b in members},
+        [str(t["requires-python"]) for t in tables if "requires-python" in t],
+    )
+    distribution = BUNDLE_NAME.format(distribution=target.distribution)
+    rows = "\n".join(f"| {b.project} | {b.distribution} | {b.version} | {b.branch} {b.commit} |" for _, _, b in members)
+    header = "\n".join(provenance_header("", command, "aisland/aisland/wheels/bundle.py (write_bundle)"))
+    description = f"""\
+<!--
+{header}
+-->
+# {distribution}
+
+{target.name} and the workspace projects it needs, in one wheel. Inside it pip knows only the name
+`{distribution}`: none of the projects below is installed under its own name.
+
+| Project | Distribution | Version | Commit |
+| --- | --- | --- | --- |
+{rows}
+"""
+    metadata = render_metadata(
+        distribution,
+        own_entry.version,
+        f"{target.name} and the workspace projects it needs, in one wheel",
+        requires,
+        description,
+    )
+    parts = [BundlePart(b.project, b.distribution, wheel) for _, wheel, b in members]
+    return merge_wheels(parts, distribution, own_entry.version, metadata, folder / BUNDLE_DIR, date_time)
+
+
+def bundle_entry(
+    bundle: Optional[Path], workspace_root: Path, target: WorkspaceProject, built: List[BuiltWheel]
+) -> Optional[BundleWheel]:
+    """The report's line for the bundle ``--bundle`` wrote (``None`` without one)."""
+    if bundle is None:
+        return None
+    return BundleWheel(
+        wheel=str(bundle.relative_to(workspace_root)),
+        distribution=BUNDLE_NAME.format(distribution=target.distribution),
+        version=bundle.name.split("-")[1],
+        projects=[target.name] + [b.project for b in built if b.needed],
+        bytes=bundle.stat().st_size,
+    )

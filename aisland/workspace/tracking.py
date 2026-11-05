@@ -5,7 +5,7 @@ the root's ``git status`` (`` M <project>``) until someone records it. An UNTRAC
 ``ignore = all``: ``git status`` and ``git diff`` in the root never show its new commits, ``git add <project>`` skips
 it, and ``git pull-all`` never records it — the root keeps the commit it last recorded.
 
-Two layers, as for every per-project setting (:mod:`aisland.activation`):
+Two layers, as for every per-project setting (:mod:`aisland.workspace.activation`):
 
 * committed — the project's ``track = false`` in ``workspace.toml`` (no key: tracked), which :func:`apply` writes as
   ``submodule.<name>.ignore = all`` in ``.gitmodules``, the file git reads for everyone;
@@ -15,7 +15,7 @@ Two layers, as for every per-project setting (:mod:`aisland.activation`):
 
 An ``ignore`` value aisland does not write (``dirty``, ``untracked``) is the user's, and left alone.
 
-An untracked project FOLLOWS ITS BRANCH instead of the commit the root recorded (user request 2026-10-23): one on no
+An untracked project FOLLOWS ITS BRANCH instead of the commit the root recorded: one on no
 branch — what a clone's ``git submodule update`` leaves — is fetched and put on its branch by :func:`follow_branches`
 (``aisland setup``, ``track unset``) and by ``git pull-all``. The branch is ``.gitmodules``' ``branch`` (``.`` is the
 root's branch), else origin's default branch; the switch is never forced.
@@ -127,7 +127,7 @@ def _ignored(root: Path, name: str) -> bool:
 
 def apply(root: Path) -> List[Change]:
     """Write git's ``ignore`` of every project from the two layers; a :class:`Change` per project whose effect
-    changed. ``aisland setup`` runs it (through :func:`aisland.activation.reconcile`)."""
+    changed. ``aisland setup`` runs it (through :func:`aisland.workspace.activation.reconcile`)."""
     changes = []
     for project, name in _submodules(root).items():
         key = f"submodule.{name}.ignore"

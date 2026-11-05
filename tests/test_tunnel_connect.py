@@ -36,9 +36,10 @@ import pytest
 from click.testing import CliRunner
 
 from aisland.cli import main
+from aisland.cli import tunnel as tunnel_cli
 from aisland.tunnel import connect as tunnel_connect
-from aisland.tunnel import host as tunnel
 from aisland.tunnel import shell as tunnel_shell
+from aisland.tunnel import state as tunnel_state
 
 FAKE = Path(__file__).with_name("fake_devtunnel.py")
 
@@ -55,7 +56,7 @@ def _tunnel(tunnel_id: str, name: str, hosts: int = 1, vscode: bool = True) -> D
 @pytest.fixture(autouse=True)
 def state(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> Path:
     """Point the tunnel's state at a scratch folder, so no test touches this machine's own."""
-    monkeypatch.setenv(tunnel.TUNNEL_HOME_ENV, str(tmp_path / "tunnel"))
+    monkeypatch.setenv(tunnel_state.TUNNEL_HOME_ENV, str(tmp_path / "tunnel"))
     return tmp_path / "tunnel"
 
 
@@ -178,18 +179,18 @@ def test_an_account_without_vscode_tunnels_says_where_one_comes_from(fake: Path)
 
 def test_tab_offers_the_names_of_the_last_list(fake: Path) -> None:
     tunnel_connect.list_tunnels()
-    offered = tunnel_connect.complete_tunnel(None, None, "box")
+    offered = tunnel_cli.complete_tunnel(None, None, "box")
     assert [(item.value, item.help) for item in offered] == [
         ("box-one", "swift-dog-1.use — online"),
         ("box-two", "jolly-plane-2.use — offline"),
     ]
-    assert [item.value for item in tunnel_connect.complete_tunnel(None, None, "box-t")] == ["box-two"]
+    assert [item.value for item in tunnel_cli.complete_tunnel(None, None, "box-t")] == ["box-two"]
 
 
 def test_tab_with_an_unreadable_list_offers_nothing(state: Path) -> None:
     state.mkdir(parents=True)
     tunnel_connect.cache_path().write_text("{not json")
-    assert tunnel_connect.complete_tunnel(None, None, "") == []
+    assert tunnel_cli.complete_tunnel(None, None, "") == []
 
 
 # --- 2. refusals ----------------------------------------------------------------------------------

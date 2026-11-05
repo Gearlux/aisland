@@ -44,15 +44,12 @@ import tty
 from dataclasses import asdict, dataclass
 from pathlib import Path
 from types import FrameType, ModuleType
-from typing import TYPE_CHECKING, Callable, Dict, Iterator, List, Mapping, Optional, Tuple
+from typing import Callable, Dict, Iterator, List, Mapping, Optional, Tuple
 
-from aisland.errors import AislandError, quiet_completion
+from aisland import probe
+from aisland.errors import AislandError
 from aisland.tunnel import shell as tunnel_shell
-from aisland.tunnel.host import state_dir
-
-if TYPE_CHECKING:
-    import click
-    from click.shell_completion import CompletionItem
+from aisland.tunnel.state import state_dir
 
 #: The VS Code tunnel's control port (the CLI's ``CONTROL_PORT``); ``devtunnel connect`` forwards it
 #: to the same number here.
@@ -227,24 +224,16 @@ def _save_cache(tunnels: List[Tunnel]) -> None:
         pass
 
 
-@quiet_completion
-def complete_tunnel(
-    ctx: Optional[click.Context], param: Optional[click.Parameter], incomplete: str
-) -> List[CompletionItem]:
-    """Shell completion for ``connect``: the names of the last list, with id and state as help.
+def cached_tunnels() -> List[Tunnel]:
+    """The tunnels of the last list, read from :func:`cache_path` — no network, so TAB can ask it.
 
-    Like :func:`aisland.tunnel.host.complete_workspace` it answers from a file only — no network on a TAB —
-    and an unreadable file offers nothing rather than breaking the shell's TAB.
+    A missing or malformed file raises (``OSError``, ``ValueError``, ``KeyError``): the completer that asks wraps
+    itself in :func:`aisland.errors.quiet_completion`, which turns that into nothing to offer.
     """
-    # click is imported here, not at the top: this module runs where only the connection is wanted.
-    from click.shell_completion import CompletionItem
-
-    items = []
-    for entry in json.loads(cache_path().read_text()):
-        if str(entry["name"]).startswith(incomplete):
-            state = "online" if entry["online"] else "offline"
-            items.append(CompletionItem(entry["name"], help=f"{entry['tunnel_id']} — {state}"))
-    return items
+    return [
+        Tunnel(tunnel_id=str(entry["tunnel_id"]), name=str(entry["name"]), online=bool(entry["online"]))
+        for entry in json.loads(cache_path().read_text())
+    ]
 
 
 # --------------------------------------------------------------------------------------------------
@@ -264,25 +253,10 @@ def used_here() -> bool:
 
 def port_holder(port: int) -> Optional[str]:
     """Who listens on ``port`` here — ``pid 123 (devtunnel)`` — or None when nobody does."""
-    with socket.socket() as probe:
-        probe.settimeout(1.0)
-        if probe.connect_ex(("127.0.0.1", port)) != 0:
-            return None
-    lsof = shutil.which("lsof")
-    if lsof is not None:
-        listed = subprocess.run(
-            [lsof, "-nP", f"-iTCP:{port}", "-sTCP:LISTEN", "-Fpc"], capture_output=True, text=True
-        ).stdout
-        fields = {line[0]: line[1:] for line in listed.splitlines() if line}
-        if "p" in fields:
-            return f"pid {fields['p']} ({fields.get('c', '?')})"
-    return "a process lsof could not name"
-
-
-def _port_answers(port: int) -> bool:
-    with socket.socket() as probe:
-        probe.settimeout(1.0)
-        return probe.connect_ex(("127.0.0.1", port)) == 0
+    if not probe.port_answers(port):
+        return None
+    found = probe.listener(port)
+    return f"pid {found[0]} ({found[1]})" if found else "a process lsof could not name"
 
 
 def _tail(path: Path, lines: int = 5) -> str:
@@ -318,7 +292,7 @@ def forward(target: Tunnel, timeout: float = FORWARD_TIMEOUT_S) -> Iterator[None
         )
     try:
         deadline = time.monotonic() + timeout
-        while not _port_answers(port):
+        while not probe.port_answers(port):
             if process.poll() is not None:
                 raise AislandError(
                     f"`devtunnel connect {target.tunnel_id}` stopped (exit {process.returncode}):\n{_tail(log)}"

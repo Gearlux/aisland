@@ -48,6 +48,7 @@ import importlib.metadata
 import json
 import logging
 import os
+import re
 import shutil
 import subprocess
 import tomllib
@@ -58,9 +59,9 @@ from typing import Dict, List, Literal, Optional, Tuple, TypedDict
 from aisland import atomic, git_exclude, gitcmd, locations
 from aisland import pyproject as pyproject_toml
 from aisland.errors import AislandError
-from aisland.projects import workspace_folders
 from aisland.toml_places import FORMAT_KEY, Where, format_refusal, key_line, table_line
 from aisland.workspace import file as workspace_file
+from aisland.workspace.projects import workspace_folders
 
 logger = logging.getLogger(__name__)
 
@@ -104,6 +105,8 @@ _ENTRY_KEYS = ("set", "git", "ref", "name", "exclude")
 #: Where a set's files may not land: aisland's own bookkeeping, the repository's.
 _RESERVED = (RULES_INDEX, RECORD)
 _RESERVED_NAMES = ("workflows", "scripts")
+#: A set's name is one plain path part: it names ``.agents/<name>/`` and, for a git set, its clone's folder.
+_SET_NAME = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]*")
 
 SetKind = Literal["aisland", "project", "folder", "package", "git"]
 
@@ -156,7 +159,9 @@ def _place(where: Where, destination: str, source: Path) -> str:
     """The workspace path ``source`` lands at for ``destination`` (a folder when it ends in ``/``), checked."""
     place = destination + source.name if destination.endswith("/") else destination
     parts = PurePosixPath(place).parts
-    if PurePosixPath(place).is_absolute() or ".." in parts or not parts or parts[0] == ".git" or place in _RESERVED:
+    # `.git` in any case and at any depth: a case-insensitive disk (macOS's) reads `.GIT/hooks` as git's own hooks.
+    into_git = any(part.casefold() == ".git" for part in parts)
+    if PurePosixPath(place).is_absolute() or ".." in parts or not parts or into_git or place in _RESERVED:
         raise HarnessError(f"{where}: {destination!r} is no place in the workspace a harness may write")
     return place
 
@@ -218,10 +223,20 @@ def _usual_places(folder: Path) -> Tuple[Optional[Path], List[Tuple[Path, str]]]
     return rules, files
 
 
+def _check_name(name: str, where: Where) -> None:
+    """Refuse a set name that is aisland's own folder or no plain path part (``..``, ``a/b``, ``/``)."""
+    if name in _RESERVED_NAMES:
+        raise HarnessError(f"{where}: {name!r} cannot name a harness set (.agents/{name} is aisland's own folder)")
+    if not _SET_NAME.fullmatch(name):
+        raise HarnessError(
+            f"{where}: {name!r} cannot name a harness set: a name is letters, digits, '.', '_' and '-', "
+            'starting with a letter or digit, as name = "rules"'
+        )
+
+
 def load_set(folder: Path, name: str, kind: SetKind, exclude: List[str], where: Where) -> HarnessSet:
     """The set in ``folder``: what its ``harness.toml`` lists, else what the usual places hold, less ``exclude``."""
-    if name in _RESERVED_NAMES or name.startswith("."):
-        raise HarnessError(f"{where}: {name!r} cannot name a harness set (.agents/{name} is aisland's own folder)")
+    _check_name(name, where)
     rules, files = _from_file(folder) if (folder / SET_FILE).is_file() else _usual_places(folder)
     for pattern in exclude:
         relative = [source.relative_to(folder).as_posix() for source, _place in files]
@@ -301,6 +316,8 @@ def _clone(url: str, ref: str, name: str, where: Where) -> Path:
     """The checkout of ``url`` at ``ref``, cloned once and fetched again only when the url or the ref changes."""
     folder = clones_dir() / name
     stamp = clones_dir() / f"{name}.source"
+    if folder.parent != clones_dir():  # _check_name keeps a name one plain part; never remove a folder outside
+        raise HarnessError(f"{where}: {name!r} cannot name a harness set")
     wanted = f"{url} {ref}"
     if folder.is_dir() and stamp.is_file() and stamp.read_text(encoding="utf-8").strip() == wanted:
         return folder
@@ -380,6 +397,7 @@ def _one(root: Path, entry: object, where: Where) -> HarnessSet:
         name = entry.get("name") or PurePosixPath(url.rstrip("/")).name.removesuffix(".git")
         if not isinstance(name, str) or not name:
             raise HarnessError(f'{where}: name the git set, as name = "rules"')
+        _check_name(name, where)
         return load_set(_clone(url, ref, name, where), name, "git", exclude, where)
     if not isinstance(entry.get("set"), str):
         raise HarnessError(f'{where}: a table of {SETS_KEY} names its set, as {{ set = "aisland" }} or {{ git = … }}')

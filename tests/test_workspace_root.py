@@ -13,7 +13,8 @@ from pathlib import Path
 
 import pytest
 
-from aisland import locations, projects
+from aisland import locations
+from aisland.workspace import projects
 from tests.workspace_layout import needs_workspace
 
 
@@ -23,7 +24,7 @@ def _resolve_from(monkeypatch: pytest.MonkeyPatch, module_file: Path) -> Path:
 
 
 def _make_tree(tmp_path: Path, *, gitmodules: bool) -> Path:
-    """Build <ws>/aisland/aisland/manager.py with a TASKS.md at BOTH levels."""
+    """Build <ws>/aisland/aisland/setup/manager.py with a TASKS.md at BOTH levels."""
     ws = (tmp_path / "acme").resolve()
     pkg = ws / "aisland" / "aisland"
     pkg.mkdir(parents=True)

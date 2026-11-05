@@ -1,4 +1,4 @@
-"""``aisland.gitmodules``: every submodule's keys from ONE ``git config`` process, and the three readers that are
+"""``aisland.workspace.gitmodules``: every submodule's keys from ONE ``git config`` process, and the three readers that are
 views over it (``projects.submodule_active_map``, ``workspace_file.submodules``, ``local_workspace.submodule_names``).
 """
 
@@ -8,10 +8,11 @@ from typing import Any, List
 
 import pytest
 
-from aisland import gitmodules, projects
-from aisland.gitmodules import Submodule
 from aisland.workspace import file as workspace_file
+from aisland.workspace import gitmodules
 from aisland.workspace import local as local_workspace
+from aisland.workspace import projects
+from aisland.workspace.gitmodules import Submodule
 
 GITMODULES = """\
 [submodule "loggair"]

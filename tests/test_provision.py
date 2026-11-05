@@ -1,4 +1,4 @@
-"""Tests for aisland.manager's installers (Homebrew, the userspace registry) and shell-switch offer.
+"""Tests for aisland.setup.manager's installers (Homebrew, the userspace registry) and shell-switch offer.
 
 Which tools are installed, and the command: `tests/test_workspace_provision.py`.
 
@@ -23,7 +23,8 @@ from typing import Any
 import click
 import pytest
 
-from aisland import installers, locations, manager, paths
+from aisland import locations, paths
+from aisland.setup import installers, manager
 
 
 def _current_arch() -> str:

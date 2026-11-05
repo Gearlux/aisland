@@ -10,11 +10,12 @@ from click.shell_completion import CompletionItem
 
 from aisland.cli._base import _Group
 from aisland.errors import quiet_completion
-from aisland.projects import get_workspace_root
 from aisland.wheels import build as wheels
 from aisland.wheels import files as wheels_files
+from aisland.wheels import projects as wheels_projects
 from aisland.wheels import prune as wheels_prune
 from aisland.wheels import report as wheels_report
+from aisland.workspace.projects import get_workspace_root
 
 # --- Wheels For A Project Installed Outside The Workspace ---
 
@@ -27,7 +28,7 @@ def _complete_projects(incomplete: str, *, with_wheels: bool = False) -> List[Co
     Completion runs in the user's shell on every TAB: it reads the folders and their ``pyproject.toml`` only, and a
     workspace it cannot read offers nothing instead of an error.
     """
-    projects = wheels.workspace_projects(get_workspace_root())
+    projects = wheels_projects.workspace_projects(get_workspace_root())
     return [
         CompletionItem(project.name)
         for project in sorted(projects.values(), key=lambda p: p.name)

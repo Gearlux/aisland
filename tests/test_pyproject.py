@@ -6,10 +6,10 @@ from pathlib import Path
 
 import pytest
 
-from aisland import discovery
 from aisland import pyproject as pyproject_toml
 from aisland.errors import AislandError
 from aisland.wheels import extra as wheels_extra
+from aisland.workspace import discovery
 
 BROKEN = '[project]\nname = "app"\nversion = \n'
 

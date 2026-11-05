@@ -123,7 +123,7 @@ def test_apply_updates_running_server(isolated_config: Path) -> None:
     with (
         patch("aisland.supervisor.is_server_running", return_value=True),
         patch("aisland.supervisor._run_client", return_value=_completed()) as run_mock,
-        patch("aisland.supervisor.read_workspace_env", return_value={}),
+        patch("aisland.envfile.read", return_value={}),
     ):
         supervisor.apply()
     args, _kwargs = run_mock.call_args
@@ -141,32 +141,13 @@ def test_apply_expands_refs_from_workspace_env(isolated_config: Path) -> None:
     with (
         patch("aisland.supervisor.is_server_running", return_value=True),
         patch("aisland.supervisor._run_client", return_value=_completed()) as run_mock,
-        patch("aisland.supervisor.read_workspace_env", return_value={"LABELSTUDIO_TOKEN": "tok-from-dotenv"}),
+        patch("aisland.envfile.read", return_value={"LABELSTUDIO_TOKEN": "tok-from-dotenv"}),
         patch.dict(os.environ, {"LABELSTUDIO_TOKEN": "stale-shell-value"}),
     ):
         supervisor.apply()
     env = run_mock.call_args.kwargs["env"]
     assert env["LABELSTUDIO_TOKEN"] == "tok-from-dotenv"
     assert "PATH" in env  # os.environ still underneath
-
-
-def test_read_workspace_env_parses_and_skips_noise(tmp_path: Path) -> None:
-    (tmp_path / ".env").write_text(
-        "# comment\n"
-        "\n"
-        "LABELSTUDIO_TOKEN=abc123\n"
-        "SPACED_KEY = spaced value\n"  # bash runs a command named SPACED_KEY: no assignment
-        "malformed-line-without-equals\n"
-        "DATA_ROOT=/data/gert\n"
-    )
-    with patch("aisland.supervisor._workspace_root", return_value=tmp_path):
-        values = supervisor.read_workspace_env()
-    assert values == {"LABELSTUDIO_TOKEN": "abc123", "DATA_ROOT": "/data/gert"}
-
-
-def test_read_workspace_env_missing_file(tmp_path: Path) -> None:
-    with patch("aisland.supervisor._workspace_root", return_value=tmp_path):
-        assert supervisor.read_workspace_env() == {}
 
 
 def test_apply_raises_on_failed_update(isolated_config: Path) -> None:
@@ -358,13 +339,13 @@ def test_find_binary_prefers_path_then_vendored(tmp_path: Path, monkeypatch: pyt
 
 def test_ensure_binary_raises_when_uninstallable(monkeypatch: pytest.MonkeyPatch) -> None:
     """The user agreed to the install, and process-compose is still not there afterwards."""
-    from aisland import provision
+    from aisland.setup import provision
 
     monkeypatch.setattr(provision, "agree", lambda question: True)
     with (
         patch("aisland.supervisor.find_binary", return_value=None),
-        patch("aisland.installers.install_brew_packages"),
-        patch("aisland.installers.install_userspace_tool"),
+        patch("aisland.setup.installers.install_brew_packages"),
+        patch("aisland.setup.installers.install_userspace_tool"),
     ):
         with pytest.raises(click.ClickException, match="process-compose is still not found after installing it"):
             supervisor.ensure_binary()
@@ -462,7 +443,7 @@ def test_preflight_skips_without_external_volume_paths(
     monkeypatch.setenv("DATA_ROOT", "/data/local")  # not under /Volumes/
     with (
         patch("aisland.supervisor.platform.system", return_value="Darwin"),
-        patch("aisland.supervisor.read_workspace_env", return_value={}),
+        patch("aisland.envfile.read", return_value={}),
         patch("aisland.supervisor.ensure_binary") as binary_mock,
     ):
         supervisor._preflight_full_disk_access()
@@ -478,7 +459,7 @@ def test_preflight_warns_with_grant_path_when_absent(
     binary.touch()
     with (
         patch("aisland.supervisor.platform.system", return_value="Darwin"),
-        patch("aisland.supervisor.read_workspace_env", return_value={"DATA_ROOT": "/Volumes/Store"}),
+        patch("aisland.envfile.read", return_value={"DATA_ROOT": "/Volumes/Store"}),
         patch("aisland.supervisor.ensure_binary", return_value=str(binary)),
         patch("aisland.supervisor._tcc_full_disk_access_granted", return_value=False),
     ):
@@ -496,7 +477,7 @@ def test_preflight_silent_when_granted(
     _clear_protected_env(monkeypatch)
     with (
         patch("aisland.supervisor.platform.system", return_value="Darwin"),
-        patch("aisland.supervisor.read_workspace_env", return_value={"HF_HOME": "/Volumes/Store/huggingface"}),
+        patch("aisland.envfile.read", return_value={"HF_HOME": "/Volumes/Store/huggingface"}),
         patch("aisland.supervisor.ensure_binary", return_value=str(tmp_path / "process-compose")),
         patch("aisland.supervisor._tcc_full_disk_access_granted", return_value=True),
     ):
@@ -510,7 +491,7 @@ def test_preflight_silent_when_probe_inconclusive(
     _clear_protected_env(monkeypatch)
     with (
         patch("aisland.supervisor.platform.system", return_value="Darwin"),
-        patch("aisland.supervisor.read_workspace_env", return_value={"DATA_ROOT": "/Volumes/Store"}),
+        patch("aisland.envfile.read", return_value={"DATA_ROOT": "/Volumes/Store"}),
         patch("aisland.supervisor.ensure_binary", return_value=str(tmp_path / "process-compose")),
         patch("aisland.supervisor._tcc_full_disk_access_granted", return_value=None),
     ):

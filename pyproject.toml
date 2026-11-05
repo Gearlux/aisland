@@ -28,7 +28,7 @@ classifiers = [
 ]
 dependencies = [
     "click>=8.0.0",
-    # Renders a project's CI files from a template set (aisland/ci_templates.py): aisland's own in
+    # Renders a project's CI files from a template set (aisland/ci/ci_templates.py): aisland's own in
     # aisland/templates/ci/, or one a workspace or an installed package brings.
     "jinja2>=3.1.6",
     # Generates the process-compose desired-state document (aisland/supervisor.py). 6.0.1: 6.0 ships no wheel for
@@ -59,7 +59,7 @@ dev = [
     "msgpack>=1.2",
     "mcp>=2.0,<3",
     "git-filter-repo>=2.47",
-    # `aisland completion install` hands liquifai apps to liquifai (aisland/completion.py), and its tests stub that.
+    # `aisland completion install` hands liquifai apps to liquifai (aisland/setup/completion.py), and its tests stub that.
     "liquifai>=0.3.1",
     # The quality gates ci.yml and the Jenkinsfiles run.
     "pytest>=8.0,<9.0",

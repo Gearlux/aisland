@@ -2,16 +2,15 @@
 project's ``wheels/`` folder as a ``find-links`` path."""
 
 import os
-import re
 import tomllib
 from pathlib import Path
 from typing import Dict, List
 
-from packaging.requirements import InvalidRequirement, Requirement
+from packaging.utils import canonicalize_name
 
 from aisland import console, failures
 from aisland import pyproject as pyproject_toml
-from aisland.projects import ProjectMetadata
+from aisland.workspace.projects import ProjectMetadata, requirement_name
 
 # Workspace-wide uv settings that are no single project's concern. Merged into the generated
 # root uv.toml beneath every activated project's own uv.toml. The never-true marker
@@ -61,13 +60,9 @@ def _mentions_distribution(pyproject_path: Path, distribution: str) -> bool:
     requirements = list(project.get("dependencies", []) or [])
     for extra in (project.get("optional-dependencies", {}) or {}).values():
         requirements += list(extra or [])
-    wanted = re.sub(r"[-_.]+", "-", distribution).lower()
-    for raw in requirements:
-        try:
-            if re.sub(r"[-_.]+", "-", Requirement(str(raw)).name).lower() == wanted:
-                return True
-        except InvalidRequirement:
-            continue
+    wanted = canonicalize_name(distribution)
+    if any(requirement_name(str(raw)) == wanted for raw in requirements):
+        return True
     return False
 
 

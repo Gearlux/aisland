@@ -20,6 +20,7 @@ import pytest
 from click.testing import CliRunner, Result
 
 from aisland import cli, locations, pytest_stats
+from aisland.ci import stats_report
 from aisland.workspace import file as workspace_file
 
 pytest_plugins = ["pytester"]
@@ -249,9 +250,9 @@ def test_a_run_of_a_project_that_is_off_writes_nothing(
 def test_the_report_says_the_project_is_not_recorded_and_how_to_turn_it_on(
     ws: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    monkeypatch.setattr(pytest_stats, "workspace_root", lambda: ws)
+    monkeypatch.setattr(locations, "workspace_root", lambda: ws)
     monkeypatch.setattr(pytest_stats, "stats_folder", lambda: ws / "stats")
-    monkeypatch.setattr(pytest_stats, "jenkins_jobs_folder", lambda: ws / "jobs")
+    monkeypatch.setattr(stats_report, "jenkins_jobs_folder", lambda: ws / "jobs")
     _run(ws, monkeypatch, "off", "app")
     text = CliRunner().invoke(cli.main, ["tests", "report", "app"]).output
     assert "Test runs of app are not recorded: `aisland workspace test-stats on app` records them again." in text
@@ -262,9 +263,9 @@ def test_the_report_says_the_project_is_not_recorded_and_how_to_turn_it_on(
 def test_the_report_names_the_machine_only_switch_when_this_machine_turned_it_off(
     ws: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    monkeypatch.setattr(pytest_stats, "workspace_root", lambda: ws)
+    monkeypatch.setattr(locations, "workspace_root", lambda: ws)
     monkeypatch.setattr(pytest_stats, "stats_folder", lambda: ws / "stats")
-    monkeypatch.setattr(pytest_stats, "jenkins_jobs_folder", lambda: ws / "jobs")
+    monkeypatch.setattr(stats_report, "jenkins_jobs_folder", lambda: ws / "jobs")
     _run(ws, monkeypatch, "off", "--machine-only")
     text = CliRunner().invoke(cli.main, ["tests", "report", "app"]).output
     assert "`aisland workspace test-stats on app --machine-only` records them again." in text

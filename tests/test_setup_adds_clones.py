@@ -17,9 +17,10 @@ from typing import List, Optional
 
 import pytest
 
-from aisland import clones, projects, tracking
+from aisland.workspace import clones
 from aisland.workspace import file as workspace_file
 from aisland.workspace import local as local_workspace
+from aisland.workspace import projects, tracking
 
 _AUTHOR = {"GIT_AUTHOR_NAME": "t", "GIT_AUTHOR_EMAIL": "t@t", "GIT_COMMITTER_NAME": "t", "GIT_COMMITTER_EMAIL": "t@t"}
 

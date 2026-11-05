@@ -19,8 +19,9 @@ from typing import Dict, List
 import pytest
 import yaml
 
-from aisland import harness, locations, manager
-from tests.test_no_private_names import FORBIDDEN, PRIVATE_NAMES
+from aisland import harness, locations
+from aisland.setup import manager
+from tests.private_names import DOMAIN, PRIVATE, words_named
 
 
 @pytest.fixture
@@ -345,10 +346,10 @@ def test_the_ignore_lines_are_added_once(root: Path, shipped: Path) -> None:
 
 # --- aisland's own harness ------------------------------------------------------------------------------------
 
-#: Names that mean something only in the workspace aisland was written in: the harness runs in any workspace. The two
-#: names no aisland file may carry at all are `test_no_private_names.FORBIDDEN`'s, checked beside these.
-PRIVATE = re.compile(
-    "|".join(PRIVATE_NAMES) + r"|gearlux|annotaide|navigaitor|confluid|recordstream|matrainer"
+#: Names that mean something only in the workspace aisland was written in: the harness runs in any workspace. The
+#: private and domain names (`tests.private_names`, kept as digests) are checked beside these.
+WORKSPACE_PROJECTS = re.compile(
+    r"gearlux|annotaide|navigaitor|confluid|recordstream|matrainer"
     r"|liquifai|loggair|streamstudio|sonair|raidar|deltaid|curaitor|torpaido|distilaide|torchsig",
     re.IGNORECASE,
 )
@@ -363,7 +364,7 @@ def test_the_harness_names_no_project_of_the_workspace_it_was_written_in() -> No
         f"{path.relative_to(harness.HARNESS_DIR)}:{number}: {line.strip()}"
         for path in _real_harness_files()
         for number, line in enumerate(path.read_text().splitlines(), start=1)
-        if PRIVATE.search(line) or FORBIDDEN.search(line)
+        if WORKSPACE_PROJECTS.search(line) or words_named(line, PRIVATE | DOMAIN)
     ]
     assert hits == []
 
@@ -493,7 +494,7 @@ def test_setup_installs_the_harness_before_provisioning(
     def provision(root: Path, aislands_own: bool = True) -> None:
         raise _Stop
 
-    monkeypatch.setattr("aisland.provision.install", provision)
+    monkeypatch.setattr("aisland.setup.provision.install", provision)
     with pytest.raises(_Stop):
         manager.setup_workspace(non_interactive=True)
     assert (tmp_path / ".agents/workflows/ship.md").is_file()
@@ -508,7 +509,9 @@ def test_setup_prints_what_the_harness_reports(
     monkeypatch.setattr(locations, "workspace_root", lambda: tmp_path)
     monkeypatch.setattr(manager, "ensure_uv_in_venv", lambda venv_bin: "uv")
     monkeypatch.setattr(manager, "link_project_bashrc", lambda root: None)
-    monkeypatch.setattr("aisland.provision.install", lambda root, aislands_own=True: (_ for _ in ()).throw(_Stop()))
+    monkeypatch.setattr(
+        "aisland.setup.provision.install", lambda root, aislands_own=True: (_ for _ in ()).throw(_Stop())
+    )
     with pytest.raises(_Stop):
         manager.setup_workspace(non_interactive=True)
     assert (

@@ -1,6 +1,6 @@
 """Installing system tools: Homebrew packages on macOS, and on Linux the pinned userspace archives
 (:data:`USERSPACE_TOOLS`), each checked against its sha256 before it is unpacked. Which tools a machine needs is
-:mod:`aisland.provision`'s."""
+:mod:`aisland.setup.provision`'s."""
 
 import logging
 import os
@@ -61,7 +61,7 @@ USERSPACE_TOOLS: Dict[str, UserspaceTool] = {
         },
     },
     # The aisland service supervisor (see aisland/supervisor.py). macOS gets it
-    # via Homebrew (f1bonacc1/tap, in aisland.provision.AISLAND_TOOLS);
+    # via Homebrew (f1bonacc1/tap, in aisland.setup.provision.AISLAND_TOOLS);
     # this entry covers Linux. Flat archive: the binary sits at the tarball
     # root (bin_subdir "" — no bin/ directory), and upstream publishes
     # per-architecture assets ({arch} = amd64 / arm64).

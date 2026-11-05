@@ -1,4 +1,4 @@
-"""aisland reads the workspace `.env` the way the shell does: `supervisor.read_workspace_env` is the one reader.
+"""aisland reads the workspace `.env` the way the shell does: `envfile.read` is the one reader.
 
 `project.bashrc` exports `.env` with `set -a; source .env; set +a`, so what a run sees is what bash makes of it. Two
 readers disagreed with it and with each other: the services' kept the quotes of `KEY="a b"`, Jenkins' stripped
@@ -15,7 +15,7 @@ from typing import Dict
 
 import pytest
 
-from aisland import supervisor
+from aisland import envfile, locations
 
 ENVIRONMENT = {"HOME": "/home/you", "PATH": os.environ.get("PATH", "/usr/bin:/bin")}
 
@@ -59,29 +59,47 @@ def test_the_reader_reads_what_bash_exports(
     for name, value in ENVIRONMENT.items():
         monkeypatch.setenv(name, value)
     assert _bash(tmp_path / ".env", expected) == expected  # the case says what bash does
-    assert supervisor.read_workspace_env(tmp_path) == expected
+    assert envfile.read(tmp_path) == expected
 
 
 def test_a_line_bash_reads_as_no_assignment_sets_nothing(tmp_path: Path) -> None:
     """`KEY = value` runs a command named KEY in bash; `not-a-name=1` is no variable."""
     (tmp_path / ".env").write_text("SPACED_KEY = spaced value\nnot-a-name=1\nmalformed\nKEPT=1\n")
-    assert supervisor.read_workspace_env(tmp_path) == {"KEPT": "1"}
+    assert envfile.read(tmp_path) == {"KEPT": "1"}
 
 
 def test_a_missing_file_reads_as_nothing(tmp_path: Path) -> None:
-    assert supervisor.read_workspace_env(tmp_path) == {}
+    assert envfile.read(tmp_path) == {}
+
+
+def test_the_reader_defaults_to_the_workspace_root(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    (tmp_path / ".env").write_text(
+        "# comment\n"
+        "\n"
+        "LABELSTUDIO_TOKEN=abc123\n"
+        "SPACED_KEY = spaced value\n"  # bash runs a command named SPACED_KEY: no assignment
+        "malformed-line-without-equals\n"
+        "DATA_ROOT=/data/gert\n"
+    )
+    monkeypatch.setattr(locations, "workspace_root", lambda: tmp_path)
+    assert envfile.read() == {"LABELSTUDIO_TOKEN": "abc123", "DATA_ROOT": "/data/gert"}
+
+
+def test_a_missing_file_at_the_workspace_root_reads_as_nothing(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(locations, "workspace_root", lambda: tmp_path)
+    assert envfile.read() == {}
 
 
 @pytest.mark.parametrize("value", ["plain", "a b", "$HOME/x", 'say "hi"', "it's", "", "a#b"])
 def test_what_a_service_writes_reads_back_the_same_in_bash_and_in_aisland(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, value: str
 ) -> None:
-    """A service publishes what it decided (`write_workspace_env`); bash and the reader both get it back verbatim."""
-    monkeypatch.setattr(supervisor, "_workspace_root", lambda: tmp_path)
+    """A service publishes what it decided (`envfile.write`); bash and the reader both get it back verbatim."""
+    monkeypatch.setattr(locations, "workspace_root", lambda: tmp_path)
     (tmp_path / ".env").write_text("# mine\nOTHER=1\n")
-    supervisor.write_workspace_env({"PUBLISHED": value})
+    envfile.write({"PUBLISHED": value})
     assert _bash(tmp_path / ".env", {"PUBLISHED": value}) == {"PUBLISHED": value}
-    assert supervisor.read_workspace_env(tmp_path)["PUBLISHED"] == value
+    assert envfile.read(tmp_path)["PUBLISHED"] == value
     assert (tmp_path / ".env").read_text().startswith("# mine\nOTHER=1\n")
 
 

@@ -12,10 +12,10 @@ from pathlib import Path
 import pytest
 from click.testing import CliRunner
 
-from aisland import completion as comp
 from aisland.cli import main
 from aisland.cli import toplevel as cli_toplevel
-from aisland.projects import get_workspace_name
+from aisland.setup import completion as comp
+from aisland.workspace.projects import get_workspace_name
 
 LIQUIFAI_APPS = ["matrainer", "sonair"]
 
@@ -253,7 +253,7 @@ def test_the_generated_file_carries_its_provenance(rc: Path, all_present: None) 
     text = rc.read_text()
 
     assert "AUTO-GENERATED" in text
-    assert "aisland.completion" in text
+    assert "aisland.setup.completion" in text
     assert f"To regenerate:  {comp.REGENERATE_COMMAND}" in text
 
 
@@ -419,4 +419,4 @@ def test_the_file_names_no_workspace_project(rc: Path, all_present: None) -> Non
     assert name == "aisland" or name not in block.lower()
     assert "# >>> aisland completion for non-liquifai CLIs >>>" in text
     assert "# <<< aisland completion for non-liquifai CLIs <<<" in text
-    assert "# Source template: aisland.completion (_render_non_liquifai)" in text
+    assert "# Source template: aisland.setup.completion (_render_non_liquifai)" in text

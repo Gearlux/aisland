@@ -1,4 +1,4 @@
-"""Tests for per-project dependency sources (`aisland workspace configure source`, aisland/sources.py).
+"""Tests for per-project dependency sources (`aisland workspace configure source`, aisland/workspace/sources.py).
 
 Covers the four things a source change has to keep consistent:
 - the source model (local / github / pypi) + its two configuration layers (committed file,
@@ -21,11 +21,12 @@ from typing import Any, Callable, Dict, List, Optional, Set
 import click
 import pytest
 
-from aisland import ci_scaffold, gitcmd, locations, pypi
-from aisland import sources as s
+from aisland import gitcmd, locations, pypi
+from aisland.ci import ci_scaffold
 from aisland.errors import AislandError
 from aisland.services.jenkins import JenkinsService
 from aisland.workspace import file as workspace_file
+from aisland.workspace import sources as s
 
 # --- the model ----------------------------------------------------------------------------
 
@@ -324,9 +325,20 @@ class TestApplySource:
         source = s.ProjectSource(kind="local", ref="dev/main")
         assert s.apply_source(tmp_path, "loggair", source, "/venv/bin/uv") is True
         flat = recorder.flat()
-        assert flat[0] == "git submodule update --init loggair"
+        assert flat[0] == (
+            "git -c http.lowSpeedLimit=1 -c http.lowSpeedTime=60 submodule update --init -- loggair"
+        ), "the clone gives up on a remote that stops sending"
         assert "git switch dev/main" in flat
         assert flat[-1] == f"/venv/bin/uv pip install -e {tmp_path / 'loggair'}"
+
+    def test_a_branch_that_reads_as_an_option_is_refused_before_any_switch(
+        self, tmp_path: Path, recorder: _Recorder, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        """`branch` comes from workspace.toml, another person's file: `--orphan=x` must never reach `git switch`."""
+        source = s.ProjectSource(kind="local", ref="--orphan=x")
+        assert s.apply_source(tmp_path, "loggair", source, "/venv/bin/uv") is False
+        assert not any("switch" in c for c in recorder.flat())
+        assert "'--orphan=x' is no branch name" in capsys.readouterr().err
 
     def test_git_skips_init_when_already_checked_out(self, tmp_path: Path, recorder: _Recorder) -> None:
         (tmp_path / "loggair").mkdir()
@@ -532,7 +544,7 @@ def ci_workspace(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
 
     monkeypatch.setattr(locations, "workspace_root", lambda: tmp_path)
     # Keep the scaffolder off the network: `gh api` would otherwise decide the token step.
-    monkeypatch.setattr("aisland.ci_scaffold.is_private_repo", lambda repository: False)
+    monkeypatch.setattr("aisland.ci.ci_scaffold.is_private_repo", lambda repository: False)
     return tmp_path
 
 
@@ -615,7 +627,7 @@ class TestScaffoldAsksPypiNotTheSource:
         # Detached == the directory is gone, exactly as `apply_source` leaves it.
         shutil.rmtree(ci_workspace / "loggair")
 
-        from aisland.ci_scaffold import discover_github_projects
+        from aisland.ci.ci_scaffold import discover_github_projects
 
         assert "loggair" in discover_github_projects(ci_workspace)
         ci_scaffold.scaffold("confluid", force=True, jenkins_url=JenkinsService().url())
@@ -639,7 +651,7 @@ class TestScaffoldAsksPypiNotTheSource:
         def _unreachable(distribution: str, owner: str) -> bool:
             raise pypi.ReleaseProbeError(distribution, "could not reach PyPI (offline)")
 
-        monkeypatch.setattr("aisland.ci_scaffold.released_on_pypi", _unreachable)
+        monkeypatch.setattr("aisland.ci.ci_scaffold.released_on_pypi", _unreachable)
         with pytest.raises(click.ClickException, match="loggair.*could not reach PyPI"):
             ci_scaffold.scaffold("confluid", force=True, jenkins_url=JenkinsService().url())
         assert not (ci_workspace / "confluid" / ".github" / "workflows" / "ci.yml").exists()
@@ -926,7 +938,7 @@ class TestSetALocalSource:
         (ci_workspace / ".venv" / "bin" / "uv").touch(mode=0o755)
         monkeypatch.setattr(s, "local_override", lambda root, name: None)
         monkeypatch.setattr(s, "set_local_override", lambda *a, **k: None)
-        monkeypatch.setattr("aisland.sources.write_code_workspace", lambda root: None)
+        monkeypatch.setattr("aisland.workspace.sources.write_code_workspace", lambda root: None)
         (ci_workspace / "workspace.toml").write_text('[project."loggair"]\nurl = "u"\nbranch = "dev/main"\n')
         return ci_workspace
 

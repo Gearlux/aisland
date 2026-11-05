@@ -39,7 +39,7 @@ import pytest
 from packaging.requirements import Requirement
 from packaging.version import Version
 
-from aisland.projects import discover_projects, get_project_metadata, get_workspace_root
+from aisland.workspace.projects import discover_projects, get_project_metadata, get_workspace_root
 
 
 class Violation(NamedTuple):

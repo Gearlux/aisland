@@ -1,7 +1,7 @@
 """Whether the pytest plugin records a project's runs: ``aisland workspace test-stats on|off [PROJECT…] [--machine-only]``.
 
 The plugin (:mod:`aisland.pytest_stats`) records every run of a workspace project for ``aisland tests report``; this
-switch turns that off. Two layers, as ``aisland workspace track set|unset`` (:mod:`aisland.tracking`):
+switch turns that off. Two layers, as ``aisland workspace track set|unset`` (:mod:`aisland.workspace.tracking`):
 
 * committed — the project's ``test-stats = false`` in ``workspace.toml``, and with no project named the workspace's
   ``[workspace] test-stats = false``, which every project without a ``test-stats`` of its own follows, those added

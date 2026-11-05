@@ -15,8 +15,9 @@ from typing import Any, Dict, List, Optional
 import pytest
 from click.testing import CliRunner, Result
 
-from aisland import cli, configure, locations
-from aisland import sources as s
+from aisland import cli, locations
+from aisland.workspace import configure
+from aisland.workspace import sources as s
 
 
 def _run(*args: str) -> Result:

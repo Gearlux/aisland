@@ -1,6 +1,6 @@
 """The morning report of the local Jenkins' nightly runs — what failed, written down, and a notification.
 
-Root AGENTS.md "Two Test Runs" (user ruling 2026-10-06): the local orchestrator (`<workspace>.local`) builds every
+The workspace's two test runs: the local orchestrator (`<workspace>.local`) builds every
 project at 01:00 with its slow tests; a manual build runs the fast tests only. A night's failure must not wait for
 somebody to open Jenkins, so the `<workspace>.nightly-check` job runs `aisland tests nightly` each weekday at 09:30
 (`NIGHTLY_CHECK_CRON`): it reads every timer run of the orchestrator since the previous report from the Jenkins API,
@@ -28,9 +28,9 @@ from typing import Any, Dict, List, Optional, Protocol, Tuple
 
 from aisland import paths
 from aisland.errors import AislandError
-from aisland.projects import get_workspace_name
 from aisland.services.jenkins import JenkinsService
 from aisland.services.jenkins_jobs import NIGHTLY_CRON
+from aisland.workspace.projects import get_workspace_name
 
 
 def report_dir() -> Path:

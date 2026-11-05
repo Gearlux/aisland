@@ -1,7 +1,7 @@
 """The system tools a workspace needs: ``aisland workspace provision [install]``, and the step of ``aisland setup``.
 
 A project declares the tools it needs from outside Python in its own ``pyproject.toml``, read by
-:mod:`aisland.discovery` (which refuses a declaration it cannot use, naming the file and the line)::
+:mod:`aisland.workspace.discovery` (which refuses a declaration it cannot use, naming the file and the line)::
 
     [tool.aisland.sys-dependencies]
     brew = ["node"]          # macOS, installed through Homebrew
@@ -22,21 +22,22 @@ one — or on a "no" — the command refuses with the line that installs it, hav
 from __future__ import annotations
 
 import platform
-import subprocess
 import sys
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Dict, List, Optional, Set, Tuple
 
-from aisland import console, discovery, installers, paths
-from aisland.discovery import ToolKind
+from aisland import console, paths, probe
 from aisland.errors import AislandError
-from aisland.installers import USERSPACE_TOOLS
+from aisland.setup import installers
+from aisland.setup.installers import USERSPACE_TOOLS
+from aisland.workspace import discovery
+from aisland.workspace.discovery import ToolKind
 
 #: aisland's own tools, by how they are installed:
 #:
 #: - ``f1bonacc1/tap/process-compose``: the service supervisor (``aisland/supervisor.py``), tap-qualified because
-#:   homebrew-core has no process-compose formula; Linux gets it from :data:`aisland.installers.USERSPACE_TOOLS`.
+#:   homebrew-core has no process-compose formula; Linux gets it from :data:`aisland.setup.installers.USERSPACE_TOOLS`.
 #: - ``docker`` and ``colima``: the container engine the Docker-run services use; ``act``: running GitHub's CI locally;
 #:   ``swiftbar``: the menu-bar status of the services.
 #: - No ``openjdk``: that formula follows the newest Java, which Jenkins refuses — the Java the Jenkins WAR names is
@@ -80,7 +81,7 @@ def tools(root: Path, aislands_own: bool = True) -> List[Tool]:
     """The tools this machine needs, by name — aisland's own (unless ``aislands_own`` is False) and every
     checked-out project's, each once.
 
-    Raises :class:`aisland.discovery.DeclarationError` for a declaration aisland cannot use."""
+    Raises :class:`aisland.workspace.discovery.DeclarationError` for a declaration aisland cannot use."""
     kind = this_platform()
     if kind is None:
         return []
@@ -95,9 +96,8 @@ def _brew_installed() -> Set[str]:
     """The formulae and casks Homebrew has installed (empty without Homebrew)."""
     names: Set[str] = set()
     for kind in ("--formula", "--cask"):
-        try:
-            listed = subprocess.run(["brew", "list", kind, "-1"], capture_output=True, text=True)
-        except FileNotFoundError:
+        listed = probe.run(["brew", "list", kind, "-1"])
+        if listed is None:
             return set()
         names.update(listed.stdout.split())
     return names

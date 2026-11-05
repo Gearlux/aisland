@@ -3,7 +3,7 @@
 Some workspaces have no root repository to share — each project is its own repository, and the root only holds them
 together. Submodules still need a superproject, so ``init --local`` makes one that stays out of the way: its
 ``.gitignore`` ignores everything (``/*``), so only ``.gitmodules`` and the submodules are tracked. Whether the root
-records the projects' commits is a choice of its own (:mod:`aisland.tracking`, ``init --untracked``).
+records the projects' commits is a choice of its own (:mod:`aisland.workspace.tracking`, ``init --untracked``).
 
 The workspace is marked in this machine's ``.git/config`` (``aisland.workspace.local``) — the root is no repository
 anyone shares. :func:`settle` keeps a marked workspace committed after ``.gitmodules`` changes or a project is added,
@@ -17,7 +17,8 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Dict, List, Optional
 
-from aisland import gitcmd, gitmodules, machine_config
+from aisland import gitcmd, machine_config
+from aisland.workspace import gitmodules
 
 #: This machine's mark of a local workspace, in the root's ``.git/config``.
 MARKER = "aisland.workspace.local"

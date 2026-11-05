@@ -14,7 +14,8 @@ from typing import Any, List
 
 import pytest
 
-from aisland import nightly, paths
+from aisland import paths
+from aisland.ci import nightly
 from aisland.services import jenkins
 from aisland.services.jenkins import JenkinsService
 

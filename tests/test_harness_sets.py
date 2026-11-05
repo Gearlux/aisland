@@ -215,6 +215,26 @@ def test_a_url_that_looks_like_an_option_is_read_as_a_repository(root: Path) -> 
     assert not (harness.clones_dir() / "team").exists()
 
 
+@pytest.mark.parametrize("entry", ['name = ".."', 'name = "../../.."', 'name = "/"', 'name = "a/b"'])
+def test_a_git_set_name_that_is_no_plain_folder_name_is_refused_before_anything_is_removed(
+    root: Path, entry: str
+) -> None:
+    """The name is the clone's folder under aisland's state: `..` would make setup remove the state folder itself,
+    `/` the disk. It is refused before any folder is touched or any clone begins."""
+    keep = harness.clones_dir().parent / "jenkins" / "config.xml"
+    _write(keep, "<jenkins/>\n")
+    _sets(root, f'[{{ git = "/nowhere/team.git", ref = "v1", {entry} }}]')
+    with pytest.raises(harness.HarnessError, match="cannot name a harness set"):
+        harness.install_harness(root, link=False)
+    assert keep.is_file()
+
+
+def test_a_url_whose_last_part_is_no_plain_name_is_refused(root: Path) -> None:
+    _sets(root, '[{ git = "https://example.com/team/..", ref = "v1" }]')
+    with pytest.raises(harness.HarnessError, match=r"'\.\.' cannot name a harness set"):
+        harness.install_harness(root, link=False)
+
+
 def test_a_ref_the_repository_lacks_is_refused(root: Path, tmp_path: Path) -> None:
     url = _remote(tmp_path, {"AGENTS.md": "# rules\n"}, "v1")
     _sets(root, f'[{{ git = "{url}", ref = "v9", name = "team" }}]')
@@ -282,6 +302,8 @@ def test_two_sets_of_one_name_are_refused(root: Path) -> None:
         ('commands = "commands/*.md"\n', r"harness\.toml:1: commands must be a list of patterns"),
         ('[files]\n"x.md" = "../outside.md"\n', r"harness\.toml:2: '\.\./outside\.md' is no place in the workspace"),
         ('[files]\n"x.md" = ".agents/rules.md"\n', r"harness\.toml:2: '\.agents/rules\.md' is no place"),
+        ('[files]\n"x.md" = ".GIT/hooks/pre-commit"\n', r"harness\.toml:2: '\.GIT/hooks/pre-commit' is no place"),
+        ('[files]\n"x.md" = "sub/.git/config"\n', r"harness\.toml:2: 'sub/\.git/config' is no place"),
         (
             'format = 2\nrules = "x.md"\n',
             r"harness\.toml:1: harness\.toml is format 2, written for a newer aisland; this one reads format 1\. "
@@ -295,6 +317,8 @@ def test_two_sets_of_one_name_are_refused(root: Path) -> None:
         "not a list",
         "outside the workspace",
         "aisland's own file",
+        "git's folder in another case",
+        "a project's git folder",
         "a newer format",
         "no whole number",
     ],

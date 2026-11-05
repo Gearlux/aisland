@@ -28,8 +28,11 @@ from aisland import locations
 from aisland.cli import main
 from aisland.wheels import build as w
 from aisland.wheels import check as wheels_check
+from aisland.wheels import export as wheels_export
 from aisland.wheels import files as wheels_files
 from aisland.wheels import install as wi
+from aisland.wheels import projects as wheels_projects
+from aisland.wheels import published
 from aisland.wheels import report as wheels_report
 
 
@@ -147,7 +150,7 @@ _ABSENT: Tuple[str, Any] = ("missing", None)
 
 def _pypi(monkeypatch: pytest.MonkeyPatch, answers: Dict[str, Tuple[str, Any]]) -> None:
     """Answer PyPI's JSON from `answers`; any other name is absent."""
-    monkeypatch.setattr(w, "pypi_json", lambda distribution: answers.get(distribution, _ABSENT))
+    monkeypatch.setattr(published, "pypi_json", lambda distribution: answers.get(distribution, _ABSENT))
 
 
 # --- the workspace's projects and what a project needs -----------------------------------------
@@ -164,8 +167,8 @@ class TestDependencyClosure:
         _project(root, "plug")
         _project(root, "other")
 
-        projects = w.workspace_projects(root)
-        closure = w.dependency_closure(projects, projects["app"])
+        projects = wheels_projects.workspace_projects(root)
+        closure = wheels_projects.dependency_closure(projects, projects["app"])
 
         assert [p.name for p in closure] == ["conf", "lib", "plug"]
 
@@ -176,9 +179,9 @@ class TestDependencyClosure:
         _project(root, "base", extras={"dev": ["base[sig]"], "sig": ["sig"]})
         _project(root, "sig")
 
-        projects = w.workspace_projects(root)
+        projects = wheels_projects.workspace_projects(root)
 
-        assert [p.name for p in w.dependency_closure(projects, projects["app"])] == ["base", "sig"]
+        assert [p.name for p in wheels_projects.dependency_closure(projects, projects["app"])] == ["base", "sig"]
 
     def test_extras_and_markers_never_drop_a_project(self, tmp_path: Path) -> None:
         """The wheels serve another machine, so a platform marker is no reason to leave one out."""
@@ -186,18 +189,18 @@ class TestDependencyClosure:
         _project(root, "app", deps=["winonly ; sys_platform == 'win32'"])
         _project(root, "winonly")
 
-        projects = w.workspace_projects(root)
+        projects = wheels_projects.workspace_projects(root)
 
-        assert [p.name for p in w.dependency_closure(projects, projects["app"])] == ["winonly"]
+        assert [p.name for p in wheels_projects.dependency_closure(projects, projects["app"])] == ["winonly"]
 
     def test_the_project_itself_is_not_in_its_closure(self, tmp_path: Path) -> None:
         root = _workspace(tmp_path, "app", "lib")
         _project(root, "app", deps=["lib"])
         _project(root, "lib", deps=["app"])
 
-        projects = w.workspace_projects(root)
+        projects = wheels_projects.workspace_projects(root)
 
-        assert [p.name for p in w.dependency_closure(projects, projects["app"])] == ["lib"]
+        assert [p.name for p in wheels_projects.dependency_closure(projects, projects["app"])] == ["lib"]
 
     def test_a_distribution_name_unlike_its_folder_is_matched(self, tmp_path: Path) -> None:
         """`acme` the folder is `acme-tools` the distribution; requirements use the latter."""
@@ -205,9 +208,9 @@ class TestDependencyClosure:
         _project(root, "app", deps=["Acme_Tools"])
         _project(root, "acme", name="acme-tools")
 
-        projects = w.workspace_projects(root)
+        projects = wheels_projects.workspace_projects(root)
 
-        assert [p.name for p in w.dependency_closure(projects, projects["app"])] == ["acme"]
+        assert [p.name for p in wheels_projects.dependency_closure(projects, projects["app"])] == ["acme"]
 
     def test_an_empty_folder_is_a_project_without_a_checkout(self, tmp_path: Path) -> None:
         """A detached project keeps its distribution name in workspace.toml; an inactive one, its folder name."""
@@ -215,8 +218,8 @@ class TestDependencyClosure:
         (root / "workspace.toml").write_text('[project."acme"]\nsource = "pypi"\ndistribution = "acme-tools"\n')
         _project(root, "app", deps=["acme-tools", "viewer"])
 
-        projects = w.workspace_projects(root)
-        closure = w.dependency_closure(projects, projects["app"])
+        projects = wheels_projects.workspace_projects(root)
+        closure = wheels_projects.dependency_closure(projects, projects["app"])
 
         assert [(p.name, p.distribution, p.checked_out) for p in closure] == [
             ("acme", "acme-tools", False),
@@ -228,15 +231,15 @@ class TestDependencyClosure:
         _project(root, "app")
         (root / "tools" / "pyproject.toml").write_text("[tool.black]\nline-length = 120\n")
 
-        assert sorted(w.workspace_projects(root)) == ["app"]
+        assert sorted(wheels_projects.workspace_projects(root)) == ["app"]
 
     def test_an_unreadable_requirement_is_named_with_its_project(self, tmp_path: Path) -> None:
         root = _workspace(tmp_path, "app")
         _project(root, "app", deps=["lib >>> 1"])
 
-        projects = w.workspace_projects(root)
+        projects = wheels_projects.workspace_projects(root)
         with pytest.raises(click.ClickException, match=r"app/pyproject.toml: cannot read the requirement 'lib >>> 1'"):
-            w.dependency_closure(projects, projects["app"])
+            wheels_projects.dependency_closure(projects, projects["app"])
 
 
 class TestPypiState:
@@ -244,26 +247,26 @@ class TestPypiState:
 
     def test_a_gearlux_pre_release_is_published(self, monkeypatch: pytest.MonkeyPatch) -> None:
         _pypi(monkeypatch, {"recordstream": _published("0.1.0a2")})
-        assert w.pypi_state("recordstream", "Gearlux")[0] == "published"
+        assert published.pypi_state("recordstream", "Gearlux")[0] == "published"
 
     def test_a_name_nobody_published_is_absent(self, monkeypatch: pytest.MonkeyPatch) -> None:
         _pypi(monkeypatch, {})
-        assert w.pypi_state("torpaido", "Gearlux") == ("absent", None)
+        assert published.pypi_state("torpaido", "Gearlux") == ("absent", None)
 
     def test_a_strangers_package_under_the_same_name_is_foreign(self, monkeypatch: pytest.MonkeyPatch) -> None:
         stranger = ("ok", {"info": {"version": "0.1.3", "project_urls": {"Home": "https://example.com"}}})
         _pypi(monkeypatch, {"purifai": stranger})
-        assert w.pypi_state("purifai", "Gearlux")[0] == "foreign"
+        assert published.pypi_state("purifai", "Gearlux")[0] == "foreign"
 
     def test_a_gearlux_name_whose_every_file_is_yanked_is_absent(self, monkeypatch: pytest.MonkeyPatch) -> None:
         yanked = ("ok", {"info": {"version": "0.1.0", **_GEARLUX}, "releases": {"0.1.0": [{"yanked": True}]}})
         _pypi(monkeypatch, {"liquifai": yanked})
-        assert w.pypi_state("liquifai", "Gearlux")[0] == "absent"
+        assert published.pypi_state("liquifai", "Gearlux")[0] == "absent"
 
     def test_an_unreachable_pypi_stops_naming_the_package(self, monkeypatch: pytest.MonkeyPatch) -> None:
         _pypi(monkeypatch, {"confluid": ("unreachable", "could not reach PyPI (timed out)")})
         with pytest.raises(click.ClickException, match="confluid.*could not reach PyPI"):
-            w.pypi_state("confluid", "Gearlux")
+            published.pypi_state("confluid", "Gearlux")
 
 
 # --- what a wheel holds ----------------------------------------------------------------------
@@ -1168,11 +1171,11 @@ class TestTheRunWithFakedBuilds:
             builds.append(source.name)
             return fake_build(uv, source, out, timestamp)
 
-        def _no_download(url: str, path: Path) -> Path:
+        def _no_download(entry: object, path: Path) -> Path:
             raise AssertionError("an unchecked run downloads nothing from PyPI")
 
         monkeypatch.setattr(w, "build_wheel", _counted)
-        monkeypatch.setattr(w, "_download", _no_download)
+        monkeypatch.setattr(w, "download_wheel", _no_download)
 
         report = w.vendor_wheels(root, "app", check=False)
 
@@ -1752,7 +1755,7 @@ class TestEndToEnd:
     def test_a_folder_without_a_commit_cannot_be_exported(self, tmp_path: Path) -> None:
         (tmp_path / "plain").mkdir()
         with pytest.raises(click.ClickException, match="plain: cannot export its last commit"):
-            w.export_head(tmp_path / "plain", tmp_path / "out")
+            wheels_export.export_head(tmp_path / "plain", tmp_path / "out")
 
     def test_a_failed_build_shows_what_the_build_said(self, tmp_path: Path, offline_uv: Path) -> None:
         broken = tmp_path / "broken"

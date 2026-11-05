@@ -128,7 +128,7 @@ def checkout_workspace_root(package_file: Optional[Path] = None) -> Path:
     if with_git:
         return _said(with_git[-1], "from the checkout: no .gitmodules or TASKS.md above it, the outermost .git")
 
-    # 4. Absolute fallback: <root>/aisland/aisland/manager.py -> <root>.
+    # 4. Absolute fallback: <root>/aisland/aisland/setup/manager.py -> <root>.
     return _said(start.parents[2], "from the checkout: no marker above it, two folders above the package")
 
 

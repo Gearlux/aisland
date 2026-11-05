@@ -4,14 +4,52 @@ on a remote one through it (:mod:`aisland.tunnel.connect`).
 
 import json
 from pathlib import Path
-from typing import Optional, Tuple
+from typing import List, Optional, Tuple
 
 import click
+from click.shell_completion import CompletionItem
 
 from aisland.cli._base import _Group
-from aisland.errors import AislandError
+from aisland.errors import AislandError, quiet_completion
 from aisland.tunnel import connect as tunnel_connect_mod
 from aisland.tunnel import host as tunnel_mod
+from aisland.tunnel import store as tunnel_store
+
+# --- What TAB offers ---
+
+
+@quiet_completion
+def complete_workspace(
+    ctx: Optional[click.Context], param: Optional[click.Parameter], incomplete: str
+) -> List[CompletionItem]:
+    """Shell completion for a workspace argument: the remembered names, with folder and age as help.
+
+    Completion runs inside the user's shell on every TAB, so this answers from the cache only — no
+    workspace needed, no network, and every failure answers "nothing to offer" instead of raising.
+    """
+    items = []
+    for entry in tunnel_store.load_store():
+        if entry.name.startswith(incomplete):
+            detail = " — ".join(part for part in (entry.folder, entry.age()) if part)
+            items.append(CompletionItem(entry.name, help=detail))
+    return items
+
+
+@quiet_completion
+def complete_tunnel(
+    ctx: Optional[click.Context], param: Optional[click.Parameter], incomplete: str
+) -> List[CompletionItem]:
+    """Shell completion for ``connect``: the names of the last list, with id and state as help.
+
+    Like :func:`complete_workspace` it answers from a file only — no network on a TAB — and an
+    unreadable file offers nothing rather than breaking the shell's TAB.
+    """
+    return [
+        CompletionItem(entry.name, help=f"{entry.tunnel_id} — {'online' if entry.online else 'offline'}")
+        for entry in tunnel_connect_mod.cached_tunnels()
+        if entry.name.startswith(incomplete)
+    ]
+
 
 # --- Remote Tunnel ---
 
@@ -114,7 +152,7 @@ def tunnel_start(name: Optional[str], provider: Optional[str], cli: Optional[Pat
 
 
 @tunnel.command(name="open")
-@click.argument("name_or_url", required=False, shell_complete=tunnel_mod.complete_workspace)
+@click.argument("name_or_url", required=False, shell_complete=complete_workspace)
 @click.option(
     "--name",
     default=None,
@@ -158,15 +196,15 @@ def tunnel_list(as_json: bool) -> None:
     Each row is the tunnel name, what was opened there (a folder or a .code-workspace file), how long
     ago, and the address it was learned from. The twenty most recent are kept; `clear` forgets them.
     """
-    entries = tunnel_mod.load_store()
+    entries = tunnel_store.load_store()
     if as_json:
-        click.echo(json.dumps(tunnel_mod.store_payload(entries), indent=2))
+        click.echo(json.dumps(tunnel_store.store_payload(entries), indent=2))
         return
-    click.echo(tunnel_mod.render_store(entries))
+    click.echo(tunnel_store.render_store(entries))
 
 
 @tunnel.command(name="clear")
-@click.argument("names_or_urls", nargs=-1, shell_complete=tunnel_mod.complete_workspace)
+@click.argument("names_or_urls", nargs=-1, shell_complete=complete_workspace)
 @click.option("--all", "clear_all", is_flag=True, help="Forget every remembered workspace.")
 @click.option("--yes", is_flag=True, help="Do not ask before forgetting everything.")
 def tunnel_clear(names_or_urls: Tuple[str, ...], clear_all: bool, yes: bool) -> None:
@@ -176,7 +214,7 @@ def tunnel_clear(names_or_urls: Tuple[str, ...], clear_all: bool, yes: bool) -> 
     forgets what `open` completes on; it never touches a running tunnel (`stop` does that).
     """
     if clear_all:
-        remembered = len(tunnel_mod.load_store())
+        remembered = len(tunnel_store.load_store())
         if not remembered:
             click.echo("No workspace remembered yet.")
             return
@@ -184,23 +222,23 @@ def tunnel_clear(names_or_urls: Tuple[str, ...], clear_all: bool, yes: bool) -> 
         if not yes and not click.confirm(f"Clear all {remembered} remembered workspace{plural}?"):
             click.echo("Kept.")
             return
-        click.echo(f"Cleared {tunnel_mod.forget_all()} workspace{plural}.")
+        click.echo(f"Cleared {tunnel_store.forget_all()} workspace{plural}.")
         return
 
     if not names_or_urls:
         raise click.UsageError("Name a workspace to clear, or pass --all.")
-    cleared, unknown = tunnel_mod.forget(names_or_urls)
+    cleared, unknown = tunnel_store.forget(names_or_urls)
     for name in cleared:
         click.echo(f"Cleared '{name}'.")
     if unknown:
         raise AislandError(
             "Not remembered: " + ", ".join(f"'{name}'" for name in unknown) + " (`aisland tunnel list` shows what is)."
         )
-    click.echo(f"{len(tunnel_mod.load_store())} workspace(s) remembered.")
+    click.echo(f"{len(tunnel_store.load_store())} workspace(s) remembered.")
 
 
 @tunnel.command(name="connect")
-@click.argument("target", required=False, shell_complete=tunnel_connect_mod.complete_tunnel)
+@click.argument("target", required=False, shell_complete=complete_tunnel)
 @click.option(
     "--cwd",
     "folder",

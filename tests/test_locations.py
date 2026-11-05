@@ -16,8 +16,11 @@ from typing import Callable, Dict, Iterator
 import click
 import pytest
 
-from aisland import locations, manager, mcp_config, paths, projects, pytest_stats, sources, supervisor
+from aisland import locations, paths, pytest_stats, supervisor
+from aisland.ci import stats_report
 from aisland.services import jenkins
+from aisland.setup import manager, mcp_config
+from aisland.workspace import projects, sources
 from tests.workspace_layout import needs_workspace
 
 AISLAND_PROJECT = Path(__file__).resolve().parents[1]
@@ -114,7 +117,7 @@ def test_from_a_checkout_the_state_stays_in_aislands_own_folder() -> None:
     assert supervisor.config_file() == AISLAND_PROJECT / "data" / "process-compose.yaml"
     assert pytest_stats.workspace_root() == WORKSPACE
     assert pytest_stats.stats_folder() == AISLAND_PROJECT / "data" / "test-stats"
-    assert pytest_stats.jenkins_jobs_folder() == AISLAND_PROJECT / "data" / "jenkins" / "jobs"
+    assert stats_report.jenkins_jobs_folder() == AISLAND_PROJECT / "data" / "jenkins" / "jobs"
 
 
 def test_jenkins_finds_the_root_the_way_the_rest_of_aisland_does() -> None:
@@ -241,7 +244,7 @@ def locked(tmp_path: Path) -> Iterator[Path]:
 def test_from_a_wheel_a_subfolder_you_may_not_enter_counts_as_no_project(
     locked: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """Importing `aisland.manager` from `/tmp` raised `PermissionError` on `snap-private-tmp/pyproject.toml`."""
+    """Importing `aisland.setup.manager` from `/tmp` raised `PermissionError` on `snap-private-tmp/pyproject.toml`."""
     start = locked.parent
     (start / "alpha").mkdir()
     (start / "alpha" / "pyproject.toml").write_text("")

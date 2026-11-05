@@ -1,15 +1,14 @@
-"""``aisland setup`` adds a clone the workspace does not list as a submodule, by itself (user ruling 2026-10-23).
+"""``aisland setup`` adds a clone the workspace does not list as a submodule, by itself.
 
 In a workspace of submodules, a repository cloned into the workspace folder by hand is invisible: discovery and
 ``workspace.toml`` read ``.gitmodules`` only, so it is neither listed nor installed. Setup finds each such CLONE — a
 direct, non-hidden subfolder that is its own repository (a ``.git`` folder; a submodule's is a file), with an
 ``origin`` and a ``pyproject.toml``, which ``.gitmodules`` does not list and which is no link to another folder
-(:func:`aisland.locations.is_alias`) — and adds it, never asking (user ruling 2026-10-23: "aisland setup MUST take
-care of this automatically"), with
+(:func:`aisland.locations.is_alias`) — and adds it, never asking, with
 ``git submodule add -b <the branch it is on> <its origin> <folder>``. git keeps the clone as it is (its history,
 checkout and uncommitted edits); ``-f`` is passed only in a local root, whose ``.gitignore`` is ``/*``.
 
-The new project is tracked as the workspace says (:mod:`aisland.tracking`): untracked when ``workspace.toml`` has
+The new project is tracked as the workspace says (:mod:`aisland.workspace.tracking`): untracked when ``workspace.toml`` has
 ``[workspace] track = false`` (``init --untracked``, ``aisland workspace track unset``) or this machine untracks every
 project, tracked otherwise. So in such a workspace a clone needs only ``aisland setup``: it becomes a submodule, is
 listed in ``workspace.toml``, untracked, in the editor's workspace file, and committed in a local root. A workspace without ``.gitmodules``
@@ -22,9 +21,10 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import List, Optional
 
-from aisland import gitcmd, locations, tracking
+from aisland import gitcmd, locations
 from aisland.workspace import file as workspace_file
 from aisland.workspace import local as local_workspace
+from aisland.workspace import tracking
 
 
 @dataclass(frozen=True)

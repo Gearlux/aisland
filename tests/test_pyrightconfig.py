@@ -10,8 +10,8 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-from aisland.editor_files import write_pyrightconfig
-from aisland.projects import ProjectMetadata
+from aisland.setup.editor_files import write_pyrightconfig
+from aisland.workspace.projects import ProjectMetadata
 from tests.records import project_metadata
 
 

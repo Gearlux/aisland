@@ -158,7 +158,7 @@ cd "$WORKSPACE_ROOT"
 "$VENV_DIR/bin/aisland" setup -y
 
 # 5. Install shell completion for every workspace CLI.
-# One command, owned by `aisland/aisland/completion.py`. This used to be ~70 lines of inline
+# One command, owned by `aisland/aisland/setup/completion.py`. This used to be ~70 lines of inline
 # shell right here (three CLI families + a stale-block pruner), which meant a completion fix
 # could only reach a machine by re-running this whole provisioning script — so it silently
 # rotted. `aisland completion install` is re-runnable in a second and is unit-tested.

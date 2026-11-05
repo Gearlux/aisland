@@ -17,8 +17,9 @@ from typing import Any, List
 
 import pytest
 
-from aisland import ci_scaffold, locations
-from aisland.ci_scaffold import STAGE_LIMITS, TIMED_OUT_MESSAGE
+from aisland import locations
+from aisland.ci import ci_scaffold
+from aisland.ci.ci_scaffold import STAGE_LIMITS, TIMED_OUT_MESSAGE
 from aisland.services.jenkins import JenkinsService
 
 
@@ -290,7 +291,7 @@ def _scaffold_app(monkeypatch: pytest.MonkeyPatch, tmp_path: Path, projects: dic
 
     _make_gearlux_workspace(tmp_path, projects)
     monkeypatch.setattr(locations, "workspace_root", lambda: tmp_path)
-    monkeypatch.setattr("aisland.ci_scaffold.is_private_repo", lambda repository: False)
+    monkeypatch.setattr("aisland.ci.ci_scaffold.is_private_repo", lambda repository: False)
     ci_scaffold.scaffold("app", force=True, jenkins_url=JenkinsService().url())
     return {
         "Jenkinsfile": (tmp_path / "app" / "Jenkinsfile").read_text(encoding="utf-8"),
@@ -582,13 +583,13 @@ class TestTheWorkflowActionsRunOnNode24:
             },
         )
         monkeypatch.setattr(locations, "workspace_root", lambda: tmp_path)
-        monkeypatch.setattr("aisland.ci_scaffold.is_private_repo", lambda repository: True)
+        monkeypatch.setattr("aisland.ci.ci_scaffold.is_private_repo", lambda repository: True)
         _with_node_tests(tmp_path / "app")
         ci_scaffold.scaffold("app", force=True, jenkins_url=JenkinsService().url())
         return (tmp_path / "app" / ".github" / "workflows" / "ci.yml").read_text(encoding="utf-8")
 
     def test_every_uses_line_comes_from_the_one_table(self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
-        from aisland.ci_scaffold import GH_ACTIONS
+        from aisland.ci.ci_scaffold import GH_ACTIONS
 
         ci = self._every_job(monkeypatch, tmp_path)
         used = {line.split("uses:", 1)[1].strip() for line in ci.splitlines() if "uses:" in line}
@@ -596,7 +597,7 @@ class TestTheWorkflowActionsRunOnNode24:
         assert "slow-tests:" in ci and "node-tests:" in ci and "create-github-app-token" in ci  # every optional path
 
     def test_the_table_names_the_node24_majors(self) -> None:
-        from aisland.ci_scaffold import GH_ACTIONS
+        from aisland.ci.ci_scaffold import GH_ACTIONS
 
         assert GH_ACTIONS == {
             "checkout": "actions/checkout@v7",
@@ -688,7 +689,7 @@ class TestALongStageHasATimeLimit:
         quality gates run tools, not the project's code, and get none, as in Jenkins."""
         import yaml
 
-        from aisland.ci_scaffold import RUNNER_LIMIT_FACTOR, STAGE_LIMITS
+        from aisland.ci.ci_scaffold import RUNNER_LIMIT_FACTOR, STAGE_LIMITS
 
         files = _scaffolded(monkeypatch, tmp_path, _make_pyproject_with_slow_marker_and_node_tests)
         jobs = yaml.safe_load(files["ci.yml"])["jobs"]
@@ -801,7 +802,7 @@ class TestWhichFoldersHoldNodeTests:
             (root / rel).write_text(text, encoding="utf-8")
 
     def test_outside_git_the_folders_are_walked_and_only_a_test_script_counts(self, tmp_path: Path) -> None:
-        from aisland.ci_scaffold import node_test_folders
+        from aisland.ci.ci_scaffold import node_test_folders
 
         self._write(
             tmp_path,
@@ -820,7 +821,7 @@ class TestWhichFoldersHoldNodeTests:
         assert node_test_folders(tmp_path) == [".", "web"]
 
     def test_in_git_an_ignored_folder_is_no_source_and_an_untracked_one_is(self, tmp_path: Path) -> None:
-        from aisland.ci_scaffold import node_test_folders
+        from aisland.ci.ci_scaffold import node_test_folders
 
         subprocess.run(["git", "init", "-q", str(tmp_path)], check=True)
         self._write(
@@ -837,6 +838,6 @@ class TestWhichFoldersHoldNodeTests:
         assert node_test_folders(tmp_path) == ["frontend", "tools"]
 
     def test_a_folder_with_none_has_none(self, tmp_path: Path) -> None:
-        from aisland.ci_scaffold import node_test_folders
+        from aisland.ci.ci_scaffold import node_test_folders
 
         assert node_test_folders(tmp_path) == []

@@ -35,9 +35,9 @@ from typing import Any, Dict, List, Literal, Mapping, Optional, Sequence, Tuple,
 
 from aisland import pyproject as pyproject_toml
 from aisland.errors import AislandError
-from aisland.installers import USERSPACE_TOOLS
-from aisland.projects import workspace_folders
+from aisland.setup.installers import USERSPACE_TOOLS
 from aisland.toml_places import Where, key_line, table_line
+from aisland.workspace.projects import workspace_folders
 
 #: The entry-point group a project's code plugins are declared in.
 ENTRY_POINT_GROUP = "aisland.plugins"
@@ -231,7 +231,7 @@ def _selections(projects: List[_ProjectTable], found: Discovery) -> None:
 
 def _manual_extras(projects: List[_ProjectTable]) -> None:
     """Check each ``[tool.aisland] manual-extras``: a list of the project's own extras, which setup installs only when
-    they are named (:func:`aisland.selection.manual`)."""
+    they are named (:func:`aisland.workspace.selection.manual`)."""
     for project, path, text, data in projects:
         tool = data.get("tool", {}).get("aisland", {})
         if "manual-extras" not in tool:

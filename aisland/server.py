@@ -2,9 +2,9 @@
 
 Installed with the ``[mcp]`` extra (``pip install 'aisland[mcp]'``) and listed in the workspace's ``.mcp.json`` by
 ``aisland setup`` (a ``<pkg>.server:main`` script whose module imports ``mcp.server``). Not navigaitor's: navigaitor
-serves the ML libraries, aisland the workspace it runs in (user ruling 2026-10-21).
+serves the ML libraries, aisland the workspace it runs in.
 
-The tools are a chosen set, never the whole CLI (user choice 2026-10-21):
+The tools are a chosen set, never the whole CLI:
 
 * reading — ``doctor``, ``tests_report``, ``editor_themes``, ``editor_colors``, ``sources``, ``services_status``,
   ``tunnel_list``, ``tunnel_status``, ``track_status``: each the data its command prints with ``--json`` (or would),
@@ -37,13 +37,16 @@ from typing import Callable, Dict, List, Literal, Optional, ParamSpec, TypeVar, 
 
 import click
 
-from aisland import cli, console, doctor, editor, editor_files, pytest_stats
-from aisland import sources as sources_mod
-from aisland import tracking
+from aisland import console, doctor, editor, locations
+from aisland.ci import stats_report
 from aisland.errors import AislandError
-from aisland.projects import get_workspace_root
 from aisland.services import registry as service_registry
+from aisland.setup import editor_files
 from aisland.tunnel import host as tunnel_mod
+from aisland.tunnel import store as tunnel_store
+from aisland.workspace import sources as sources_mod
+from aisland.workspace import tracking
+from aisland.workspace.projects import get_workspace_root
 
 try:
     import mcp.types as mcp_types
@@ -136,20 +139,19 @@ def _run_aisland(args: List[str]) -> "subprocess.CompletedProcess[str]":
 def _service_entry(name: str) -> service_registry.Entry:
     """The workspace's service called ``name``: aisland's, or one a project brings. A name no service has is refused
     in the command's own words (``no service 'x' (the services: …)``)."""
-    return service_registry.chosen(service_registry.entries(get_workspace_root(), reserved=cli.main.commands), [name])[
-        0
-    ]
+    return service_registry.chosen(service_registry.entries(get_workspace_root()), [name])[0]
 
 
 def _service_command(name: str, action: str) -> Dict[str, object]:
-    """Run ``aisland NAME ACTION`` — ``start`` and ``restart`` in the background where the service runs under the
-    supervisor (the container engine and the menu detach by themselves and take no ``--background``)."""
+    """Run ``aisland services ACTION NAME`` — ``start`` and ``restart`` in the background where the service runs under
+    the supervisor (the container engine and the menu detach by themselves and take no ``--background``). Never the
+    ``aisland NAME`` shortcut: a project's service named like an aisland command has none, and the command would run."""
     entry = _service_entry(name)
-    args = [action, "--background"] if action != "stop" and entry.takes_background else [action]
-    result = _run_aisland([name, *args])
+    args = ["services", action, *(["--background"] if action != "stop" and entry.takes_background else []), name]
+    result = _run_aisland(args)
     output = "\n".join(part.strip() for part in (result.stdout, result.stderr) if part.strip())
     if result.returncode != 0:
-        raise ToolRefusal(output or f"aisland {name} {' '.join(args)} exited with {result.returncode}")
+        raise ToolRefusal(output or f"aisland {' '.join(args)} exited with {result.returncode}")
     return {**entry.make().state(), "output": output}
 
 
@@ -163,12 +165,12 @@ def tool_doctor() -> Dict[str, object]:
     return {"ok": all(r.ok for r in results), "python": sys.executable, "checks": [asdict(r) for r in results]}
 
 
-def tool_tests_report(project: str, days: int = pytest_stats.DEFAULT_WINDOW_DAYS) -> Dict[str, object]:
+def tool_tests_report(project: str, days: int = stats_report.DEFAULT_WINDOW_DAYS) -> Dict[str, object]:
     """A project's test runs over the last `days` days (`aisland tests report PROJECT --json`): its fast run
     against the 5-minute budget, the slowest tests, the tests that failed, and what to move between the runs."""
-    if not (pytest_stats.workspace_root() / project / "pyproject.toml").is_file():
-        raise ToolRefusal(f"no project {project!r} in the workspace {pytest_stats.workspace_root()}")
-    report: Dict[str, object] = pytest_stats.build_report(project, days=days).to_dict()
+    if not (locations.workspace_root() / project / "pyproject.toml").is_file():
+        raise ToolRefusal(f"no project {project!r} in the workspace {locations.workspace_root()}")
+    report: Dict[str, object] = stats_report.build_report(project, days=days).to_dict()
     return report
 
 
@@ -238,13 +240,13 @@ def tool_services_status() -> Dict[str, object]:
     """Every service of the workspace — aisland's and the ones its projects bring — with its state (`running`,
     `stopped`, `not installed`, `not supported`, `unknown`), PID, ports and readiness (`aisland services status
     --json`)."""
-    entries = service_registry.entries(get_workspace_root(), reserved=cli.main.commands)
+    entries = service_registry.entries(get_workspace_root())
     return {"services": service_registry.states(entries, ())}
 
 
 def tool_tunnel_list() -> Dict[str, object]:
     """The workspaces opened through `aisland tunnel`, newest first (`aisland tunnel list --json`)."""
-    return {"workspaces": tunnel_mod.store_payload(tunnel_mod.load_store())}
+    return {"workspaces": tunnel_store.store_payload(tunnel_store.load_store())}
 
 
 def tool_tunnel_status() -> Dict[str, object]:

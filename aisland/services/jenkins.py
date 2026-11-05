@@ -1,7 +1,7 @@
 """The local Jenkins service: its WAR, the Java it runs on, its plugins, its credentials, starting and stopping it.
 
 The jobs aisland seeds into it are :mod:`aisland.services.jenkins_jobs`; the CI files those jobs run are
-:mod:`aisland.ci_scaffold`'s.
+:mod:`aisland.ci.ci_scaffold`'s.
 """
 
 import base64
@@ -16,13 +16,14 @@ from typing import Set
 
 import click
 
-from aisland import console, failures, paths, provision
+from aisland import console, failures, paths
 from aisland.downloads import download, sha256
 from aisland.errors import AislandError
-from aisland.installers import install_brew_packages
-from aisland.projects import get_workspace_root
 from aisland.services.base import BaseService
 from aisland.services.jenkins_java import JenkinsJava, choose_java, find_runtimes, newest_versioned_formula
+from aisland.setup import provision
+from aisland.setup.installers import install_brew_packages
+from aisland.workspace.projects import get_workspace_root
 
 logger = logging.getLogger(__name__)
 

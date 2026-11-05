@@ -8,7 +8,8 @@ from pathlib import Path
 
 import pytest
 
-from aisland import locations, projects
+from aisland import locations
+from aisland.workspace import projects
 from tests.conftest import RealWorkspaceReached
 from tests.workspace_layout import needs_workspace
 

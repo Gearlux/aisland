@@ -18,11 +18,12 @@ import pytest
 from click.testing import CliRunner
 
 import aisland
-from aisland import failures, locations, manager, paths, supervisor
+from aisland import failures, locations, paths, supervisor
 from aisland.cli import main
 from aisland.errors import AislandError
-from aisland.projects import get_project_metadata
 from aisland.services import base
+from aisland.setup import manager
+from aisland.workspace.projects import get_project_metadata
 
 
 @pytest.fixture(autouse=True)
@@ -88,8 +89,10 @@ def test_the_next_command_starts_with_no_failure(monkeypatch: pytest.MonkeyPatch
 
 
 def test_every_exception_aisland_defines_is_an_aisland_error_and_the_builtin_it_stands_for() -> None:
-    from aisland import discovery, editor, nightly, pypi, server
+    from aisland import editor, pypi, server
+    from aisland.ci import nightly
     from aisland.wheels import prune as wheels_prune
+    from aisland.workspace import discovery
     from aisland.workspace import file as workspace_file
 
     assert issubclass(discovery.DeclarationError, (AislandError, ValueError))

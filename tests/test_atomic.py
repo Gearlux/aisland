@@ -13,7 +13,7 @@ from unittest.mock import patch
 
 import pytest
 
-from aisland import atomic, locations, supervisor
+from aisland import atomic, envfile, locations
 
 
 def _mode(path: Path) -> int:
@@ -53,6 +53,6 @@ def test_a_link_stays_a_link_and_its_target_is_written(tmp_path: Path) -> None:
 
 def test_a_new_env_is_readable_by_its_owner_alone(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(locations, "workspace_root", lambda: tmp_path)
-    env = supervisor.write_workspace_env({"TOKEN": "secret"})
+    env = envfile.write({"TOKEN": "secret"})
     assert env.read_text() == "TOKEN=secret\n"
     assert _mode(env) == 0o600

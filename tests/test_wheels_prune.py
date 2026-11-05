@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import json
 import os
+import shlex
 import subprocess
 from dataclasses import dataclass
 from pathlib import Path
@@ -612,3 +613,11 @@ def test_a_refusal_is_one_error_line_and_exit_1(setup: Setup, monkeypatch: pytes
     result = CliRunner().invoke(main, ["wheels", "prune", "models", "--apply"])
     assert result.exit_code == 1
     assert result.output.startswith("Error: models has changes no commit holds: M code.py")
+
+
+def test_the_commands_printed_to_put_a_clone_back_survive_a_path_with_spaces(tmp_path: Path) -> None:
+    """They are pasted at the worst moment: a folder such as `~/My Work/models` must stay one word."""
+    repo, bundle = tmp_path / "My Work" / "models", tmp_path / "My Work" / "models.bundle"
+    restore = shlex.split(wp._restore_command(repo, bundle))
+    assert restore[:4] == ["git", "-C", str(repo), "fetch"] and str(bundle) in restore
+    assert shlex.split(wp._put_back_command(repo))[:3] == ["git", "-C", str(repo)]

@@ -18,8 +18,10 @@ from typing import List, Optional
 
 import pytest
 
-from aisland import __version__, editor_files, locations, manager, projects
+from aisland import __version__, locations
+from aisland.setup import editor_files, manager
 from aisland.workspace import file as workspace_file
+from aisland.workspace import projects
 
 _AUTHOR = {"GIT_AUTHOR_NAME": "t", "GIT_AUTHOR_EMAIL": "t@t", "GIT_COMMITTER_NAME": "t", "GIT_COMMITTER_EMAIL": "t@t"}
 
@@ -340,7 +342,9 @@ def test_setup_keeps_the_file_current(tmp_path: Path, monkeypatch: pytest.Monkey
         return ["workspace.toml: added x"]
 
     monkeypatch.setattr(workspace_file, "refresh", refresh)
-    monkeypatch.setattr("aisland.provision.install", lambda root, aislands_own=True: (_ for _ in ()).throw(_Stop()))
+    monkeypatch.setattr(
+        "aisland.setup.provision.install", lambda root, aislands_own=True: (_ for _ in ()).throw(_Stop())
+    )
     with pytest.raises(_Stop):
         manager.setup_workspace(non_interactive=True)
     assert seen == ["refresh"]

@@ -19,10 +19,11 @@ from typing import Dict, Iterator, List, Set, Tuple
 import click
 import pytest
 
-from aisland import ci_templates
+from aisland.ci import ci_templates
 from aisland.cli import main
 from aisland.services import registry
 from aisland.wheels import unzip as wheels_unzip
+from tests.private_names import PRIVATE, words_named
 
 PROJECT = Path(__file__).resolve().parents[1]
 README = PROJECT / "README.md"
@@ -30,10 +31,10 @@ DOCS = PROJECT / "docs"
 EXAMPLES = PROJECT / "examples"
 REPOSITORY = "https://github.com/Gearlux/aisland/blob/main/"
 
-#: The projects of the workspace aisland is developed in, and the company names a published page never carries.
-#: liquifai and loggair are not here: aisland drives them by name (completion, the editor's log folder).
+#: The projects of the workspace aisland is developed in, which a published page never names; the private names and
+#: the company's are checked too, as digests (:data:`tests.private_names.PRIVATE`). liquifai and loggair are not
+#: here: aisland drives them by name (completion, the editor's log folder).
 WORKSPACE_NAMES = (
-    "acme",
     "navigaitor",
     "sonair",
     "recordstream",
@@ -50,8 +51,6 @@ WORKSPACE_NAMES = (
     "traidwind",
     "chainwind",
     "hydraide",
-    "vendorcli",
-    "company",
 )
 README_MAX_LINES = 250
 
@@ -178,15 +177,13 @@ def test_every_link_of_the_architecture_contents_lands_on_its_own_heading() -> N
     assert wrong == []
 
 
-_WORKSPACE_NAME = re.compile(r"\b(" + "|".join(WORKSPACE_NAMES) + r")\b", re.IGNORECASE)
+#: A name not preceded by a letter or digit: `_labels_completion`, `planner_bundle-1.0.whl` and `datasets's` are
+#: caught too (``\b`` stops at none of `_`, `-` or a plural `s`).
+_WORKSPACE_NAME = re.compile(r"(?<![a-z0-9])(" + "|".join(WORKSPACE_NAMES) + r")", re.IGNORECASE)
 
-#: The user's choice (2026-10-29): the example of a project's service. The one place a page names a project of the
-#: workspace, and only inside this link.
-SERVICES_EXAMPLE_LINK = (
-    "[matrainer's MLflow, Aim and ClearML servers]"
-    "(https://github.com/Gearlux/matrainer/blob/main/docs/backends.md"
-    "#the-tracking-servers-as-workspace-services-matrainerservices)"
-)
+
+def _names_a_project(line: str) -> bool:
+    return bool(_WORKSPACE_NAME.search(line) or words_named(line, PRIVATE))
 
 
 def _commands(group: click.Group, path: Tuple[str, ...] = ("aisland",)) -> Iterator[Tuple[str, click.Command]]:
@@ -202,14 +199,10 @@ def _commands(group: click.Group, path: Tuple[str, ...] = ("aisland",)) -> Itera
 @pytest.mark.parametrize("page", [README, *_user_pages(), DOCS / "architecture.md"], ids=lambda page: page.name)
 def test_a_user_page_names_no_project_of_the_workspace(page: Path) -> None:
     """The decision log too: it is published with the docs, and names a project it measured on by its role."""
-    pattern = _WORKSPACE_NAME
-    text = page.read_text(encoding="utf-8")
-    if page.name == "services.md":
-        text = text.replace(SERVICES_EXAMPLE_LINK, "")
     hits = [
         f"{page.name}:{number}: {line.strip()}"
-        for number, line in enumerate(text.splitlines(), start=1)
-        if pattern.search(line)
+        for number, line in enumerate(page.read_text(encoding="utf-8").splitlines(), start=1)
+        if _names_a_project(line)
     ]
     assert hits == []
 
@@ -225,7 +218,7 @@ def test_the_changelog_and_the_examples_name_no_project_of_the_workspace(page: P
     hits = [
         f"{page.name}:{number}: {line.strip()}"
         for number, line in enumerate(page.read_text(encoding="utf-8").splitlines(), start=1)
-        if _WORKSPACE_NAME.search(line)
+        if _names_a_project(line)
     ]
     assert hits == []
 
@@ -244,7 +237,7 @@ def test_a_commands_help_names_no_project_of_the_workspace(
     """
     monkeypatch.setattr(registry, "declared", lambda root, reserved=(): [])
     text = command.get_help(click.Context(command, info_name=words))
-    hits = [line.strip() for line in text.splitlines() if _WORKSPACE_NAME.search(line)]
+    hits = [line.strip() for line in text.splitlines() if _names_a_project(line)]
     assert hits == []
 
 
@@ -275,7 +268,7 @@ def test_every_fact_a_ci_template_reads_is_on_the_pages(page: str) -> None:
 
 def test_the_wheel_zips_usage_names_no_project_of_the_workspace() -> None:
     """The zip's ``__main__.py`` travels to machines without the workspace; its usage text says ``myproject``."""
-    hits = [line.strip() for line in (wheels_unzip.__doc__ or "").splitlines() if _WORKSPACE_NAME.search(line)]
+    hits = [line.strip() for line in (wheels_unzip.__doc__ or "").splitlines() if _names_a_project(line)]
     assert hits == []
 
 

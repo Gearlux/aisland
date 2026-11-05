@@ -89,3 +89,13 @@ def test_a_config_without_the_setting_is_left_as_it_is(tmp_path: Path, capsys: p
     jenkins_jobs.allow_anonymous_read(tmp_path)
     assert (tmp_path / "config.xml").read_text() == text
     assert "left as it is" in capsys.readouterr().out
+
+
+def test_a_remote_url_reaches_the_job_xml_escaped_and_is_printed_without_its_token() -> None:
+    """A url from a `.gitmodules` is another person's text: an `&` must not break (or change) the job, and a token
+    in it must not reach scrollback, CI logs or an AI client."""
+    url = "https://user:ghp_secret@example.com/acme/models.git?a=1&b=<2>"
+    xml = jenkins_jobs._multibranch_config("models", url, "github-token")
+    assert ET.fromstring(xml).find(".//remote").text == url  # type: ignore[union-attr]
+    assert jenkins_jobs._without_userinfo(url) == "https://example.com/acme/models.git?a=1&b=<2>"
+    assert jenkins_jobs._without_userinfo("git@github.com:acme/models.git") == "git@github.com:acme/models.git"

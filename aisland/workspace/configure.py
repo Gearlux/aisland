@@ -10,7 +10,7 @@ A plugin declares its keys and three functions; the commands are built from them
 so a plugin writes no command of its own. A plugin's settings live in ``workspace.toml`` (committed) and in
 ``.git/config`` as ``aisland.<plugin>.<project>.<key>`` (this machine); the plugin's functions read and write them.
 
-A SELECTION (:mod:`aisland.selection`: aisland's ``extras`` and each one a project declares) is a plugin too, of the
+A SELECTION (:mod:`aisland.workspace.selection`: aisland's ``extras`` and each one a project declares) is a plugin too, of the
 whole workspace rather than of a project — ``set NAME… [--machine-only]`` and ``unset [NAME…] [--machine-only]``,
 committed as ``[workspace] <selection>`` and chosen here as ``aisland.<selection>.selected``.
 """
@@ -21,7 +21,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Callable, Dict, List, Optional, Tuple, Union
 
-from aisland import activation, mirrors, selection, sources
+from aisland.workspace import activation, mirrors, selection, sources
 
 
 @dataclass(frozen=True)
@@ -72,7 +72,7 @@ def table(rows: List[Dict[str, str]]) -> List[str]:
 
 @dataclass(frozen=True)
 class SelectionPlugin:
-    """A selection of :mod:`aisland.selection` as a plugin: one list of names for the whole workspace."""
+    """A selection of :mod:`aisland.workspace.selection` as a plugin: one list of names for the whole workspace."""
 
     axis: selection.Axis
 
@@ -93,7 +93,7 @@ AnyPlugin = Union[Plugin, SelectionPlugin]
 
 def plugins(root: Optional[Path]) -> Dict[str, AnyPlugin]:
     """Every plugin: the built-ins of :data:`PLUGINS`, and — in a workspace — each selection. Raises
-    :class:`aisland.discovery.DeclarationError` for a selection declared in a way aisland cannot use."""
+    :class:`aisland.workspace.discovery.DeclarationError` for a selection declared in a way aisland cannot use."""
     found: Dict[str, AnyPlugin] = dict(PLUGINS)
     if root is not None:
         found.update({axis.name: SelectionPlugin(axis) for axis in selection.axes(root)})

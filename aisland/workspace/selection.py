@@ -2,7 +2,7 @@
 
 A project keeps its core minimal and puts optional capabilities behind extras; a SELECTION decides which of them a
 machine installs. The projects declare the selections in their own ``pyproject.toml`` (read by
-:mod:`aisland.discovery`, so aisland names none of them): the project whose table has ``question`` DEFINES the
+:mod:`aisland.workspace.discovery`, so aisland names none of them): the project whose table has ``question`` DEFINES the
 selection, and every project's ``choices`` are its MENU, each an extra of its own::
 
     [tool.aisland.selection.framework]          # the project that asks
@@ -38,12 +38,13 @@ from typing import Dict, List, Optional, Sequence, Set, Tuple
 
 from packaging.requirements import InvalidRequirement, Requirement
 
-from aisland import console, discovery, failures, machine_config
+from aisland import console, failures, machine_config
 from aisland import pyproject as pyproject_toml
 from aisland.errors import AislandError
-from aisland.installers import ensure_uv_in_venv
-from aisland.projects import discover_projects, get_install_order, get_project_metadata
+from aisland.setup.installers import ensure_uv_in_venv
+from aisland.workspace import discovery
 from aisland.workspace import file as workspace_file
+from aisland.workspace.projects import discover_projects, get_install_order, get_project_metadata
 
 logger = logging.getLogger(__name__)
 
@@ -75,7 +76,7 @@ EXTRAS = Axis(
 def axes(root: Path) -> Tuple[Axis, ...]:
     """Every selection of the workspace: :data:`EXTRAS`, then each one a project defines, in discovery order.
 
-    Raises :class:`aisland.discovery.DeclarationError`, naming the file and the line, for a declaration it cannot
+    Raises :class:`aisland.workspace.discovery.DeclarationError`, naming the file and the line, for a declaration it cannot
     use (a choice that is no extra, a question asked twice)."""
 
     found = discovery.discover(root)
@@ -101,7 +102,7 @@ def declared(pyproject_path: Path, axis: Axis) -> List[str]:
 def declarations(root: Path, axis: Axis) -> Dict[str, List[str]]:
     """``{project: its choices}`` for every project offering any for ``axis``.
 
-    Through :func:`aisland.projects.discover_projects`, so a project with an empty folder (a ``pypi`` source) drops
+    Through :func:`aisland.workspace.projects.discover_projects`, so a project with an empty folder (a ``pypi`` source) drops
     out on its own."""
 
     out: Dict[str, List[str]] = {}
@@ -120,7 +121,7 @@ def available(root: Path, axis: Axis) -> List[str]:
 def manual(root: Path, axis: Axis) -> Set[str]:
     """The choices of ``axis`` installed only when they are named: a blank answer, ``-y`` and ``--all`` leave them out.
 
-    A project marks them in ``[tool.aisland] manual-extras`` (checked by :mod:`aisland.discovery`) — an extra no
+    A project marks them in ``[tool.aisland] manual-extras`` (checked by :mod:`aisland.workspace.discovery`) — an extra no
     machine should get by default, such as one pinning a dependency to a remote branch that would replace a local
     checkout of it. One project marking a name is enough: a selection is one name for every project. Only
     :data:`EXTRAS` has them."""
@@ -358,7 +359,7 @@ def apply_selection(root: Path, axis: Axis, uv_cmd: Optional[str] = None) -> int
     many failed.
 
     Only the OFFERING projects are touched: reinstalling the workspace to change one extra would take minutes. The
-    order is setup's (:func:`aisland.projects.get_install_order`): a consumer's extra can name a sibling's
+    order is setup's (:func:`aisland.workspace.projects.get_install_order`): a consumer's extra can name a sibling's
     (``models[keras]`` requiring ``trainer[keras]``), and installed first it resolves against the sibling's OLD
     metadata. uv never uninstalls an extra no longer chosen — which packages "belonged" to it is unknowable, and a
     stale wheel costs disk, not correctness."""
@@ -454,10 +455,7 @@ def add_command(root: Path, name: str, value: str) -> str:
     return " ".join(["aisland workspace configure", name, "set", *current, *([] if value in current else [value])])
 
 
-# --- a dev dependency that needs more than pip: playwright's browser ----------------------------------------------
-
-#: The one browser a workspace test asks for — Playwright's package alone cannot open a page.
-PLAYWRIGHT_BROWSER = "chromium"
+# --- the names a dev extra lists (read by playwright_browser and the CI scaffolder) -------------------------------
 
 
 def dev_extra_names(pyproject_data: pyproject_toml.Table) -> Set[str]:
@@ -474,20 +472,3 @@ def dev_extra_names(pyproject_data: pyproject_toml.Table) -> Set[str]:
         except InvalidRequirement:
             continue
     return names
-
-
-def browser_install_command(pyproject: Path, venv_bin: Path) -> Optional[List[str]]:
-    """The command that fetches the browser a ``playwright`` DEV dependency needs, or ``None``.
-
-    Listing ``playwright`` under ``dev`` is the whole declaration — the shape of the ``slow`` pytest
-    marker, never an aisland knob. ``aisland setup`` runs this right after the project's editable
-    install, and the scaffolded CI emits its equivalent after ``.[dev]``, so a browser-driven test
-    runs everywhere the extra is installed instead of ``skip``-ping into a green build that checks
-    less. A project without the dependency gets exactly what it always did.
-    """
-    if not pyproject.exists():
-        return None
-    data = pyproject_toml.load(pyproject)
-    if "playwright" not in dev_extra_names(data):
-        return None
-    return [str(venv_bin / "playwright"), "install", PLAYWRIGHT_BROWSER]

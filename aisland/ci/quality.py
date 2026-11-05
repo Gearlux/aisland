@@ -7,10 +7,11 @@ from typing import Dict, List, Optional, Set, Tuple
 
 import click
 
-from aisland import console, provision
+from aisland import console
 from aisland.errors import AislandError
-from aisland.mcp_config import no_venv
-from aisland.projects import discover_projects, get_project_metadata, get_workspace_root
+from aisland.setup import provision
+from aisland.setup.mcp_config import no_venv
+from aisland.workspace.projects import discover_projects, get_project_metadata, get_workspace_root
 
 #: The gates, in the order they run. ``isort`` and ``black`` are formatters: they only check (as the CI jobs do) unless
 #: ``aisland check --write`` lets them rewrite the files they find.

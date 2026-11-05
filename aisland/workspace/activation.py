@@ -16,11 +16,12 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Dict, List, Optional
 
-from aisland import console, gitcmd, machine_config, tracking
-from aisland.projects import submodule_active_map
-from aisland.sources import detached_projects
+from aisland import console, gitcmd, machine_config
 from aisland.workspace import file as workspace_file
 from aisland.workspace import local as local_workspace
+from aisland.workspace import tracking
+from aisland.workspace.projects import submodule_active_map
+from aisland.workspace.sources import detached_projects
 
 #: The project's setting in ``workspace.toml`` and the last part of this machine's ``aisland.active.<project>.active``.
 ACTIVE_KEY = "active"
@@ -99,7 +100,7 @@ def reconcile(root: Path) -> List[str]:
     """Check each project out or empty it as this machine has it, and tell git. Returns the projects whose folder
     could not follow (a deinit refused, an add or init that failed), each said on the way.
 
-    Then each project's ``ignore`` is written from its tracking (:mod:`aisland.tracking`) — git's own key in
+    Then each project's ``ignore`` is written from its tracking (:mod:`aisland.workspace.tracking`) — git's own key in
     ``.git/config`` is gone after a deinit —, each untracked project on no branch is put on its branch, and a local
     workspace (:mod:`aisland.workspace.local`) commits
     ``.gitmodules`` and the projects added."""

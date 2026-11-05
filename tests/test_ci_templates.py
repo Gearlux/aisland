@@ -12,7 +12,8 @@ from pathlib import Path
 import pytest
 from click.testing import CliRunner
 
-from aisland import ci_scaffold, ci_templates, cli, locations
+from aisland import cli, locations
+from aisland.ci import ci_scaffold, ci_templates
 from aisland.services.jenkins import JenkinsService
 from aisland.workspace import check as workspace_check
 from aisland.workspace import file as workspace_file

@@ -34,9 +34,10 @@ from typing import List, Sequence, Union
 import click
 import yaml
 
-from aisland import console, failures, provision
+from aisland import console, failures, probe
 from aisland.errors import AislandError
 from aisland.services.base import BaseService, ServiceState, service_state, styled_state
+from aisland.setup import provision
 
 logger = logging.getLogger(__name__)
 
@@ -138,11 +139,7 @@ class DockerService(BaseService):
         SAVED the ignored flags into the profile, leaving it claiming a share the VM did not
         have. Exit 0 = running, non-zero = stopped, and it is what :meth:`status` already used.
         """
-        try:
-            result = subprocess.run(["colima", "status"], capture_output=True, text=True, check=False)
-        except FileNotFoundError:
-            return False
-        return result.returncode == 0
+        return probe.succeeds(["colima", "status"])
 
     def launch(self, background: bool = True, mounts: Sequence[str] = (), **kwargs: object) -> None:
         """Start the Docker engine via Colima.
@@ -216,20 +213,19 @@ class DockerService(BaseService):
     def info(self) -> None:
         """Show detailed Docker (Colima) configuration."""
         console.echo(click.style("Docker (Colima):", bold=True))
-        try:
-            result = subprocess.run(["colima", "status"], capture_output=True, text=True)
-            if result.returncode == 0:
-                console.echo(f"  Status        : {click.style('Running', fg='green')}")
-            else:
-                console.echo(f"  Status        : {click.style('Stopped', fg='red')}")
-            for line in result.stdout.splitlines():
-                line = line.strip()
-                if line:
-                    console.echo(f"  colima        : {line}")
-        except FileNotFoundError:
+        if shutil.which("colima") is None:
             console.echo(f"  Status        : {click.style('Not Installed', fg='yellow')}")
             console.echo("  Install with  : brew install colima")
             return
+        result = probe.run(["colima", "status"])
+        if result is None:
+            console.echo(f"  Status        : {click.style(f'No answer within {probe.PROBE_SECONDS:.0f} s', fg='red')}")
+            return
+        running = click.style("Running", fg="green") if result.returncode == 0 else click.style("Stopped", fg="red")
+        console.echo(f"  Status        : {running}")
+        for line in (result.stdout or result.stderr).splitlines():  # colima 0.10 says it all on stderr
+            if line.strip():
+                console.echo(f"  colima        : {line.strip()}")
 
         console.echo(
             "  VM mounts     : "

@@ -39,7 +39,7 @@ def _read_envvars(config_file: Path) -> dict[str, str]:
     return dict(zip(strings[::2], strings[1::2]))
 
 
-# The `.env` reader's cases: tests/test_workspace_env.py (Jenkins reads it with supervisor.read_workspace_env).
+# The `.env` reader's cases: tests/test_workspace_env.py (Jenkins reads it with envfile.read).
 
 
 # --------------------------------------------------------------------------- #

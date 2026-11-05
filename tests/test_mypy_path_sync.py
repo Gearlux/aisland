@@ -12,8 +12,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from aisland.editor_files import sync_mypy_path
-from aisland.projects import ProjectMetadata
+from aisland.setup.editor_files import sync_mypy_path
+from aisland.workspace.projects import ProjectMetadata
 from tests.records import project_metadata
 
 _INI_TEMPLATE = """\

@@ -15,7 +15,7 @@ When the user invokes the `/commit-all` command (or requests to commit all chang
 
    ```text
    Staged before /commit-all ran — not mine to commit:
-     aisland: aisland/selection.py, tests/test_selection.py
+     aisland: aisland/workspace/selection.py, tests/test_selection.py
    ```
 
    and ask the user whether to commit them too or to wait until that session is done. Run `ListAgents` first and name the busy sessions, so the user can see whose they likely are. Go on only on the user's answer.

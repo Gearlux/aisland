@@ -13,9 +13,11 @@ from pathlib import Path
 import click
 import pytest
 
-from aisland import locations, projects, pytest_stats, sources
+from aisland import locations, pytest_stats
 from aisland.errors import AislandError
 from aisland.wheels import build as wheels
+from aisland.wheels import projects as wheels_projects
+from aisland.workspace import projects, sources
 
 
 def _project(folder: Path, name: str, deps: str = "") -> Path:
@@ -90,7 +92,7 @@ def test_with_gitmodules_the_submodules_are_the_projects(tmp_path: Path) -> None
 
 
 def test_wheels_sees_the_folder_projects(acme: Path) -> None:
-    assert sorted(wheels.workspace_projects(acme)) == ["alpha", "beta"]
+    assert sorted(wheels_projects.workspace_projects(acme)) == ["alpha", "beta"]
 
 
 def test_a_wheel_of_a_project_outside_git_is_refused(acme: Path, monkeypatch: pytest.MonkeyPatch) -> None:

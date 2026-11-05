@@ -4,9 +4,13 @@ import re
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple, TypedDict
 
-from aisland import gitcmd, gitmodules, locations, machine_config
+from packaging.requirements import InvalidRequirement, Requirement
+from packaging.utils import NormalizedName, canonicalize_name
+
+from aisland import gitcmd, locations, machine_config
 from aisland import pyproject as pyproject_toml
 from aisland.workspace import file as workspace_file
+from aisland.workspace import gitmodules
 
 
 def get_workspace_root() -> Path:
@@ -63,34 +67,41 @@ class ProjectMetadata(TypedDict):
 
 
 def get_project_metadata(pyproject_path: Path) -> ProjectMetadata:
-    """Extract name and dependencies from pyproject.toml."""
+    """The distribution name, folder and every requirement (its extras' included) of one ``pyproject.toml``."""
     data = pyproject_toml.load(pyproject_path)
     project_info = data.get("project", {})
-    name = project_info.get("name")
-    deps = project_info.get("dependencies", [])
-    # Also include optional-dependencies if they are internal
     optional_deps = project_info.get("optional-dependencies", {})
+    deps = list(project_info.get("dependencies", []))  # a copy: the extras below never reach the loaded table
     for extra_deps in optional_deps.values():
         deps.extend(extra_deps)
-
     return {
-        "name": name,
+        "name": project_info.get("name") or "",
         "path": pyproject_path.parent,
         "dependencies": deps,
         "has_dev": "dev" in optional_deps,
     }
 
 
+def requirement_name(spec: str) -> Optional[NormalizedName]:
+    """The normalized distribution name a PEP 508 requirement names (``Foo_Bar[x]~=1.0; python_version>'3'`` →
+    ``foo-bar``), or ``None`` for a string that is no requirement."""
+    try:
+        return canonicalize_name(Requirement(spec).name)
+    except InvalidRequirement:
+        return None
+
+
 def internal_dependencies(projects: List[ProjectMetadata]) -> Dict[str, List[str]]:
-    """Map each project name to the names of the workspace projects it depends on."""
-    project_names = {p["name"] for p in projects}
+    """Map each project name to the names of the workspace projects it depends on, each once, in the order its
+    requirements name them. Names match as PEP 503 normalizes them, so ``Foo_Bar`` requires ``foo-bar``."""
+    by_canonical = {canonicalize_name(p["name"]): p["name"] for p in projects if p["name"]}
     adj: Dict[str, List[str]] = {p["name"]: [] for p in projects}
     for p in projects:
-        for dep in p["dependencies"]:
-            # Extract package name from dependency string (e.g., 'loggair>=0.1.0' -> 'loggair')
-            dep_name = dep.split(">=")[0].split("==")[0].split("<=")[0].split("[")[0].strip()
-            if dep_name in project_names and dep_name != p["name"]:
-                adj[p["name"]].append(dep_name)
+        for spec in p["dependencies"]:
+            name = requirement_name(spec)
+            dependency = by_canonical.get(name) if name else None
+            if dependency and dependency != p["name"] and dependency not in adj[p["name"]]:
+                adj[p["name"]].append(dependency)
     return adj
 
 
@@ -144,32 +155,9 @@ def get_install_order(workspace_root: Path) -> List[ProjectMetadata]:
 
 
 def dependency_order(projects: List[ProjectMetadata]) -> List[ProjectMetadata]:
-    """``projects`` with every workspace dependency before its dependents; otherwise in the order given."""
-    adj = internal_dependencies(projects)
-
-    # Topological sort (Kahn's algorithm or DFS)
-    visited = set()
-    temp_visited = set()
-    order = []
-
-    def visit(name: str) -> None:
-        if name in temp_visited:
-            # Circular dependency detected - just break and continue for now
-            return
-        if name not in visited:
-            temp_visited.add(name)
-            for neighbor in adj.get(name, []):
-                visit(neighbor)
-            temp_visited.remove(name)
-            visited.add(name)
-            order.append(name)
-
-    for p in projects:
-        visit(p["name"])
-
-    # Map names back to metadata
-    name_to_meta = {p["name"]: p for p in projects}
-    return [name_to_meta[name] for name in order]
+    """``projects`` with every workspace dependency before its dependents; otherwise in the order given. A dependency
+    cycle's members stand together (:func:`install_groups`, which setup installs as one unit)."""
+    return [project for group in install_groups(projects) for project in group]
 
 
 def submodule_active_map(workspace_root: Path) -> List[Tuple[str, str, bool]]:

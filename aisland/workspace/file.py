@@ -26,22 +26,23 @@ from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Set, Tuple
 
-from aisland import __version__, atomic, gitcmd, gitmodules, locations
+from aisland import __version__, atomic, gitcmd, locations
 from aisland.errors import AislandError
 from aisland.toml_places import FORMAT_KEY, Where, format_refusal, key_line, table_line
+from aisland.workspace import gitmodules
 
 #: The file, at the workspace root.
 FILE_NAME = "workspace.toml"
 
 #: The sections the file has: the workspace's own choices, its CI template set, its harness sets, and its projects.
 _SECTIONS = ("workspace", "ci", "harness", "project")
-#: The section naming the CI template set and its variables (:mod:`aisland.ci_templates`).
+#: The section naming the CI template set and its variables (:mod:`aisland.ci.ci_templates`).
 CI_SECTION = "ci"
 #: The section listing the agent harness sets the workspace combines (:mod:`aisland.harness`).
 HARNESS_SECTION = "harness"
 
 #: The ``[workspace]`` key naming the workspace (else its origin's repository, else its folder:
-#: :func:`aisland.projects.get_workspace_name`); no selection may take it.
+#: :func:`aisland.workspace.projects.get_workspace_name`); no selection may take it.
 NAME_KEY = "name"
 
 #: The ``[workspace]`` key saying which shape of the file this is, and the one this aisland reads and writes. A file
@@ -395,8 +396,7 @@ def refresh(root: Path) -> List[str]:
         if project.path not in kept_paths and project.name not in {f.name for f in found}
     ]
     # An optional project (an `active` key) the workspace does not have is not gone: it is not switched on here. Nor is
-    # one with a url to clone from: the file is a way to add a project, and setup's activation step clones it (user
-    # choice 2026-10-28). Only a project the workspace lacks and nothing could bring back is dropped.
+    # one with a url to clone from: the file is a way to add a project, and setup's activation step clones it. Only a project the workspace lacks and nothing could bring back is dropped.
     optional = [project for project in gone if "active" in project.others]
     to_add = [project for project in gone if project not in optional and project.url is not None]
     lines = [

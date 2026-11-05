@@ -9,7 +9,7 @@ repository as a submodule, writes ``workspace.toml`` and installs the workspace 
 whichever way aisland is installed; the workspace it makes is one that aisland from a wheel works in
 (:mod:`aisland.locations`).
 
-In a folder that already is a git repository it sets that one up instead (user choice 2026-10-23): no ``git init``,
+In a folder that already is a git repository it sets that one up instead: no ``git init``,
 the ``--add`` projects added, the starting files that are missing written, the aliases and the agent harness
 installed. A ``--from`` file is refused there (the repository keeps its own ``workspace.toml``), and so is ``--local``.
 
@@ -20,7 +20,7 @@ as ``<file>.bak``; in an existing repository that is all init does, and it is re
 
 Two choices of the root's, each its own flag: ``--local`` makes a new root repository that tracks only the projects
 (:mod:`aisland.workspace.local`: its ``.gitignore`` ignores everything, ``.gitmodules`` and the projects are its first
-commit), and ``--untracked`` makes the root record none of its projects' commits (:mod:`aisland.tracking`).
+commit), and ``--untracked`` makes the root record none of its projects' commits (:mod:`aisland.workspace.tracking`).
 """
 
 import codecs
@@ -35,15 +35,17 @@ from typing import Dict, List, Literal, Optional, Sequence, Tuple, get_args
 
 import click
 
-from aisland import atomic, console, env_example, gitcmd, locations, tracking
+from aisland import atomic, console, gitcmd, locations
 from aisland.errors import AislandError
 from aisland.harness import install_harness
 from aisland.harness import sets as harness_sets
 from aisland.harness import summary as harness_summary
-from aisland.manager import install_git_aliases
-from aisland.projects import get_workspace_name
+from aisland.setup import env_example
+from aisland.setup.manager import install_git_aliases
 from aisland.workspace import file as workspace_file
 from aisland.workspace import local as local_workspace
+from aisland.workspace import tracking
+from aisland.workspace.projects import get_workspace_name
 
 #: The files ``init`` starts a workspace with, in the order it writes them; ``--rewrite`` takes only these.
 StartingFile = Literal[".gitignore", ".env", "mypy.ini", "vscode-init-bash.sh"]
@@ -150,6 +152,7 @@ def _add_submodule(
     terminal = sys.stderr.isatty()
     args = [
         "git",
+        *gitcmd.network_options(),  # a remote that stops sending is given up, as every git network call is
         "submodule",
         "add",
         "-q",
@@ -160,7 +163,12 @@ def _add_submodule(
         *([path] if path else []),
     ]
     process = subprocess.Popen(
-        args, cwd=root, stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE
+        args,
+        cwd=root,
+        env=gitcmd.network_env(),  # no credential prompt: git asks on the terminal, whatever stdin is
+        stdin=subprocess.DEVNULL,
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.PIPE,
     )
     assert process.stderr is not None  # stderr=PIPE
     # A line wider than the terminal wraps, and the carriage return then goes back to its last row only.

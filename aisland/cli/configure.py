@@ -1,4 +1,4 @@
-"""`aisland workspace configure …`: one set of commands built from each plugin's keys (:mod:`aisland.configure`) —
+"""`aisland workspace configure …`: one set of commands built from each plugin's keys (:mod:`aisland.workspace.configure`) —
 the project-level built-ins and a workspace-level group per selection.
 """
 
@@ -9,11 +9,12 @@ from typing import Callable, Dict, List, Optional, Sequence, Tuple
 import click
 from click.shell_completion import CompletionItem
 
-from aisland import configure, locations, selection
+from aisland import locations
 from aisland.cli._base import _Command, _complete_workspace_projects, _configure_root, _Group
 from aisland.errors import quiet_completion
-from aisland.projects import get_workspace_root
 from aisland.workspace import check as workspace_check
+from aisland.workspace import configure, selection
+from aisland.workspace.projects import get_workspace_root
 
 
 def _plugin_group(plugin: configure.Plugin) -> click.Group:

@@ -40,9 +40,10 @@ from typing import Any, Dict, Iterator, List, NotRequired, Optional, Tuple, Type
 import click
 import yaml
 
-from aisland import atomic, console, failures, paths, provision
+from aisland import atomic, console, envfile, failures, paths, probe
 from aisland.errors import AislandError
-from aisland.projects import get_workspace_root
+from aisland.setup import provision
+from aisland.workspace.projects import get_workspace_root
 
 
 def config_file() -> Path:
@@ -110,7 +111,7 @@ def find_binary() -> Optional[str]:
 
 def ensure_binary() -> str:
     """Return the process-compose binary path; a missing one is installed once the user agrees
-    (:func:`aisland.provision.ask_to_install`: Homebrew's ``f1bonacc1/tap`` on macOS, the pinned release into
+    (:func:`aisland.setup.provision.ask_to_install`: Homebrew's ``f1bonacc1/tap`` on macOS, the pinned release into
     ``aisland/bin`` on Linux), else the command refuses naming the line that installs it.
     """
     binary = find_binary()
@@ -149,121 +150,6 @@ def _run_client(
         timeout=_CLIENT_TIMEOUT,
         env=env,
     )
-
-
-#: A variable's name, as the shell reads one.
-_ENV_NAME = re.compile(r"[A-Za-z_][A-Za-z0-9_]*")
-#: A value the shell reads back as written without quotes.
-_ENV_BARE = re.compile(r"[A-Za-z0-9_./:@%+,=-]*")
-
-
-def _expand(raw: str, start: int, known: Dict[str, str]) -> Tuple[str, int]:
-    """The ``$NAME`` / ``${NAME}`` at ``raw[start]``, expanded as the shell does — an earlier ``.env`` line first, then
-    the environment, unset is empty — and where the text goes on. A ``${…}`` that is no plain name stays as written."""
-    if raw.startswith("${", start):
-        stop = raw.find("}", start + 2)
-        if stop < 0:
-            return raw[start:], len(raw)
-        name = raw[start + 2 : stop]
-        if not _ENV_NAME.fullmatch(name):
-            return raw[start : stop + 1], stop + 1
-        return known.get(name, os.environ.get(name, "")), stop + 1
-    match = _ENV_NAME.match(raw, start + 1)
-    if match is None:
-        return "$", start + 1
-    return known.get(match.group(), os.environ.get(match.group(), "")), match.end()
-
-
-def _env_value(raw: str, known: Dict[str, str]) -> str:
-    """The value the shell assigns from ``raw``, the text after ``NAME=``: single quotes literal, double quotes and bare
-    text expanded, a backslash escaping the next character, unquoted whitespace ending it (a `` # note`` after it)."""
-    out: List[str] = []
-    index, size = 0, len(raw)
-    while index < size:
-        char = raw[index]
-        if char == "'":
-            stop = raw.find("'", index + 1)
-            stop = size if stop < 0 else stop
-            out.append(raw[index + 1 : stop])
-            index = stop + 1
-        elif char == '"':
-            index += 1
-            while index < size and raw[index] != '"':
-                if raw[index] == "\\" and index + 1 < size and raw[index + 1] in '"\\$`':
-                    out.append(raw[index + 1])
-                    index += 2
-                elif raw[index] == "$":
-                    text, index = _expand(raw, index, known)
-                    out.append(text)
-                else:
-                    out.append(raw[index])
-                    index += 1
-            index += 1
-        elif char == "$":
-            text, index = _expand(raw, index, known)
-            out.append(text)
-        elif char == "\\" and index + 1 < size:
-            out.append(raw[index + 1])
-            index += 2
-        elif char in " \t":
-            break
-        else:
-            out.append(char)
-            index += 1
-    return "".join(out)
-
-
-def read_workspace_env(workspace_root: Optional[Path] = None) -> Dict[str, str]:
-    """The workspace ``.env`` as the shell reads it — ``project.bashrc`` runs ``set -a; source .env`` — so every service
-    and Jenkins sees the values a run in a terminal sees: ``export`` and quotes understood, ``$VAR`` and ``${VAR}``
-    expanded (an earlier line first, then the environment), a trailing comment dropped. A line the shell reads as no
-    assignment (``KEY = value``, a name with a dash) sets nothing. The one reader of the file: used by the services
-    that publish and consume workspace configuration, by :func:`apply` for ``${VAR}`` expansion, and by Jenkins.
-    ``workspace_root`` defaults to the discovered root."""
-    env_file = (workspace_root or _workspace_root()) / ".env"
-    if not env_file.exists():
-        return {}
-    out: Dict[str, str] = {}
-    for line in env_file.read_text().splitlines():
-        line = line.strip()
-        if line.startswith("export "):
-            line = line[len("export ") :].lstrip()
-        name, equals, raw = line.partition("=")
-        if not equals or not _ENV_NAME.fullmatch(name):
-            continue
-        out[name] = _env_value(raw, out)
-    return out
-
-
-def _env_quoted(value: str) -> str:
-    """``value`` written so the shell reads it back as it is: bare when nothing in it is special, else single-quoted."""
-    if _ENV_BARE.fullmatch(value):
-        return value
-    return "'" + value.replace("'", "'\\''") + "'"
-
-
-def write_workspace_env(values: Dict[str, str]) -> Path:
-    """Set each ``KEY=VALUE`` in the workspace ``.env``, replacing an existing key IN PLACE.
-
-    The counterpart of :func:`read_workspace_env`, for services that publish what they
-    decided (a served directory, a URL) so a config or a later start can read it back as
-    ``$KEY``. Neighbouring lines — comments included — are left untouched; a key not yet
-    present is appended. A value is quoted when the shell would otherwise change it (a space,
-    a ``$``, a quote), so both the shell and the reader get it back as written.
-    """
-    env_file = _workspace_root() / ".env"
-    lines = env_file.read_text().splitlines() if env_file.exists() else []
-    for key, value in values.items():
-        entry = f"{key}={_env_quoted(value)}"
-        for index, existing in enumerate(lines):
-            if existing.strip().startswith(f"{key}="):
-                lines[index] = entry
-                break
-        else:
-            lines.append(entry)
-    # Whole or not at all, and a new one readable by its owner alone: it holds the workspace's secrets.
-    atomic.write_text(env_file, "\n".join(lines) + "\n", new_mode=atomic.PRIVATE)
-    return env_file
 
 
 def is_server_running() -> bool:
@@ -415,7 +301,7 @@ def apply() -> None:
     if is_server_running():
         result = _run_client(
             ["project", "update", "-f", str(config_file())],
-            env={**os.environ, **read_workspace_env()},
+            env={**os.environ, **envfile.read()},
         )
         if result.returncode != 0:
             raise AislandError(
@@ -460,7 +346,7 @@ def _preflight_full_disk_access() -> None:
     """
     if platform.system() != "Darwin":
         return
-    env = {**read_workspace_env(), **os.environ}
+    env = {**envfile.read(), **os.environ}
     exposed = {key: value for key in _TCC_PROTECTED_ENV_KEYS if (value := env.get(key, "")).startswith("/Volumes/")}
     if not exposed:
         return
@@ -706,33 +592,18 @@ def wait_for_outcome(name: str, timeout: float = 45.0) -> Tuple[str, Optional[Pr
 
 
 def port_in_use(port: int) -> Optional[int]:
-    """Return the PID listening on ``port`` (best-effort; -1 if unknown owner).
+    """The PID listening on ``port``, -1 when its owner cannot be named, None when the port is free.
 
-    Used as a pre-start check: a service whose port is already taken would
-    otherwise crash-loop through its restart budget with a log-only error —
-    most commonly an orphan instance started by a pre-supervisor aisland.
-    Returns None when the port is free.
+    Used as a pre-start check: a service whose port is already taken would otherwise crash-loop through its restart
+    budget with a log-only error — most commonly an orphan instance started by a pre-supervisor aisland.
     """
-    import socket
-
-    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
-        sock.settimeout(0.5)
-        if sock.connect_ex(("127.0.0.1", port)) != 0:
-            return None
-    # Something answers — identify it if the platform lets us (diagnostic only).
-    try:
-        out = subprocess.check_output(
-            ["lsof", "-nP", f"-iTCP:{port}", "-sTCP:LISTEN", "-t"],
-            text=True,
-            stderr=subprocess.DEVNULL,
-            timeout=5,
-        ).strip()
-        return int(out.splitlines()[0])
-    except (subprocess.SubprocessError, FileNotFoundError, ValueError, IndexError, OSError):
-        return -1
+    if not probe.port_answers(port, wait=0.5):
+        return None
+    found = probe.listener(port)  # diagnostic only: the platform may not let us name it
+    return int(found[0]) if found and found[0].isdigit() else -1
 
 
 def _workspace_root() -> Path:
-    """Workspace root via manager's marker search (lazy import — see above)."""
+    """The workspace root (:func:`aisland.workspace.projects.get_workspace_root`)."""
 
     return get_workspace_root()

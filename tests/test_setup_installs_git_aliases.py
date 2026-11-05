@@ -13,7 +13,8 @@ from typing import List
 import pytest
 from click.testing import CliRunner
 
-from aisland import cli, locations, manager
+from aisland import cli, locations
+from aisland.setup import manager
 
 
 @pytest.fixture
@@ -25,15 +26,15 @@ def stubbed_setup(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> List[Path]
     monkeypatch.setattr(manager, "ensure_uv_in_venv", lambda venv_bin: "uv")
     monkeypatch.setattr(manager, "link_project_bashrc", lambda root: None)
     monkeypatch.setattr(manager, "install_harness", lambda root: [])
-    monkeypatch.setattr("aisland.provision.install", lambda root, aislands_own=True: None)
-    monkeypatch.setattr("aisland.activation.resolve", lambda root, non_interactive: None)
-    monkeypatch.setattr("aisland.activation.reconcile", lambda root: [])
-    monkeypatch.setattr("aisland.manager.apply_all", lambda *a, **k: None)
-    monkeypatch.setattr("aisland.manager.apply_mirrors", lambda *a, **k: None)
+    monkeypatch.setattr("aisland.setup.provision.install", lambda root, aislands_own=True: None)
+    monkeypatch.setattr("aisland.workspace.activation.resolve", lambda root, non_interactive: None)
+    monkeypatch.setattr("aisland.workspace.activation.reconcile", lambda root: [])
+    monkeypatch.setattr("aisland.setup.manager.apply_all", lambda *a, **k: None)
+    monkeypatch.setattr("aisland.setup.manager.apply_mirrors", lambda *a, **k: None)
     monkeypatch.setattr(manager, "get_install_order", lambda root: [])
     monkeypatch.setattr(manager, "write_pyrightconfig", lambda *a: None)
     monkeypatch.setattr(manager, "sync_mypy_path", lambda *a: None)
-    monkeypatch.setattr("aisland.manager.resolve_for_setup", lambda *a, **k: ([], False))
+    monkeypatch.setattr("aisland.setup.manager.resolve_for_setup", lambda *a, **k: ([], False))
     monkeypatch.setattr(manager, "write_root_uv_toml", lambda *a: None)
     monkeypatch.setattr(manager, "_run_installs", lambda *a: ([], []))
     monkeypatch.setattr(manager, "write_gemini_settings", lambda *a: None)
@@ -68,13 +69,13 @@ def test_there_is_no_separate_command_for_the_aliases() -> None:
 def test_setup_adds_the_clones_the_workspace_does_not_list(
     stubbed_setup: List[Path], tmp_path: Path, monkeypatch: pytest.MonkeyPatch, non_interactive: bool
 ) -> None:
-    """`aisland.clones` adds them, with or without -y (tests/test_setup_adds_clones.py); setup hands it the root."""
+    """`aisland.workspace.clones` adds them, with or without -y (tests/test_setup_adds_clones.py); setup hands it the root."""
     calls: List[Path] = []
 
     def add_unlisted(root: Path) -> List[str]:
         calls.append(root)
         return ["added foo"]
 
-    monkeypatch.setattr("aisland.clones.add_unlisted", add_unlisted)
+    monkeypatch.setattr("aisland.workspace.clones.add_unlisted", add_unlisted)
     manager.setup_workspace(non_interactive=non_interactive)
     assert calls == [tmp_path]

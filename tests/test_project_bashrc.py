@@ -14,7 +14,8 @@ from typing import Dict, Optional, Tuple
 
 import pytest
 
-from aisland import locations, manager, paths
+from aisland import locations, paths
+from aisland.setup import manager
 
 BASHRC = Path(__file__).resolve().parents[1] / "project.bashrc"
 

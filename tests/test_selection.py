@@ -1,7 +1,7 @@
-"""What a machine installs of each project: the selections (`aisland/selection.py`).
+"""What a machine installs of each project: the selections (`aisland/workspace/selection.py`).
 
 A project declares a selection in its own `pyproject.toml` — the project whose table has `question` DEFINES it, and
-every project's `choices` are its menu, each an extra of its own (`aisland/discovery.py`)::
+every project's `choices` are its menu, each an extra of its own (`aisland/workspace/discovery.py`)::
 
     [tool.aisland.selection.framework]
     question = "Which ML frameworks should this machine install?"
@@ -24,11 +24,12 @@ import click
 import pytest
 from click.testing import CliRunner, Result
 
-from aisland import cli, configure, locations
-from aisland import selection as s
-from aisland.discovery import DeclarationError
-from aisland.projects import get_workspace_root
+from aisland import cli, locations
+from aisland.workspace import configure
 from aisland.workspace import file as workspace_file
+from aisland.workspace import selection as s
+from aisland.workspace.discovery import DeclarationError
+from aisland.workspace.projects import get_workspace_root
 from tests.workspace_layout import needs_workspace
 
 QUESTION = "Which ML frameworks should this machine install?"
@@ -88,7 +89,7 @@ def _run(*args: str) -> Result:
 def installs(monkeypatch: pytest.MonkeyPatch) -> List[List[str]]:
     """Every `uv pip install` a selection change runs, recorded instead of run."""
     calls: List[List[str]] = []
-    monkeypatch.setattr("aisland.selection.ensure_uv_in_venv", lambda venv_bin: "uv")
+    monkeypatch.setattr("aisland.workspace.selection.ensure_uv_in_venv", lambda venv_bin: "uv")
 
     def record(cmd: List[str], **kw: object) -> int:
         calls.append(list(cmd))
@@ -543,7 +544,7 @@ def test_a_failed_install_is_the_exit_code(workspace: Path, monkeypatch: pytest.
     def fail(cmd: List[str], **kw: object) -> int:
         raise subprocess.CalledProcessError(1, cmd)
 
-    monkeypatch.setattr("aisland.selection.ensure_uv_in_venv", lambda venv_bin: "uv")
+    monkeypatch.setattr("aisland.workspace.selection.ensure_uv_in_venv", lambda venv_bin: "uv")
     monkeypatch.setattr(s.subprocess, "check_call", fail)
     assert _run("framework", "set", "torch").exit_code == 2  # two projects offer torch, both failed
 
@@ -602,10 +603,10 @@ def test_adding_an_extra_to_an_unset_selection_keeps_the_dev_extras_it_installs(
 
 
 def _ci_install_line(workspace: Path, monkeypatch: pytest.MonkeyPatch, project: str) -> str:
-    from aisland import ci_scaffold
+    from aisland.ci import ci_scaffold
     from aisland.services.jenkins import JenkinsService
 
-    monkeypatch.setattr("aisland.ci_scaffold.is_private_repo", lambda repository: False)
+    monkeypatch.setattr("aisland.ci.ci_scaffold.is_private_repo", lambda repository: False)
     ci_scaffold.scaffold(project, force=True, jenkins_url=JenkinsService().url())
     text = (workspace / project / ".github" / "workflows" / "ci.yml").read_text()
     return next(line.strip() for line in text.splitlines() if '-e ".[' in line)

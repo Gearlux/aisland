@@ -14,8 +14,7 @@ source     directory                         ``.venv``
 
 **No CI file reads a source.** A runner installs a RELEASED dependency from PyPI and an
 unreleased one from GitHub ``main`` (:func:`released_on_pypi`, asked by
-:func:`aisland.ci_scaffold.project_facts`) — user ruling 2026-09-26:
-"it should always point to released packages, and to GitHub for non-released ones". So
+:func:`aisland.ci.ci_scaffold.project_facts`): CI installs what is released, and from GitHub what is not. So
 ``aisland workspace configure source set`` / ``unset`` never regenerate a CI file.
 
 ``local`` and ``github`` both carry a ``ref`` (branch or tag) and differ ONLY in whether the
@@ -28,7 +27,7 @@ A project with no entry anywhere is *unmanaged*: nothing is switched and nothing
 differently — so this module changes no behaviour until a source is set.
 
 Two configuration layers, mirroring the existing ``.gitmodules active`` +
-``.git/config`` split of the projects' activation (:mod:`aisland.activation`):
+``.git/config`` split of the projects' activation (:mod:`aisland.workspace.activation`):
 
 * **committed** — each project's ``source``, ``version`` and ``distribution`` (only where it differs from the
   project's name) in its ``[project."<name>"]`` table of ``<workspace>/workspace.toml``, a git source's ref being the
@@ -44,7 +43,7 @@ tracked file:
 * *effective source* (override, else committed) -> submodule init/deinit + branch switch and the
   editable/PyPI install into the shared ``.venv`` (via :func:`apply_source`) — and, through the
   checkout, the folder list of the generated, gitignored ``*.code-workspace`` file
-  (:func:`aisland.editor_files.write_code_workspace`, rewritten after every source change).
+  (:func:`aisland.setup.editor_files.write_code_workspace`, rewritten after every source change).
 """
 
 from __future__ import annotations
@@ -57,15 +56,15 @@ from typing import Dict, List, Literal, Optional, Tuple, cast, get_args
 
 from aisland import console, failures, gitcmd, locations, machine_config
 from aisland import pyproject as pyproject_toml
-from aisland.editor_files import write_code_workspace
 from aisland.errors import AislandError
 from aisland.github import github_repository
-from aisland.installers import ensure_uv_in_venv
-from aisland.mcp_config import no_venv
-from aisland.projects import get_workspace_root, set_submodule_active, submodule_active_map
 from aisland.pypi import PypiInfo, PypiProject, points_at_owner, pypi_json
-from aisland.selection import editable_target
+from aisland.setup.editor_files import write_code_workspace
+from aisland.setup.installers import ensure_uv_in_venv
+from aisland.setup.mcp_config import no_venv
 from aisland.workspace import file as workspace_file
+from aisland.workspace.projects import get_workspace_root, set_submodule_active, submodule_active_map
+from aisland.workspace.selection import editable_target
 
 logger = logging.getLogger(__name__)
 
@@ -79,7 +78,7 @@ SOURCE_KINDS: Tuple[str, ...] = get_args(SourceKind)
 REF_KINDS: Tuple[str, ...] = ("local", "github")
 
 #: The kinds that leave the project directory EMPTY (submodule deinit'd). Consumed by
-#: :func:`detached_projects` -> :func:`aisland.activation.reconcile`.
+#: :func:`detached_projects` -> :func:`aisland.workspace.activation.reconcile`.
 DETACHED_KINDS: Tuple[str, ...] = ("github", "pypi")
 
 #: A project's settings this module owns in its ``[project."<name>"]`` table of ``workspace.toml`` (beside the
@@ -312,16 +311,16 @@ def pip_vcs_url(url: str, ref: str) -> str:
     return f"{url}@{ref}"
 
 
-def _run(cmd: List[str], cwd: Path, *, quiet: bool = False) -> bool:
-    """Run ``cmd``; return True on success. A failure is reported, never raised.
+def _run(cmd: List[str], cwd: Path, *, quiet: bool = False, env: Optional[Dict[str, str]] = None) -> bool:
+    """Run ``cmd`` (in ``env``, else this environment); return True on success. A failure is reported, never raised.
 
     One project's unreachable remote or dirty checkout must not abort a whole
     ``aisland setup`` sweep — the same non-fatal contract as
-    :func:`aisland.activation.reconcile`.
+    :func:`aisland.workspace.activation.reconcile`.
     """
     logger.debug("running %s (in %s)", " ".join(cmd), cwd)
     try:
-        subprocess.check_call(cmd, cwd=str(cwd))
+        subprocess.check_call(cmd, cwd=str(cwd), env=env)
         return True
     except (subprocess.CalledProcessError, FileNotFoundError) as e:
         if not quiet:
@@ -381,12 +380,18 @@ def apply_source(workspace_root: Path, project: str, source: ProjectSource, uv_c
         console.echo(f"==> {project}: local checkout @ {source.ref}")
         set_submodule_active(workspace_root, project, True)
         if not (path / ".git").exists():
-            if not _run(["git", "submodule", "update", "--init", rel], workspace_root):
+            # It clones: no credential prompt, and a remote that stops sending is given up (gitcmd's guard).
+            clone = ["git", *gitcmd.network_options(), "submodule", "update", "--init", "--", rel]
+            if not _run(clone, workspace_root, env=gitcmd.network_env()):
                 return False
         # Non-fatal: an offline machine can still switch to a branch it already has.
         gitcmd.fetch(path, "--quiet", "origin")
         # No ``-f``: a switch that would discard uncommitted work refuses, protecting it. The
         # bare ref relies on git's DWIM (--guess) to create a tracking branch from origin/<ref>.
+        # The ref comes from workspace.toml, another person's file: a branch name, never an option (`--orphan=x`).
+        if source.ref.startswith("-"):
+            failures.report(f"  - Error: {project}: {source.ref!r} is no branch name (a branch never starts with '-')")
+            return False
         if not _run(["git", "switch", source.ref], path):
             console.echo(f"  - {project}: left on its current branch; resolve local changes and re-run.", err=True)
             return False
@@ -448,7 +453,7 @@ def _overridden_projects(workspace_root: Path) -> List[str]:
 def detached_projects(workspace_root: Path) -> set[str]:
     """Projects whose EFFECTIVE source empties their directory (``github`` or ``pypi``).
 
-    Consumed by :func:`aisland.activation.reconcile` so the activation machinery and the
+    Consumed by :func:`aisland.workspace.activation.reconcile` so the activation machinery and the
     source machinery cannot fight over the same submodule.
     """
     committed = read_committed_sources(workspace_root)
@@ -684,7 +689,7 @@ def unset_project_source(
     Deliberately does NOT touch the checkout or the venv: "unmanaged" means aisland holds no
     opinion, not that the current state is wrong. Dropping a ``pypi`` entry therefore leaves the
     directory empty until the next ``aisland setup`` (whose ``.gitmodules``-driven
-    :func:`aisland.activation.reconcile` re-inits it) — set an explicit ``git`` source
+    :func:`aisland.workspace.activation.reconcile` re-inits it) — set an explicit ``git`` source
     instead if you want the checkout back now.
     """
 

@@ -2,49 +2,45 @@
 one ``.venv``, and write the files the workspace generates per machine (the shell start-up file ``project.bashrc``,
 the editor and MCP client files, the root ``uv.toml``, the example environment files, the git aliases).
 
-The pieces live in their own modules — :mod:`aisland.projects` (the workspace and its projects),
-:mod:`aisland.installers` (system tools), :mod:`aisland.editor_files`, :mod:`aisland.mcp_config`,
-:mod:`aisland.uv_config` — and this module runs them in order.
+The pieces live in their own modules — :mod:`aisland.workspace.projects` (the workspace and its projects),
+:mod:`aisland.setup.installers` (system tools), :mod:`aisland.setup.editor_files`, :mod:`aisland.setup.mcp_config`,
+:mod:`aisland.setup.uv_config`, :mod:`aisland.setup.git_settings`, :mod:`aisland.setup.playwright_browser` — and this module runs them in
+order.
 """
 
 import logging
 import os
 import subprocess
 from pathlib import Path
-from typing import List, Tuple
+from typing import Iterable, List, Tuple
 
 import click
 
-from aisland import (
-    activation,
-    clones,
-    console,
-    env_example,
-    failures,
-    locations,
-    machine_config,
-    paths,
-    provision,
-    selection,
-)
-from aisland.editor_files import sync_mypy_path, write_code_workspace, write_pyrightconfig
+from aisland import console, failures, locations, paths
 from aisland.harness import install_harness
-from aisland.installers import ensure_uv_in_venv
-from aisland.mcp_config import no_venv, write_gemini_settings, write_mcp_json
-from aisland.mirrors import apply_all as apply_mirrors
 from aisland.paths import SERVICES_DIR
-from aisland.projects import (
+from aisland.setup import env_example, provision
+from aisland.setup.editor_files import sync_mypy_path, write_code_workspace, write_pyrightconfig
+from aisland.setup.git_settings import merge_on_pull
+from aisland.setup.installers import ensure_uv_in_venv
+from aisland.setup.mcp_config import no_venv, write_gemini_settings, write_mcp_json
+from aisland.setup.playwright_browser import install_browsers
+from aisland.setup.uv_config import write_root_uv_toml
+from aisland.workspace import activation
+from aisland.workspace import check as workspace_check
+from aisland.workspace import clones
+from aisland.workspace import file as workspace_file
+from aisland.workspace import selection
+from aisland.workspace.mirrors import apply_all as apply_mirrors
+from aisland.workspace.projects import (
     ProjectMetadata,
     get_install_order,
     get_workspace_root,
     install_groups,
     internal_dependencies,
 )
-from aisland.selection import PLAYWRIGHT_BROWSER, axes, browser_install_command, resolve_for_setup
-from aisland.sources import apply_all
-from aisland.uv_config import write_root_uv_toml
-from aisland.workspace import check as workspace_check
-from aisland.workspace import file as workspace_file
+from aisland.workspace.selection import axes, resolve_for_setup
+from aisland.workspace.sources import apply_all
 
 logger = logging.getLogger(__name__)
 
@@ -149,86 +145,16 @@ def write_generated_env_example(workspace_root: Path) -> None:
             console.echo(f"==> Wrote {env_example.FILE_NAMES[kind]} ({env_example.counts(result)})")
 
 
-def setup_workspace(non_interactive: bool = False, install_all: bool = False) -> None:
-    """Perform a full workspace setup: system provisioning followed by editable pip installs.
-
-    Each selection (:mod:`aisland.selection`: aisland's ``extras`` and those the projects declare) installs what this
-    machine has chosen, asked once and committed in ``workspace.toml``; ``install_all`` (``--all``) takes every extra
-    every project defines. A choice is changed with ``aisland workspace configure <selection> set``.
-    """
-    workspace_root = get_workspace_root()
-    venv_bin = workspace_root / ".venv" / "bin"
-
-    if not venv_bin.exists():
-        raise no_venv(workspace_root)
-
-    # 0. Ensure uv is present in the venv — required by everything below and by
-    #    every Jenkinsfile.local job that targets this workspace.
-    uv_cmd = ensure_uv_in_venv(venv_bin)
-
-    # 0b. Symlink the aisland-managed project.bashrc to the workspace root so
-    #     users can `source ./project.bashrc` from the workspace as before.
-    link_project_bashrc(workspace_root)
-
-    # 0c. The agent harness: aisland's commands and generic rules in `.agents/` (aisland.harness) — linked from a
-    #     checkout, copied from a wheel. Before provisioning, which can stop a setup half-way.
-    for line in install_harness(workspace_root):
+def _say(lines: Iterable[str]) -> None:
+    """A step's report, one ``  - <line>`` each."""
+    for line in lines:
         console.echo(f"  - {line}")
 
-    # 0c'. A clone of the workspace's folder that .gitmodules does not list: added as a submodule, never asked about
-    #      (aisland.clones), before workspace.toml, discovery and the installs read the projects.
 
-    for line in clones.add_unlisted(workspace_root):
-        console.echo(f"  - {line}")
-
-    # 0d. workspace.toml: its projects brought in line with .gitmodules (or the clones) — a new one added, a changed
-    #     url or folder followed, a gone one dropped — then each key no part of aisland reads named (a typo).
-    for line in workspace_file.refresh(workspace_root):
-        console.echo(f"  - {line}")
-    for line in workspace_check.unknown_keys(workspace_root):
-        console.echo(line, err=True)
-
-    # 1. The system tools the workspace needs (aisland's own and the projects' sys-dependencies).
-    provision.install(workspace_root, aislands_own=False)
-
-    # 1b. Activation (aisland.activation): ask about each optional project (an `active` key in workspace.toml), then
-    #     check each project out or empty it as this machine has it — adding one the workspace does not have yet — so
-    #     the install set (and discovery, push-all, `git submodule foreach`) matches. Before discovery, so an inactive
-    #     checkout drops out.
-
-    activation.resolve(workspace_root, non_interactive)
-    activation.reconcile(workspace_root)
-
-    # 1c. Per-project sources — put each managed project on its configured branch (git) or
-    #     replace it with the published wheel (pypi, which empties its directory). Runs BEFORE
-    #     discovery so a pypi-sourced project drops out of the editable-install loop below on
-    #     its own, and its wheel is already installed when a consumer's `.[dev]` resolves it.
-
-    apply_all(workspace_root, uv_cmd)
-
-    # 1d. Per-project mirrors — each checkout's `mirror` remote follows `[mirrors.*]` (and this
-    #     machine's override); a remote whose mirror was unset elsewhere is removed. No network.
-
-    apply_mirrors(workspace_root)
-
-    # 2. Dependency Discovery (now reflects the active checkouts)
-    console.echo(f"==> Resolving workspace dependency graph in {workspace_root}...")
-    install_order = get_install_order(workspace_root)
-
-    # 2b. Editor config — generate pyrightconfig.json so Pyright/Pylance resolve
-    #     cross-project imports against the same project set we install editable.
-    write_pyrightconfig(workspace_root, install_order)
-
-    # 2b'. Keep the COMMITTED root mypy.ini's mypy_path covering every discovered
-    #      project (append-only — see sync_mypy_path for why nothing is removed).
-    sync_mypy_path(workspace_root, install_order)
-
-    # 2b''. The selections — aisland's `extras` and each one a project declares — resolved AFTER discovery (their
-    #       menus come from the projects) and BEFORE the installs, which read them per project. A declaration aisland
-    #       cannot use (a choice that is no extra) stops setup here, naming its file and line, before anything is
-    #       installed. Asks once when nothing is chosen; a recorded choice is used silently. `--all` is the extras
-    #       selection's own: a framework or tracker is a machine's choice of one backend each.
-
+def _choose_selections(workspace_root: Path, non_interactive: bool, install_all: bool) -> None:
+    """Each selection (aisland's ``extras`` and each one a project declares) resolved for setup: asked once when
+    nothing is chosen, a recorded choice used silently. ``install_all`` (``--all``) is the extras selection's own: a
+    framework or tracker is a machine's choice of one backend each."""
     for axis in axes(workspace_root):
         selected, _just_chosen = resolve_for_setup(
             workspace_root, non_interactive, axis, select_all=install_all and axis.from_defined_extras
@@ -236,57 +162,81 @@ def setup_workspace(non_interactive: bool = False, install_all: bool = False) ->
         if selected:
             console.echo(f"==> {axis.name}: {', '.join(selected)}")
 
-    # 2c. Generated root uv.toml — workspace base merged with each activated project's uv.toml,
-    #     so a private index (a company's artifact repository) is present ONLY when that
-    #     project is active. Written BEFORE the install loop so `uv pip install` sees the index.
-    write_root_uv_toml(workspace_root, install_order)
 
-    # 3. Provisioning (Git & Python)
-    for project in install_order:
-        project_dir = project["path"]
-
-        # Git Configuration (pull.rebase false)
-        machine_config.put(project_dir, "pull.rebase", False)
-
-    # Python provisioning (editable installs): cycles together, dependents of a failure skipped.
-    failed, skipped = _run_installs(workspace_root, uv_cmd, install_order)
+def _report_installs(failed: List[str], skipped: List[str]) -> None:
+    """The editable installs' summary, said only when one failed or was skipped."""
     if failed or skipped:
         console.echo(f"==> {len(failed)} project(s) failed to install: {', '.join(failed) or '-'}")
         if skipped:
             console.echo(f"==> {len(skipped)} skipped because a dependency failed: {', '.join(skipped)}")
 
-    for project in install_order:
-        if project["name"] in failed or project["name"] in skipped:
-            continue
-        # A `playwright` dev dependency needs its browser fetched once the package is in — the
-        # SAME declaration the scaffolded CI reads, so a browser-driven test runs here as it
-        # runs there instead of skipping (see `selection.browser_install_command`).
-        project_dir = project["path"]
-        browser = browser_install_command(project_dir / "pyproject.toml", venv_bin)
-        if browser:
-            console.echo(f"==> Installing Playwright's {PLAYWRIGHT_BROWSER} for {project['name']}...")
-            try:
-                logger.debug("running %s (in %s)", " ".join(browser), project_dir)
-                subprocess.check_call(browser, cwd=project_dir)
-            except (subprocess.CalledProcessError, FileNotFoundError) as e:
-                failures.report(
-                    f"  - Error: Failed to install Playwright's {PLAYWRIGHT_BROWSER} for {project['name']}: {e}"
-                )
 
-    # 4. MCP client config — register every workspace MCP server (every
-    #    `<pkg>.server:main` script) for the Gemini CLI AND for Claude Code, with
-    #    locally-resolved absolute venv paths. Written after the editable installs
-    #    so the console scripts exist.
+def setup_workspace(non_interactive: bool = False, install_all: bool = False) -> None:
+    """Perform a full workspace setup: system provisioning followed by editable pip installs.
+
+    Each selection (:mod:`aisland.workspace.selection`: aisland's ``extras`` and those the projects declare) installs what this
+    machine has chosen, asked once and committed in ``workspace.toml``; ``install_all`` (``--all``) takes every extra
+    every project defines. A choice is changed with ``aisland workspace configure <selection> set``.
+    """
+    workspace_root = get_workspace_root()
+    venv_bin = workspace_root / ".venv" / "bin"
+    if not venv_bin.exists():
+        raise no_venv(workspace_root)
+
+    # 0. uv in the venv — everything below needs it, and so does every Jenkinsfile.local job of this workspace.
+    uv_cmd = ensure_uv_in_venv(venv_bin)
+    # 0b. The root's `project.bashrc`, a link to aisland's copy, so `source ./project.bashrc` works from the root.
+    link_project_bashrc(workspace_root)
+    # 0c. The agent harness in `.agents/` (aisland.harness) — linked from a checkout, copied from a wheel. Before
+    #     provisioning, which can stop a setup half-way.
+    _say(install_harness(workspace_root))
+    # 0c'. A clone of the workspace's folder that .gitmodules does not list: added as a submodule, never asked about
+    #      (aisland.workspace.clones), before workspace.toml, discovery and the installs read the projects.
+    _say(clones.add_unlisted(workspace_root))
+    # 0d. workspace.toml: its projects brought in line with .gitmodules (or the clones) — a new one added, a changed
+    #     url or folder followed, a gone one dropped — then each key no part of aisland reads named (a typo).
+    _say(workspace_file.refresh(workspace_root))
+    for line in workspace_check.unknown_keys(workspace_root):
+        console.echo(line, err=True)
+
+    # 1. The system tools the projects declare (aisland's own are installed by the feature that first needs one).
+    provision.install(workspace_root, aislands_own=False)
+    # 1b. Activation (aisland.workspace.activation): ask about each optional project, then check each one out or empty it as
+    #     this machine has it. Before discovery, so an inactive checkout drops out.
+    activation.resolve(workspace_root, non_interactive)
+    activation.reconcile(workspace_root)
+    # 1c. Per-project sources: each managed project on its branch, or replaced by its published wheel (which empties
+    #     its folder). Before discovery, so a pypi-sourced project drops out of the editable installs.
+    apply_all(workspace_root, uv_cmd)
+    # 1d. Per-project mirrors: each checkout's `mirror` remote follows its setting. No network.
+    apply_mirrors(workspace_root)
+
+    # 2. Dependency discovery (now reflects the active checkouts), and the editor and type-checker files from it.
+    console.echo(f"==> Resolving workspace dependency graph in {workspace_root}...")
+    install_order = get_install_order(workspace_root)
+    write_pyrightconfig(workspace_root, install_order)
+    sync_mypy_path(workspace_root, install_order)  # append-only: the root mypy.ini is committed
+    # 2b. The selections — after discovery (their menus come from the projects), before the installs that read them. A
+    #     declaration aisland cannot use stops setup here, naming its file and line, before anything is installed.
+    _choose_selections(workspace_root, non_interactive, install_all)
+    # 2c. The root uv.toml — each activated project's private index merged in — before `uv pip install` reads it.
+    write_root_uv_toml(workspace_root, install_order)
+
+    # 3. Each project's git settings, its editable install (cycles together, dependents of a failure skipped), then
+    #    the browser a `playwright` dev dependency needs, for each project that installed.
+    merge_on_pull(install_order)
+    failed, skipped = _run_installs(workspace_root, uv_cmd, install_order)
+    _report_installs(failed, skipped)
+    install_browsers([p for p in install_order if p["name"] not in failed + skipped], venv_bin)
+
+    # 4. The MCP client files — every workspace MCP server for the Gemini CLI and Claude Code, with absolute venv
+    #    paths. After the installs, so the console scripts exist.
     write_gemini_settings(workspace_root, venv_bin)
     write_mcp_json(workspace_root, venv_bin)
-
-    # 5. The VS Code workspace file — this machine's checkouts, and loggair's log folder, which needs loggair
-    #    installed to be asked.
+    # 5. The VS Code workspace file (its loggair log folder needs loggair installed to be asked), then the workspace's
+    #    example environment made of each project's env.example (never .env itself).
     write_code_workspace(workspace_root)
-
-    # 5b. The workspace's example environment, made of each project's env.example (never .env itself).
     write_generated_env_example(workspace_root)
-
     # 6. The git aliases, however aisland is installed: from a wheel they name the scripts by their path in the venv,
     #    so a recreated venv or a new aisland is pointed at by the next setup; a newly activated submodule gets them.
     install_git_aliases(workspace_root)

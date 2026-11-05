@@ -1,6 +1,6 @@
 """A service a project implements in its own code: an ``aisland.plugins`` entry point of kind ``service``.
 
-The project imports nothing of aisland (:mod:`aisland.discovery`, stage 2): its class needs only ``start(ctx)``, and
+The project imports nothing of aisland (:mod:`aisland.workspace.discovery`, stage 2): its class needs only ``start(ctx)``, and
 ``stop``, ``status``, ``info`` and ``reset`` are aisland's own unless the class has them — ``info(ctx)`` adds lines
 after aisland's, or stands alone for a class whose processes are not the supervisor's (``supervised = False``). A
 class may declare options of its own (``options = {"repo": "help"}``), offered on ``start`` and ``restart``.
@@ -21,10 +21,11 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Mapping, Optional
 
-from aisland import console, projects, supervisor
+from aisland import console, envfile, supervisor
 from aisland.errors import AislandError
-from aisland.selection import add_command
 from aisland.services.base import BaseService, ServiceState, service_state
+from aisland.workspace import projects
+from aisland.workspace.selection import add_command
 
 
 class ServiceContext:
@@ -63,11 +64,11 @@ class ServiceContext:
 
     def write_env(self, values: Dict[str, str]) -> None:
         """Set each key in the workspace ``.env``, an existing one replaced in place."""
-        supervisor.write_workspace_env(values)
+        envfile.write(values)
 
     def read_env(self) -> Dict[str, str]:
         """The workspace ``.env``'s keys and values, as written."""
-        return supervisor.read_workspace_env(self.workspace)
+        return envfile.read(self.workspace)
 
     def choose_command(self, selection: str, name: str) -> str:
         """The command that adds ``name`` to ``selection`` keeping what this machine chose — ``set`` takes the whole

@@ -1,8 +1,8 @@
 """``aisland jenkins scaffold``: a project's CI files, rendered from the workspace's template set.
 
-This module works out the FACTS a template reads (:class:`aisland.ci_templates.Facts`) — the extras CI installs, the
+This module works out the FACTS a template reads (:class:`aisland.ci.ci_templates.Facts`) — the extras CI installs, the
 internal dependencies a runner installs from GitHub, the slow marker, the Node test folders, the time limits — and
-writes what :func:`aisland.ci_templates.render` makes of them, each Jenkinsfile checked by the running Jenkins'
+writes what :func:`aisland.ci.ci_templates.render` makes of them, each Jenkinsfile checked by the running Jenkins'
 linter first. Jenkins is asked for nothing else here: the jobs aisland seeds are :mod:`aisland.services.jenkins_jobs`.
 """
 
@@ -21,20 +21,21 @@ import click
 from packaging.requirements import InvalidRequirement, Requirement
 from packaging.utils import canonicalize_name
 
-from aisland import ci_templates, console, gitcmd
+from aisland import console, gitcmd
 from aisland import pyproject as pyproject_toml
+from aisland.ci import ci_templates
 from aisland.errors import AislandError
 from aisland.github import GitHubRepository, project_repositories
-from aisland.projects import get_project_metadata, get_workspace_name, get_workspace_root
 from aisland.pypi import released_on_pypi
-from aisland.selection import PLAYWRIGHT_BROWSER
-from aisland.selection import axes as sel_axes
-from aisland.selection import declared as sel_declared
-from aisland.selection import dev_extra_names
-from aisland.selection import extras_for as sel_extras_for
-from aisland.selection import read_committed as sel_committed
-from aisland.sources import DEFAULT_REF, read_committed_sources
+from aisland.setup.playwright_browser import PLAYWRIGHT_BROWSER
 from aisland.wheels import extra as wheels_extra
+from aisland.workspace.projects import get_project_metadata, get_workspace_name, get_workspace_root
+from aisland.workspace.selection import axes as sel_axes
+from aisland.workspace.selection import declared as sel_declared
+from aisland.workspace.selection import dev_extra_names
+from aisland.workspace.selection import extras_for as sel_extras_for
+from aisland.workspace.selection import read_committed as sel_committed
+from aisland.workspace.sources import DEFAULT_REF, read_committed_sources
 
 #: Every GitHub Action a generated ``ci.yml`` uses — the ONE place their versions live. Each is a
 #: MAJOR tag whose ``action.yml`` declares ``using: node24`` (2026-09-26: GitHub annotated every run
@@ -51,7 +52,7 @@ GH_ACTIONS: Dict[str, str] = {
     "setup-node": "actions/setup-node@v7",
 }
 
-#: A long stage's time limit in minutes in `Jenkinsfile.local` (user choice 2026-10-15): past it the stage FAILS naming
+#: A long stage's time limit in minutes in `Jenkinsfile.local`: past it the stage FAILS naming
 #: itself and the limit (`TIMED_OUT_MESSAGE`), so one hung test never holds the nightly orchestrator — annotaide.local
 #: #37's Unit Tests waited 109 min on a test ignoring SIGINT, another project's Slow Tests ran 519 min the
 #: night before, and acme.local #36 waited on both with no limit anywhere. Each limit is about twice the longest
@@ -68,15 +69,13 @@ STAGE_LIMITS: Dict[str, int] = {
     "Verify Notebooks": 15,
     "Node Tests": 10,
 }
-#: A GitHub job's limit is its stage's times this (user pick 2026-10-28): a runner is slower than this machine, whose
+#: A GitHub job's limit is its stage's times this: a runner is slower than this machine, whose
 #: runs the table was measured on, and without one a hung job holds the runner for GitHub's six hours. `ci.yml`'s
 #: `timeout-minutes` come from here; the quality gates get none, as in Jenkins.
 RUNNER_LIMIT_FACTOR = 3
 
 #: The one line a stage past its limit writes (Groovy interpolation); `nightly._TIMED_OUT` reads it from the console.
-TIMED_OUT_MESSAGE = (
-    "${stage} timed out after ${minutes} min - its limit in Jenkinsfile.local (STAGE_LIMITS in aisland/ci_scaffold.py)"
-)
+TIMED_OUT_MESSAGE = "${stage} timed out after ${minutes} min - its limit in Jenkinsfile.local (STAGE_LIMITS in aisland/ci/ci_scaffold.py)"
 #: The `limited` helper `Jenkinsfile.local` defines above `pipeline {` is aisland's template
 #: `templates/ci/_limited.groovy.jinja`, which writes this message; each long stage's steps run inside it. Measured 2026-10-15
 #: on a probe job (a 1 min limit around a shell ignoring SIGINT): the stage FAILED at 80 s, the build FAILURE, the
@@ -245,8 +244,7 @@ def project_facts(workspace_root: Path, project_name: str, jenkins_url: str) -> 
     data = pyproject_toml.load(pyproject_path)
 
     # CI asks ONE question per internal dependency — is it RELEASED on PyPI? — and nothing about the workspace's
-    # sources (`workspace.toml`) (user ruling 2026-09-26: "it should always point to released packages, and to GitHub
-    # for non-released ones"). Released (a final, non-yanked version whose metadata points at github.com/<its owner>/ —
+    # sources (`workspace.toml`): CI installs what is released, and from GitHub what is not. Released (a final, non-yanked version whose metadata points at github.com/<its owner>/ —
     # `pypi.released_on_pypi`) -> the dep drops out of the pre-install loop and `.[dev]` resolves the release from
     # PyPI. Not released -> the runner installs GitHub `main` (`DEFAULT_REF`). A source (`local` / `github` / `pypi`,
     # any `ref`) describes ONE machine's checkout and venv; before this rule it also decided the runner's install

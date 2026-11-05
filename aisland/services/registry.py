@@ -19,7 +19,7 @@ from typing import TYPE_CHECKING, Any, Callable, Collection, List, Mapping, Opti
 
 import click
 
-from aisland import discovery, failures, selection, supervisor
+from aisland import failures, supervisor
 from aisland.errors import AislandError
 from aisland.services.base import ServiceState
 from aisland.services.declared import DeclaredService
@@ -27,6 +27,7 @@ from aisland.services.docker import docker_service
 from aisland.services.jenkins import JenkinsService
 from aisland.services.plugin import PluginService
 from aisland.services.swiftbar import SwiftBarService
+from aisland.workspace import discovery, selection
 
 if TYPE_CHECKING:
     import importlib.metadata

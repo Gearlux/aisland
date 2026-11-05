@@ -18,6 +18,7 @@ import click
 import pytest
 
 from aisland.wheels import build as w
+from aisland.wheels import projects as wheels_projects
 
 _BUILD_SYSTEM = '[build-system]\nrequires = ["setuptools>=61"]\nbuild-backend = "setuptools.build_meta"\n'
 
@@ -40,7 +41,7 @@ def _workspace(root: Path) -> Path:
 
 
 def _problem(path: Path) -> Optional[str]:
-    return w.wheels_folder_problem(w.workspace_projects(path.parent)["app"])
+    return w.wheels_folder_problem(wheels_projects.workspace_projects(path.parent)["app"])
 
 
 # --- refused ---------------------------------------------------------------------------------------------------------

@@ -1,7 +1,7 @@
 """This machine's editor theme and colours, laid over the generated ``<workspace>.code-workspace``.
 
 ``aisland workspace theme|color`` record a choice per machine, in ``git config --local aisland.editor.*`` — never
-in a committed file — and :func:`aisland.editor_files.write_code_workspace` adds it to the file on every rewrite, so
+in a committed file — and :func:`aisland.setup.editor_files.write_code_workspace` adds it to the file on every rewrite, so
 ``aisland setup`` keeps it. VS Code reads the file's ``workbench.colorTheme`` for this window only (the user setting
 stays every other window's theme) and lays ``workbench.colorCustomizations`` written without a ``[Theme]`` scope over
 whichever theme is active, so the colours hold whatever the theme.

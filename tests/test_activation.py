@@ -19,7 +19,9 @@ from typing import List, Optional
 import pytest
 from click.testing import CliRunner
 
-from aisland import activation, cli, console, locations, manager
+from aisland import cli, console, locations
+from aisland.setup import manager
+from aisland.workspace import activation
 from aisland.workspace import file as workspace_file
 
 _AUTHOR = {"GIT_AUTHOR_NAME": "t", "GIT_AUTHOR_EMAIL": "t@t", "GIT_COMMITTER_NAME": "t", "GIT_COMMITTER_EMAIL": "t@t"}
@@ -194,7 +196,7 @@ def test_a_folder_with_uncommitted_work_is_never_emptied(ws: Path, capsys: pytes
 def test_a_project_on_a_package_source_stays_empty_whatever_its_choice(
     ws: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    monkeypatch.setattr("aisland.activation.detached_projects", lambda root: {"models"})
+    monkeypatch.setattr("aisland.workspace.activation.detached_projects", lambda root: {"models"})
     activation.reconcile(ws)
     assert list((ws / "models").iterdir()) == []
     assert activation.machine_choice(ws, "models") is None  # the source emptied it, no choice was made
@@ -266,7 +268,7 @@ def test_set_refuses_a_project_the_file_does_not_list(at: Path) -> None:
 
 
 def test_active_is_a_plugin_of_configure() -> None:
-    from aisland import configure
+    from aisland.workspace import configure
 
     plugin = configure.PLUGINS["active"]
     assert (plugin.main.name, plugin.main.choices, plugin.options) == ("active", ("true", "false"), ())
@@ -342,7 +344,7 @@ def test_setup_asks_then_reconciles(tmp_path: Path, monkeypatch: pytest.MonkeyPa
     monkeypatch.setattr(manager, "ensure_uv_in_venv", lambda venv_bin: "uv")
     monkeypatch.setattr(manager, "link_project_bashrc", lambda root: None)
     monkeypatch.setattr(manager, "install_harness", lambda root: [])
-    monkeypatch.setattr("aisland.provision.install", lambda root, aislands_own=True: None)
+    monkeypatch.setattr("aisland.setup.provision.install", lambda root, aislands_own=True: None)
 
     def resolve(root: Path, non_interactive: bool) -> None:
         calls.append(f"resolve {non_interactive}")
@@ -357,7 +359,7 @@ def test_setup_asks_then_reconciles(tmp_path: Path, monkeypatch: pytest.MonkeyPa
     def apply_all(*args: object, **kwargs: object) -> None:
         raise _Stop
 
-    monkeypatch.setattr("aisland.manager.apply_all", apply_all)
+    monkeypatch.setattr("aisland.setup.manager.apply_all", apply_all)
     with pytest.raises(_Stop):
         manager.setup_workspace(non_interactive=True)
     assert calls == ["resolve True", "reconcile"]

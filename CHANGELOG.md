@@ -7,6 +7,35 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+- **The package is grouped by subject**: `aisland.workspace` (the projects, what they declare and what a machine
+  chooses), `aisland.setup` (`aisland setup` and its steps), `aisland.ci` (generated CI, `aisland check`, the test-run
+  report), and smaller modules split out of large ones (`backups`, `envfile`, `probe`, `tunnel.store`, `wheels.projects`,
+  …). Modules are no interface ([stability](docs/stability.md)); commands, files and entry points are unchanged.
+
+### Fixed
+- **A harness set's name is one plain folder name**: a `name` (or a git url's last part) such as `..`, `a/b` or `/`
+  is refused naming its line before anything is cloned or removed. Before, setup could remove a folder outside
+  aisland's state for it.
+- **Install order reads every PEP 508 spelling of a dependency**: `~=`, `<`, `>`, `!=`, extras, environment markers
+  and the name as PEP 503 normalizes it (`Foo_Bar` is `foo-bar`). `aisland setup`, `aisland workspace projects` and
+  the SwiftBar menu take the order from one place.
+- **The MCP server's service tools always run `aisland services <action> <name>`**, so a project's service named like
+  an aisland command is still that service.
+- **A status question never hangs**: `colima status`, `pgrep`, `brew list` and `lsof`, asked by `aisland services
+  status`, the doctor and the MCP tools, are given up after 30 s.
+- **Every git command that reaches a remote gives up on one that stops sending and never prompts**, the submodule
+  clone of `workspace configure source set … local` and `workspace init`'s `submodule add` included; a `branch` that
+  starts with `-` is refused before `git switch`.
+- **`aisland clean` lists the expired backups its sweep deletes and asks about them too**, also when there is nothing
+  to move.
+- **A remote url reaches a Jenkins job's `config.xml` escaped**, and `jenkins init` prints it without its
+  `user:token@`.
+- A harness file never lands in `.git` in any letter case or at any depth; the restore commands `clean` and
+  `wheels prune` print keep a path with spaces one word; the wheel `aisland wheels` downloads from PyPI to compare is
+  checked against the SHA-256 PyPI lists; `aisland tunnel` recognises its process however long its path;
+  `backups restore` refuses a manifest entry that names the whole project.
+
 ## [0.1.0] - 2026-11-03
 
 The first release on PyPI: `pip install aisland`.

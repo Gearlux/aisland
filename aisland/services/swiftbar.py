@@ -1,16 +1,20 @@
+"""SwiftBar, the macOS menu-bar app: aisland's menus of each project's Jenkins jobs and GitHub Actions runs."""
+
 import os
 import platform
 import subprocess
 from pathlib import Path
 from typing import Any, List, Optional, Tuple
+from urllib.parse import quote
 
 import click
 
-from aisland import console, failures, gitcmd, locations, paths, provision
+from aisland import console, failures, gitcmd, locations, paths, probe
 from aisland.github import github_repository
-from aisland.projects import discover_projects, get_project_metadata, get_workspace_root
 from aisland.services.base import BaseService, ServiceState, service_state, styled_state
 from aisland.services.jenkins import JenkinsService
+from aisland.setup import provision
+from aisland.workspace.projects import dependency_order, discover_projects, get_project_metadata, get_workspace_root
 
 #: The bodies of the menu scripts ``aisland swiftbar init`` writes, each ``<[ name ]>`` filled in by :func:`_render_script`.
 TEMPLATES_DIR = locations.PACKAGE_DIR / "templates" / "swiftbar"
@@ -69,43 +73,10 @@ class SwiftBarService(BaseService):
         return f"{repository.owner}/{repository.name}" if repository else None
 
     def _dependency_ordered_projects(self, workspace_root: Path) -> List[Path]:
-        """Return project directories ordered so dependencies precede dependents.
-
-        Alphabetical tie-breaking is applied within each dependency level so
-        the resulting order is deterministic. The workspace root itself is
-        excluded (it has no ``pyproject.toml``); callers add it separately.
-        """
-        import graphlib
-
-        projects = [get_project_metadata(p) for p in discover_projects(workspace_root)]
-        project_names = {p["name"] for p in projects if p["name"]}
-        name_to_path = {p["name"]: p["path"] for p in projects if p["name"]}
-
-        graph: dict[str, set[str]] = {}
-        for p in projects:
-            if not p["name"]:
-                continue
-            deps: set[str] = set()
-            for raw in p["dependencies"]:
-                # Strip version specifiers, extras, and URL fragments so that
-                # 'loggair>=0.1.0', 'pkg[extra]', and 'torchsig @ git+https://...'
-                # all reduce to the bare distribution name.
-                dep_name = (
-                    raw.split("@")[0].split(">=")[0].split("==")[0].split("<=")[0].split("[")[0].split()[0].strip()
-                )
-                if dep_name in project_names and dep_name != p["name"]:
-                    deps.add(dep_name)
-            graph[p["name"]] = deps
-
-        sorter = graphlib.TopologicalSorter(graph)
-        sorter.prepare()
-        ordered: List[str] = []
-        while sorter.is_active():
-            # sorted() here gives alphabetical tie-breaking within a level.
-            for name in sorted(sorter.get_ready()):
-                ordered.append(name)
-                sorter.done(name)
-        return [name_to_path[n] for n in ordered]
+        """Project folders, dependencies before their dependents and otherwise by name, so the order is the same
+        on every machine. The workspace root itself is excluded (it has no ``pyproject.toml``); callers add it."""
+        projects = sorted((get_project_metadata(p) for p in discover_projects(workspace_root)), key=lambda p: p["name"])
+        return [p["path"] for p in dependency_order([p for p in projects if p["name"]])]
 
     def init_scripts(self) -> None:
         """Scan workspace and generate SwiftBar scripts for Jenkins and GitHub."""
@@ -147,7 +118,9 @@ class SwiftBarService(BaseService):
             subprocess.run([*defaults, "DisabledPlugins", "-array", "CLAUDE.md", "AGENTS.md", "GEMINI.md"], check=True)
             console.echo(f"  - SwiftBar configured to use: {self.plugins_dir}")
             # The URL scheme as well, so a running app makes its bookmark of the folder.
-            subprocess.run(["open", "-g", f"swiftbar://changePluginsDirectory?path={self.plugins_dir}"], check=False)
+            subprocess.run(
+                ["open", "-g", f"swiftbar://changePluginsDirectory?path={quote(str(self.plugins_dir))}"], check=False
+            )
             self.launch()
         except (OSError, subprocess.CalledProcessError) as e:
             failures.report(f"  - Error: failed to configure SwiftBar: {e}")
@@ -215,11 +188,7 @@ class SwiftBarService(BaseService):
         """Whether the SwiftBar app runs (``pgrep``); ``not supported`` off macOS."""
         if platform.system() != "Darwin":
             return service_state(self.name, "not supported")
-        try:
-            subprocess.check_output(["pgrep", "SwiftBar"])
-        except (subprocess.CalledProcessError, FileNotFoundError):
-            return service_state(self.name, "stopped")
-        return service_state(self.name, "running")
+        return service_state(self.name, "running" if probe.succeeds(["pgrep", "SwiftBar"]) else "stopped")
 
     def status(self) -> None:
         """Display SwiftBar status."""
@@ -233,10 +202,9 @@ class SwiftBarService(BaseService):
         if platform.system() != "Darwin":
             console.echo(f"  Status        : {click.style('Not supported (macOS only)', fg='yellow')}")
             return
-        try:
-            subprocess.check_output(["pgrep", "SwiftBar"])
+        if probe.succeeds(["pgrep", "SwiftBar"]):
             console.echo(f"  Status        : {click.style('Running', fg='green')}")
-        except (subprocess.CalledProcessError, FileNotFoundError):
+        else:
             console.echo(f"  Status        : {click.style('Stopped', fg='red')}")
         console.echo(f"  Plugins dir   : {self.plugins_dir}")
         if self.plugins_dir.exists():

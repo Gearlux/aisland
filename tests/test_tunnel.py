@@ -20,11 +20,12 @@ from __future__ import annotations
 
 import io
 import json
+import signal
 import tarfile
 from pathlib import Path
 from subprocess import CompletedProcess
 from typing import Any, Dict, List, Optional
-from unittest.mock import patch
+from unittest.mock import call, patch
 
 import click
 import pytest
@@ -33,13 +34,16 @@ from click.testing import CliRunner
 from aisland import downloads, locations
 from aisland.cli import main
 from aisland.errors import AislandError
+from aisland.tunnel import binary as tunnel_binary
 from aisland.tunnel import host as tunnel
+from aisland.tunnel import state as tunnel_state
+from aisland.tunnel import store as tunnel_store
 
 
 @pytest.fixture(autouse=True)
 def state(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> Path:
     """Point the tunnel's state at a scratch folder, so no test touches this machine's own."""
-    monkeypatch.setenv(tunnel.TUNNEL_HOME_ENV, str(tmp_path / "tunnel"))
+    monkeypatch.setenv(tunnel_state.TUNNEL_HOME_ENV, str(tmp_path / "tunnel"))
     return tmp_path / "tunnel"
 
 
@@ -94,8 +98,8 @@ def _cli_archive(path: Path) -> Path:
     ],
 )
 def test_a_name_is_normalized_to_what_the_relay_accepts(raw: str, expected: str) -> None:
-    assert tunnel.sanitize_name(raw) == expected
-    assert tunnel.NAME_MIN <= len(tunnel.sanitize_name(raw)) <= tunnel.NAME_MAX
+    assert tunnel_state.sanitize_name(raw) == expected
+    assert tunnel_state.NAME_MIN <= len(tunnel_state.sanitize_name(raw)) <= tunnel_state.NAME_MAX
 
 
 def test_the_default_name_is_the_hosts_workspace_name_then_the_hostname() -> None:
@@ -119,7 +123,7 @@ def test_the_tunnel_is_never_passed_an_account_option(state: Path) -> None:
     tunnel.provider_path().write_text("microsoft\n")  # remembered from an earlier sign-in
 
     with (
-        patch.object(tunnel, "install_cli", return_value=state / "code"),
+        patch.object(tunnel_binary, "install_cli", return_value=state / "code"),
         patch.object(tunnel.subprocess, "Popen", popen),
         patch.object(tunnel, "signed_in", return_value="user@example.invalid"),
     ):
@@ -146,7 +150,7 @@ def test_an_unsigned_machine_is_signed_in_before_the_tunnel_is_spawned(state: Pa
     state.mkdir(parents=True, exist_ok=True)
     tunnel.provider_path().write_text("github\n")
     with (
-        patch.object(tunnel, "install_cli", return_value=state / "code"),
+        patch.object(tunnel_binary, "install_cli", return_value=state / "code"),
         patch.object(tunnel.subprocess, "Popen", record_popen),
         patch.object(tunnel, "signed_in", return_value=None),
         patch.object(tunnel, "login", fake_login),
@@ -159,7 +163,7 @@ def test_an_unsigned_machine_is_signed_in_before_the_tunnel_is_spawned(state: Pa
 def test_machine_readable_start_reports_the_signin_instead_of_asking(state: Path) -> None:
     popen = _spawn()
     with (
-        patch.object(tunnel, "install_cli", return_value=state / "code"),
+        patch.object(tunnel_binary, "install_cli", return_value=state / "code"),
         patch.object(tunnel.subprocess, "Popen", popen),
         patch.object(tunnel, "signed_in", return_value=None),
     ):
@@ -173,7 +177,7 @@ def test_machine_readable_start_reports_the_signin_instead_of_asking(state: Path
 def test_sign_in_state_is_read_from_the_output_not_the_exit_code(state: Path) -> None:
     """`code tunnel user show` exits 0 whether or not an account is held (measured 2026-10-20)."""
     state.mkdir(parents=True, exist_ok=True)
-    tunnel.cli_path().write_text("")
+    tunnel_binary.cli_path().write_text("")
 
     with patch.object(tunnel.subprocess, "run", return_value=CompletedProcess([], 0, "not logged in\n", "")):
         assert tunnel.signed_in() is None
@@ -188,8 +192,8 @@ def test_a_cli_that_does_not_answer_whether_it_is_signed_in_is_refused_naming_it
     """`tunnel status` and `tunnel start` (and their MCP tools) wait on this question: a CLI that hangs is named
     after `ANSWER_SECONDS`, never waited on."""
     state.mkdir(parents=True, exist_ok=True)
-    tunnel.cli_path().write_text("#!/bin/sh\nsleep 60\n")
-    tunnel.cli_path().chmod(0o755)
+    tunnel_binary.cli_path().write_text("#!/bin/sh\nsleep 60\n")
+    tunnel_binary.cli_path().chmod(0o755)
     monkeypatch.setattr(tunnel, "ANSWER_SECONDS", 1)
     with pytest.raises(AislandError, match=r"`code tunnel user show` did not answer within 1 s"):
         tunnel.signed_in()
@@ -208,7 +212,7 @@ def test_status_says_which_name_the_tunnel_registered(state: Path) -> None:
 def test_start_spawns_the_license_flag_and_the_name_and_nothing_else(state: Path) -> None:
     popen = _spawn(log_text="Open this link in your browser https://vscode.dev/tunnel/box/x\n")
     with (
-        patch.object(tunnel, "install_cli", return_value=state / "code"),
+        patch.object(tunnel_binary, "install_cli", return_value=state / "code"),
         patch.object(tunnel.subprocess, "Popen", popen),
         patch.object(tunnel, "_is_tunnel", return_value=True),
         patch.object(tunnel, "signed_in", return_value="user@example.invalid"),
@@ -224,7 +228,7 @@ def test_start_spawns_the_license_flag_and_the_name_and_nothing_else(state: Path
 def test_start_reports_a_pending_signin_instead_of_waiting_for_it(state: Path) -> None:
     log = "To grant access to the server, please log into https://github.com/login/device and use code ABCD-1234\n"
     with (
-        patch.object(tunnel, "install_cli", return_value=state / "code"),
+        patch.object(tunnel_binary, "install_cli", return_value=state / "code"),
         patch.object(tunnel.subprocess, "Popen", _spawn(log_text=log)),
         patch.object(tunnel, "signed_in", return_value="user@example.invalid"),
     ):
@@ -237,7 +241,7 @@ def test_start_reports_a_pending_signin_instead_of_waiting_for_it(state: Path) -
 def test_a_second_start_does_not_spawn_a_second_tunnel(state: Path) -> None:
     popen = _spawn()
     with (
-        patch.object(tunnel, "install_cli", return_value=state / "code"),
+        patch.object(tunnel_binary, "install_cli", return_value=state / "code"),
         patch.object(tunnel.subprocess, "Popen", popen),
         patch.object(tunnel, "_is_tunnel", return_value=True),
         patch.object(tunnel, "signed_in", return_value="user@example.invalid"),
@@ -259,7 +263,7 @@ def test_the_provider_is_remembered_for_the_sign_in_only(state: Path) -> None:
         return 0
 
     with (
-        patch.object(tunnel, "install_cli", return_value=state / "code"),
+        patch.object(tunnel_binary, "install_cli", return_value=state / "code"),
         patch.object(tunnel.subprocess, "Popen", popen),
         patch.object(tunnel, "signed_in", return_value=None),
         patch.object(tunnel, "login", fake_login),
@@ -285,7 +289,7 @@ def test_installing_from_an_archive_never_reaches_the_network(state: Path, tmp_p
         raise AssertionError("the downloader must not be called when --cli names an archive")
 
     with patch.object(tunnel.urllib.request, "urlopen", explode):
-        installed = tunnel.install_cli(tarball=archive)
+        installed = tunnel_binary.install_cli(tarball=archive)
 
     assert installed == state / "code"
     assert installed.read_bytes().startswith(b"#!/bin/sh")
@@ -301,9 +305,9 @@ def test_the_cli_is_fetched_through_the_shared_download_and_installed(state: Pat
         target.write_bytes(archive.read_bytes())
 
     with patch.object(downloads, "download", fetch):
-        installed = tunnel.install_cli()
+        installed = tunnel_binary.install_cli()
 
-    assert fetched == [tunnel.CLI_DOWNLOAD_URL.format(asset=tunnel.cli_asset())]
+    assert fetched == [tunnel_binary.CLI_DOWNLOAD_URL.format(asset=tunnel_binary.cli_asset())]
     assert installed == state / "code"
     assert installed.stat().st_mode & 0o111
 
@@ -314,7 +318,7 @@ def test_a_cli_download_that_fails_names_the_url_and_the_way_around_it(state: Pa
 
     with patch.object(downloads, "download", fetch):
         with pytest.raises(AislandError, match="Could not download the VS Code CLI from https://.*timed out") as raised:
-            tunnel.install_cli()
+            tunnel_binary.install_cli()
 
     assert "aisland tunnel start --cli" in str(raised.value)
     assert not (state / "code").exists()
@@ -325,7 +329,7 @@ def test_an_archive_without_the_binary_is_refused_by_name(tmp_path: Path) -> Non
     with tarfile.open(empty, "w:gz"):
         pass
     with pytest.raises(click.ClickException, match="holds no 'code' binary"):
-        tunnel.install_cli(tarball=empty)
+        tunnel_binary.install_cli(tarball=empty)
 
 
 @pytest.mark.parametrize(
@@ -333,12 +337,12 @@ def test_an_archive_without_the_binary_is_refused_by_name(tmp_path: Path) -> Non
     [("x86_64", "cli-alpine-x64"), ("AMD64", "cli-alpine-x64"), ("aarch64", "cli-alpine-arm64")],
 )
 def test_the_download_identifier_follows_the_architecture(machine: str, asset: str) -> None:
-    assert tunnel.cli_asset(machine) == asset
+    assert tunnel_binary.cli_asset(machine) == asset
 
 
 def test_an_unsupported_architecture_is_refused_and_named() -> None:
     with pytest.raises(click.ClickException, match="ppc64le"):
-        tunnel.cli_asset("ppc64le")
+        tunnel_binary.cli_asset("ppc64le")
 
 
 # --- 5. where state lives ---------------------------------------------------------------------
@@ -346,17 +350,23 @@ def test_an_unsupported_architecture_is_refused_and_named() -> None:
 
 def test_the_default_state_folder_is_per_machine_not_per_workspace(monkeypatch: pytest.MonkeyPatch) -> None:
     """Deriving it from the working directory made `start` here and `status` there disagree."""
-    monkeypatch.delenv(tunnel.TUNNEL_HOME_ENV, raising=False)
-    monkeypatch.setattr(tunnel.Path, "home", classmethod(lambda cls: Path("/home/someone")))
+    monkeypatch.delenv(tunnel_state.TUNNEL_HOME_ENV, raising=False)
+    monkeypatch.setattr(tunnel_state.Path, "home", classmethod(lambda cls: Path("/home/someone")))
 
-    assert tunnel.state_dir() == Path("/home/someone/.aisland/tunnel")
+    assert tunnel_state.state_dir() == Path("/home/someone/.aisland/tunnel")
 
-    monkeypatch.setenv(tunnel.TUNNEL_HOME_ENV, "/mnt/persistent/tunnel")
-    assert tunnel.state_dir() == Path("/mnt/persistent/tunnel")
+    monkeypatch.setenv(tunnel_state.TUNNEL_HOME_ENV, "/mnt/persistent/tunnel")
+    assert tunnel_state.state_dir() == Path("/mnt/persistent/tunnel")
 
 
 def test_every_path_is_in_the_one_state_folder(state: Path, tmp_path: Path) -> None:
-    paths = [tunnel.cli_path(), tunnel.log_path(), tunnel.pid_path(), tunnel.provider_path(), tunnel.store_path()]
+    paths = [
+        tunnel_binary.cli_path(),
+        tunnel.log_path(),
+        tunnel.pid_path(),
+        tunnel.provider_path(),
+        tunnel_store.store_path(),
+    ]
     assert all(path.parent == state for path in paths)
     assert {path.name for path in paths} == {"code", "tunnel.log", "tunnel.pid", "provider", "workspaces.json"}
     home = Path.home()
@@ -389,11 +399,12 @@ def test_stop_without_a_tunnel_is_not_an_error(state: Path) -> None:
 def test_stop_signals_the_recorded_pid_and_clears_the_pidfile(state: Path) -> None:
     state.mkdir(parents=True, exist_ok=True)
     tunnel.pid_path().write_text("4711\n")
-    with patch.object(tunnel, "_is_tunnel", return_value=True), patch.object(tunnel.os, "kill") as kill:
+    # alive when stop looks, gone once it has been asked to stop
+    with patch.object(tunnel, "_is_tunnel", side_effect=[True, False]), patch.object(tunnel.os, "kill") as kill:
         payload = tunnel.stop()
 
     assert payload == {"running": False, "stopped": True, "pid": 4711}
-    assert kill.call_args[0][0] == 4711
+    assert kill.call_args_list == [call(4711, signal.SIGTERM)]
     assert not tunnel.pid_path().exists()
 
 

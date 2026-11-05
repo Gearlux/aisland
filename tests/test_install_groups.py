@@ -11,9 +11,9 @@ from typing import Any, List
 
 import pytest
 
-from aisland import manager as m
-from aisland import selection
-from aisland.projects import ProjectMetadata, install_groups
+from aisland.setup import manager as m
+from aisland.workspace import selection
+from aisland.workspace.projects import ProjectMetadata, install_groups
 from tests.records import project_metadata
 
 
@@ -23,6 +23,19 @@ def _project(name: str, *deps: str) -> ProjectMetadata:
 
 def _names(groups: List[List[ProjectMetadata]]) -> List[List[str]]:
     return [[p["name"] for p in g] for g in groups]
+
+
+@pytest.mark.parametrize(
+    "spec",
+    ["lib~=0.1", "lib<1", "lib>0.1", "lib!=0.2", "lib[extra]>=0.1", "lib ; python_version >= '3.12'"],
+)
+def test_every_pep_508_spelling_of_a_dependency_orders_it_first(spec: str) -> None:
+    """A dependency is read as packaging reads a requirement: any operator, extras or a marker."""
+    assert _names(install_groups([_project("app", spec), _project("lib")])) == [["lib"], ["app"]]
+
+
+def test_a_dependency_names_its_project_whatever_its_case_and_separators() -> None:
+    assert _names(install_groups([_project("app", "Foo_Bar>=1"), _project("foo-bar")])) == [["foo-bar"], ["app"]]
 
 
 class TestInstallGroups:

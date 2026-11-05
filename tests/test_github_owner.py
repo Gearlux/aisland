@@ -18,14 +18,16 @@ from typing import Any, Dict, Iterator, Optional, Set
 import click
 import pytest
 
-from aisland import ci_scaffold, locations, projects
-from aisland import sources as s
-from aisland.ci_scaffold import discover_github_projects, is_private_repo
+from aisland import locations
+from aisland.ci import ci_scaffold
+from aisland.ci.ci_scaffold import discover_github_projects, is_private_repo
 from aisland.errors import AislandError
 from aisland.github import GitHubRepository, github_repository, project_repositories
 from aisland.pypi import released_on_pypi
 from aisland.services.jenkins import JenkinsService
-from aisland.wheels import build as w
+from aisland.wheels import published
+from aisland.workspace import projects
+from aisland.workspace import sources as s
 
 
 def _project(root: Path, name: str, deps: list[str]) -> None:
@@ -59,7 +61,7 @@ def acme(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     )
 
     monkeypatch.setattr(locations, "workspace_root", lambda: tmp_path)
-    monkeypatch.setattr("aisland.ci_scaffold.is_private_repo", lambda repository: False)
+    monkeypatch.setattr("aisland.ci.ci_scaffold.is_private_repo", lambda repository: False)
     return tmp_path
 
 
@@ -79,7 +81,7 @@ def pypi(monkeypatch: pytest.MonkeyPatch) -> Iterator[Dict[str, Dict[str, Any]]]
 
     monkeypatch.setattr(urllib.request, "urlopen", _open)
     # The scaffold asks the REAL question here, of this fake PyPI (conftest stubs it for every other test).
-    monkeypatch.setattr("aisland.ci_scaffold.released_on_pypi", released_on_pypi)
+    monkeypatch.setattr("aisland.ci.ci_scaffold.released_on_pypi", released_on_pypi)
     released_on_pypi.cache_clear()
     yield answers
     released_on_pypi.cache_clear()
@@ -186,7 +188,7 @@ def test_a_strangers_release_under_the_same_name_is_not_the_dependency(acme: Pat
 def test_a_private_dependency_gets_a_token_for_its_owner(
     acme: Path, pypi: Dict[str, Any], monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    monkeypatch.setattr("aisland.ci_scaffold.is_private_repo", lambda repository: True)
+    monkeypatch.setattr("aisland.ci.ci_scaffold.is_private_repo", lambda repository: True)
     ci_scaffold.scaffold("app", force=True, jenkins_url=JenkinsService().url())
     ci = _ci(acme, "app")["ci.yml"]
     assert "        owner: acme\n" in ci
@@ -207,7 +209,7 @@ def test_private_dependencies_of_two_owners_are_refused_naming_both(
             "app": "git@github.com:acme/app.git",
         },
     )
-    monkeypatch.setattr("aisland.ci_scaffold.is_private_repo", lambda repository: True)
+    monkeypatch.setattr("aisland.ci.ci_scaffold.is_private_repo", lambda repository: True)
     with pytest.raises(click.ClickException, match="acme, other-org"):
         ci_scaffold.scaffold("app", force=True, jenkins_url=JenkinsService().url())
 
@@ -304,7 +306,7 @@ def _set_pypi(root: Path, project: str, monkeypatch: pytest.MonkeyPatch) -> int:
     monkeypatch.setattr(s, "local_override", lambda root, name: None)
     monkeypatch.setattr(s, "set_local_override", lambda *a, **k: None)
     monkeypatch.setattr(s, "apply_source", lambda *a, **k: True)
-    monkeypatch.setattr("aisland.sources.write_code_workspace", lambda *a, **k: None)
+    monkeypatch.setattr("aisland.workspace.sources.write_code_workspace", lambda *a, **k: None)
     return s.set_project_source(project, "pypi", workspace_root=root)
 
 
@@ -348,7 +350,7 @@ def test_a_wheel_counts_as_on_pypi_only_from_its_projects_owner(
     pypi: Dict[str, Any], repository: str, owner: Optional[str], state: str
 ) -> None:
     pypi["lib"] = _release(repository)
-    assert w.pypi_state("lib", owner)[0] == state
+    assert published.pypi_state("lib", owner)[0] == state
 
 
 def test_released_on_pypi_asks_for_the_owner(pypi: Dict[str, Any]) -> None:

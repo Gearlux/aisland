@@ -8,8 +8,8 @@ from typing import Optional, Tuple
 
 import click
 
-from aisland import ci_scaffold, ci_templates
 from aisland import supervisor as supervisor_mod
+from aisland.ci import ci_scaffold, ci_templates
 from aisland.cli._base import _Group, _service_entries
 from aisland.services import jenkins_jobs
 from aisland.services import registry as service_registry

@@ -4,7 +4,7 @@ Its `.gitignore` ignores everything (`/*`), so only `.gitmodules` and the submod
 marked in this machine's `.git/config` (`aisland.workspace.local`). `local_workspace.settle` keeps it so after
 `.gitmodules` changes or a project is added — by hand with `git submodule add -f`, by the `active` plugin, by
 `aisland workspace track unset`: `.gitmodules` and the new projects are committed, nothing else. Whether the root records a
-project's commits is `aisland.tracking`'s (`tests/test_tracking.py`).
+project's commits is `aisland.workspace.tracking`'s (`tests/test_tracking.py`).
 """
 
 from __future__ import annotations
@@ -15,7 +15,7 @@ from pathlib import Path
 
 import pytest
 
-from aisland import activation
+from aisland.workspace import activation
 from aisland.workspace import local as local_workspace
 
 _AUTHOR = {"GIT_AUTHOR_NAME": "t", "GIT_AUTHOR_EMAIL": "t@t", "GIT_COMMITTER_NAME": "t", "GIT_COMMITTER_EMAIL": "t@t"}

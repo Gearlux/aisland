@@ -18,7 +18,7 @@ from typing import Any
 
 import pytest
 
-from aisland import uv_config
+from aisland.setup import uv_config
 from tests.records import project_metadata
 
 # The workspace-wide override policy (uv_config._ROOT_UV_BASE), restated so a change to it is a

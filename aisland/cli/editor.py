@@ -6,9 +6,10 @@ from typing import List, Optional
 import click
 from click.shell_completion import CompletionItem
 
-from aisland import editor, editor_files
+from aisland import editor
 from aisland.cli._base import _editor_root, _Group
 from aisland.errors import quiet_completion
+from aisland.setup import editor_files
 
 
 @quiet_completion

@@ -14,9 +14,10 @@ from typing import List
 
 import pytest
 
-from aisland import paths, provision
+from aisland import paths
 from aisland.services import docker
 from aisland.services.docker import DockerService
+from aisland.setup import provision
 
 
 @pytest.fixture

@@ -13,7 +13,7 @@ from typing import Any, List
 
 import pytest
 
-from aisland import projects
+from aisland.workspace import projects
 
 GITMODULES = """\
 [submodule "loggair"]

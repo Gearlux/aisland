@@ -67,7 +67,7 @@ fi
 echo "==> Configuring Git Submodule Tracking..."
 git config submodule.recurse true
 
-# Which submodules this machine has is aisland's (aisland.activation, run by `aisland setup`): it writes each one's
+# Which submodules this machine has is aisland's (aisland.workspace.activation, run by `aisland setup`): it writes each one's
 # `submodule.<name>.active` from this machine's choice, so this script leaves those keys alone.
 
 echo "==> Configuring Git Aliases..."

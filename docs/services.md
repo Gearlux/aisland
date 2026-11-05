@@ -1,8 +1,8 @@
 # Services
 
 The services aisland runs for a workspace — Jenkins, Docker and, on macOS, the SwiftBar menu — with the supervisor
-that keeps them running and the commands that start, stop and inspect each. A project of the workspace can bring more services; they run the same way and start only when named.
-For an example, see [matrainer's MLflow, Aim and ClearML servers](https://github.com/Gearlux/matrainer/blob/main/docs/backends.md#the-tracking-servers-as-workspace-services-matrainerservices).
+that keeps them running and the commands that start, stop and inspect each. A project of the workspace can bring more services; they run the same way and start only when named
+(declared in the project's `pyproject.toml`: the example under [Check Status](#check-status)).
 
 ## Default Ports
 
@@ -271,7 +271,7 @@ Cancelling nested steps due to timeout
 Sending interrupt signal to process
 After 20s process did not stop
 ...
-ERROR: Slow Tests timed out after 60 min - its limit in Jenkinsfile.local (STAGE_LIMITS in aisland/ci_scaffold.py)
+ERROR: Slow Tests timed out after 60 min - its limit in Jenkinsfile.local (STAGE_LIMITS in aisland/ci/ci_scaffold.py)
 Finished: FAILURE
 ```
 

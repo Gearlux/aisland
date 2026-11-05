@@ -23,24 +23,14 @@ from mcp.client.stdio import StdioServerParameters, stdio_client
 from mcp.server.lowlevel.server import NotificationOptions
 from mcp.server.mcpserver.exceptions import ToolError
 
-from aisland import (
-    cli,
-    console,
-    doctor,
-    editor,
-    editor_files,
-    failures,
-    locations,
-    mcp_config,
-    projects,
-    pytest_stats,
-    server,
-)
-from aisland import sources as sources_mod
-from aisland import supervisor
+from aisland import cli, console, doctor, editor, failures, locations, server, supervisor
+from aisland.ci import stats_report
 from aisland.services import docker, registry, swiftbar
 from aisland.services.base import ServiceState, service_state
-from aisland.tunnel import host as tunnel_mod
+from aisland.setup import editor_files, mcp_config
+from aisland.tunnel import store as tunnel_store
+from aisland.workspace import projects
+from aisland.workspace import sources as sources_mod
 from tests.test_editor import no_vscode, vscode  # noqa: F401  (fixtures)
 
 READ_ONLY = {
@@ -188,14 +178,14 @@ class _Report:
 def test_tests_report_is_what_the_command_prints_with_json(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     (tmp_path / "loggair").mkdir()
     (tmp_path / "loggair" / "pyproject.toml").write_text("[project]\nname = 'loggair'\n")
-    monkeypatch.setattr(pytest_stats, "workspace_root", lambda: tmp_path)
+    monkeypatch.setattr(locations, "workspace_root", lambda: tmp_path)
     asked: List[Any] = []
 
     def build_report(project: str, days: int) -> _Report:
         asked.append((project, days))
         return _Report()
 
-    monkeypatch.setattr(pytest_stats, "build_report", build_report)
+    monkeypatch.setattr(stats_report, "build_report", build_report)
     assert _call("tests_report", {"project": "loggair", "days": 90}) == {"project": "loggair", "fast_run_seconds": 12.5}
     printed = CliRunner().invoke(cli.main, ["tests", "report", "loggair", "--days", "90", "--json"])
     assert json.loads(printed.output) == _call("tests_report", {"project": "loggair", "days": 90})
@@ -205,7 +195,7 @@ def test_tests_report_is_what_the_command_prints_with_json(tmp_path: Path, monke
 def test_tests_report_refuses_a_project_the_workspace_does_not_have(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    monkeypatch.setattr(pytest_stats, "workspace_root", lambda: tmp_path)
+    monkeypatch.setattr(locations, "workspace_root", lambda: tmp_path)
     assert f"no project 'nothere' in the workspace {tmp_path}" in _error("tests_report", {"project": "nothere"})
 
 
@@ -241,7 +231,7 @@ def test_sources_are_the_rows_source_list_shows(repo: Path, monkeypatch: pytest.
 
 
 def test_tunnel_list_is_what_the_command_prints_with_json() -> None:
-    tunnel_mod.remember("sandbox-4821", url="https://example.invalid/sandbox-4821/?folder=/mnt/w", folder="/mnt/w")
+    tunnel_store.remember("sandbox-4821", url="https://example.invalid/sandbox-4821/?folder=/mnt/w", folder="/mnt/w")
     printed = CliRunner().invoke(cli.main, ["tunnel", "list", "--json"])
     assert _call("tunnel_list") == {"workspaces": json.loads(printed.output)}
     assert _call("tunnel_list")["workspaces"][0]["name"] == "sandbox-4821"
@@ -419,7 +409,7 @@ def ran(monkeypatch: pytest.MonkeyPatch, repo: Path) -> List[List[str]]:
 
     def run(args: List[str]) -> subprocess.CompletedProcess[str]:
         calls.append(args)
-        return subprocess.CompletedProcess(args, 0, stdout=f"{args[0].capitalize()} started.\n", stderr="")
+        return subprocess.CompletedProcess(args, 0, stdout=f"{args[-1].capitalize()} started.\n", stderr="")
 
     notes = registry.Entry("notes", cast(Any, _Notes), by_default=False, takes_background=True, project="app")
     monkeypatch.setattr(registry, "declared", lambda root, reserved=(): [notes])
@@ -433,9 +423,9 @@ def ran(monkeypatch: pytest.MonkeyPatch, repo: Path) -> List[List[str]]:
 @pytest.mark.parametrize(
     ("tool", "args"),
     [
-        ("service_start", ["notes", "start", "--background"]),
-        ("service_stop", ["notes", "stop"]),
-        ("service_restart", ["notes", "restart", "--background"]),
+        ("service_start", ["services", "start", "--background", "notes"]),
+        ("service_stop", ["services", "stop", "notes"]),
+        ("service_restart", ["services", "restart", "--background", "notes"]),
     ],
 )
 def test_a_service_tool_runs_the_aisland_command_in_the_background(
@@ -454,14 +444,25 @@ def test_a_service_tool_runs_the_aisland_command_in_the_background(
 
 @pytest.mark.parametrize(
     ("tool", "args"),
-    [("service_start", ["docker", "start"]), ("service_restart", ["swiftbar", "restart"])],
+    [("service_start", ["services", "start", "docker"]), ("service_restart", ["services", "restart", "swiftbar"])],
 )
 def test_a_service_that_detaches_by_itself_gets_no_background_flag(
     ran: List[List[str]], tool: str, args: List[str]
 ) -> None:
     """`aisland docker start` takes no `--background`: Colima detaches by itself."""
-    _call(tool, {"name": args[0]})
+    _call(tool, {"name": args[-1]})
     assert ran == [args]
+
+
+def test_a_service_named_like_an_aisland_command_is_still_the_service(
+    ran: List[List[str]], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A project's service called `clean` has no `aisland clean` shortcut — that is aisland's own command — so the
+    tool runs it through `aisland services`, never `aisland clean stop`."""
+    clean = registry.Entry("clean", cast(Any, _Notes), by_default=False, takes_background=True, project="app")
+    monkeypatch.setattr(registry, "declared", lambda root, reserved=(): [clean])
+    _call("service_stop", {"name": "clean"})
+    assert ran == [["services", "stop", "clean"]]
 
 
 def test_every_service_of_the_workspace_is_one_a_tool_controls_and_no_other(ran: List[List[str]]) -> None:
@@ -577,8 +578,8 @@ def test_without_the_mcp_extra_the_command_says_what_to_install() -> None:
 def test_over_stdio_a_print_goes_to_stderr_and_the_tools_still_answer(tmp_path: Path) -> None:
     """The real process, as a client starts it: a tool whose code prints does not corrupt the protocol."""
     script = (
-        "import click; from aisland.tunnel import host as tunnel; "
-        "tunnel.load_store = lambda: (click.echo('noise on stdout'), [])[1]; "
+        "import click; from aisland.tunnel import store as tunnel_store; "
+        "tunnel_store.load_store = lambda: (click.echo('noise on stdout'), [])[1]; "
         "from aisland.server import main; main()"
     )
     params = StdioServerParameters(

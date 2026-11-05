@@ -9,6 +9,7 @@ Unlike `tests/test_tunnel.py`, these tests start real processes (`sleep`, a scri
 
 from __future__ import annotations
 
+import signal
 import subprocess
 import time
 from pathlib import Path
@@ -17,13 +18,16 @@ from unittest.mock import patch
 
 import pytest
 
+from aisland.errors import AislandError
+from aisland.tunnel import binary as tunnel_binary
 from aisland.tunnel import host as tunnel
+from aisland.tunnel import state as tunnel_state
 from tests.test_tunnel import _cli_archive
 
 
 @pytest.fixture(autouse=True)
 def state(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> Path:
-    monkeypatch.setenv(tunnel.TUNNEL_HOME_ENV, str(tmp_path / "tunnel"))
+    monkeypatch.setenv(tunnel_state.TUNNEL_HOME_ENV, str(tmp_path / "tunnel"))
     (tmp_path / "tunnel").mkdir()
     return tmp_path / "tunnel"
 
@@ -47,9 +51,9 @@ def test_stop_never_signals_a_process_that_is_not_the_tunnel(stranger: "subproce
 
 
 def test_a_process_of_the_cli_is_the_tunnel(state: Path) -> None:
-    tunnel.cli_path().write_text("#!/bin/sh\nsleep 30\n")
-    tunnel.cli_path().chmod(0o755)
-    process = subprocess.Popen([str(tunnel.cli_path()), "tunnel"])
+    tunnel_binary.cli_path().write_text("#!/bin/sh\nsleep 30\n")
+    tunnel_binary.cli_path().chmod(0o755)
+    process = subprocess.Popen([str(tunnel_binary.cli_path()), "tunnel"])
     try:
         time.sleep(0.2)
         tunnel.pid_path().write_text(f"{process.pid}\n")
@@ -62,9 +66,64 @@ def test_a_process_of_the_cli_is_the_tunnel(state: Path) -> None:
 
 def test_an_interrupted_install_leaves_no_binary(state: Path, tmp_path: Path) -> None:
     archive = _cli_archive(tmp_path)
-    with patch.object(tunnel.shutil, "copyfileobj", side_effect=KeyboardInterrupt), pytest.raises(KeyboardInterrupt):
-        tunnel.install_cli(tarball=archive)
+    with (
+        patch.object(tunnel_binary.shutil, "copyfileobj", side_effect=KeyboardInterrupt),
+        pytest.raises(KeyboardInterrupt),
+    ):
+        tunnel_binary.install_cli(tarball=archive)
     assert sorted(path.name for path in state.iterdir()) == []
-    installed = tunnel.install_cli(tarball=archive)
+    installed = tunnel_binary.install_cli(tarball=archive)
     assert installed.read_bytes().startswith(b"#!/bin/sh")
     assert installed.stat().st_mode & 0o111
+
+
+def _fake_cli(body: str) -> "subprocess.Popen[bytes]":
+    """Run a script standing in for the CLI, recorded in the pidfile as `start` records the tunnel."""
+    ready = tunnel_binary.cli_path().with_name("ready")
+    tunnel_binary.cli_path().write_text(f"#!/bin/sh\n{body}: > '{ready}'\nwhile :; do sleep 0.1; done\n")
+    tunnel_binary.cli_path().chmod(0o755)
+    process = subprocess.Popen([str(tunnel_binary.cli_path()), "tunnel"])
+    deadline = time.monotonic() + 10
+    while not ready.exists() and time.monotonic() < deadline:  # the shell has set its trap
+        time.sleep(0.05)
+    tunnel.pid_path().write_text(f"{process.pid}\n")
+    return process
+
+
+def test_stop_returns_only_once_the_tunnel_has_exited(state: Path) -> None:
+    """A tunnel takes a moment to shut down: a pidfile removed before it has gone let an immediate `start` bring up
+    a second tunnel beside the first."""
+    process = _fake_cli("trap 'sleep 1; exit 0' TERM\n")
+    try:
+        assert tunnel.stop()["stopped"] is True
+        assert process.poll() == 0  # exited through its own shutdown, already
+        assert not tunnel.pid_path().exists()
+        assert tunnel.running() is False
+    finally:
+        process.kill()
+        process.wait()
+
+
+def test_a_tunnel_that_ignores_the_stop_is_killed(state: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(tunnel, "STOP_GRACE_S", 0.5)
+    process = _fake_cli("trap '' TERM\n")
+    try:
+        assert tunnel.stop()["stopped"] is True
+        assert process.poll() == -signal.SIGKILL
+        assert not tunnel.pid_path().exists()
+    finally:
+        process.kill()
+        process.wait()
+
+
+def test_a_tunnel_that_outlives_the_kill_keeps_its_pidfile(state: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(tunnel, "STOP_GRACE_S", 0.2)
+    tunnel.pid_path().write_text("4711\n")
+    with (
+        patch.object(tunnel, "_is_tunnel", return_value=True),
+        patch.object(tunnel, "_signal", return_value=True) as sent,
+        pytest.raises(AislandError, match=r"^The tunnel \(pid 4711\) is still running 0.4 s after it was stopped"),
+    ):
+        tunnel.stop()
+    assert [args[0] for args in sent.call_args_list] == [(4711, signal.SIGTERM), (4711, signal.SIGKILL)]
+    assert tunnel.pid_path().read_text() == "4711\n"  # so `start` reports it instead of starting a second one

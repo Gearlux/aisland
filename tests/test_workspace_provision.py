@@ -1,4 +1,4 @@
-"""The system tools a workspace needs: `aisland workspace provision [install]` (`aisland/provision.py`).
+"""The system tools a workspace needs: `aisland workspace provision [install]` (`aisland/setup/provision.py`).
 
 A project declares the tools it needs outside Python in its own `pyproject.toml`::
 
@@ -22,7 +22,9 @@ from typing import Dict, List
 import pytest
 from click.testing import CliRunner, Result
 
-from aisland import cli, discovery, installers, locations, manager, paths, provision
+from aisland import cli, locations, paths
+from aisland.setup import installers, manager, provision
+from aisland.workspace import discovery
 
 
 def _workspace(tmp_path: Path, projects: Dict[str, str]) -> Path:
@@ -159,7 +161,7 @@ def test_aislands_pyproject_declares_no_tools_of_its_own() -> None:
     """One place for them: the checkout's pyproject.toml would list them a second time."""
     import tomllib
 
-    pyproject = Path(provision.__file__).resolve().parents[1] / "pyproject.toml"
+    pyproject = locations.CHECKOUT_DIR / "pyproject.toml"
     assert "sys-dependencies" not in tomllib.loads(pyproject.read_text()).get("tool", {}).get("aisland", {})
 
 

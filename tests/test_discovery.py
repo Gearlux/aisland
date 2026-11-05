@@ -6,7 +6,7 @@ menu), a service (``[tool.aisland.service.<name>]``: a command, a port, a readin
 project declares (``[project.entry-points."aisland.plugins"]``). STAGE 2 loads those entry points once the project
 is installed, and checks each against the protocol of its kind. A project never imports aisland for either.
 
-Every test builds a workspace without ``.gitmodules`` whose subfolders are the projects (`aisland.manager
+Every test builds a workspace without ``.gitmodules`` whose subfolders are the projects (`aisland.setup.manager
 .workspace_folders` reads it as if each were a submodule), and every refusal names the file and the line.
 """
 
@@ -22,7 +22,8 @@ from typing import Dict
 import pytest
 from click.testing import CliRunner
 
-from aisland import cli, discovery, locations
+from aisland import cli, locations
+from aisland.workspace import discovery
 
 MATRAINER = """\
 [project]

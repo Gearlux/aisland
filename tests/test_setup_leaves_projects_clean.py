@@ -19,7 +19,7 @@ from typing import List
 import pytest
 
 from aisland import git_exclude
-from aisland.editor_files import write_pyrightconfig
+from aisland.setup.editor_files import write_pyrightconfig
 from tests.records import project_metadata
 
 

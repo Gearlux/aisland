@@ -19,11 +19,14 @@ import tomllib
 from pathlib import Path
 from typing import List, Tuple
 
-from aisland import activation, ci_templates, discovery, harness, mirrors
+from aisland import harness
 from aisland import pyproject as pyproject_toml
-from aisland import pytest_stats, selection, sources, tracking
+from aisland import pytest_stats
+from aisland.ci import ci_templates
 from aisland.toml_places import FORMAT_KEY, Where, key_line, table_line
+from aisland.workspace import activation, discovery
 from aisland.workspace import file as workspace_file
+from aisland.workspace import mirrors, selection, sources, tracking
 
 #: Every key a project's table may hold, and the part of aisland that reads it.
 PROJECT_KEYS: Tuple[str, ...] = (

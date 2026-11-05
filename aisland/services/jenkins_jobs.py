@@ -5,10 +5,11 @@ A multibranch job per project with a ``Jenkinsfile`` (or, with ``--local``, a pi
 ``<workspace>.nightly-check`` job, the dashboard view and the workspace's environment in Jenkins' global properties.
 Every function writes into the Jenkins home it is handed (``JenkinsService().service_data_dir``); only
 :func:`init_pipelines` starts and stops the service around them. The CI files those jobs run are
-:mod:`aisland.ci_scaffold`'s; the service itself is :mod:`aisland.services.jenkins`.
+:mod:`aisland.ci.ci_scaffold`'s; the service itself is :mod:`aisland.services.jenkins`.
 """
 
 import logging
+import re
 import shutil
 import time
 import xml.etree.ElementTree as ET
@@ -16,25 +17,24 @@ from pathlib import Path
 from typing import TYPE_CHECKING, AbstractSet, Dict, List, Optional
 from xml.sax.saxutils import escape
 
-from aisland import console, failures, gitcmd
+from aisland import console, envfile, failures, gitcmd
 from aisland import pyproject as pyproject_toml
-from aisland import supervisor
-from aisland.ci_scaffold import registers_slow_marker
+from aisland.ci.ci_scaffold import registers_slow_marker
 from aisland.errors import AislandError
-from aisland.projects import ProjectMetadata, get_install_order, get_workspace_name, get_workspace_root
+from aisland.workspace.projects import ProjectMetadata, get_install_order, get_workspace_name, get_workspace_root
 
 if TYPE_CHECKING:
     from aisland.services.jenkins import JenkinsService
 
 logger = logging.getLogger(__name__)
 
-#: When the LOCAL orchestrator (`<workspace>.local`) builds every project on its own: 01:00 every night (user
-#: ruling 2026-10-06), so each project's slow run happens and the test-run statistics fill (`aisland tests report`).
+#: When the LOCAL orchestrator (`<workspace>.local`) builds every project on its own: 01:00 every night, so
+#: each project's slow run happens and the test-run statistics fill (`aisland tests report`).
 #: Jenkins reads it in the server's time zone; a machine asleep at that minute misses the night (Jenkins does not catch
 #: up a missed timer). The GitHub-backed orchestrator gets none: it builds what is pushed.
 NIGHTLY_CRON = "0 1 * * *"
-#: When the `<workspace>.nightly-check` job reports the nightly runs (`aisland tests nightly`): 09:30 on weekdays (user
-#: choice 2026-10-06), so a Monday's report covers Saturday's, Sunday's and Monday's nights.
+#: When the `<workspace>.nightly-check` job reports the nightly runs (`aisland tests nightly`): 09:30 on weekdays, so
+#: a Monday's report covers Saturday's, Sunday's and Monday's nights.
 NIGHTLY_CHECK_CRON = "30 9 * * 1-5"
 
 
@@ -122,7 +122,12 @@ def _seed_project_job(home: Path, jobs_dir: Path, project_path: Path, local: boo
         return
     cred_id = _find_credentials(home, remote_url)
     (project_job_dir / "config.xml").write_text(_multibranch_config(project, remote_url, cred_id))
-    console.echo(f"  - Seeded job: {project} (Remote: {remote_url}, CredID: {cred_id})")
+    console.echo(f"  - Seeded job: {project} (Remote: {_without_userinfo(remote_url)}, CredID: {cred_id})")
+
+
+def _without_userinfo(url: str) -> str:
+    """``url`` with any ``user:token@`` dropped: what aisland prints reaches scrollback, CI logs and AI clients."""
+    return re.sub(r"^([a-z][a-z0-9+.-]*://)[^/@]*@", r"\1", url, flags=re.IGNORECASE)
 
 
 def _multibranch_config(project: str, remote_url: str, cred_id: str) -> str:
@@ -156,9 +161,9 @@ def _multibranch_config(project: str, remote_url: str, cred_id: str) -> str:
     <data>
       <jenkins.branch.BranchSource>
         <source class="jenkins.plugins.git.GitSCMSource" plugin="git">
-          <id>{project}-remote</id>
-          <remote>{remote_url}</remote>
-          <credentialsId>{cred_id}</credentialsId>
+          <id>{escape(project)}-remote</id>
+          <remote>{escape(remote_url)}</remote>
+          <credentialsId>{escape(cred_id)}</credentialsId>
           <traits>
             <jenkins.plugins.git.traits.BranchDiscoveryTrait/>
           </traits>
@@ -257,8 +262,6 @@ def local_job_config(project_base_name: str, script_content: str, project_path: 
     so a pipeline declaring SLOW_TESTS gets it defined here already, or the orchestrator's first nightly run would
     ask a new job for its slow tests in vain.
     """
-    from xml.sax.saxutils import escape
-
     slow_switch = (
         """
     <hudson.model.ParametersDefinitionProperty>
@@ -275,7 +278,7 @@ def local_job_config(project_base_name: str, script_content: str, project_path: 
     return f"""<?xml version='1.1' encoding='UTF-8'?>
 <flow-definition plugin="workflow-job">
   <actions/>
-  <description>Local development pipeline for {project_base_name}</description>
+  <description>Local development pipeline for {escape(project_base_name)}</description>
   <keepDependencies>false</keepDependencies>
   <properties>
     <org.jenkinsci.plugins.workflow.job.properties.DisableConcurrentBuildsJobProperty/>{slow_switch}
@@ -286,7 +289,7 @@ def local_job_config(project_base_name: str, script_content: str, project_path: 
   </definition>
   <triggers/>
   <disabled>false</disabled>
-  <customWorkspace>{project_path.absolute()}</customWorkspace>
+  <customWorkspace>{escape(str(project_path.absolute()))}</customWorkspace>
 </flow-definition>
 """
 
@@ -393,7 +396,7 @@ def _orchestrator_script(stages_str: str, local: bool) -> str:
     # arm it as soon as the job is seeded, before any run.
     triggers_block = f"    triggers {{\n        cron('{NIGHTLY_CRON}')\n    }}\n" if local else ""
     # A manual Build Now is the FAST run of every project; the nightly timer — or a tick on SLOW_TESTS — asks
-    # every project with slow tests for them too (user ruling 2026-10-06), and that run gathers the statistics.
+    # every project with slow tests for them too, and that run gathers the statistics.
     slow_tests_head = (
         "// The nightly timer, or a tick on SLOW_TESTS, runs every project's slow tests too; Build Now the fast ones.\n"
         "def slowTests() {\n"
@@ -458,7 +461,7 @@ def _orchestrator_config(pipeline_script: str, description: str, local: bool) ->
     config_xml = f"""<?xml version='1.1' encoding='UTF-8'?>
 <flow-definition plugin="workflow-job">
   <actions/>
-  <description>{description}</description>
+  <description>{escape(description)}</description>
   <keepDependencies>false</keepDependencies>
   <properties>
     <org.jenkinsci.plugins.workflow.job.properties.DisableConcurrentBuildsJobProperty/>{timer_property}{slow_switch_property}
@@ -478,13 +481,11 @@ def _create_nightly_check_job(home: Path) -> None:
     """Seed `<workspace>.nightly-check`: `aisland tests nightly` each weekday morning (`NIGHTLY_CHECK_CRON`).
 
     It reports the orchestrator's nightly runs to `aisland/data/nightly/<date>.md`, notifies on a failure, and
-    exits 1 then, so the job is red on the mornings that need a look (user choice 2026-10-06). The timer sits in
+    exits 1 then, so the job is red on the mornings that need a look. The timer sits in
     the job's properties (armed at seeding) and in the pipeline's `triggers` (re-applied at each run).
     """
-    from xml.sax.saxutils import escape
-
     job_name = f"{get_workspace_name()}.nightly-check"
-    pipeline_script = f"""// The morning report of the nightly runs (aisland/nightly.py): written to aisland/data/nightly/<date>.md,
+    pipeline_script = f"""// The morning report of the nightly runs (aisland/ci/nightly.py): written to aisland/data/nightly/<date>.md,
 // a desktop notification and a red build when a night failed, had no run, or is still building.
 pipeline {{
     agent {{
@@ -679,7 +680,7 @@ def setup_global_properties(home: Path) -> None:
 
     workspace_root = get_workspace_root()
     dotenv_path = workspace_root / ".env"
-    dotenv_vars = supervisor.read_workspace_env(workspace_root)  # the one reader: what the shell reads
+    dotenv_vars = envfile.read(workspace_root)  # the one reader: what the shell reads
     if dotenv_vars:
         logger.debug("read %d key(s) from %s", len(dotenv_vars), dotenv_path)
     else:

@@ -20,8 +20,9 @@ from typing import Any, Dict, List, Optional
 import pytest
 from click.testing import CliRunner, Result
 
-from aisland import cli, locations, selection
+from aisland import cli, locations
 from aisland.services import base, registry
+from aisland.workspace import selection
 
 NOTES = """\
     [project]

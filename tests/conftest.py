@@ -1,5 +1,6 @@
 """Shared test fixtures for aisland."""
 
+import functools
 import logging
 import sys
 from pathlib import Path
@@ -19,11 +20,11 @@ def released_packages(monkeypatch: pytest.MonkeyPatch) -> Iterator[Set[str]]:
     (``aisland.pypi.released_on_pypi``); no test may reach the network, so the name the
     scaffolder imports is stubbed for every test. A test marks a dependency released by adding
     its distribution name to the returned set. The probe's own tests call the real function
-    through :mod:`aisland.sources`, which this stub does not touch.
+    through :mod:`aisland.workspace.sources`, which this stub does not touch.
     """
     released: Set[str] = set()
     monkeypatch.setattr(
-        "aisland.ci_scaffold.released_on_pypi",
+        "aisland.ci.ci_scaffold.released_on_pypi",
         lambda distribution, owner: distribution in released,
         raising=False,
     )
@@ -93,6 +94,28 @@ def no_real_workspace(request: pytest.FixtureRequest, monkeypatch: pytest.Monkey
         )
 
     monkeypatch.setattr(locations, "workspace_root", refuse)
+
+
+@pytest.fixture(autouse=True)
+def no_real_state(
+    request: pytest.FixtureRequest, monkeypatch: pytest.MonkeyPatch, tmp_path_factory: pytest.TempPathFactory
+) -> None:
+    """No test writes aisland's state into the checkout it runs from.
+
+    From a checkout :func:`aisland.locations.state_dir` is the checkout itself, whatever the test pointed the root at:
+    a test that forgot it would write ``data/``, ``bin/``, backups or the supervisor's document into the developer's
+    aisland. Here that answer is a folder of the test's own; a test pointing ``state_dir`` elsewhere replaces this, and
+    one that checks the real rule says so with ``@pytest.mark.real_workspace``."""
+    if reads_the_real_workspace(request.node):
+        return
+    real = locations.state_dir
+
+    def own_state() -> Path:
+        found = real()
+        return tmp_path_factory.mktemp("state") if found == locations.CHECKOUT_DIR else found
+
+    own = functools.lru_cache(maxsize=1)(own_state)  # one folder for the whole test, asked any number of times
+    monkeypatch.setattr(locations, "state_dir", own)
 
 
 @pytest.fixture

@@ -27,7 +27,10 @@ from click.testing import CliRunner
 
 from aisland import locations
 from aisland.cli import main
+from aisland.cli import tunnel as tunnel_cli
 from aisland.tunnel import host as tunnel
+from aisland.tunnel import state as tunnel_state
+from aisland.tunnel import store as tunnel_store
 
 #: An address whose path segment IS the tunnel name — nothing to disambiguate.
 URL = "https://example.invalid/sandbox-4821/?folder=/mnt/workspace"
@@ -40,7 +43,7 @@ URL_WORKSPACE_FILE = "https://example.invalid/sandbox-4821/?workspace=/mnt/works
 @pytest.fixture(autouse=True)
 def state(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> Path:
     """Point the tunnel's state at a scratch folder, so no test touches this machine's own."""
-    monkeypatch.setenv(tunnel.TUNNEL_HOME_ENV, str(tmp_path / "tunnel"))
+    monkeypatch.setenv(tunnel_state.TUNNEL_HOME_ENV, str(tmp_path / "tunnel"))
     return tmp_path / "tunnel"
 
 
@@ -70,7 +73,7 @@ def test_an_address_teaches_the_name_and_the_folder(editor: List[List[str]]) -> 
     assert payload["folder"] == "/mnt/workspace"
     assert editor == [["/usr/local/bin/code", "--remote", "tunnel+sandbox-4821", "/mnt/workspace"]]
 
-    remembered = tunnel.load_store()
+    remembered = tunnel_store.load_store()
     assert [(entry.name, entry.folder, entry.url) for entry in remembered] == [("sandbox-4821", "/mnt/workspace", URL)]
 
 
@@ -91,8 +94,8 @@ def test_an_address_that_names_no_workspace_is_refused(editor: List[List[str]]) 
 
 
 def test_open_with_no_argument_takes_the_most_recent(editor: List[List[str]]) -> None:
-    tunnel.remember("older", folder="/one")
-    tunnel.remember("newer", folder="/two")
+    tunnel_store.remember("older", folder="/one")
+    tunnel_store.remember("newer", folder="/two")
     editor.clear()
 
     payload = tunnel.open_editor()
@@ -112,66 +115,66 @@ def test_open_with_nothing_remembered_says_how_to_start(editor: List[List[str]])
 
 
 def test_the_store_round_trips_newest_first_and_deduplicates_by_name(state: Path) -> None:
-    tunnel.remember("one", folder="/one")
-    tunnel.remember("two", folder="/two")
-    tunnel.remember("one", folder="/one-again")
+    tunnel_store.remember("one", folder="/one")
+    tunnel_store.remember("two", folder="/two")
+    tunnel_store.remember("one", folder="/one-again")
 
-    names = [entry.name for entry in tunnel.load_store()]
+    names = [entry.name for entry in tunnel_store.load_store()]
     assert names == ["one", "two"]
-    assert tunnel.load_store()[0].folder == "/one-again"
+    assert tunnel_store.load_store()[0].folder == "/one-again"
 
-    payload = json.loads(tunnel.store_path().read_text())
-    assert payload["version"] == tunnel.STORE_VERSION
+    payload = json.loads(tunnel_store.store_path().read_text())
+    assert payload["version"] == tunnel_store.STORE_VERSION
     assert [entry["name"] for entry in payload["entries"]] == ["one", "two"]
 
 
 def test_an_earlier_url_survives_an_open_that_does_not_carry_one(state: Path) -> None:
-    tunnel.remember("box", url=URL, folder="/mnt/workspace")
-    tunnel.remember("box")
-    assert tunnel.load_store()[0].url == URL
+    tunnel_store.remember("box", url=URL, folder="/mnt/workspace")
+    tunnel_store.remember("box")
+    assert tunnel_store.load_store()[0].url == URL
 
 
 def test_the_store_is_capped_at_its_limit(state: Path) -> None:
-    for index in range(tunnel.STORE_LIMIT + 5):
-        tunnel.remember(f"box-{index:02d}")
+    for index in range(tunnel_store.STORE_LIMIT + 5):
+        tunnel_store.remember(f"box-{index:02d}")
 
-    remembered = tunnel.load_store()
-    assert len(remembered) == tunnel.STORE_LIMIT
-    assert remembered[0].name == f"box-{tunnel.STORE_LIMIT + 4:02d}"
+    remembered = tunnel_store.load_store()
+    assert len(remembered) == tunnel_store.STORE_LIMIT
+    assert remembered[0].name == f"box-{tunnel_store.STORE_LIMIT + 4:02d}"
 
 
 # --- 14, 15, 16. completion -------------------------------------------------------------------
 
 
 def test_completion_offers_every_name_and_filters_by_prefix(state: Path) -> None:
-    tunnel.remember("sandbox-48", folder="/mnt/workspace")
-    tunnel.remember("rfuav-train", folder="/data")
+    tunnel_store.remember("sandbox-48", folder="/mnt/workspace")
+    tunnel_store.remember("rfuav-train", folder="/data")
 
-    everything = tunnel.complete_workspace(None, None, "")
+    everything = tunnel_cli.complete_workspace(None, None, "")
     assert [item.value for item in everything] == ["rfuav-train", "sandbox-48"]
 
-    filtered = tunnel.complete_workspace(None, None, "san")
+    filtered = tunnel_cli.complete_workspace(None, None, "san")
     assert [item.value for item in filtered] == ["sandbox-48"]
     assert "/mnt/workspace" in str(filtered[0].help)
     assert "just now" in str(filtered[0].help)
 
 
 def test_completion_answers_nothing_rather_than_raising(monkeypatch: pytest.MonkeyPatch, state: Path) -> None:
-    assert tunnel.complete_workspace(None, None, "") == []  # no file at all
+    assert tunnel_cli.complete_workspace(None, None, "") == []  # no file at all
 
-    tunnel.save_store([])
-    assert tunnel.complete_workspace(None, None, "") == []  # an empty store
+    tunnel_store.save_store([])
+    assert tunnel_cli.complete_workspace(None, None, "") == []  # an empty store
 
     monkeypatch.setattr(locations, "workspace_found", lambda: False)
-    assert tunnel.complete_workspace(None, None, "") == []  # outside any workspace
+    assert tunnel_cli.complete_workspace(None, None, "") == []  # outside any workspace
 
 
 def test_a_malformed_store_reads_as_empty_everywhere(state: Path, editor: List[List[str]]) -> None:
     state.mkdir(parents=True, exist_ok=True)
-    tunnel.store_path().write_text("{not json at all")
+    tunnel_store.store_path().write_text("{not json at all")
 
-    assert tunnel.load_store() == []
-    assert tunnel.complete_workspace(None, None, "") == []
+    assert tunnel_store.load_store() == []
+    assert tunnel_cli.complete_workspace(None, None, "") == []
 
     listing = CliRunner().invoke(main, ["tunnel", "list"])
     assert listing.exit_code == 0
@@ -186,33 +189,33 @@ def test_a_malformed_store_reads_as_empty_everywhere(state: Path, editor: List[L
 
 
 def test_clear_removes_exactly_the_named_workspace(state: Path) -> None:
-    tunnel.remember("keep", folder="/keep")
-    tunnel.remember("drop", folder="/drop")
+    tunnel_store.remember("keep", folder="/keep")
+    tunnel_store.remember("drop", folder="/drop")
 
     result = CliRunner().invoke(main, ["tunnel", "clear", "drop"])
 
     assert result.exit_code == 0
     assert "Cleared 'drop'" in result.output
-    assert [entry.name for entry in tunnel.load_store()] == ["keep"]
+    assert [entry.name for entry in tunnel_store.load_store()] == ["keep"]
 
 
 def test_clear_accepts_the_address_instead_of_the_name(state: Path) -> None:
-    tunnel.remember("sandbox-4821", url=URL, folder="/mnt/workspace")
+    tunnel_store.remember("sandbox-4821", url=URL, folder="/mnt/workspace")
 
-    cleared, unknown = tunnel.forget([URL])
+    cleared, unknown = tunnel_store.forget([URL])
 
     assert (cleared, unknown) == ([URL], [])
-    assert tunnel.load_store() == []
+    assert tunnel_store.load_store() == []
 
 
 def test_clearing_something_unremembered_is_reported(state: Path) -> None:
-    tunnel.remember("keep")
+    tunnel_store.remember("keep")
 
     result = CliRunner().invoke(main, ["tunnel", "clear", "ghost"])
 
     assert result.exit_code != 0
     assert "Not remembered: 'ghost'" in result.output
-    assert [entry.name for entry in tunnel.load_store()] == ["keep"]
+    assert [entry.name for entry in tunnel_store.load_store()] == ["keep"]
 
 
 def test_clear_without_a_target_says_what_to_pass(state: Path) -> None:
@@ -222,26 +225,26 @@ def test_clear_without_a_target_says_what_to_pass(state: Path) -> None:
 
 
 def test_clear_all_asks_first_and_keeps_everything_on_no(state: Path) -> None:
-    tunnel.remember("one")
-    tunnel.remember("two")
+    tunnel_store.remember("one")
+    tunnel_store.remember("two")
 
     result = CliRunner().invoke(main, ["tunnel", "clear", "--all"], input="n\n")
 
     assert result.exit_code == 0
     assert "Clear all 2 remembered workspaces?" in result.output
     assert "Kept." in result.output
-    assert len(tunnel.load_store()) == 2
+    assert len(tunnel_store.load_store()) == 2
 
 
 def test_clear_all_with_yes_forgets_everything(state: Path) -> None:
-    tunnel.remember("one")
-    tunnel.remember("two")
+    tunnel_store.remember("one")
+    tunnel_store.remember("two")
 
     result = CliRunner().invoke(main, ["tunnel", "clear", "--all", "--yes"])
 
     assert result.exit_code == 0
     assert "Cleared 2 workspaces." in result.output
-    assert tunnel.load_store() == []
+    assert tunnel_store.load_store() == []
 
     listing = CliRunner().invoke(main, ["tunnel", "list", "--json"])
     assert json.loads(listing.output) == []
@@ -257,7 +260,7 @@ def test_clear_all_with_nothing_remembered_says_so(state: Path) -> None:
 
 
 def test_the_listing_shows_folder_age_and_address(state: Path) -> None:
-    tunnel.remember("sandbox-48", url=URL, folder="/mnt/workspace")
+    tunnel_store.remember("sandbox-48", url=URL, folder="/mnt/workspace")
 
     result = CliRunner().invoke(main, ["tunnel", "list"])
 
@@ -276,7 +279,7 @@ def test_the_address_of_an_open_workspace_file_opens_that_file(editor: List[List
 
     assert payload["folder"] == "/mnt/workspace/repo/dev.code-workspace"
     assert editor[0][-1] == "/mnt/workspace/repo/dev.code-workspace"
-    assert tunnel.load_store()[0].folder == "/mnt/workspace/repo/dev.code-workspace"
+    assert tunnel_store.load_store()[0].folder == "/mnt/workspace/repo/dev.code-workspace"
 
 
 def test_a_workspace_file_wins_over_a_folder_in_the_same_address(editor: List[List[str]]) -> None:
@@ -284,11 +287,11 @@ def test_a_workspace_file_wins_over_a_folder_in_the_same_address(editor: List[Li
         "https://example.invalid/sandbox-4821/?folder=/mnt/workspace&workspace=/mnt/workspace/repo/dev.code-workspace"
     )
 
-    assert tunnel.parse_workspace_url(both).folder == "/mnt/workspace/repo/dev.code-workspace"
+    assert tunnel_store.parse_workspace_url(both).folder == "/mnt/workspace/repo/dev.code-workspace"
 
 
 def test_the_listing_calls_the_column_what_it_opens(state: Path) -> None:
-    tunnel.remember("sandbox-4821", url=URL_WORKSPACE_FILE, folder="/mnt/workspace/repo/dev.code-workspace")
+    tunnel_store.remember("sandbox-4821", url=URL_WORKSPACE_FILE, folder="/mnt/workspace/repo/dev.code-workspace")
 
     result = CliRunner().invoke(main, ["tunnel", "list"])
 
@@ -304,11 +307,11 @@ def test_an_explicit_name_wins_over_the_one_in_the_address(editor: List[List[str
 
     assert payload["name"] == "sandbox-4821"
     assert editor[0][2] == "tunnel+sandbox-4821"
-    assert tunnel.load_store()[0].url == URL_PROD
+    assert tunnel_store.load_store()[0].url == URL_PROD
 
 
 def test_a_remembered_stripped_name_is_used_without_asking(editor: List[List[str]]) -> None:
-    tunnel.remember("sandbox-4821", folder="/mnt/workspace")
+    tunnel_store.remember("sandbox-4821", folder="/mnt/workspace")
     editor.clear()
 
     result = CliRunner().invoke(main, ["tunnel", "open", URL_PROD])
@@ -319,7 +322,7 @@ def test_a_remembered_stripped_name_is_used_without_asking(editor: List[List[str
 
 
 def test_a_remembered_suffixed_name_stays_as_the_address_spells_it(editor: List[List[str]]) -> None:
-    tunnel.remember("sandbox-4821-prod", folder="/mnt/workspace")
+    tunnel_store.remember("sandbox-4821-prod", folder="/mnt/workspace")
     editor.clear()
 
     result = CliRunner().invoke(main, ["tunnel", "open", URL_PROD])
@@ -336,7 +339,7 @@ def test_an_ambiguous_address_asks_and_offers_the_machines_own_form(editor: List
     assert "The address names 'sandbox-4821-prod'" in result.output
     assert "sandbox-4821" in result.output
     assert editor[0][2] == "tunnel+sandbox-4821"
-    assert [entry.name for entry in tunnel.load_store()] == ["sandbox-4821"]
+    assert [entry.name for entry in tunnel_store.load_store()] == ["sandbox-4821"]
 
 
 def test_the_answer_is_remembered_so_it_is_asked_once(editor: List[List[str]]) -> None:
@@ -369,7 +372,7 @@ def test_machine_readable_output_never_asks(editor: List[List[str]]) -> None:
     ],
 )
 def test_only_a_trailing_environment_suffix_is_stripped(name: str, stripped: str) -> None:
-    assert tunnel.strip_env_suffix(name) == stripped
+    assert tunnel_store.strip_env_suffix(name) == stripped
 
 
 # --- completion after the first open ----------------------------------------------------------
@@ -378,7 +381,7 @@ def test_only_a_trailing_environment_suffix_is_stripped(name: str, stripped: str
 def test_a_prefix_completes_the_workspace_after_the_first_open(editor: List[List[str]]) -> None:
     tunnel.open_editor(URL)
 
-    offered = tunnel.complete_workspace(None, None, "sand")
+    offered = tunnel_cli.complete_workspace(None, None, "sand")
 
     assert [item.value for item in offered] == ["sandbox-4821"]
     assert "/mnt/workspace" in str(offered[0].help)

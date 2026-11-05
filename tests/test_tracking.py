@@ -23,10 +23,12 @@ import click
 import pytest
 from click.testing import CliRunner, Result
 
-from aisland import activation, cli, locations, tracking
+from aisland import cli, locations
 from aisland.cli import workspace as cli_workspace
+from aisland.workspace import activation
 from aisland.workspace import file as workspace_file
 from aisland.workspace import local as local_workspace
+from aisland.workspace import tracking
 
 _AUTHOR = {"GIT_AUTHOR_NAME": "t", "GIT_AUTHOR_EMAIL": "t@t", "GIT_COMMITTER_NAME": "t", "GIT_COMMITTER_EMAIL": "t@t"}
 

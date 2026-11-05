@@ -25,7 +25,7 @@ import pytest
 import yaml
 from packaging.requirements import Requirement
 
-from aisland import editor_files
+from aisland.setup import editor_files
 
 PROJECT = Path(__file__).resolve().parents[1]
 PACKAGE = PROJECT / "aisland"
@@ -274,7 +274,9 @@ def acme(tmp_path: Path) -> Path:
 
 _REPORT = """
 import json
-from aisland import editor_files, locations, paths, projects, pytest_stats, supervisor
+from aisland import locations, paths, pytest_stats, supervisor
+from aisland.setup import editor_files
+from aisland.workspace import projects
 print(json.dumps({
     "package": locations.PACKAGE_DIR.as_posix(),
     "from_checkout": locations.FROM_CHECKOUT,

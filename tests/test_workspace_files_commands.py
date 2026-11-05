@@ -13,7 +13,8 @@ import click.testing
 import pytest
 from click.testing import CliRunner
 
-from aisland import cli, editor_files, locations, paths
+from aisland import cli, locations, paths
+from aisland.setup import editor_files
 
 
 @pytest.fixture

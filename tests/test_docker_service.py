@@ -12,6 +12,7 @@ bind mount under the home directory. ``aisland docker start --mount`` therefore 
 
 from __future__ import annotations
 
+import subprocess
 from pathlib import Path
 from typing import List
 from unittest.mock import MagicMock, patch
@@ -20,6 +21,7 @@ import click
 import pytest
 from click.testing import CliRunner
 
+from aisland import probe
 from aisland.services import docker as docker_mod
 from aisland.services.docker import DockerService, Mount, parse_mount
 
@@ -151,6 +153,13 @@ def test_is_running_is_the_exit_code_not_a_stdout_grep() -> None:
 def test_is_running_is_false_without_a_colima_binary() -> None:
     with patch("subprocess.run", side_effect=FileNotFoundError):
         assert DockerService().is_running() is False
+
+
+def test_a_colima_status_that_never_answers_is_given_up_as_not_running() -> None:
+    """A stuck VM's `colima status` must not hang `aisland services status`, the doctor or an MCP tool."""
+    with patch("subprocess.run", side_effect=subprocess.TimeoutExpired(["colima", "status"], 30)) as run:
+        assert DockerService().is_running() is False
+    assert run.call_args.kwargs["timeout"] == probe.PROBE_SECONDS
 
 
 # --------------------------------------------------------------------------- #

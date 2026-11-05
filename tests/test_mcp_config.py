@@ -19,9 +19,9 @@ from typing import List
 
 import pytest
 
-from aisland import manager, mcp_config
-from aisland.mcp_config import discover_mcp_servers, write_gemini_settings, write_mcp_json
-from aisland.projects import get_workspace_root
+from aisland.setup import manager, mcp_config
+from aisland.setup.mcp_config import discover_mcp_servers, write_gemini_settings, write_mcp_json
+from aisland.workspace.projects import get_workspace_root
 from tests.test_setup_installs_git_aliases import stubbed_setup
 from tests.workspace_layout import needs_workspace
 

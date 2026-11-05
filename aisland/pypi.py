@@ -3,7 +3,7 @@
 :func:`pypi_json` is the one request; :func:`points_at_owner` is the provenance marker (a release whose metadata names
 the GitHub owner of the project's own remote is the project's, not a stranger's of the same global name). What
 ``aisland workspace configure source`` and ``aisland wheels`` ask of the document is theirs
-(:func:`aisland.sources._pypi_provenance`, :func:`aisland.wheels.build.pypi_state`).
+(:func:`aisland.workspace.sources._pypi_provenance`, :func:`aisland.wheels.published.pypi_state`).
 """
 
 from __future__ import annotations
@@ -36,6 +36,7 @@ class PypiFile(TypedDict, total=False):
     url: str
     packagetype: str
     yanked: bool
+    digests: Dict[str, str]
 
 
 class PypiInfo(TypedDict, total=False):
@@ -88,7 +89,7 @@ def released_on_pypi(distribution: str, owner: str) -> bool:
     version with a file that is not yanked, and its metadata points at ``github.com/<owner>/``,
     the owner of the project's own remote.
 
-    The ONE question the CI scaffolder asks per internal dependency (user ruling 2026-09-26):
+    The ONE question the CI scaffolder asks per internal dependency:
     released -> the runner installs it from PyPI (``.[dev]`` resolves it); not released -> from
     GitHub ``main``. The workspace SOURCE of the dependency (``workspace.toml``) plays no part —
     it describes one machine's checkout, never what a runner builds against. A pre-release

@@ -1,4 +1,4 @@
-"""Tests for project mirrors (`aisland workspace configure mirror`, `aisland workspace mirror sync`, aisland/mirrors.py).
+"""Tests for project mirrors (`aisland workspace configure mirror`, `aisland workspace mirror sync`, aisland/workspace/mirrors.py).
 
 Every test builds a throwaway workspace: a root repository holding two real submodules,
 ``alpha`` and ``beta``, whose primaries are bare repositories under ``origin/``, plus an empty
@@ -28,8 +28,8 @@ import pytest
 from click.testing import CliRunner
 
 from aisland import locations
-from aisland import mirrors as m
 from aisland.cli import main as cli_main
+from aisland.workspace import mirrors as m
 from aisland.workspace.file import FILE_NAME
 
 BRANCH = "dev/main"

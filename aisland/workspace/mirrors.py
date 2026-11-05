@@ -29,7 +29,7 @@ a commit you have not pushed to the primary does not reach the mirror either, so
 can only ever differ by the mirror being behind. A local branch the primary has not got is
 reported ``not on the primary`` and not pushed; a branch only on the primary is not copied.
 
-Two configuration layers, the same split as :mod:`aisland.sources`:
+Two configuration layers, the same split as :mod:`aisland.workspace.sources`:
 
 * **committed** — the project's ``mirror`` in its table of ``<workspace>/workspace.toml``, shared between
   machines;
@@ -43,7 +43,7 @@ mirror from importing its tags. Every network call runs with ``GIT_TERMINAL_PROM
 whose credentials are missing fails the sync with git's message instead of stalling it on a
 password prompt.
 
-Only submodules are mirrored (user choice 2026-10-16); the root repository is not.
+Only submodules are mirrored; the root repository is not.
 """
 
 from __future__ import annotations
@@ -56,8 +56,8 @@ from typing import Dict, List, Literal, Optional, Tuple
 from urllib.parse import urlparse
 
 from aisland import console, failures, gitcmd, machine_config
-from aisland.projects import get_workspace_root, submodule_active_map
 from aisland.workspace import file as workspace_file
+from aisland.workspace.projects import get_workspace_root, submodule_active_map
 
 #: The project's setting this module owns in its ``[project."<name>"]`` table of ``workspace.toml``, and the last part
 #: of this machine's ``aisland.mirror.<project>.mirror``.

@@ -275,7 +275,7 @@ def test_an_option_given_reaches_the_class_and_one_not_given_is_none(
 def test_the_class_gets_the_command_that_adds_its_choice_keeping_the_others(
     workspace: Path, supervised: List[Dict[str, Any]]
 ) -> None:
-    from aisland import selection
+    from aisland.workspace import selection
 
     _module(VIEWER)
     selection.write_committed(workspace, "tracker", ["tensorboard"])
@@ -397,7 +397,7 @@ def test_a_plugin_that_cannot_be_imported_is_listed_and_fails_when_used(workspac
 
 def test_loading_reads_the_installed_entry_points_once(workspace: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """Each scan of the installed distributions reads every one's metadata; one scan serves every plugin."""
-    from aisland import discovery
+    from aisland.workspace import discovery
 
     scans: List[Dict[str, Any]] = []
     real = discovery.importlib.metadata.entry_points

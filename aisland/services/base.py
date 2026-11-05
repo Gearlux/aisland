@@ -8,7 +8,7 @@ from typing import Any, Dict, List, Literal, Optional, Sequence, TypedDict
 import click
 
 from aisland import console, failures, paths, supervisor
-from aisland.projects import get_workspace_root
+from aisland.workspace.projects import get_workspace_root
 
 #: What a service's state can be: ``not installed`` (its program is missing), ``not supported`` (not on this platform),
 #: ``unknown`` (a project's service whose processes are not the supervisor's; its own ``status`` prints the detail).

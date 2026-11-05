@@ -18,8 +18,9 @@ import click
 import pytest
 from click.testing import CliRunner
 
-from aisland import cli, editor, editor_files, locations
+from aisland import cli, editor, locations
 from aisland.css_colors import NAMED_COLORS
+from aisland.setup import editor_files
 
 # --- fixtures -----------------------------------------------------------------------------
 

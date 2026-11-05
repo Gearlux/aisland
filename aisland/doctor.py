@@ -35,8 +35,10 @@ from aisland import console, locations
 from aisland.services.docker import DockerService
 from aisland.services.jenkins import JenkinsService
 from aisland.services.jenkins_java import JenkinsJava
+from aisland.tunnel import binary as tunnel_binary
 from aisland.tunnel import connect as tunnel_connect
 from aisland.tunnel import host as tunnel
+from aisland.tunnel import state as tunnel_state
 
 #: The OpenCV variant the workspace keeps. Both distributions install the SAME files
 #: (`cv2/cv2.abi3.so` + `cv2/.dylibs/*` appear in BOTH RECORDs) with different bundled native
@@ -475,8 +477,8 @@ def check_tunnel_relay() -> CheckResult:
     pidfile): the doctor runs on every machine, most of which have no tunnel, and none of them should
     pay a network timeout for a feature they never touched.
     """
-    state = tunnel.state_dir()
-    configured = any(path.exists() for path in (tunnel.cli_path(), tunnel.provider_path(), tunnel.pid_path()))
+    state = tunnel_state.state_dir()
+    configured = any(path.exists() for path in (tunnel_binary.cli_path(), tunnel.provider_path(), tunnel.pid_path()))
     if not configured:
         return CheckResult("tunnel-relay", True, f"no tunnel configured here (nothing in {state})")
     reachable, detail = tunnel.relay_reachable()
@@ -505,7 +507,7 @@ def check_tunnel_connect() -> CheckResult:
     """
     if not tunnel_connect.used_here():
         return CheckResult(
-            "tunnel-connect", True, f"`aisland tunnel connect` not used here (nothing in {tunnel.state_dir()})"
+            "tunnel-connect", True, f"`aisland tunnel connect` not used here (nothing in {tunnel_state.state_dir()})"
         )
     if shutil.which("devtunnel") is None:
         return CheckResult(
