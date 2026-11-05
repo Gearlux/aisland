@@ -82,11 +82,6 @@ def axes(root: Path) -> Tuple[Axis, ...]:
     return (EXTRAS,) + tuple(Axis(name, selection.question) for name, selection in found.selections.items())
 
 
-def axis_named(root: Path, name: str) -> Optional[Axis]:
-    """The selection called ``name``, or ``None``."""
-    return {axis.name: axis for axis in axes(root)}.get(name)
-
-
 # --- what each project offers -------------------------------------------------------------------------------------
 
 

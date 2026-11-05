@@ -44,3 +44,24 @@ def key_line(text: str, header: int, key: str) -> Optional[int]:
     pattern = re.compile(rf"^\s*{_part(key)}\s*=")
     lines = text.splitlines()[header:]
     return next((number for number, line in enumerate(lines, start=header + 1) if pattern.match(line)), None)
+
+
+#: The key a file of aisland's writes its format in (`workspace.toml`, a template set's `template.toml`, a harness
+#: set's `harness.toml`); a file without it is format 1.
+FORMAT_KEY = "format"
+
+
+def format_refusal(where: Where, file_name: str, value: object, current: int) -> Optional[str]:
+    """Why a file of format ``value`` cannot be read by an aisland that reads up to ``current``, or ``None`` when it
+    can: a newer format (a newer aisland wrote it, or its set asks for one) names the upgrade; a value that is no whole
+    number names the setting's shape."""
+    if not isinstance(value, int) or isinstance(value, bool):
+        return f"{where}: {FORMAT_KEY} must be a whole number, as {FORMAT_KEY} = {current}"
+    if 1 <= value <= current:
+        return None
+    if value > current:
+        return (
+            f"{where}: {file_name} is format {value}, written for a newer aisland; this one reads format {current}. "
+            "Upgrade it: pip install --upgrade aisland"
+        )
+    return f"{where}: {FORMAT_KEY} must be a whole number, as {FORMAT_KEY} = {current}"

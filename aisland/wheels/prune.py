@@ -39,7 +39,6 @@ from __future__ import annotations
 
 import datetime
 import importlib.util
-import os
 import shutil
 import subprocess
 import sys
@@ -169,16 +168,17 @@ class ResetReport:
 def _run(
     repo: Path, *args: str, network: bool = False, stdin: Optional[str] = None, env: Optional[Dict[str, str]] = None
 ) -> subprocess.CompletedProcess[str]:
-    # A network call: a host asking for a password fails instead of waiting on a prompt no one sees, and a remote
-    # that stops sending is given up — with no overall limit, as a prune's fetches and its push may be large.
-    full_env = {**(gitcmd.network_env() if network else os.environ), **(env or {})}
-    return subprocess.run(
-        ["git", "-C", str(repo), "-c", "core.quotePath=false", *(gitcmd.network_options() if network else []), *args],
-        capture_output=True,
-        text=True,
+    """``gitcmd.git`` in ``repo``, paths unquoted (``core.quotePath=false``). A network call never prompts and gives up
+    on a remote that stops sending, with no overall limit: a prune's fetches and its push may be large."""
+    return gitcmd.git(
+        repo,
+        "-c",
+        "core.quotePath=false",
+        *args,
+        network=network,
+        timeout=gitcmd.NO_LIMIT if network else None,
         input=stdin,
-        env=full_env,
-        stdin=None if stdin is not None else subprocess.DEVNULL,
+        env=env,
     )
 
 

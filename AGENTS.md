@@ -22,13 +22,16 @@ The workspace's dev-infrastructure CLI, `aisland` (click, the `aisland/cli/` pac
 - **`pypi.py`**: PyPI's JSON document (`pypi_json`) and the CI scaffolder's question of it (`released_on_pypi`);
   **`github.py`**: a project's GitHub repository from its remote (`github_repository`, `project_repositories`). Both
   were split out of `sources.py`, which keeps the source choice itself [module-split].
-- **`gitcmd.py`**: `git(repo, *args, network=, timeout=, check=)` is the one helper that runs `git` and captures its text
-  (`network=True`: no credential prompt, 60 s default limit; `check=True`: an `AislandError` naming the command);
-  `read(repo, *args)` is what git prints, or `None` when it cannot answer, and `remote_url(repo)` an origin's address.
-  A new git call uses these, never a bare `subprocess.run(["git", …])`. The ones that keep their own runner differ in
-  behaviour: `wheels/build.py`, `workspace/file.py` (`git -C`), `mirrors.py` (no overall limit on a push), `wheels/prune.py`,
-  `sources._run` (git's output reaches the terminal), `workspace._add_submodule` (clone progress),
-  `wheels/filter_repo.py` and `pytest_stats.py` (they run where aisland is not). **Every git command that reaches a remote gives up on one that stops sending**:
+- **`gitcmd.py`**: `git(repo, *args, network=, timeout=, check=, input=, env=)` is the one helper that runs `git` and
+  captures its text — `git -C <repo>` (a missing folder is git's exit code, never an exception), stdin empty unless
+  `input`, `env` laid over the environment; `network=True`: no credential prompt, 60 s default limit, `NO_LIMIT` for a
+  long transfer (a mirror's push, a prune's); `check=True`: an `AislandError` naming the command. `read(repo, *args)`
+  is what git prints, or `None` when it cannot answer, and `remote_url(repo)` an origin's address. A new git call uses
+  these, never a bare `subprocess.run(["git", …])`; a module's own wrapper only adds to them (`mirrors._git`,
+  `wheels.prune._run`: `core.quotePath=false`, a `PruneError`). Only these run git themselves, each for a reason:
+  `wheels.build.export_head` (`git archive`'s bytes), `sources._run` (git's output reaches the terminal),
+  `workspace.init._add_submodule` (clone progress), `wheels/filter_repo.py`, `pytest_stats.py` and the harness's
+  `stage_hunks.py` (they run where aisland is not) (`tests/test_gitcmd.py`). **Every git command that reaches a remote gives up on one that stops sending**:
   `gitcmd.network_options()` (`http.lowSpeedLimit=1`, `http.lowSpeedTime=STALL_SECONDS`) and `network_env()`, through
   `git(network=True)`, the helpers above or `gitcmd.fetch` (best-effort, no overall limit). A transfer may be long, so
   the guard is never an overall limit (ssh's `ServerAliveInterval` bounds SSH). Never a bare
@@ -829,6 +832,10 @@ A bare `::` pin in this section is in `tests/test_jenkins_scaffold.py`.
   into `harness.clones_dir()`, fetched again only when url or ref changes; no ref, an unreachable url or a missing ref
   is refused naming the line). A set's `harness.toml` (`rules`, `commands`, `scripts`, `[files]`) says what it brings;
   without one the usual places are read (`harness._usual_places`, never the `.claude/commands` link aisland makes).
+  A set's `harness.toml` and a template set's `template.toml` carry `format` as `workspace.toml` does
+  (`toml_places.format_refusal`: none is 1, a newer one refused naming the line and the upgrade, a value that is no
+  whole number refused; `harness.SET_FORMAT`, `ci_templates.SET_FORMAT`); aisland's own sets write `format = 1`
+  (`tests/test_harness_sets.py`, `tests/test_ci_templates.py`).
   Rules land in `.agents/<set>/AGENTS.md`, `.agents/rules.md` imports them in order, and the workspace `AGENTS.md`
   imports `@.agents/rules.md` (never edited: setup names the line). Two sets placing one path are REFUSED before
   anything is installed, naming both — never a precedence by position; `exclude` leaves a file out and one naming

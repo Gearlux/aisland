@@ -231,6 +231,7 @@ aisland jenkins templates export ci-templates
 A set is a folder with a `template.toml` and its templates:
 
 ```toml
+format = 1                             # the shape of this file; left out, it is format 1
 [files]                                # each file the set writes, relative to the project, and its template
 "Jenkinsfile" = "Jenkinsfile.jinja"
 

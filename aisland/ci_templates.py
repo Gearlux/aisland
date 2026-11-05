@@ -36,7 +36,7 @@ import jinja2
 
 from aisland import locations
 from aisland.errors import AislandError
-from aisland.toml_places import Where, key_line, table_line
+from aisland.toml_places import FORMAT_KEY, Where, format_refusal, key_line, table_line
 from aisland.workspace import file as workspace_file
 
 logger = logging.getLogger(__name__)
@@ -48,6 +48,9 @@ BUILTIN_DIR = locations.PACKAGE_DIR / "templates" / "ci"
 ENTRY_POINT_GROUP = "aisland.ci_templates"
 #: The file describing a set.
 SET_FILE = "template.toml"
+#: The format of ``template.toml`` this aisland reads; a set without ``format`` is format 1, one asking for a newer
+#: format is refused naming the upgrade (a later aisland may add facts, never change what format 1 means).
+SET_FORMAT = 1
 #: The key of ``[ci]`` and of a project's ``ci`` table naming the set; every other key of a project's ``ci`` is a
 #: variable's value.
 TEMPLATES_KEY = "templates"
@@ -151,6 +154,11 @@ def load_set(folder: Path, name: str) -> TemplateSet:
         data = tomllib.loads(text)
     except tomllib.TOMLDecodeError as error:
         raise TemplateError(f"{path}: {error}") from error
+    refusal = format_refusal(
+        Where(path, key_line(text, 0, FORMAT_KEY)), SET_FILE, data.get(FORMAT_KEY, SET_FORMAT), SET_FORMAT
+    )
+    if refusal:
+        raise TemplateError(refusal)
     files_header = table_line(text, "files")
     files = data.get("files")
     if not isinstance(files, dict) or not files:

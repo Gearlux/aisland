@@ -91,6 +91,7 @@ A set is a folder. A `harness.toml` in it says what it brings:
 
 ```toml
 # agents/harness.toml
+format = 1                            # the shape of this file; an aisland too old for it refuses the set
 rules = "rules/AGENTS.md"             # lands in .agents/agents/AGENTS.md, which .agents/rules.md imports
 commands = ["commands/*.md"]          # into .agents/workflows/
 scripts = ["scripts/*.py"]            # into .agents/scripts/
@@ -98,6 +99,9 @@ scripts = ["scripts/*.py"]            # into .agents/scripts/
 [files]                               # any other file: a pattern of the set → a place in the workspace
 "cursor/*.mdc" = ".cursor/rules/"     # a place ending in / is a folder
 ```
+
+`format` may be left out (a set without it is format 1); an aisland that reads an older format refuses the set,
+naming the line and `pip install --upgrade aisland`.
 
 A folder without a `harness.toml` is read where agents read their files, so a project that knows nothing of aisland
 can be a set: `AGENTS.md` (else `CLAUDE.md`) as its rules, `.claude/commands/*.md` as its commands,

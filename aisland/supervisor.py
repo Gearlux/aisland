@@ -589,12 +589,6 @@ def get_ports(name: str) -> List[int]:
     return sorted({int(p) for p in re.findall(r"\d+", match.group(1))})
 
 
-def restart_process(name: str) -> bool:
-    """Restart a supervised process in place."""
-    result = _run_client(["process", "restart", name])
-    return result.returncode == 0
-
-
 def start_process(name: str) -> bool:
     """Explicitly start an enabled-but-not-running process.
 

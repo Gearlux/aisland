@@ -6,6 +6,8 @@
 # [variables] declares a set's own settings — `name = { default = "…", help = "…" }`, without a default required —
 # which a workspace sets in workspace.toml's [ci.variables] and a project in its own `ci = { name = "…" }`.
 
+format = 1  # the shape of this file; an aisland too old for a set's format refuses it, naming the upgrade
+
 [files]
 "Jenkinsfile.local" = "Jenkinsfile.local.jinja"
 "Jenkinsfile" = "Jenkinsfile.jinja"

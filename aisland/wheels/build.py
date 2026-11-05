@@ -81,7 +81,7 @@ from packaging.requirements import InvalidRequirement, Requirement
 from packaging.utils import canonicalize_name
 from packaging.version import InvalidVersion, Version
 
-from aisland import console, downloads
+from aisland import console, downloads, gitcmd
 from aisland import pyproject as pyproject_toml
 from aisland.errors import AislandError
 from aisland.github import GitHubRepository, project_repositories
@@ -257,10 +257,6 @@ def pypi_state(distribution: str, owner: Optional[str]) -> Tuple[PypiState, Opti
 # --- building and reading wheels -------------------------------------------------------------
 
 
-def _git(project_dir: Path, *args: str) -> subprocess.CompletedProcess[str]:
-    return subprocess.run(["git", "-C", str(project_dir), *args], capture_output=True, text=True)
-
-
 def export_head(project_dir: Path, dest: Path) -> int:
     """Write ``project_dir``'s last commit into ``dest`` — what a wheel is built from.
 
@@ -273,7 +269,7 @@ def export_head(project_dir: Path, dest: Path) -> int:
     dest.mkdir(parents=True, exist_ok=True)
     with tarfile.open(fileobj=io.BytesIO(archive.stdout)) as tar:
         tar.extractall(dest, filter="data")
-    return int(_git(project_dir, "log", "-1", "--format=%ct", "HEAD").stdout.strip())
+    return int(gitcmd.git(project_dir, "log", "-1", "--format=%ct", "HEAD").stdout.strip())
 
 
 def export_worktree(project_dir: Path, dest: Path) -> int:
@@ -283,7 +279,7 @@ def export_worktree(project_dir: Path, dest: Path) -> int:
     a new one is in, and an ignored setuptools ``build/lib`` stays out, as it does from a commit. Returns the
     last commit's time, so a rerun over unchanged files builds the same wheel.
     """
-    listed = _git(project_dir, "ls-files", "-z", "--cached", "--others", "--exclude-standard")
+    listed = gitcmd.git(project_dir, "ls-files", "-z", "--cached", "--others", "--exclude-standard")
     if listed.returncode != 0:
         raise AislandError(f"{project_dir.name}: cannot list its files: {listed.stderr.strip()}")
     for relative in sorted(set(filter(None, listed.stdout.split("\0")))):
@@ -295,7 +291,7 @@ def export_worktree(project_dir: Path, dest: Path) -> int:
         target = dest / relative
         target.parent.mkdir(parents=True, exist_ok=True)
         shutil.copy2(source, target, follow_symlinks=False)
-    return int(_git(project_dir, "log", "-1", "--format=%ct", "HEAD").stdout.strip())
+    return int(gitcmd.git(project_dir, "log", "-1", "--format=%ct", "HEAD").stdout.strip())
 
 
 def build_wheel(uv: str, source_dir: Path, out_dir: Path, timestamp: Optional[int] = None) -> Path:
@@ -417,17 +413,17 @@ def wheels_folder_problem(project: WorkspaceProject) -> Optional[str]:
 
 def _uncommitted(project: WorkspaceProject) -> List[str]:
     """``git status --porcelain`` of the project: its changes no commit holds."""
-    if _git(project.path, "rev-parse", "--is-inside-work-tree").returncode != 0:
+    if gitcmd.git(project.path, "rev-parse", "--is-inside-work-tree").returncode != 0:
         raise AislandError(
             f"{project.name} is in no git repository; a wheel is built from a project's last commit. "
             "Put it under git (git init, then commit) and run this again."
         )
-    return [line for line in _git(project.path, "status", "--porcelain").stdout.splitlines() if line]
+    return [line for line in gitcmd.git(project.path, "status", "--porcelain").stdout.splitlines() if line]
 
 
 def _uncommitted_file(project: WorkspaceProject, name: str) -> List[str]:
     """``git status --porcelain`` of one file of the project."""
-    return [line for line in _git(project.path, "status", "--porcelain", "--", name).stdout.splitlines() if line]
+    return [line for line in gitcmd.git(project.path, "status", "--porcelain", "--", name).stdout.splitlines() if line]
 
 
 def _outside_wheels_dir(line: str) -> bool:
@@ -772,8 +768,8 @@ def _build_one(
 ) -> Tuple[Path, BuiltWheel]:
     """One project's wheel, from its last commit — or, when ``dirty`` lists its changes (``--force``), from its
     working tree, its commit then written ``<sha>+uncommitted``."""
-    branch = _git(project.path, "rev-parse", "--abbrev-ref", "HEAD").stdout.strip()
-    sha = _git(project.path, "rev-parse", "--short", "HEAD").stdout.strip()
+    branch = gitcmd.git(project.path, "rev-parse", "--abbrev-ref", "HEAD").stdout.strip()
+    sha = gitcmd.git(project.path, "rev-parse", "--short", "HEAD").stdout.strip()
     changes = dirty.get(project.name, [])
     if changes:
         sha += "+uncommitted"
@@ -909,7 +905,7 @@ def _commit_or_note(
             [pyproject.name] if chosen.name is not None else [],
         )
         return committed, None if committed else f"nothing new to commit in {wheels_dir}", None
-    tracked = [line for line in _git(target.path, "ls-files", "--", WHEELS_DIR).stdout.splitlines() if line]
+    tracked = [line for line in gitcmd.git(target.path, "ls-files", "--", WHEELS_DIR).stdout.splitlines() if line]
     if not tracked:
         return None, None, None
     return (
@@ -1024,16 +1020,16 @@ def _commit_wheels(target: WorkspaceProject, command: str, also: Sequence[str] =
     """Commit ``wheels/`` in the target — that path and ``also`` (``--extra``'s ``pyproject.toml``) only, whatever
     else is staged or changed — and return the commit's short SHA, or ``None`` when they hold nothing new."""
     paths = [WHEELS_DIR, *also]
-    added = _git(target.path, "add", "-A", "--", *paths)
+    added = gitcmd.git(target.path, "add", "-A", "--", *paths)
     if added.returncode != 0:
         raise AislandError(f"{target.name}: git add {' '.join(paths)} failed: {added.stderr.strip()}")
-    if _git(target.path, "diff", "--cached", "--quiet", "--", *paths).returncode == 0:
+    if gitcmd.git(target.path, "diff", "--cached", "--quiet", "--", *paths).returncode == 0:
         return None
     message = f"chore: wheels built with {command}"
-    done = _git(target.path, "commit", "-q", "-m", message, "--", *paths)
+    done = gitcmd.git(target.path, "commit", "-q", "-m", message, "--", *paths)
     if done.returncode != 0:
         raise AislandError(f"{target.name}: committing {WHEELS_DIR} failed: {done.stderr.strip()}")
-    return _git(target.path, "rev-parse", "--short", "HEAD").stdout.strip()
+    return gitcmd.git(target.path, "rev-parse", "--short", "HEAD").stdout.strip()
 
 
 def zip_wheels(workspace_root: Path, project_name: str) -> Path:

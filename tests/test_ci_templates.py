@@ -223,12 +223,29 @@ def test_a_template_that_does_not_parse_is_refused_naming_its_line(ws: Path) -> 
         ('[files]\n"Jenkinsfile" = "missing.jinja"\n', "Jenkinsfile names no template of"),
         ('[files]\n"notes.txt" = "Jenkinsfile.jinja"\n', "aisland cannot tell how notes.txt writes a comment"),
         ('[files]\n"Jenkinsfile" = "Jenkinsfile.jinja"\n[variables]\nx = "y"\n', "variable 'x' must be"),
+        (
+            'format = 2\n[files]\n"Jenkinsfile" = "Jenkinsfile.jinja"\n',
+            "template.toml:1: template.toml is format 2, written for a newer aisland; this one reads format 1. "
+            "Upgrade it: pip install --upgrade aisland",
+        ),
+        (
+            'format = "1"\n[files]\n"Jenkinsfile" = "Jenkinsfile.jinja"\n',
+            "format must be a whole number, as format = 1",
+        ),
     ],
 )
 def test_a_set_file_aisland_cannot_use_is_refused(tmp_path: Path, set_file: str, message: str) -> None:
     folder = _set(tmp_path / "set", set_file=set_file)
     with pytest.raises(ci_templates.TemplateError, match=re.escape(message)):
         ci_templates.load_set(folder, "set")
+
+
+@pytest.mark.parametrize("first_line", ["", "format = 1\n"], ids=["no format", "format 1"])
+def test_a_set_of_format_1_or_none_is_read(tmp_path: Path, first_line: str) -> None:
+    """A set written before `format` existed is format 1; aisland's own set says so."""
+    folder = _set(tmp_path / "set", set_file=first_line + '[files]\n"Jenkinsfile" = "Jenkinsfile.jinja"\n')
+    assert [output.path for output in ci_templates.load_set(folder, "set").files] == ["Jenkinsfile"]
+    assert "format = 1" in (ci_templates.BUILTIN_DIR / ci_templates.SET_FILE).read_text()
 
 
 def test_a_file_with_its_own_comment_gets_a_header_in_it(tmp_path: Path) -> None:

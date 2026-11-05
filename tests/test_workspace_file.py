@@ -505,7 +505,7 @@ def test_a_file_without_a_format_is_read_as_the_first(tmp_path: Path) -> None:
 def test_a_newer_format_is_refused_naming_its_line_and_the_upgrade(tmp_path: Path) -> None:
     path = _file(tmp_path, '[workspace]\nname = "studio"\nformat = 2\n')
     assert _refusal(path) == (
-        f"{path}:3: workspace.toml is format 2, written by a newer aisland; this one reads format 1. "
+        f"{path}:3: workspace.toml is format 2, written for a newer aisland; this one reads format 1. "
         "Upgrade it: pip install --upgrade aisland"
     )
 

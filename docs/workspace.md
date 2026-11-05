@@ -271,7 +271,7 @@ direct checkouts.
 is refused with the upgrade to make:
 
 ```text
-Error: workspace.toml:2: workspace.toml is format 2, written by a newer aisland; this one reads format 1. Upgrade it: pip install --upgrade aisland
+Error: workspace.toml:2: workspace.toml is format 2, written for a newer aisland; this one reads format 1. Upgrade it: pip install --upgrade aisland
 ```
 
 **A key aisland does not read is named.** A project's table holds `path`, `url`, `branch` and the settings of

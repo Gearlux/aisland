@@ -14,6 +14,8 @@ and what to do about it. A patch release (0.1.0 → 0.1.1) changes none of it.
   `[ci]` (`templates`, `[ci.variables]`), `[harness]` (`sets`), and each `[project."<name>"]` (`path`, `url`, `branch`, `source`,
   `version`, `distribution`, `mirror`, `active`, `track`, `test-stats`, `ci`). A later aisland reads a format 1 file;
   a file of a newer format is refused with the upgrade to install. See [the workspace page](workspace.md).
+  `template.toml` and `harness.toml` carry a `format` the same way: a set may ask for a newer aisland, never be
+  misread by an older one.
 - **What a project declares in its own `pyproject.toml`**, so it never imports aisland:
   - `[tool.aisland.selection.<name>]` (`question`, `choices`) — [selections](selections.md);
   - `[tool.aisland.service.<name>]` (`command`, `port`, `ready`, `needs`) — [services](services.md). A service is
@@ -27,10 +29,10 @@ and what to do about it. A patch release (0.1.0 → 0.1.1) changes none of it.
     `ctx.workspace`, `ctx.workspace_name`, `ctx.data_dir`, `ctx.port`, `ctx.background`, `ctx.options`, `ctx.run`,
     `ctx.write_env`, `ctx.read_env`, `ctx.ports`, `ctx.echo`, `ctx.fail`, `ctx.choose_command`.
 - **A harness set** ([harness](harness.md)): `workspace.toml`'s `[harness] sets` (a name, `{ set, exclude, name }`,
-  `{ git, ref, name, exclude }`), `harness.toml`'s `rules`, `commands`, `scripts` and `[files]`, the places a set
+  `{ git, ref, name, exclude }`), `harness.toml`'s `format` (1), `rules`, `commands`, `scripts` and `[files]`, the places a set
   without one is read from, a project's `[tool.aisland] harness`, the entry point group `aisland.harnesses`, and where
   the files land (`.agents/workflows/`, `.agents/scripts/`, `.agents/<set>/AGENTS.md`, `.agents/rules.md`).
-- **A CI template set** ([ci](ci.md)): `template.toml`'s `[files]` and `[variables]`, the delimiters `<[ ]>`,
+- **A CI template set** ([ci](ci.md)): `template.toml`'s `format` (1), `[files]` and `[variables]`, the delimiters `<[ ]>`,
   `<% %>` and `<# #>`, the entry point group `aisland.ci_templates`, and the facts a template reads: `project`,
   `title`, `distribution`, `package`, `extras`, `browser`, `slow_tests`, `unreleased` (each with `name`, `url`,
   `ref`), `unreleased_owners`, `token_owner`, `token_secret`, `stage_limits`, `runner_limits`, `actions`,

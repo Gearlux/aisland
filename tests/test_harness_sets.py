@@ -282,8 +282,22 @@ def test_two_sets_of_one_name_are_refused(root: Path) -> None:
         ('commands = "commands/*.md"\n', r"harness\.toml:1: commands must be a list of patterns"),
         ('[files]\n"x.md" = "../outside.md"\n', r"harness\.toml:2: '\.\./outside\.md' is no place in the workspace"),
         ('[files]\n"x.md" = ".agents/rules.md"\n', r"harness\.toml:2: '\.agents/rules\.md' is no place"),
+        (
+            'format = 2\nrules = "x.md"\n',
+            r"harness\.toml:1: harness\.toml is format 2, written for a newer aisland; this one reads format 1\. "
+            r"Upgrade it: pip install --upgrade aisland",
+        ),
+        ("format = 1.5\n", r"harness\.toml:1: format must be a whole number, as format = 1"),
     ],
-    ids=["unknown key", "missing rules", "not a list", "outside the workspace", "aisland's own file"],
+    ids=[
+        "unknown key",
+        "missing rules",
+        "not a list",
+        "outside the workspace",
+        "aisland's own file",
+        "a newer format",
+        "no whole number",
+    ],
 )
 def test_a_harness_toml_aisland_cannot_use_is_refused_naming_its_line(root: Path, body: str, message: str) -> None:
     _write(root / "agents" / "harness.toml", body)

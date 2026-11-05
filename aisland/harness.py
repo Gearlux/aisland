@@ -59,7 +59,7 @@ from aisland import atomic, git_exclude, gitcmd, locations
 from aisland import pyproject as pyproject_toml
 from aisland.errors import AislandError
 from aisland.projects import workspace_folders
-from aisland.toml_places import Where, key_line, table_line
+from aisland.toml_places import FORMAT_KEY, Where, format_refusal, key_line, table_line
 from aisland.workspace import file as workspace_file
 
 logger = logging.getLogger(__name__)
@@ -96,7 +96,10 @@ _USUAL_FILES = {
     ".github/copilot-instructions.md": ".github/copilot-instructions.md",
 }
 #: The keys of ``harness.toml``, of a ``sets`` entry and of a git one.
-_SET_KEYS = ("rules", "commands", "scripts", "files")
+_SET_KEYS = ("format", "rules", "commands", "scripts", "files")
+#: The format of ``harness.toml`` this aisland reads; a set without ``format`` is format 1, one asking for a newer
+#: format is refused naming the upgrade.
+SET_FORMAT = 1
 _ENTRY_KEYS = ("set", "git", "ref", "name", "exclude")
 #: Where a set's files may not land: aisland's own bookkeeping, the repository's.
 _RESERVED = (RULES_INDEX, RECORD)
@@ -170,6 +173,9 @@ def _from_file(folder: Path) -> Tuple[Optional[Path], List[Tuple[Path, str]]]:
     def at(key: str, table: Optional[int] = None) -> Where:
         return Where(path, key_line(text, table, key) if table else key_line(text, 0, key))
 
+    refusal = format_refusal(at(FORMAT_KEY), SET_FILE, data.get(FORMAT_KEY, SET_FORMAT), SET_FORMAT)
+    if refusal:
+        raise HarnessError(refusal)
     for key in data:
         if key not in _SET_KEYS:
             raise HarnessError(f"{at(key)}: {key} is no setting of a harness set (it has {', '.join(_SET_KEYS)})")

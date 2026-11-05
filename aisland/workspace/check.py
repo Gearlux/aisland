@@ -22,7 +22,7 @@ from typing import List, Tuple
 from aisland import activation, ci_templates, discovery, harness, mirrors
 from aisland import pyproject as pyproject_toml
 from aisland import pytest_stats, selection, sources, tracking
-from aisland.toml_places import Where, key_line, table_line
+from aisland.toml_places import FORMAT_KEY, Where, key_line, table_line
 from aisland.workspace import file as workspace_file
 
 #: Every key a project's table may hold, and the part of aisland that reads it.
@@ -38,7 +38,7 @@ PROJECT_KEYS: Tuple[str, ...] = (
 #: Every key ``[workspace]`` may hold besides the selections.
 WORKSPACE_KEYS: Tuple[str, ...] = (
     workspace_file.NAME_KEY,
-    workspace_file.FORMAT_KEY,
+    FORMAT_KEY,
     tracking.TRACK_KEY,
     pytest_stats.RECORD_KEY,
 )

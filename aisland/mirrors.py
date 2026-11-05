@@ -177,18 +177,14 @@ def mirrored_projects(workspace_root: Path) -> List[str]:
 
 
 def _git(repo: Path, *args: str, network: bool = False) -> "subprocess.CompletedProcess[str]":
-    """Run git in ``repo``. A network call never prompts (missing credentials fail at once) and gives up on a remote
-    that stops sending — but has no overall limit, unlike ``gitcmd.git``: a first push to a mirror may be large."""
-    if not network:
-        return subprocess.run(["git", *args], cwd=str(repo), text=True, capture_output=True)
-    command = ["git", *gitcmd.network_options(), *args]
-    return subprocess.run(command, cwd=str(repo), text=True, capture_output=True, env=gitcmd.network_env())
+    """``gitcmd.git`` in ``repo``; a network call with no overall limit — a first push to a mirror may be large — but
+    given up on a remote that stops sending."""
+    return gitcmd.git(repo, *args, network=network, timeout=gitcmd.NO_LIMIT if network else None)
 
 
 def _git_out(repo: Path, *args: str) -> str:
     """git's stdout, stripped; empty when the command failed (an unset key, a missing ref)."""
-    res = _git(repo, *args)
-    return res.stdout.strip() if res.returncode == 0 else ""
+    return gitcmd.read(repo, *args) or ""
 
 
 def _last_line(res: "subprocess.CompletedProcess[str]") -> str:

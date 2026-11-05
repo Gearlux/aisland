@@ -21,15 +21,14 @@ from __future__ import annotations
 
 import json
 import re
-import subprocess
 import tomllib
 from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Set, Tuple
 
-from aisland import __version__, atomic, gitmodules, locations
+from aisland import __version__, atomic, gitcmd, gitmodules, locations
 from aisland.errors import AislandError
-from aisland.toml_places import Where, key_line, table_line
+from aisland.toml_places import FORMAT_KEY, Where, format_refusal, key_line, table_line
 
 #: The file, at the workspace root.
 FILE_NAME = "workspace.toml"
@@ -47,7 +46,6 @@ NAME_KEY = "name"
 
 #: The ``[workspace]`` key saying which shape of the file this is, and the one this aisland reads and writes. A file
 #: without it is read as format 1; a newer format is refused, naming the upgrade.
-FORMAT_KEY = "format"
 FORMAT = 1
 
 #: A project's own keys, in the order they are written; any other key of its table follows, as written.
@@ -154,16 +152,12 @@ def read(path: Path) -> WorkspaceFile:
 
 def _check_format(path: Path, text: str, value: object) -> None:
     """Refuse a format this aisland cannot read: a newer one (written by a newer aisland) or a value that is none."""
-    if isinstance(value, int) and not isinstance(value, bool) and 1 <= value <= FORMAT:
-        return
     header = table_line(text, "workspace")
-    where = Where(path, key_line(text, header, FORMAT_KEY) if header else None)
-    if isinstance(value, int) and not isinstance(value, bool) and value > FORMAT:
-        raise FileError(
-            f"{where}: {FILE_NAME} is format {value}, written by a newer aisland; this one reads format {FORMAT}. "
-            "Upgrade it: pip install --upgrade aisland"
-        )
-    raise FileError(f"{where}: {FORMAT_KEY} must be a whole number, as {FORMAT_KEY} = {FORMAT}")
+    refusal = format_refusal(
+        Where(path, key_line(text, header, FORMAT_KEY) if header else None), FILE_NAME, value, FORMAT
+    )
+    if refusal:
+        raise FileError(refusal)
 
 
 def name_of(root: Path) -> Optional[str]:
@@ -337,12 +331,6 @@ def submodules(root: Path) -> List[Tuple[str, str, Optional[str]]]:
     return [(submodule.path, submodule.url or "", submodule.branch) for submodule in gitmodules.read(root)]
 
 
-def _git_out(folder: Path, *args: str) -> Optional[str]:
-    """``git -C folder <args>``'s output, or None when it fails."""
-    result = subprocess.run(["git", "-C", str(folder), *args], capture_output=True, text=True)
-    return result.stdout.strip() if result.returncode == 0 else None
-
-
 def repository_name(url: str) -> Optional[str]:
     """The repository's own name, read from its address (``…/models.git`` -> ``models``), or None when the address
     ends in no folder name."""
@@ -363,7 +351,7 @@ def workspace_projects(root: Path) -> List[Found]:
     a workspace made from the file checks it out straight into that path."""
     found: List[Tuple[str, str, Optional[str]]] = []
     if (root / ".gitmodules").is_file():
-        root_branch = _git_out(root, "branch", "--show-current") or None
+        root_branch = gitcmd.read(root, "branch", "--show-current") or None
         for path, url, branch in submodules(root):
             if _FOLDER_NAME.fullmatch(path) and url:
                 found.append((path, url, root_branch if branch == "." else branch))
@@ -372,9 +360,9 @@ def workspace_projects(root: Path) -> List[Found]:
             if not child.is_dir() or child.name.startswith(".") or locations.is_alias(child, root):
                 continue
             if (child / ".git").exists():
-                origin = _git_out(child, "remote", "get-url", "origin")
+                origin = gitcmd.read(child, "remote", "get-url", "origin")
                 if origin:
-                    found.append((child.name, origin, _git_out(child, "branch", "--show-current") or None))
+                    found.append((child.name, origin, gitcmd.read(child, "branch", "--show-current") or None))
     folders = {folder for folder, _url, _branch in found}
     short = locations.alias_names(root)
     used: Set[str] = set()
