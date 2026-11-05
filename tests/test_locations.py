@@ -19,7 +19,7 @@ import pytest
 from aisland import locations, paths, pytest_stats, supervisor
 from aisland.ci import stats_report
 from aisland.services import jenkins
-from aisland.setup import manager, mcp_config
+from aisland.setup import git_settings, manager, mcp_config
 from aisland.workspace import projects, sources
 from tests.workspace_layout import needs_workspace
 
@@ -352,8 +352,8 @@ def test_a_failing_alias_install_shows_the_script_s_output_when_quiet(
 ) -> None:
     script = tmp_path / "setup_git.sh"
     script.write_text('echo "fatal: not a git repository"\nexit 3\n')
-    monkeypatch.setattr(manager, "SETUP_GIT_SCRIPT", script)
-    assert manager.install_git_aliases(tmp_path, quiet=True) is False
+    monkeypatch.setattr(git_settings, "SETUP_GIT_SCRIPT", script)
+    assert git_settings.install_git_aliases(tmp_path, quiet=True) is False
     captured = capsys.readouterr()
     assert captured.out == "fatal: not a git repository\n"
     assert captured.err == f"  - Error: installing the git aliases failed (bash {script} {tmp_path}).\n"

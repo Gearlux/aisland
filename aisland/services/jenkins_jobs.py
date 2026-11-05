@@ -6,8 +6,13 @@ A multibranch job per project with a ``Jenkinsfile`` (or, with ``--local``, a pi
 Every function writes into the Jenkins home it is handed (``JenkinsService().service_data_dir``); only
 :func:`init_pipelines` starts and stops the service around them. The CI files those jobs run are
 :mod:`aisland.ci.ci_scaffold`'s; the service itself is :mod:`aisland.services.jenkins`.
+
+Each job's ``config.xml`` is rendered from its template in ``aisland/templates/jenkins/`` (:func:`render_job`), in an
+environment that escapes every ``{{ value }}`` — a url, a name, a path, a whole pipeline script — so no caller escapes
+one by hand and none reaches the XML as markup.
 """
 
+import functools
 import logging
 import re
 import shutil
@@ -17,7 +22,10 @@ from pathlib import Path
 from typing import TYPE_CHECKING, AbstractSet, Dict, List, Optional
 from xml.sax.saxutils import escape
 
-from aisland import console, envfile, failures, gitcmd
+import jinja2
+from markupsafe import Markup
+
+from aisland import console, envfile, failures, gitcmd, locations
 from aisland import pyproject as pyproject_toml
 from aisland.ci.ci_scaffold import registers_slow_marker
 from aisland.errors import AislandError
@@ -36,6 +44,37 @@ NIGHTLY_CRON = "0 1 * * *"
 #: When the `<workspace>.nightly-check` job reports the nightly runs (`aisland tests nightly`): 09:30 on weekdays, so
 #: a Monday's report covers Saturday's, Sunday's and Monday's nights.
 NIGHTLY_CHECK_CRON = "30 9 * * 1-5"
+#: The folder of the jobs' ``config.xml`` templates.
+TEMPLATES_DIR = locations.PACKAGE_DIR / "templates" / "jenkins"
+
+
+def _xml_text(value: object) -> object:
+    """A ``{{ value }}`` as a config.xml holds it: ``&``, ``<`` and ``>`` escaped — XML element text — and quotes left as
+    written, so a pipeline script reads in the file as it does in the Jenkinsfile. Autoescape's own escape would also
+    turn every ``'`` and ``"`` of a script into ``&#39;`` and ``&#34;``; a value already escaped (``Markup``: a
+    template's literal, already escaped by autoescape, or a ``|safe``) passes as it is. Every value goes into element
+    text, never an attribute (where a ``"`` would need escaping too)."""
+    if isinstance(value, Markup):
+        return value
+    return Markup(escape(str(value)))
+
+
+@functools.lru_cache(maxsize=1)
+def _job_templates() -> jinja2.Environment:
+    """The environment the job templates render in: autoescaped through :func:`_xml_text`, a value the template uses
+    but the caller did not give refused (``StrictUndefined``), and each file's last newline kept."""
+    return jinja2.Environment(
+        loader=jinja2.FileSystemLoader(str(TEMPLATES_DIR)),
+        autoescape=True,
+        finalize=_xml_text,
+        undefined=jinja2.StrictUndefined,
+        keep_trailing_newline=True,
+    )
+
+
+def render_job(template: str, **values: object) -> str:
+    """The ``config.xml`` of ``templates/jenkins/<template>`` with ``values``, each escaped as XML text."""
+    return _job_templates().get_template(template).render(**values)
 
 
 def init_pipelines(service: "JenkinsService", project_name: Optional[str] = None, local: bool = False) -> None:
@@ -132,56 +171,7 @@ def _without_userinfo(url: str) -> str:
 
 def _multibranch_config(project: str, remote_url: str, cred_id: str) -> str:
     """The config.xml of a multibranch job over ``remote_url`` (a simplified Multibranch Pipeline template)."""
-    script_path = "Jenkinsfile"
-    config_xml = f"""<?xml version='1.1' encoding='UTF-8'?>
-<org.jenkinsci.plugins.workflow.multibranch.WorkflowMultiBranchProject plugin="workflow-multibranch">
-  <properties/>
-  <folderViews class="jenkins.branch.MultiBranchProjectViewHolder" plugin="branch-api">
-    <owner class="org.jenkinsci.plugins.workflow.multibranch.WorkflowMultiBranchProject" reference="../.."/>
-  </folderViews>
-  <healthMetrics/>
-  <icon class="jenkins.branch.MetadataActionFolderIcon" plugin="branch-api">
-    <owner class="org.jenkinsci.plugins.workflow.multibranch.WorkflowMultiBranchProject" reference="../.."/>
-  </icon>
-  <orphanedItemStrategy
-      class="com.cloudbees.hudson.plugins.folder.computed.DefaultOrphanedItemStrategy"
-      plugin="cloudbees-folder">
-    <pruneDeadBranches>true</pruneDeadBranches>
-    <daysToKeep>-1</daysToKeep>
-    <numToKeep>-1</numToKeep>
-  </orphanedItemStrategy>
-  <triggers>
-    <com.cloudbees.hudson.plugins.folder.computed.PeriodicFolderTrigger plugin="cloudbees-folder">
-      <spec>* * * * *</spec>
-      <interval>300000</interval>
-    </com.cloudbees.hudson.plugins.folder.computed.PeriodicFolderTrigger>
-  </triggers>
-  <disabled>false</disabled>
-  <sources class="jenkins.branch.MultiBranchProject$BranchSourceList" plugin="branch-api">
-    <data>
-      <jenkins.branch.BranchSource>
-        <source class="jenkins.plugins.git.GitSCMSource" plugin="git">
-          <id>{escape(project)}-remote</id>
-          <remote>{escape(remote_url)}</remote>
-          <credentialsId>{escape(cred_id)}</credentialsId>
-          <traits>
-            <jenkins.plugins.git.traits.BranchDiscoveryTrait/>
-          </traits>
-        </source>
-        <strategy class="jenkins.branch.DefaultBranchPropertyStrategy">
-          <properties class="empty-list"/>
-        </strategy>
-      </jenkins.branch.BranchSource>
-    </data>
-    <owner class="org.jenkinsci.plugins.workflow.multibranch.WorkflowMultiBranchProject" reference="../.."/>
-  </sources>
-  <factory class="org.jenkinsci.plugins.workflow.multibranch.WorkflowBranchProjectFactory">
-    <owner class="org.jenkinsci.plugins.workflow.multibranch.WorkflowMultiBranchProject" reference="../.."/>
-    <scriptPath>{script_path}</scriptPath>
-  </factory>
-</org.jenkinsci.plugins.workflow.multibranch.WorkflowMultiBranchProject>
-"""
-    return config_xml
+    return render_job("multibranch.xml.jinja", project=project, remote_url=remote_url, credentials_id=cred_id)
 
 
 def _stop_with_a_config_xml(service: "JenkinsService", home: Path) -> None:
@@ -262,36 +252,13 @@ def local_job_config(project_base_name: str, script_content: str, project_path: 
     so a pipeline declaring SLOW_TESTS gets it defined here already, or the orchestrator's first nightly run would
     ask a new job for its slow tests in vain.
     """
-    slow_switch = (
-        """
-    <hudson.model.ParametersDefinitionProperty>
-      <parameterDefinitions>
-        <hudson.model.BooleanParameterDefinition>
-          <name>SLOW_TESTS</name>
-          <defaultValue>false</defaultValue>
-        </hudson.model.BooleanParameterDefinition>
-      </parameterDefinitions>
-    </hudson.model.ParametersDefinitionProperty>"""
-        if "name: 'SLOW_TESTS'" in script_content
-        else ""
+    return render_job(
+        "local_job.xml.jinja",
+        project=project_base_name,
+        script=script_content,
+        slow_tests="name: 'SLOW_TESTS'" in script_content,
+        workspace=project_path.absolute(),
     )
-    return f"""<?xml version='1.1' encoding='UTF-8'?>
-<flow-definition plugin="workflow-job">
-  <actions/>
-  <description>Local development pipeline for {escape(project_base_name)}</description>
-  <keepDependencies>false</keepDependencies>
-  <properties>
-    <org.jenkinsci.plugins.workflow.job.properties.DisableConcurrentBuildsJobProperty/>{slow_switch}
-  </properties>
-  <definition class="org.jenkinsci.plugins.workflow.cps.CpsFlowDefinition" plugin="workflow-cps">
-    <script>{escape(script_content)}</script>
-    <sandbox>true</sandbox>
-  </definition>
-  <triggers/>
-  <disabled>false</disabled>
-  <customWorkspace>{escape(str(project_path.absolute()))}</customWorkspace>
-</flow-definition>
-"""
 
 
 def _create_orchestrator_job(home: Path, local: bool, initialized_projects: List[str]) -> None:
@@ -430,51 +397,13 @@ def _orchestrator_script(stages_str: str, local: bool) -> str:
 
 
 def _orchestrator_config(pipeline_script: str, description: str, local: bool) -> str:
-    """The orchestrator's config.xml, its script escaped."""
-    escaped_script = escape(pipeline_script)
-    timer_property = (
-        f"""
-    <org.jenkinsci.plugins.workflow.job.properties.PipelineTriggersJobProperty>
-      <triggers>
-        <hudson.triggers.TimerTrigger>
-          <spec>{NIGHTLY_CRON}</spec>
-        </hudson.triggers.TimerTrigger>
-      </triggers>
-    </org.jenkinsci.plugins.workflow.job.properties.PipelineTriggersJobProperty>"""
-        if local
-        else ""
+    """The orchestrator's config.xml: the nightly timer and the SLOW_TESTS switch on the local one.
+
+    SLOW_TESTS is defined at seeding too, so Build with Parameters offers the tick before the job's first run.
+    """
+    return render_job(
+        "orchestrator.xml.jinja", script=pipeline_script, description=description, local=local, cron=NIGHTLY_CRON
     )
-    # SLOW_TESTS defined at seeding too, so Build with Parameters offers the tick before the job's first run.
-    slow_switch_property = (
-        """
-    <hudson.model.ParametersDefinitionProperty>
-      <parameterDefinitions>
-        <hudson.model.BooleanParameterDefinition>
-          <name>SLOW_TESTS</name>
-          <defaultValue>false</defaultValue>
-        </hudson.model.BooleanParameterDefinition>
-      </parameterDefinitions>
-    </hudson.model.ParametersDefinitionProperty>"""
-        if local
-        else ""
-    )
-    config_xml = f"""<?xml version='1.1' encoding='UTF-8'?>
-<flow-definition plugin="workflow-job">
-  <actions/>
-  <description>{escape(description)}</description>
-  <keepDependencies>false</keepDependencies>
-  <properties>
-    <org.jenkinsci.plugins.workflow.job.properties.DisableConcurrentBuildsJobProperty/>{timer_property}{slow_switch_property}
-  </properties>
-  <definition class="org.jenkinsci.plugins.workflow.cps.CpsFlowDefinition" plugin="workflow-cps">
-    <script>{escaped_script}</script>
-    <sandbox>true</sandbox>
-  </definition>
-  <triggers/>
-  <disabled>false</disabled>
-</flow-definition>
-"""
-    return config_xml
 
 
 def _create_nightly_check_job(home: Path) -> None:
@@ -507,29 +436,9 @@ pipeline {{
         }}
     }}
 }}"""
-    config_xml = f"""<?xml version='1.1' encoding='UTF-8'?>
-<flow-definition plugin="workflow-job">
-  <actions/>
-  <description>Reports the nightly runs of {get_workspace_name()}.local each weekday morning.</description>
-  <keepDependencies>false</keepDependencies>
-  <properties>
-    <org.jenkinsci.plugins.workflow.job.properties.DisableConcurrentBuildsJobProperty/>
-    <org.jenkinsci.plugins.workflow.job.properties.PipelineTriggersJobProperty>
-      <triggers>
-        <hudson.triggers.TimerTrigger>
-          <spec>{NIGHTLY_CHECK_CRON}</spec>
-        </hudson.triggers.TimerTrigger>
-      </triggers>
-    </org.jenkinsci.plugins.workflow.job.properties.PipelineTriggersJobProperty>
-  </properties>
-  <definition class="org.jenkinsci.plugins.workflow.cps.CpsFlowDefinition" plugin="workflow-cps">
-    <script>{escape(pipeline_script)}</script>
-    <sandbox>true</sandbox>
-  </definition>
-  <triggers/>
-  <disabled>false</disabled>
-</flow-definition>
-"""
+    config_xml = render_job(
+        "nightly_check.xml.jinja", workspace=get_workspace_name(), script=pipeline_script, cron=NIGHTLY_CHECK_CRON
+    )
     job_dir = home / "jobs" / job_name
     job_dir.mkdir(parents=True, exist_ok=True)
     (job_dir / "config.xml").write_text(config_xml)

@@ -27,7 +27,10 @@ and what to do about it. A patch release (0.1.0 → 0.1.1) changes none of it.
     `click-commands` — [the workspace page](workspace.md);
   - the entry point group `aisland.plugins`: a class of kind `service` and what aisland hands it, `ctx.name`,
     `ctx.workspace`, `ctx.workspace_name`, `ctx.data_dir`, `ctx.port`, `ctx.background`, `ctx.options`, `ctx.run`,
-    `ctx.write_env`, `ctx.read_env`, `ctx.ports`, `ctx.echo`, `ctx.fail`, `ctx.choose_command`.
+    `ctx.write_env`, `ctx.read_env`, `ctx.ports`, `ctx.echo`, `ctx.fail`, `ctx.choose_command`. The contract has a
+    version, a class's `aisland_api` (1 when absent): a release serves every earlier version, and a plugin asking for
+    a newer one is refused with the upgrade to install. `aisland.plugins` (`ServiceContext`, `ServicePlugin`) types
+    it, the one module a project may name, under `TYPE_CHECKING`.
 - **A harness set** ([harness](harness.md)): `workspace.toml`'s `[harness] sets` (a name, `{ set, exclude, name }`,
   `{ git, ref, name, exclude }`), `harness.toml`'s `format` (1), `rules`, `commands`, `scripts` and `[files]`, the places a set
   without one is read from, a project's `[tool.aisland] harness`, the entry point group `aisland.harnesses`, and where
@@ -47,8 +50,8 @@ and what to do about it. A patch release (0.1.0 → 0.1.1) changes none of it.
 
 ## What may change in any release
 
-- **aisland's Python modules.** `import aisland.<module>` is no interface: every name in them may move or change. A
-  project declares what it brings (above) and never imports aisland.
+- **aisland's Python modules**, all but `aisland.plugins`. `import aisland.<module>` is no interface: every name in
+  them may move or change. A project declares what it brings (above) and never imports aisland.
 - **The files aisland generates**: the CI files, the VS Code workspace file, `pyrightconfig.json`, `project.bashrc`,
   `.mcp.json`, `.gemini/settings.json`, the root `uv.toml`, the completion file. Each says in its header how to
   write it again; after an upgrade, run `aisland setup` and `aisland jenkins scaffold <project>`. A CI template set

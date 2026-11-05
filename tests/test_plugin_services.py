@@ -17,6 +17,7 @@ It joins `aisland services` (started when named) and gets `aisland <name> start|
 
 from __future__ import annotations
 
+import os
 import subprocess
 import sys
 import textwrap
@@ -26,7 +27,7 @@ from typing import Any, Dict, List, Optional
 import pytest
 from click.testing import CliRunner, Result
 
-from aisland import cli, locations, paths
+from aisland import cli, locations, paths, plugins
 from aisland.services import base, registry
 
 PROJECT = """\
@@ -412,3 +413,59 @@ def test_loading_reads_the_installed_entry_points_once(workspace: Path, monkeypa
     loaded = discovery.load(found)
     assert {name: item.state for name, item in loaded.items()} == {"acme-db": "installed", "acme-db-copy": "installed"}
     assert len(scans) == 1
+
+
+#: A plugin author's module typed against `aisland.plugins`, and the context aisland really hands it given to the
+#: protocol. `Short` lacks almost everything a context offers: the one error mypy reports, so the check bites.
+_TYPED_AUTHOR = """\
+from __future__ import annotations
+
+from aisland import plugins
+from aisland.services.plugin import ServiceContext
+
+
+def handed(ctx: ServiceContext) -> plugins.ServiceContext:
+    return ctx
+
+
+class Viewer:
+    kind = "service"
+    aisland_api = 1
+
+    def start(self, ctx: plugins.ServiceContext) -> None:
+        if not ctx.options.get("repo"):
+            ctx.fail("name a repository")
+        ctx.write_env({"VIEWER_URL": f"http://localhost:{ctx.port or 5151}"})
+        ctx.run(("viewer-app", str(ctx.data_dir)), port=ctx.port or 5151, ready="/")
+
+
+plugin: plugins.ServicePlugin = Viewer()
+
+
+class Short:
+    name = "viewer"
+
+
+def short(ctx: Short) -> plugins.ServiceContext:
+    return ctx  # refused
+"""
+
+
+def test_the_context_aisland_hands_a_plugin_is_what_aisland_plugins_types(tmp_path: Path) -> None:
+    """`mypy --strict` over an author's module: `ServiceContext` satisfies `aisland.plugins.ServiceContext`, a plain
+    class satisfies `ServicePlugin`, and a context missing what the protocol names does not."""
+    pytest.importorskip("mypy")
+    (tmp_path / "author.py").write_text(_TYPED_AUTHOR)
+    result = subprocess.run(
+        [sys.executable, "-m", "mypy", "--strict", "--no-incremental", "--cache-dir", os.devnull, "author.py"],
+        cwd=tmp_path,
+        env={**os.environ, "MYPYPATH": str(Path(plugins.__file__).parent.parent)},
+        capture_output=True,
+        text=True,
+        timeout=300,
+    )
+    refused = _TYPED_AUTHOR.splitlines().index("    return ctx  # refused") + 1
+    errors = [line for line in result.stdout.splitlines() if ": error:" in line]
+    assert len(errors) == 1 and errors[0].startswith(f"author.py:{refused}: error: Incompatible return value"), (
+        result.stdout + result.stderr
+    )

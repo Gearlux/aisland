@@ -283,6 +283,60 @@ def test_an_installed_plugin_of_an_unknown_kind_is_refused(tmp_path: Path, monke
     )
 
 
+def _with_api(value: str) -> str:
+    """The plugin module with its class declaring ``aisland_api = <value>``."""
+    return PLUGIN_MODULE.replace('    kind = "service"\n', f'    kind = "service"\n    aisland_api = {value}\n')
+
+
+def test_a_plugin_that_names_no_contract_version_loads_as_version_one(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    root = _workspace(tmp_path, {"acme": PLUGIN_PROJECT})
+    _install(tmp_path, monkeypatch)
+    loaded = discovery.load(discovery.discover(root))["acme-db"]
+    assert not hasattr(loaded.obj, "aisland_api")
+    assert (loaded.state, loaded.kind) == ("installed", "service")
+
+
+def test_a_plugin_written_for_the_contract_this_aisland_serves_loads(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    root = _workspace(tmp_path, {"acme": PLUGIN_PROJECT})
+    _install(tmp_path, monkeypatch, _with_api(str(discovery.PLUGIN_API)))
+    loaded = discovery.load(discovery.discover(root))["acme-db"]
+    assert (loaded.state, loaded.kind, loaded.obj.aisland_api) == ("installed", "service", discovery.PLUGIN_API)
+
+
+def test_a_plugin_written_for_a_newer_contract_is_refused_naming_the_upgrade(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Refused before its kind is read: a plugin for a newer aisland may be of a kind this one does not know."""
+    root = _workspace(tmp_path, {"acme": PLUGIN_PROJECT})
+    newer = discovery.PLUGIN_API + 1
+    _install(tmp_path, monkeypatch, _with_api(str(newer)).replace('kind = "service"', 'kind = "widget"'))
+    with pytest.raises(discovery.DeclarationError) as refused:
+        discovery.load(discovery.discover(root))
+    assert refused.value.message == (
+        f"{root / 'acme' / 'pyproject.toml'}:6: plugin 'acme-db' (acme_plugin:Database) of project acme asks for "
+        f"aisland_api {newer}, written for a newer aisland; this one serves aisland_api {discovery.PLUGIN_API}. "
+        "Upgrade it: pip install --upgrade aisland"
+    )
+
+
+@pytest.mark.parametrize("value", ['"1"', "1.5", "True", "0", "None"])
+def test_a_contract_version_that_is_no_whole_number_is_refused_saying_its_shape(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, value: str
+) -> None:
+    root = _workspace(tmp_path, {"acme": PLUGIN_PROJECT})
+    _install(tmp_path, monkeypatch, _with_api(value))
+    with pytest.raises(discovery.DeclarationError) as refused:
+        discovery.load(discovery.discover(root))
+    assert refused.value.message == (
+        f"{root / 'acme' / 'pyproject.toml'}:6: plugin 'acme-db' (acme_plugin:Database): aisland_api must be a "
+        f"whole number, as aisland_api = {discovery.PLUGIN_API}"
+    )
+
+
 def test_an_entry_point_of_a_package_outside_the_workspace_is_not_loaded(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

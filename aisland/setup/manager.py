@@ -18,10 +18,9 @@ import click
 
 from aisland import console, failures, locations, paths
 from aisland.harness import install_harness
-from aisland.paths import SERVICES_DIR
 from aisland.setup import env_example, provision
 from aisland.setup.editor_files import sync_mypy_path, write_code_workspace, write_pyrightconfig
-from aisland.setup.git_settings import merge_on_pull
+from aisland.setup.git_settings import install_git_aliases, merge_on_pull
 from aisland.setup.installers import ensure_uv_in_venv
 from aisland.setup.mcp_config import no_venv, write_gemini_settings, write_mcp_json
 from aisland.setup.playwright_browser import install_browsers
@@ -242,27 +241,3 @@ def setup_workspace(non_interactive: bool = False, install_all: bool = False) ->
     install_git_aliases(workspace_root)
 
     console.echo("==> Workspace setup complete!")
-
-
-#: The script that installs the workspace git aliases (`git pull-all`, `git push-all`, ...), shipped in the package.
-SETUP_GIT_SCRIPT = SERVICES_DIR / "git" / "setup_git.sh"
-
-
-def install_git_aliases(workspace_root: Path, quiet: bool = False) -> bool:
-    """Install the workspace git aliases into the local config of ``workspace_root`` and each active submodule.
-
-    Runs the packaged ``setup_git.sh`` with the root as its argument, so the scripts need not sit in the workspace:
-    from a wheel the aliases name them by their path in ``site-packages`` (`aisland setup` runs it every time).
-    Returns whether the script succeeded. Its output is passed through, or with ``quiet`` shown only on a failure.
-    """
-    result = subprocess.run(
-        ["bash", str(SETUP_GIT_SCRIPT), str(workspace_root)],
-        cwd=workspace_root,
-        capture_output=quiet,
-        text=True,
-    )
-    if result.returncode != 0:
-        if quiet:
-            console.echo((result.stdout or "") + (result.stderr or ""), nl=False)
-        failures.report(f"  - Error: installing the git aliases failed (bash {SETUP_GIT_SCRIPT} {workspace_root}).")
-    return result.returncode == 0

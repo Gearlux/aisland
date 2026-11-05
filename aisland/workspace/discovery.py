@@ -20,7 +20,8 @@ asks "which frameworks?" before the project that defines that question is instal
     acme-db = "acme_plugin:Database"
 
 STAGE 2 (:func:`load`) loads those entry points once their project is installed, and checks each against the
-methods its kind needs. A project never imports aisland: a plugin is any object with a ``kind`` and those methods.
+methods its kind needs. A project never imports aisland: a plugin is any object with a ``kind`` and those methods,
+and an ``aisland_api`` (:data:`PLUGIN_API`) when it is written for a later contract than the first.
 
 Everything refused names the file and the line of the table it is about (:class:`DeclarationError`).
 """
@@ -48,6 +49,12 @@ ENTRY_POINT_GROUP = "aisland.plugins"
 PluginKind = Literal["service"]
 PLUGIN_KINDS: Tuple[str, ...] = get_args(PluginKind)
 _KIND_METHODS: Dict[str, Tuple[str, ...]] = {"service": ("start",)}
+
+#: The version of the plugin contract this aisland serves (what :mod:`aisland.plugins` types). A plugin declares the
+#: one it is written for as ``aisland_api = <whole number>``, 1 when absent: an older or equal one loads, a newer one
+#: is refused naming the upgrade. It rises only when a release changes what a plugin gets or must have.
+PLUGIN_API = 1
+PLUGIN_API_ATTRIBUTE = "aisland_api"
 
 #: ``workspace.toml``'s ``[workspace]`` key for the workspace's name (``workspace_file.NAME_KEY``, which imports this
 #: module): a selection's choice is committed under its own name in that table, so none may take this one.
@@ -388,9 +395,24 @@ def _entry_point(
     return None
 
 
+def _check_api(plugin: Plugin, what: str, api: object) -> None:
+    """A plugin's ``aisland_api``: a whole number this aisland serves, in the words of a file's ``format`` refusal
+    (:func:`aisland.toml_places.format_refusal`)."""
+    shape = f"{what}: {PLUGIN_API_ATTRIBUTE} must be a whole number, as {PLUGIN_API_ATTRIBUTE} = {PLUGIN_API}"
+    if not isinstance(api, int) or isinstance(api, bool) or api < 1:
+        raise DeclarationError(shape)
+    if api > PLUGIN_API:
+        raise DeclarationError(
+            f"{what} of project {plugin.project} asks for {PLUGIN_API_ATTRIBUTE} {api}, written for a newer aisland; "
+            f"this one serves {PLUGIN_API_ATTRIBUTE} {PLUGIN_API}. Upgrade it: pip install --upgrade aisland"
+        )
+
+
 def _check(plugin: Plugin, obj: object) -> str:
-    """The plugin's kind, after checking it has the methods that kind needs."""
+    """The plugin's kind, after checking it asks for a contract this aisland serves and has the methods that kind
+    needs. The version comes first: a plugin for a newer aisland may be of a kind this one does not know."""
     what = f"{plugin.where}: plugin {plugin.name!r} ({plugin.target})"
+    _check_api(plugin, what, getattr(obj, PLUGIN_API_ATTRIBUTE, 1))
     kind = getattr(obj, "kind", None)
     if kind not in PLUGIN_KINDS:
         raise DeclarationError(f"{what} has kind {kind!r} (a plugin's kind is {', '.join(PLUGIN_KINDS)})")

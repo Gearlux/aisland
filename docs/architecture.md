@@ -101,6 +101,7 @@ read. Decided 2026-11-05, when the top level had grown to 47 modules.
 - [The test-run record is written only in an aisland workspace (2026-10-29)](#the-test-run-record-is-written-only-in-an-aisland-workspace-2026-10-29)
 - [aisland's fast run is parallel (2026-10-28)](#aislands-fast-run-is-parallel-2026-10-28)
 - [The CI files come from a template set (2026-10-30)](#the-ci-files-come-from-a-template-set-2026-10-30)
+- [The Jenkins jobs' `config.xml` comes from templates that escape every value (2026-11-05)](#the-jenkins-jobs-configxml-comes-from-templates-that-escape-every-value-2026-11-05)
 - [A project off GitHub never names one in its CI files (2026-10-28)](#a-project-off-github-never-names-one-in-its-ci-files-2026-10-28)
 - [A `package.json` with a `test` script is a Node test run CI runs](#a-packagejson-with-a-test-script-is-a-node-test-run-ci-runs)
 - [Warnings go to stderr, and the doctor and the notebook filter run outside a workspace](#warnings-go-to-stderr-and-the-doctor-and-the-notebook-filter-run-outside-a-workspace)
@@ -4354,6 +4355,39 @@ index_url = "https://pypi.example.com/simple"
 
 The facts, by adding one to `Facts` with its documentation; aisland's templates, held by the scaffold's pins. Never
 give a template a way to run code or read files beyond its set.
+
+## The Jenkins jobs' `config.xml` comes from templates that escape every value (2026-11-05)
+
+*2026-11-05* (the record [jenkins-job-templates]; follows "The CI files come from a template set")
+
+### Context
+
+`services/jenkins_jobs.py` wrote each job's `config.xml` — the multibranch job, the local job, the orchestrator, the
+nightly check — as a Python f-string, escaping each value by hand with `xml.sax.saxutils.escape`. A value that was
+forgotten reached the XML as markup: the nightly check's description held the workspace's name unescaped, so a name
+with `&` or `<` wrote a file Jenkins cannot read.
+
+### Decision
+
+The four files are templates in `aisland/templates/jenkins/` (package data), rendered by `jenkins_jobs.render_job` in
+a Jinja environment with `autoescape=True`, `StrictUndefined` and `keep_trailing_newline`. Jinja's own braces are
+kept: the templates are XML, and the pipeline scripts with their `${…}` and `{{` are VALUES, never template text.
+Every value is escaped by the environment's `finalize` (`_xml_text`), XML's escape of `&`, `<` and `>`, and marked
+`Markup` so autoescape does not escape it again; autoescape's own escape would also have turned every quote of a
+script into `&#39;` or `&#34;`, changing every job's bytes. Values go into element text only, never an attribute.
+
+### Consequences
+
+For 87 configs rendered before and after (urls with `&`, `<` and quotes, scripts with `<`, `&`, `${x}`, `{{`, `{%`,
+`]]>`) the files are byte for byte the same but one: the nightly check of a workspace whose name holds `&` or `<`,
+whose description is now escaped (it was invalid XML). `markupsafe` becomes a declared dependency (jinja2 already
+brought it). `tests/test_jenkins_job_templates.py` renders every template with hostile values and reads each back
+through ElementTree.
+
+### What you may change
+
+The templates' XML, and a job's values. Never escape a value before handing it to `render_job` (it would be escaped
+twice), never mark one `|safe`, and never put a value in an attribute without escaping its quotes.
 
 ## A project's `pyproject.toml` and `.gitmodules` each have one reader (2026-10-30)
 

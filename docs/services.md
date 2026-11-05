@@ -77,6 +77,35 @@ them; its `info(ctx)` adds lines after aisland's. Once the project is installed 
 `aisland viewer start|stop|restart|status|info|reset`, with `--port` on `start` and `restart`, and joins
 `aisland services`, started when named.
 
+A class may declare the version of this contract it is written for, `aisland_api = 1`; without it, it is 1. A plugin
+written for an older or the same version always loads; one asking for a newer version than this aisland serves is
+refused when it loads, naming the plugin, its project and the upgrade:
+
+```text
+Error: tools/pyproject.toml:6: plugin 'viewer' (tools.viewer_service:Viewer) of project tools asks for aisland_api 2, written for a newer aisland; this one serves aisland_api 1. Upgrade it: pip install --upgrade aisland
+```
+
+To type the class, name `aisland.plugins` under `TYPE_CHECKING`, so nothing of aisland is imported when it runs:
+`ServiceContext` is what `ctx` offers and `ServicePlugin` what a service class must have.
+
+```python
+from __future__ import annotations
+
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from aisland.plugins import ServiceContext
+
+
+class Viewer:
+    kind = "service"
+    aisland_api = 1
+
+    def start(self, ctx: ServiceContext) -> None:
+        port = ctx.port or 5151
+        ctx.run(["viewer-app", "--port", str(port)], port=port, ready="/")
+```
+
 ## Service Supervision (process-compose)
 
 Aisland delegates process supervision (spawn, liveness, readiness, crash

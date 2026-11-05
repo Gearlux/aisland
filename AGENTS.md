@@ -66,7 +66,7 @@ The workspace's dev-infrastructure CLI, `aisland` (click, the `aisland/cli/` pac
 - **`manager.py`** [manager-split]: `aisland setup` runs its steps in order — provisioning, activation, editable
   installs (`_run_installs`), the generated workspace files, the git aliases — and each step's code is a module of its
   own (`projects.py`, `installers.py`, `paths.py`, `services/base.py`, `editor_files.py`, `mcp_config.py`,
-  `uv_config.py`, `playwright_browser.py`, `git_settings.py`). A new step goes into its own module, never back into `manager.py`. A name another module uses is
+  `uv_config.py`, `playwright_browser.py`, `git_settings.py` — `pull.rebase false` and the git aliases). A new step goes into its own module, never back into `manager.py`. A name another module uses is
   public (no `_`), in every module of the package; a name only its own module and its tests use stays private.
   **`quality.py`** is `aisland check`: each gate runs once, and `isort` and `black` only check (showing the change they
   would make, as the CI jobs do) unless `--write` lets them rewrite the files (`tests/test_quality.py`).
@@ -160,7 +160,7 @@ The workspace's dev-infrastructure CLI, `aisland` (click, the `aisland/cli/` pac
 - **`setup.sh`**: interpreter + venv, then `aisland setup -y` and `aisland completion install`. **`harness.py` +
   `harness/`**: the agent harness. **`aisland/git/setup_git.sh`**: the workspace git aliases, local config of the root
   and every active submodule; `pull-all` runs `git_pull_all.sh`. `aisland setup` runs it with the root on every run and
-  `workspace init` once; it has no command of its own.
+  `workspace init` once (`setup/git_settings.py::install_git_aliases`); it has no command of its own.
 
 Invariants: only supervisor-started services exist (one started elsewhere is invisible; the start-time port pre-flight
 naming the PID is the only signal). All service state lives under `<workspace>/aisland/data/` (from a wheel,
@@ -431,7 +431,11 @@ naming the PID is the only signal). All service state lives under `<workspace>/a
   service that needs more. A class may declare `options = {"name": "help"}` (offered as `--name` on
   `start`/`restart`; `port`/`background` refused), `supervised = False` when Docker runs it, and `reset_question` when
   its `reset` wipes no data. A moved service disappears with its project; its data folder stays `data/<name>/`
-  (`tests/test_plugin_services.py`).
+  (`tests/test_plugin_services.py`). `aisland.plugins` (`ServiceContext`, `ServicePlugin` Protocols; standard library
+  only) is the typed copy of that contract a project names under `TYPE_CHECKING`, the one module `docs/stability.md`
+  keeps: a context attribute grows in `ServiceContext` and the Protocol together, which `mypy aisland` holds
+  (`services/plugin.py`'s `TYPE_CHECKING` line;
+  `tests/test_plugin_services.py::test_the_context_aisland_hands_a_plugin_is_what_aisland_plugins_types`).
 - **A service's state is data: `state()` → `services.base.ServiceState`** (`service`, `state` — `running`, `stopped`,
   `not installed`, `not supported`, `unknown` —, `pid`, `ports`, `ready`). `status()` prints it; `registry.states`
   is what `aisland services status --json` prints and the MCP tool `services_status` returns, and a service tool
@@ -450,9 +454,11 @@ naming the PID is the only signal). All service state lives under `<workspace>/a
   aisland services start --background`. Never "fix" it by moving `DATA_ROOT`, editing Jenkinsfiles or loosening volume
   ownership; diagnose with a live `log stream` (`docs/services.md`).
 - `aisland jenkins init` seeds a multibranch job per `Jenkinsfile`; `--local` seeds `<project>.local` with
-  `Jenkinsfile.local` embedded. Every value a job's `config.xml` interpolates (a remote url, a credential id, a name, a
-  path) is `escape()`d, and a url is printed without its `user:token@` (`jenkins_jobs._without_userinfo`;
-  `tests/test_jenkins_security.py`).
+  `Jenkinsfile.local` embedded. Every job's `config.xml` is rendered from its template in `aisland/templates/jenkins/`
+  (`jenkins_jobs.render_job`: autoescape, `StrictUndefined`), which escapes every value it interpolates (a remote url,
+  a credential id, a name, a path, a pipeline script) once as XML text — never escape one by hand, never `|safe` [jenkins-job-templates] —
+  and a url is printed without its `user:token@` (`jenkins_jobs._without_userinfo`; `tests/test_jenkins_security.py`,
+  `tests/test_jenkins_job_templates.py`).
 - **Jenkins' port is written once, `JenkinsService.DEFAULT_PORT` (9080); everything that talks to it asks
   `JenkinsService.url()`** (`info`, the safe restart, the scaffold's validation, `aisland tests nightly`'s links, the
   SwiftBar menu, the CLI's `--port` default). Never type the number elsewhere (`tests/test_jenkins_port.py`).
@@ -739,7 +745,11 @@ No configure plugin (which projects a machine has decides its tools); aisland's 
   defined twice, a choice that is no extra, a missing command, an unknown setting, a value of the wrong shape, a plugin
   missing a method. NOT refused: choices for a selection no project defines (`Discovery.undefined`, shown — a
   workspace without the defining project still sets up), an empty project folder, a plugin not installed yet.
-- A new plugin kind joins `PluginKind` and `_KIND_METHODS` together, with a contract test.
+- A new plugin kind joins `PluginKind` and `_KIND_METHODS` together, with a contract test. **The contract carries a
+  version**, `discovery.PLUGIN_API` (a class's `aisland_api`, 1 when absent), checked before the kind: a newer one is
+  refused naming the plugin, its project and `pip install --upgrade aisland`, one that is no whole number naming its
+  shape, an older or equal one never. Raise it only when a release changes what a plugin gets or must have, with its
+  `docs/stability.md` and CHANGELOG lines (`tests/test_discovery.py`).
 
 ## Selections (`aisland workspace configure <selection>`, `selection.py`)
 

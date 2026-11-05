@@ -5,6 +5,10 @@ skews — two parts of the environment out of step, such as two packages install
 together, or a setting left behind by a tool since removed — and prints the command that fixes each. It checks the machine and the Python it runs on, so it runs anywhere,
 in a workspace or not. A probe that does not finish within two minutes is named, never waited on.
 
+Most checks know the skews of a Python machine-learning stack — OpenCV, `huggingface_hub` beside `transformers`,
+the MCP SDK, torch's extension builds — beside Docker, Jenkins' Java, the tunnel and the editor. A check whose
+package or tool is not installed passes saying so, so on any other stack the doctor reports only what applies.
+
 [`examples/03_doctor.py`](../examples/03_doctor.py) runs the doctor and checks its report: one line per check and an
 exit status of 0 exactly when every check passed.
 

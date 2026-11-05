@@ -41,7 +41,7 @@ from aisland.harness import install_harness
 from aisland.harness import sets as harness_sets
 from aisland.harness import summary as harness_summary
 from aisland.setup import env_example
-from aisland.setup.manager import install_git_aliases
+from aisland.setup.git_settings import install_git_aliases
 from aisland.workspace import file as workspace_file
 from aisland.workspace import local as local_workspace
 from aisland.workspace import tracking

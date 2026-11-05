@@ -14,14 +14,17 @@ class may declare options of its own (``options = {"repo": "help"}``), offered o
     ctx.choose_command(selection, name)           the command that adds `name` to a selection, keeping the rest
     ctx.ports()                                   the ports the supervisor knows for it
     ctx.echo(text), ctx.fail(message)             print; stop with one `Error:` line
+
+:mod:`aisland.plugins` types it (``ServiceContext``, ``ServicePlugin``) for a project to name under ``TYPE_CHECKING``,
+and a class may declare the contract version it is written for, ``aisland_api`` (``discovery.PLUGIN_API``).
 """
 
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Any, Callable, Dict, List, Mapping, Optional
+from typing import TYPE_CHECKING, Any, Callable, Dict, List, Mapping, NoReturn, Optional, Sequence
 
-from aisland import console, envfile, supervisor
+from aisland import console, envfile, plugins, supervisor
 from aisland.errors import AislandError
 from aisland.services.base import BaseService, ServiceState, service_state
 from aisland.workspace import projects
@@ -51,7 +54,7 @@ class ServiceContext:
 
     def run(
         self,
-        command: List[str],
+        command: Sequence[str],
         env: Optional[Dict[str, str]] = None,
         port: Optional[int] = None,
         ready: Optional[str] = None,
@@ -83,9 +86,15 @@ class ServiceContext:
     def echo(self, text: str) -> None:
         console.echo(text)
 
-    def fail(self, message: str) -> None:
+    def fail(self, message: str) -> NoReturn:
         """Stop the command with one ``Error: <message>`` line."""
         raise AislandError(message)
+
+
+if TYPE_CHECKING:  # mypy holds the context to what aisland.plugins tells a plugin's author it gets
+
+    def _offers_what_plugins_are_told(ctx: ServiceContext) -> plugins.ServiceContext:
+        return ctx
 
 
 class PluginService(BaseService):

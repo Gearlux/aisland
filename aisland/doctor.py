@@ -1,6 +1,6 @@
 """Preflight health checks for known-recurring environment skew.
 
-Some breakages in this workspace are *environment* skew, not code. The venv is shared by
+Some breakages of a workspace are *environment* skew, not code. The venv is shared by
 every project and built incrementally, so one `pip install` can leave a package pair
 inconsistent; the Docker layer (Colima) has its own equivalents — a client config left behind
 by an uninstalled tool, a VM whose trust store does not match the network the host is on.
@@ -8,8 +8,9 @@ Those failures surface far from their cause — a `dlopen` error inside a pytest
 step, an `ImportError` three libraries deep in an unrelated import chain, a `docker pull`
 dying on credentials it does not need — and cost a long diagnosis every time they recur.
 
-Each check here encodes one such skew that `AGENTS.md` documents as recurring, together with
-the remediation recorded there. The point is to turn a twenty-minute forensic session into
+Each check here encodes one such skew that recurs — most of them in a Python machine-learning stack (OpenCV,
+``huggingface_hub``, the MCP SDK, torch's extension builds), the others in Docker, Jenkins' Java, the tunnel and the
+editor — together with its remedy; a check whose package or tool is absent passes saying so. The point is to turn a twenty-minute forensic session into
 one line of output before a build starts.
 
 Adding a check: write a ``check_*`` function returning a :class:`CheckResult` and add it to

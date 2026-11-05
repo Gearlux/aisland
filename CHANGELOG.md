@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- **The plugin contract has a version**: a plugin class may declare `aisland_api = <n>` (1 when absent); one asking
+  for a newer version than this aisland serves is refused when it loads, naming the upgrade. `aisland.plugins` types
+  what a service plugin gets (`ServiceContext`) and must have (`ServicePlugin`), for a project to name under
+  `TYPE_CHECKING` ([services](docs/services.md)).
+
 ### Changed
 - **The package is grouped by subject**: `aisland.workspace` (the projects, what they declare and what a machine
   chooses), `aisland.setup` (`aisland setup` and its steps), `aisland.ci` (generated CI, `aisland check`, the test-run

@@ -31,6 +31,9 @@ dependencies = [
     # Renders a project's CI files from a template set (aisland/ci/ci_templates.py): aisland's own in
     # aisland/templates/ci/, or one a workspace or an installed package brings.
     "jinja2>=3.1.6",
+    # Jinja's own escaping library: the Jenkins jobs' config.xml templates (aisland/services/jenkins_jobs.py) mark the
+    # values they have escaped as XML text with its `Markup`. 2.0 is the floor jinja2 3.1 itself asks for.
+    "markupsafe>=2.0",
     # Generates the process-compose desired-state document (aisland/supervisor.py). 6.0.1: 6.0 ships no wheel for
     # Python 3.12 and its sdist no longer builds, so the lowest version a resolver may pick must install.
     "pyyaml>=6.0.1",
@@ -70,6 +73,10 @@ dev = [
     "black>=24.0,<25.0",
     "isort>=5.13,<6.0",
     "flake8>=7.0",
+    # flake8's I251: the names library code never imports (`.flake8`'s `banned-modules`).
+    "flake8-tidy-imports>=4.12",
+    # The import contracts (`[tool.importlinter]` below), run by tests/test_imports.py.
+    "import-linter>=2.15",
     # Below 2.0, as the workspace's other projects pin it.
     "mypy>=1.20,<2.0",
     "types-PyYAML>=6.0",
@@ -111,7 +118,7 @@ include = ["aisland*"]
 # into every workspace (aisland/harness.py: the commands, their helper script, the generic rules — `harness/` is no
 # Python package, so its script is data too). setup.py adds project.bashrc.
 [tool.setuptools.package-data]
-aisland = ["py.typed", "code-workspace.json", "git/*.sh", "templates/*", "templates/ci/*", "templates/swiftbar/*", "harness/*.md", "harness/*.toml", "harness/commands/*.md", "harness/scripts/*.py"]
+aisland = ["py.typed", "code-workspace.json", "git/*.sh", "templates/*", "templates/ci/*", "templates/jenkins/*", "templates/swiftbar/*", "harness/*.md", "harness/*.toml", "harness/commands/*.md", "harness/scripts/*.py"]
 
 [tool.black]
 line-length = 120
@@ -121,6 +128,70 @@ extend-exclude = 'data/'
 profile = "black"
 line_length = 120
 skip_glob = ["data/*"]
+
+# The package's layers, read from its import graph by import-linter (grimp); tests/test_imports.py runs them, so the
+# test run enforces them (`lint-imports --no-cache` from this folder shows the same report). Measured 2026-11-05:
+# the subpackages workspace, setup, ci and services import one another in cycles (workspace <-> setup,
+# workspace <-> ci, setup <-> ci, ci <-> services, and wheels is reached from ci while it imports setup and
+# workspace), so only the directions no cycle uses are contracts — never a layers contract over all of them.
+[tool.importlinter]
+root_package = "aisland"
+include_external_packages = true
+# pytest_stats names pytest for its annotations alone; such an import never runs.
+exclude_type_checking_imports = true
+
+[[tool.importlinter.contracts]]
+id = "cli-on-top"
+name = "Only aisland.cli imports aisland.cli: library code and aisland.server never do"
+type = "protected"
+protected_modules = ["aisland.cli"]
+allowed_importers = ["aisland.cli"]
+
+[[tool.importlinter.contracts]]
+id = "acyclic-inside"
+name = "Inside each subpackage the modules import one another without a cycle"
+type = "acyclic_siblings"
+ancestors = ["aisland.ci", "aisland.cli", "aisland.services", "aisland.setup", "aisland.tunnel", "aisland.wheels", "aisland.workspace"]
+
+[[tool.importlinter.contracts]]
+id = "tunnel-alone"
+name = "aisland.tunnel imports none of the other subpackages"
+type = "forbidden"
+source_modules = ["aisland.tunnel"]
+forbidden_modules = ["aisland.ci", "aisland.services", "aisland.setup", "aisland.wheels", "aisland.workspace"]
+
+[[tool.importlinter.contracts]]
+id = "wheels-below-ci-and-services"
+name = "aisland.wheels never imports aisland.ci or aisland.services, which import it"
+type = "forbidden"
+source_modules = ["aisland.wheels"]
+forbidden_modules = ["aisland.ci", "aisland.services"]
+
+[[tool.importlinter.contracts]]
+id = "setup-and-workspace-below-services-and-wheels"
+name = "aisland.setup and aisland.workspace never import aisland.services or aisland.wheels, which import them"
+type = "forbidden"
+source_modules = ["aisland.setup", "aisland.workspace"]
+forbidden_modules = ["aisland.services", "aisland.wheels"]
+
+# Every third-party package aisland imports anywhere is listed (tests/test_imports.py fails on one missing).
+[[tool.importlinter.contracts]]
+id = "stdlib-only"
+name = "The standard-library-only modules import no third-party package"
+type = "forbidden"
+source_modules = ["aisland.atomic", "aisland.locations", "aisland.pytest_stats", "aisland.tunnel.shell", "aisland.wheels.install", "aisland.wheels.unzip"]
+forbidden_modules = ["click", "git_filter_repo", "jinja2", "liquifai", "markupsafe", "mcp", "msgpack", "packaging", "yaml"]
+# A standalone script's optional library stays lazy (AGENTS.md "Imports sit at the top…"): install.py reads a
+# wheels.yaml with PyYAML when it is there.
+ignore_imports = ["aisland.wheels.install -> yaml"]
+
+[[tool.importlinter.contracts]]
+id = "runs-without-aisland"
+name = "The scripts that run where aisland is not installed import nothing of aisland"
+type = "forbidden"
+source_modules = ["aisland.tunnel.shell", "aisland.wheels.install", "aisland.wheels.unzip"]
+forbidden_modules = ["aisland.**"]
+as_packages = false
 
 # Every coverage run of aisland measures branches (workspace rule "Keep Branch Coverage On"); CI's runs also pass
 # --cov-branch, from the templates.
