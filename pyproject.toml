@@ -27,7 +27,11 @@ classifiers = [
     "Typing :: Typed",
 ]
 dependencies = [
-    "click>=8.0.0",
+    # The command line. Every floor below was run on: the fast suite in a venv of `--resolution lowest-direct`
+    # (2026-11-05), held by tests/test_packaging.py::test_aisland_runs_on_the_lowest_versions_its_dependencies_allow.
+    # 8.2.1: below it an empty word after a command offers no options, and below 8.2 a CliRunner result has no stderr
+    # of its own. (Before 8.4 a refused option reads `No such option: --x`, after it `No such option '--x'`.)
+    "click>=8.2.1",
     # Renders a project's CI files from a template set (aisland/ci/ci_templates.py): aisland's own in
     # aisland/templates/ci/, or one a workspace or an installed package brings.
     "jinja2>=3.1.6",
@@ -73,10 +77,9 @@ dev = [
     "black>=24.0,<25.0",
     "isort>=5.13,<6.0",
     "flake8>=7.0",
-    # flake8's I251: the names library code never imports (`.flake8`'s `banned-modules`).
-    "flake8-tidy-imports>=4.12",
-    # The import contracts (`[tool.importlinter]` below), run by tests/test_imports.py.
-    "import-linter>=2.15",
+    # The import contracts (`[tool.importlinter]` below), run by tests/test_imports.py. 2.12: 2.11 refuses the
+    # `aisland.**` contract ("Modules have shared descendants").
+    "import-linter>=2.12",
     # Below 2.0, as the workspace's other projects pin it.
     "mypy>=1.20,<2.0",
     "types-PyYAML>=6.0",
@@ -86,7 +89,9 @@ dev = [
     # Those tests (and tests/test_wheels.py's end-to-end ones) build WITHOUT isolation, so the build backend
     # must already be in the venv — a fresh one has neither.
     "setuptools>=77.0",
-    "wheel",
+    # 0.34: below it the no-isolation builds fail (0.33.6), and a bare "wheel" let a resolver take 0.1, which no longer
+    # installs.
+    "wheel>=0.34",
     # tests/test_wheels.py's end-to-end tests run the real uv found beside the interpreter, where this puts it.
     "uv>=0.12",
 ]
@@ -179,7 +184,7 @@ forbidden_modules = ["aisland.services", "aisland.wheels"]
 id = "stdlib-only"
 name = "The standard-library-only modules import no third-party package"
 type = "forbidden"
-source_modules = ["aisland.atomic", "aisland.locations", "aisland.pytest_stats", "aisland.tunnel.shell", "aisland.wheels.install", "aisland.wheels.unzip"]
+source_modules = ["aisland.atomic", "aisland.locations", "aisland.plugins", "aisland.pytest_stats", "aisland.tunnel.shell", "aisland.wheels.install", "aisland.wheels.unzip"]
 forbidden_modules = ["click", "git_filter_repo", "jinja2", "liquifai", "markupsafe", "mcp", "msgpack", "packaging", "yaml"]
 # A standalone script's optional library stays lazy (AGENTS.md "Imports sit at the top…"): install.py reads a
 # wheels.yaml with PyYAML when it is there.

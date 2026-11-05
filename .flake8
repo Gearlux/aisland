@@ -4,29 +4,3 @@ exclude = .venv,data,build,dist,*.egg-info,git,__pycache__
 # E203 (whitespace before ':') conflicts with black's slice formatting, e.g.
 # `key[len(a) : -len(b)]`; black owns style, so we ignore it (matches other projects).
 ignore = E501, W503, E203
-# flake8-tidy-imports (I251): the names library code never imports (AGENTS.md "Errors exit 1"). It sees an import
-# statement only — `from click import echo`, `import click.termui` —, never `click.echo(...)` after `import click`;
-# tests/code_rules.py reads those uses from the code's tree (tests/test_console.py, tests/test_errors_exit_one.py).
-# click's exceptions are not banned here: library code may import them to CATCH one; raising one is the rule, and
-# tests/test_errors_exit_one.py holds it.
-banned-modules =
-    click.echo = library code speaks through aisland.console.echo; only aisland/cli/ and console.py use click's
-    click.secho = library code speaks through aisland.console.echo with click.style; only aisland/cli/ and console.py use click's
-    click.confirm = library code asks through aisland.console.confirm; only aisland/cli/ and console.py use click's
-    click.prompt = library code asks through aisland.console.prompt; only aisland/cli/ and console.py use click's
-    click.termui.confirm = library code asks through aisland.console.confirm
-    click.termui.prompt = library code asks through aisland.console.prompt
-    click.termui.secho = library code speaks through aisland.console.echo
-    click.utils.echo = library code speaks through aisland.console.echo
-    sys.exit = library code raises AislandError; only the CLI and a script's own entry point decide the exit status
-# Where those names are allowed: the CLI decides what a command prints and its exit status, console.py IS the console,
-# the standalone scripts (standard library only, run where aisland is not) are their own entry points, and the tests
-# are no library code.
-per-file-ignores =
-    aisland/cli/*.py: I251
-    aisland/console.py: I251
-    aisland/wheels/install.py: I251
-    aisland/wheels/unzip.py: I251
-    aisland/tunnel/shell.py: I251
-    aisland/harness/scripts/*.py: I251
-    tests/*.py: I251

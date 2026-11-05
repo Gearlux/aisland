@@ -8,6 +8,7 @@ stderr, the command finishes its work, and the run then exits 1.
 
 from __future__ import annotations
 
+import ast
 import hashlib
 import subprocess
 from pathlib import Path
@@ -17,13 +18,13 @@ import click
 import pytest
 from click.testing import CliRunner
 
-import aisland
 from aisland import failures, locations, paths, supervisor
 from aisland.cli import main
 from aisland.errors import AislandError
 from aisland.services import base
 from aisland.setup import manager
 from aisland.workspace.projects import get_project_metadata
+from tests import code_rules
 
 
 @pytest.fixture(autouse=True)
@@ -108,21 +109,71 @@ def test_every_exception_aisland_defines_is_an_aisland_error_and_the_builtin_it_
         assert issubclass(error, AislandError) and issubclass(error, builtin)
 
 
+def _exits(tree: ast.Module, *entry_points: str) -> List[int]:
+    """The lines of ``tree`` that raise one of click's exceptions or end the process — ``raise SystemExit``,
+    ``sys.exit``, ``exit``/``quit`` — outside its own entry point (its ``__main__`` block and ``entry_points``)."""
+    allowed = code_rules.entry_point_lines(tree, *entry_points)
+    bound = code_rules.bindings(tree)
+    lines = set()
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Raise) and node.exc is not None:
+            raised = node.exc.func if isinstance(node.exc, ast.Call) else node.exc
+            name = code_rules.dotted(raised, bound)
+            if (name or "").startswith("click.") or (isinstance(raised, ast.Name) and raised.id == "SystemExit"):
+                lines.add(node.lineno)
+        elif isinstance(node, ast.Call):
+            name = code_rules.dotted(node.func, bound)
+            if name == "sys.exit" or (
+                isinstance(node.func, ast.Name) and node.func.id in {"exit", "quit"} and not name
+            ):
+                lines.add(node.lineno)
+    return sorted(lines - allowed)
+
+
 def test_no_library_module_raises_clicks_own_exception_or_exits() -> None:
-    """A refusal is an AislandError; only the CLI's group turns it into the Error line and the exit status."""
-    package = Path(aisland.__file__).parent
+    """A refusal is an AislandError; only the CLI's group turns it into the Error line and the exit status. A
+    module's own entry point decides its exit status: a script's ``__main__`` block (``wheels/install.py``,
+    ``wheels/unzip.py``, ``tunnel/shell.py``) and ``aisland-mcp``'s ``main``."""
     hits = [
-        f"{path.relative_to(package)}:{number}"
-        for path in package.rglob("*.py")
-        # main() of the MCP server is its own entry point; harness/ holds scripts a workspace runs, not aisland's code;
-        # the CLI (aisland/cli/) is where a command's exit status is decided
-        if path.name != "server.py" and "harness" not in path.relative_to(package).parts
-        for number, line in enumerate(path.read_text().splitlines(), start=1)
-        if "raise click.ClickException(" in line
-        or "raise SystemExit(" in line
-        and path.relative_to(package).parts[0] != "cli"
+        f"{path}:{line}"
+        for path, tree in code_rules.library_modules()
+        for line in _exits(tree, *(("main",) if path == "aisland/server.py" else ()))
     ]
     assert hits == []
+
+
+@pytest.mark.parametrize(
+    "source",
+    [
+        "import click\nraise click.ClickException('no')\n",
+        "import click as c\nraise c.UsageError('no')\n",
+        "from click import ClickException as Refusal\nraise Refusal('no')\n",
+        "import click\nraise click.exceptions.Exit(1)\n",
+        "raise SystemExit(1)\n",
+        "raise SystemExit\n",
+        "import sys\nsys.exit(1)\n",
+        "from sys import exit as leave\nleave(1)\n",
+        "exit(1)\n",
+    ],
+)
+def test_an_exit_is_found_however_it_is_spelled(source: str) -> None:
+    assert _exits(ast.parse(source)) != []
+
+
+def test_catching_clicks_exception_and_a_scripts_own_entry_point_are_no_exit() -> None:
+    source = (
+        "import click, sys\n"
+        "def main():\n"
+        "    raise SystemExit(1)\n"
+        "try:\n"
+        "    pass\n"
+        "except click.ClickException:\n"
+        "    pass\n"
+        "if __name__ == '__main__':\n"
+        "    sys.exit(main())\n"
+    )
+    assert _exits(ast.parse(source), "main") == []
+    assert _exits(ast.parse(source)) == [3]
 
 
 @pytest.mark.parametrize(

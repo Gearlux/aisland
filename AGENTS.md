@@ -195,20 +195,23 @@ naming the PID is the only signal). All service state lives under `<workspace>/a
   `console.collecting()` for each MCP tool call — its stderr lines come back as the tool object's `warnings`, the rest
   is dropped, and a question raises `NoOneToAsk` (an `AislandError`), never a guessed answer. Only `aisland/cli/` and
   `console.py` call `click.echo`/`confirm`/`prompt`; `click.style` stays anywhere. A test answers a question by
-  patching `console.confirm` (`tests/test_console.py`, `tests/test_server.py`).
+  patching `console.confirm`. `tests/test_console.py` reads every use of click's speech from the syntax tree, any
+  import or alias (`tests/code_rules.py`) — never a flake8 plugin, which would run in every project of the shared venv
+  (`tests/test_server.py`).
 - **A warning goes to stderr through `failures.warn`**, never `console.echo("  - Warning: …")`: it fails nothing and
   stays off stdout, which a script reads (`--json`)
   (`tests/test_configure.py::test_a_warning_goes_to_stderr_and_leaves_the_json_whole`).
 - **One exception root, and `--debug`.** [errors-root] Library code raises `AislandError` — never
-  `click.ClickException` itself, never `SystemExit` (the harness scripts and `aisland-mcp`'s `main` are their own entry
-  points) — and an exception class aisland defines derives from it AND the builtin it stands for
+  `click.ClickException` itself, never `SystemExit` (the harness scripts, a standalone script's `__main__` block and
+  `aisland-mcp`'s `main` are their own entry points) — and an exception class aisland defines derives from it AND the builtin it stands for
   (`DeclarationError(AislandError, ValueError)`). `_WorkspaceGroup.invoke` turns an `OSError` or a `SubprocessError` (a
   `CalledProcessError`, a `TimeoutExpired`) into one `Error: <it> (run `aisland --debug …` for the traceback)` line; `--debug` re-raises it and prints aisland's
   own refusals' tracebacks too; any other exception is a bug and keeps its traceback. An `except` names what can fail
   there, never `Exception` — except around a project's own code, a completion callback (`errors.quiet_completion`, the
   one guard every completer is wrapped in) and the pytest plugin's hooks. Every download goes through
   `downloads.download`, and a git network call is guarded (`gitcmd.py`)
-  (`tests/test_errors_exit_one.py::test_no_library_module_raises_clicks_own_exception_or_exits`,
+  (`tests/test_errors_exit_one.py::test_no_library_module_raises_clicks_own_exception_or_exits`, which reads every
+  `raise` and exit from the syntax tree, any alias;
   `tests/test_downloads.py`).
 
 ## Diagnostics and types
@@ -239,6 +242,15 @@ naming the PID is the only signal). All service state lives under `<workspace>/a
   command, above both `provision` and `services.jenkins`. A standalone script's optional library stays lazy
   (`wheels/install.py`'s PyYAML, `wheels/filter_repo.py`'s git-filter-repo). `tests/test_imports.py` imports every module
   first with none loaded before it, and fails on an aisland import inside a function.
+- **The layers are import-linter contracts** (`[tool.importlinter]` in `pyproject.toml`, run by
+  `tests/test_imports.py::test_the_import_graph_keeps_every_contract`; `lint-imports --no-cache` shows them): only
+  `aisland.cli` imports `aisland.cli` (`aisland.server` and library code never do); inside each subpackage no cycle;
+  `tunnel` imports no other subpackage, `wheels` never `ci`/`services`, `setup` and `workspace` never
+  `services`/`wheels`; the standard-library-only modules (`atomic`, `locations`, `plugins`, `pytest_stats`,
+  `tunnel/shell.py`, `wheels/install.py`, `wheels/unzip.py`) import no third-party package, and the three that run
+  where aisland is not import nothing of aisland. `workspace`, `setup`, `ci` and `services` import one another in
+  cycles today, so those directions are no contract. A contract changes with the rule it holds, never to let an
+  import through.
 
 ## Workspace root and paths
 

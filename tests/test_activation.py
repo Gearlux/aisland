@@ -330,7 +330,7 @@ def test_setup_clones_a_project_written_into_the_file_by_hand(
 def test_setup_has_no_activation_flags(flag: str) -> None:
     result = CliRunner().invoke(cli.main, ["setup", flag, "models"])
     assert result.exit_code == 2
-    assert f"No such option '{flag}'" in result.output
+    assert f"No such option '{flag}'" in result.output or f"No such option: {flag}" in result.output  # click >= / < 8.4
 
 
 def test_setup_asks_then_reconciles(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:

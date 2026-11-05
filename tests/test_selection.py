@@ -569,9 +569,13 @@ def test_a_bad_declaration_is_one_error_line(tmp_path: Path, monkeypatch: pytest
     ],
 )
 def test_the_old_commands_and_options_are_gone(workspace: Path, argv: List[str], message: str) -> None:
+    """click words a refused option `No such option: --x` before 8.4 and `No such option '--x'` from it on."""
     result = CliRunner().invoke(cli.main, argv)
     assert result.exit_code == 2
-    assert message in result.output
+    before_8_4 = (
+        message.replace("No such option '", "No such option: ").removesuffix("'") if "option" in message else message
+    )
+    assert message in result.output or before_8_4 in result.output
 
 
 # --- the service message ------------------------------------------------------------------------------------------

@@ -11,6 +11,7 @@ import json
 import os
 import re
 import shutil
+import socket
 import subprocess
 import sys
 import tarfile
@@ -24,6 +25,7 @@ from typing import Any, Dict, List, Optional, Tuple
 import pytest
 import yaml
 from packaging.requirements import Requirement
+from packaging.version import Version
 
 from aisland.setup import editor_files
 
@@ -555,3 +557,99 @@ def test_the_release_checks_the_build_strictly_and_smoke_tests_the_wheel(release
     smoke = _step(release_workflow, "build", "Smoke-test the built wheel in a clean venv")["run"]
     assert "cd /tmp" in smoke and "dist/*.whl" in smoke and "aisland --help" in smoke
     assert 'aisland --version | grep -qx "aisland, version ${GITHUB_REF_NAME#v}"' in smoke
+
+
+# --- the dependency floors ------------------------------------------------------------------------------------------
+
+#: Imports every module of the installed package (none of this checkout: ``-P``, run from a scratch folder) and uses
+#: each base dependency the way aisland does; prints the modules that fail.
+_FLOOR_SMOKE = """
+import importlib, json, pkgutil
+import aisland
+from aisland.workspace import projects
+from aisland import pypi, supervisor
+failures = {}
+for module in pkgutil.walk_packages(aisland.__path__, "aisland."):
+    if module.name.endswith("__main__"):
+        continue
+    try:
+        importlib.import_module(module.name)
+    except Exception as error:
+        failures[module.name] = f"{type(error).__name__}: {error}"
+assert projects.requirement_name("Lib_X[extra]>=1.0") == "lib-x"
+assert pypi.Version("1.2.0") > pypi.Version("1.2.0rc1")
+print(json.dumps(failures))
+"""
+
+
+def _reach_pypi() -> None:
+    try:
+        socket.create_connection(("pypi.org", 443), timeout=5).close()
+    except OSError as error:
+        pytest.skip(f"PyPI cannot be reached ({error}): the floors are resolved from it")
+
+
+def _lowest(venv: Path, requirements: List[str], cwd: Path) -> None:
+    """Install ``requirements`` into ``venv``, each named one at the LOWEST version its specifier allows
+    (``--resolution lowest-direct``; their own dependencies at the newest). From a scratch folder with ``--no-config``,
+    so no ``uv.toml`` of a workspace (its indexes, its overrides) is read."""
+    uv = str(Path(sys.executable).with_name("uv"))
+    environment = {k: v for k, v in os.environ.items() if not k.startswith("UV_") or k == "UV_CACHE_DIR"}
+    environment.pop("VIRTUAL_ENV", None)
+    result = subprocess.run(
+        [uv, "pip", "install", "--no-config", "--python", str(venv / "bin" / "python")]
+        + ["--resolution", "lowest-direct", *requirements],
+        cwd=cwd,
+        env=environment,
+        capture_output=True,
+        text=True,
+        timeout=600,
+    )
+    assert result.returncode == 0, result.stderr
+
+
+@pytest.mark.slow
+def test_aisland_runs_on_the_lowest_versions_its_dependencies_allow(wheel: Path, tmp_path: Path) -> None:
+    """Each floor in ``[project] dependencies`` and the runtime extras is a version aisland was run on: the wheel
+    installed with every one of them at its floor imports every module and answers ``--help``.
+
+    The only test that reaches the network (PyPI); it is skipped, saying so, where PyPI cannot be reached. The
+    floors' suite run is measured by hand (CHANGELOG, pyproject comments); this keeps them from going stale."""
+    _reach_pypi()
+    project = tomllib.loads((PROJECT / "pyproject.toml").read_text(encoding="utf-8"))["project"]
+    uv = str(Path(sys.executable).with_name("uv"))
+    venv = tmp_path / "lowest"
+    subprocess.run([uv, "venv", "--no-config", "-q", "--python", sys.executable, str(venv)], cwd=tmp_path, check=True)
+    python = str(venv / "bin" / "python")
+
+    _lowest(venv, [str(wheel), *project["dependencies"]], tmp_path)
+    for name in project["dependencies"]:
+        requirement = Requirement(name)
+        (floor,) = [spec.version for spec in requirement.specifier if spec.operator == ">="]
+        assert Version(_installed_version(python, requirement.name, tmp_path)) == Version(floor), requirement
+    smoke = subprocess.run([python, "-P", "-c", _FLOOR_SMOKE], cwd=tmp_path, capture_output=True, text=True)
+    assert smoke.returncode == 0, smoke.stderr
+    assert json.loads(smoke.stdout.strip().splitlines()[-1]) == {}
+    helped = subprocess.run([str(venv / "bin" / "aisland"), "--help"], cwd=tmp_path, capture_output=True, text=True)
+    assert helped.returncode == 0 and "Usage: aisland" in helped.stdout, helped.stderr
+
+    extras = [spec for extra in ("connect", "mcp", "prune") for spec in project["optional-dependencies"][extra]]
+    _lowest(venv, [str(wheel), *extras], tmp_path)
+    served = subprocess.run(
+        [python, "-P", "-c", "import msgpack, git_filter_repo; from aisland import server; assert server.mcp_server"],
+        cwd=tmp_path,
+        capture_output=True,
+        text=True,
+    )
+    assert served.returncode == 0, served.stderr
+
+
+def _installed_version(python: str, distribution: str, cwd: Path) -> str:
+    result = subprocess.run(
+        [python, "-P", "-c", f"import importlib.metadata as m; print(m.version({distribution!r}))"],
+        cwd=cwd,
+        capture_output=True,
+        text=True,
+        check=True,
+    )
+    return result.stdout.strip()

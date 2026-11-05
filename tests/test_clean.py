@@ -234,13 +234,24 @@ def test_every_run_sweeps_expired_backups(workspace: Path) -> None:
     assert fresh.exists()
 
 
+def _declining(monkeypatch: pytest.MonkeyPatch) -> List[str]:
+    """Every question the clean asks, each answered no."""
+    asked: List[str] = []
+
+    def decline(question: str, **kwargs: object) -> bool:
+        asked.append(question)
+        return False
+
+    monkeypatch.setattr(clean.console, "confirm", decline)
+    return asked
+
+
 def test_the_question_lists_and_names_the_backups_the_sweep_deletes(
     workspace: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
     """The sweep deletes any project's backups: a person sees them and says yes before any goes."""
     old = seed_backup(workspace, "other", 8)
-    asked: List[str] = []
-    monkeypatch.setattr(clean.console, "confirm", lambda question, **kwargs: asked.append(question) or False)
+    asked = _declining(monkeypatch)
 
     assert clean.clean_project("proj", workspace_root=workspace, data_dir=workspace / "data", now=NOW) == 0
 
@@ -254,8 +265,7 @@ def test_a_clean_with_nothing_to_move_still_asks_before_it_deletes(
 ) -> None:
     git(workspace / "proj", "clean", "-qfdX")  # nothing ignored left to move
     old = seed_backup(workspace, "other", 8)
-    asked: List[str] = []
-    monkeypatch.setattr(clean.console, "confirm", lambda question, **kwargs: asked.append(question) or False)
+    asked = _declining(monkeypatch)
 
     clean.clean_project("proj", workspace_root=workspace, data_dir=workspace / "data", now=NOW)
 

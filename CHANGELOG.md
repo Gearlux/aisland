@@ -14,6 +14,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `TYPE_CHECKING` ([services](docs/services.md)).
 
 ### Changed
+- **aisland needs click 8.2.1 or newer** (was 8.0.0): every floor of the dependencies and extras is now a version the
+  test suite ran on, installed with `--resolution lowest-direct`, and below 8.2.1 an empty word after a command offers
+  no options. jinja2 3.1.6, MarkupSafe 2.0, PyYAML 6.0.1,
+  packaging 23.0, msgpack 1.2, mcp 2.0 and git-filter-repo 2.47 hold as they were. The `dev` extra asks for
+  `wheel>=0.34` (no floor before) and adds `import-linter`, which holds the package's import layers.
 - **The package is grouped by subject**: `aisland.workspace` (the projects, what they declare and what a machine
   chooses), `aisland.setup` (`aisland setup` and its steps), `aisland.ci` (generated CI, `aisland check`, the test-run
   report), and smaller modules split out of large ones (`backups`, `envfile`, `probe`, `tunnel.store`, `wheels.projects`,
