@@ -3,7 +3,7 @@ description: Per project (and the root workspace) in dependency order — run lo
 model: sonnet
 allowed-tools: [Bash(aisland workspace mirror sync:*), Bash(git add:*), Bash(git commit:*), Bash(git push:*), Bash(git pull:*), Bash(git checkout:*), Bash(git merge:*), Bash(git -c submodule.recurse=false:*), Bash(git -C * add:*), Bash(git -C * commit:*), Bash(git -C * push:*), Bash(git -C * pull:*), Bash(git -C * checkout:*), Bash(git -C * merge:*), Bash(cd:*), Bash(source:*), Bash(for *), Bash(while *), Bash(if *)]
 ---
-<!-- Shipped by aisland (aisland/harness/commands/ship.md), installed into .agents/workflows/ by `aisland setup` (aisland/harness.py). Change it in aisland; the rules it cites are aisland's (.agents/aisland/AGENTS.md). -->
+<!-- Shipped by aisland (aisland/harness/commands/ship.md), installed into .agents/workflows/ by `aisland setup` (aisland/setup/harness.py). Change it in aisland; the rules it cites are aisland's (.agents/aisland/AGENTS.md). -->
 
 # Workflow: Ship (Push → Promote → Sync-Back)
 

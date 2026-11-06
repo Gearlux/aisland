@@ -22,12 +22,13 @@ from aisland import locations
 from aisland.ci import ci_scaffold
 from aisland.ci.ci_scaffold import discover_github_projects, is_private_repo
 from aisland.errors import AislandError
-from aisland.github import GitHubRepository, github_repository, project_repositories
 from aisland.pypi import released_on_pypi
 from aisland.services.jenkins import JenkinsService
+from aisland.setup import source_commands
 from aisland.wheels import published
-from aisland.workspace import projects
+from aisland.workspace import projects, source_apply
 from aisland.workspace import sources as s
+from aisland.workspace.github import GitHubRepository, github_repository, project_repositories
 
 
 def _project(root: Path, name: str, deps: list[str]) -> None:
@@ -305,9 +306,9 @@ def _set_pypi(root: Path, project: str, monkeypatch: pytest.MonkeyPatch) -> int:
     (root / ".venv" / "bin" / "uv").touch(mode=0o755)
     monkeypatch.setattr(s, "local_override", lambda root, name: None)
     monkeypatch.setattr(s, "set_local_override", lambda *a, **k: None)
-    monkeypatch.setattr(s, "apply_source", lambda *a, **k: True)
-    monkeypatch.setattr("aisland.workspace.sources.write_code_workspace", lambda *a, **k: None)
-    return s.set_project_source(project, "pypi", workspace_root=root)
+    monkeypatch.setattr(source_apply, "apply_source", lambda *a, **k: True)
+    monkeypatch.setattr("aisland.setup.source_commands.write_code_workspace", lambda *a, **k: None)
+    return source_commands.set_project_source(project, "pypi", workspace_root=root)
 
 
 def test_a_release_from_the_projects_own_owner_may_be_its_source(

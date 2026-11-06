@@ -10,13 +10,14 @@ import click
 
 from aisland import locations
 from aisland.backups import DEFAULT_KEEP_DAYS, list_store, prune_store, restore_backup
-from aisland.ci import nightly, stats_report
+from aisland.ci import stats_report
 from aisland.ci.quality import run_quality_gates
 from aisland.ci.stats_report import DEFAULT_WINDOW_DAYS
 from aisland.clean import clean_project
 from aisland.cli._base import _Command, _Group
 from aisland.doctor import run_doctor
 from aisland.notebook_utils import clean_notebook_stdin
+from aisland.services import nightly
 from aisland.setup.completion import install_completions, is_sourced_by, shell_snippet, verify_click_completion
 from aisland.setup.manager import setup_workspace
 from aisland.setup.mcp_config import generate_gemini_settings, generate_mcp_json

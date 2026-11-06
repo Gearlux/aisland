@@ -27,6 +27,9 @@ from aisland.workspace.projects import get_workspace_root
 
 logger = logging.getLogger(__name__)
 
+#: How long the plugin manager may take to download and resolve every plugin: minutes on a first `jenkins init`.
+PLUGIN_INSTALL_SECONDS = 30 * 60
+
 
 class JenkinsService(BaseService):
     """Jenkins CI/CD Server."""
@@ -216,12 +219,17 @@ class JenkinsService(BaseService):
             # We capture output to keep it clean unless there's an error.
             console.echo("  - Downloading necessary Jenkins plugins...")
             logger.debug("running %s", " ".join(cmd))
-            result = subprocess.run(cmd, check=True, capture_output=True, text=True)
+            result = subprocess.run(cmd, check=True, capture_output=True, text=True, timeout=PLUGIN_INSTALL_SECONDS)
             if "Installed" in result.stdout or "Done" in result.stdout:
                 console.echo("  - Jenkins plugins and dependencies synchronized.")
             return True
         except subprocess.CalledProcessError as e:
             failures.report(f"  - Error installing plugins: {e.stderr}")
+            return False
+        except subprocess.TimeoutExpired:
+            failures.report(
+                f"  - Error installing plugins: the plugin manager gave no result in {PLUGIN_INSTALL_SECONDS} s"
+            )
             return False
 
     def _has_remote_pipelines(self) -> bool:

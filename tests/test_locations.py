@@ -16,11 +16,11 @@ from typing import Callable, Dict, Iterator
 import click
 import pytest
 
-from aisland import locations, paths, pytest_stats, supervisor
+from aisland import locations, paths, pytest_stats
 from aisland.ci import stats_report
-from aisland.services import jenkins
-from aisland.setup import git_settings, manager, mcp_config
-from aisland.workspace import projects, sources
+from aisland.services import jenkins, supervisor
+from aisland.setup import git_settings, manager, mcp_config, source_commands
+from aisland.workspace import projects
 from tests.workspace_layout import needs_workspace
 
 AISLAND_PROJECT = Path(__file__).resolve().parents[1]
@@ -321,12 +321,11 @@ def test_setup_from_a_wheel_without_a_venv_says_how_to_make_one(
 @pytest.mark.parametrize(
     "command",
     [
-        lambda root: sources.set_project_source("lib", "local", workspace_root=root),
-        lambda root: sources.apply_configured(workspace_root=root),
+        lambda root: source_commands.set_project_source("lib", "local", workspace_root=root),
         lambda root: mcp_config.generate_mcp_json(),
         lambda root: mcp_config.generate_gemini_settings(),
     ],
-    ids=["source set", "source apply", "mcp claude", "mcp gemini"],
+    ids=["source set", "mcp claude", "mcp gemini"],
 )
 def test_every_command_needing_the_venv_says_how_to_make_one_from_a_wheel(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, command: Callable[[Path], object]

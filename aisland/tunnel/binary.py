@@ -1,27 +1,30 @@
 """The standalone VS Code CLI the tunnel runs: where it comes from, and how it is unpacked into place.
 
 The CLI is downloaded once per machine into the tunnel's state folder (:func:`aisland.tunnel.state.state_dir`), or
-installed from an archive a box that cannot reach the download host was given. It is unpacked to a ``.part`` file
-and moved into place whole, so an interrupted copy leaves no binary a later run would take for an installed one.
+installed from an archive a box that cannot reach the download host was given. A download is checked against the
+SHA-256 the VS Code update service lists for that build before anything is unpacked. It is unpacked to a ``.part``
+file and moved into place whole, so an interrupted copy leaves no binary a later run would take for an installed one.
 """
 
 from __future__ import annotations
 
+import json
 import os
 import platform
 import shutil
 import tarfile
 import tempfile
 from pathlib import Path
-from typing import Optional
+from typing import Optional, Tuple
 
 from aisland import console, downloads
 from aisland.errors import AislandError
 from aisland.tunnel.state import state_dir
 
-#: Where the standalone VS Code CLI comes from. The alpine builds are statically linked, so the
-#: same binary runs on a glibc image; there is no ``cli-linux-*`` identifier (it answers 404).
-CLI_DOWNLOAD_URL = "https://code.visualstudio.com/sha/download?build=stable&os={asset}"
+#: The VS Code update service's document of the latest stable standalone CLI: its archive's ``url`` and the
+#: ``sha256hash`` it is checked against. The alpine builds are statically linked, so the same binary runs on a glibc
+#: image; there is no ``cli-linux-*`` identifier (it answers 404).
+CLI_RELEASE_URL = "https://update.code.visualstudio.com/api/update/{asset}/stable/latest"
 CLI_ASSETS = {
     "x86_64": "cli-alpine-x64",
     "amd64": "cli-alpine-x64",
@@ -73,6 +76,24 @@ def _extract_cli(tarball: Path, destination: Path) -> None:
             raise
 
 
+def _latest_release(asset: str, folder: Path) -> Tuple[str, str]:
+    """The latest stable CLI archive's url and SHA-256, from the update service's document (fetched into ``folder``).
+
+    Raises ``OSError`` when the service does not answer, and :class:`AislandError` for a document without an https
+    url or a digest — an archive aisland could not check is never downloaded."""
+    document = folder / "release.json"
+    downloads.download(CLI_RELEASE_URL.format(asset=asset), document)
+    try:
+        release = json.loads(document.read_text(encoding="utf-8"))
+    except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+        raise AislandError(f"The VS Code update service's answer for {asset} is no JSON document: {exc}") from exc
+    url = release.get("url") if isinstance(release, dict) else None
+    digest = release.get("sha256hash") if isinstance(release, dict) else None
+    if not (isinstance(url, str) and url.startswith("https://") and isinstance(digest, str) and len(digest) == 64):
+        raise AislandError(f"The VS Code update service names no https archive and SHA-256 for {asset}")
+    return url, digest.lower()
+
+
 def install_cli(tarball: Optional[Path] = None, force: bool = False) -> Path:
     """Make the VS Code CLI available and return its path.
 
@@ -94,11 +115,12 @@ def install_cli(tarball: Optional[Path] = None, force: bool = False) -> Path:
         return target
 
     asset = cli_asset()
-    url = CLI_DOWNLOAD_URL.format(asset=asset)
     console.echo(f"Fetching the VS Code CLI ({asset})…")
     with tempfile.TemporaryDirectory() as tmp:
+        url = CLI_RELEASE_URL.format(asset=asset)
         downloaded = Path(tmp) / "vscode_cli.tar.gz"
         try:
+            url, expected = _latest_release(asset, Path(tmp))
             downloads.download(url, downloaded, timeout=180)
         except OSError as exc:  # ``URLError`` and a timeout are ``OSError``s
             raise AislandError(
@@ -106,5 +128,12 @@ def install_cli(tarball: Optional[Path] = None, force: bool = False) -> Path:
                 "  Fetch it on a machine that can, upload it here, and install it with:\n"
                 "      aisland tunnel start --cli <the downloaded .tar.gz>"
             ) from exc
+        actual = downloads.sha256(downloaded)
+        if actual != expected:
+            raise AislandError(
+                f"The VS Code CLI downloaded from {url} has SHA-256 {actual}, not the {expected} the update service "
+                "lists; it was not installed. Try again, or install an archive you checked with "
+                "`aisland tunnel start --cli <the .tar.gz>`"
+            )
         _extract_cli(downloaded, target)
     return target

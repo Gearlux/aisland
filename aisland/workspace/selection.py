@@ -41,7 +41,7 @@ from packaging.requirements import InvalidRequirement, Requirement
 from aisland import console, failures, machine_config
 from aisland import pyproject as pyproject_toml
 from aisland.errors import AislandError
-from aisland.setup.installers import ensure_uv_in_venv
+from aisland.venv import ensure_uv_in_venv
 from aisland.workspace import discovery
 from aisland.workspace import file as workspace_file
 from aisland.workspace.projects import discover_projects, get_install_order, get_project_metadata

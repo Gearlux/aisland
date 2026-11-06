@@ -1,4 +1,4 @@
-"""What every aisland service shares: one process under the supervisor (:mod:`aisland.supervisor`), its data
+"""What every aisland service shares: one process under the supervisor (:mod:`aisland.services.supervisor`), its data
 folder and log, and its start, stop, status, info and reset."""
 
 import os
@@ -7,7 +7,8 @@ from typing import Any, Dict, List, Literal, Optional, Sequence, TypedDict
 
 import click
 
-from aisland import console, failures, paths, supervisor
+from aisland import console, failures, paths
+from aisland.services import supervisor
 from aisland.workspace.projects import get_workspace_root
 
 #: What a service's state can be: ``not installed`` (its program is missing), ``not supported`` (not on this platform),
@@ -44,7 +45,7 @@ class BaseService:
 
     Process supervision (spawn, liveness, readiness, crash recovery, log
     capture, port discovery) is delegated to the process-compose supervisor
-    (see :mod:`aisland.supervisor`). Service classes keep the domain logic:
+    (see :mod:`aisland.services.supervisor`). Service classes keep the domain logic:
     building the command line, environment, and readiness probe that
     ``launch()`` hands to :meth:`start`.
     """

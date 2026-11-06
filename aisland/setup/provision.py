@@ -30,13 +30,13 @@ from typing import Dict, List, Optional, Set, Tuple
 from aisland import console, paths, probe
 from aisland.errors import AislandError
 from aisland.setup import installers
-from aisland.setup.installers import USERSPACE_TOOLS
+from aisland.userspace_tools import USERSPACE_TOOLS
 from aisland.workspace import discovery
 from aisland.workspace.discovery import ToolKind
 
 #: aisland's own tools, by how they are installed:
 #:
-#: - ``f1bonacc1/tap/process-compose``: the service supervisor (``aisland/supervisor.py``), tap-qualified because
+#: - ``f1bonacc1/tap/process-compose``: the service supervisor (``aisland/services/supervisor.py``), tap-qualified because
 #:   homebrew-core has no process-compose formula; Linux gets it from :data:`aisland.setup.installers.USERSPACE_TOOLS`.
 #: - ``docker`` and ``colima``: the container engine the Docker-run services use; ``act``: running GitHub's CI locally;
 #:   ``swiftbar``: the menu-bar status of the services.

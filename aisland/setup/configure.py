@@ -21,6 +21,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Callable, Dict, List, Optional, Tuple, Union
 
+from aisland.setup import source_commands
 from aisland.workspace import activation, mirrors, selection, sources
 
 
@@ -116,7 +117,7 @@ def overview(root: Optional[Path]) -> List[str]:
 
 
 def _source_set(root: Path, project: str, kind: str, options: Dict[str, Optional[str]], machine_only: bool) -> int:
-    return sources.set_project_source(
+    return source_commands.set_project_source(
         project=project,
         kind=kind,
         ref=options.get("branch"),
@@ -127,7 +128,7 @@ def _source_set(root: Path, project: str, kind: str, options: Dict[str, Optional
 
 
 def _source_unset(root: Path, project: str, machine_only: bool) -> int:
-    return sources.unset_project_source(project=project, machine_only=machine_only, workspace_root=root)
+    return source_commands.unset_project_source(project=project, machine_only=machine_only, workspace_root=root)
 
 
 SOURCE = Plugin(

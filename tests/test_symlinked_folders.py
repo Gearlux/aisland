@@ -16,8 +16,8 @@ from typing import Any, Dict, List
 
 import pytest
 
-from aisland import harness, locations
-from aisland.setup import editor_files
+from aisland import locations
+from aisland.setup import editor_files, harness
 from aisland.workspace import file as workspace_file
 from aisland.workspace import projects, selection, sources
 

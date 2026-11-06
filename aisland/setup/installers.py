@@ -11,76 +11,13 @@ import tarfile
 import tempfile
 from dataclasses import dataclass
 from pathlib import Path
-from typing import AbstractSet, Dict, List, NotRequired, Optional, TypedDict
+from typing import AbstractSet, List, Optional
 
-from aisland import console, failures, locations, paths
+from aisland import console, failures, paths
 from aisland.downloads import download, sha256
-from aisland.errors import AislandError
+from aisland.userspace_tools import USERSPACE_TOOLS
 
 logger = logging.getLogger(__name__)
-
-
-class UserspaceTool(TypedDict):
-    """One entry of :data:`USERSPACE_TOOLS`: a pinned release and how to install it.
-
-    ``url`` and ``extract_subdir`` are templates of ``{version}`` and ``{arch}`` (the architecture in the tool's own
-    names, ``arch_names``, when they differ from aisland's ``amd64``/``arm64``); ``bin_subdir`` is the binaries'
-    folder inside the archive (``""``: at its root; default ``bin``); ``sha256`` maps aisland's architecture names to
-    the archive's digest."""
-
-    version: str
-    url: str
-    extract_subdir: str
-    binaries: List[str]
-    sha256: Dict[str, str]
-    arch_names: NotRequired[Dict[str, str]]
-    bin_subdir: NotRequired[str]
-
-
-# Registry of tools aisland can install entirely in userspace (no sudo / package
-# manager required). Used on Linux where the macOS brew flow is unavailable.
-# Each entry pins a specific version AND per-architecture sha256 digests taken
-# from the upstream SHASUMS / checksums files. The downloaded tarball is verified
-# against its digest BEFORE extraction (see `install_userspace_tool`); a mismatch
-# aborts the install rather than running an unverified binary. `sha256` is keyed
-# by the same {arch} token used in the URL — node ships an x64-only asset, so it
-# is keyed "amd64". When bumping `version`, refresh the digests from upstream in
-# the SAME edit (e.g. `curl -sL <checksums-url>`), or the install will abort.
-USERSPACE_TOOLS: Dict[str, UserspaceTool] = {
-    "node": {
-        "version": "v22.11.0",
-        "url": "https://nodejs.org/dist/{version}/node-{version}-linux-{arch}.tar.xz",
-        "extract_subdir": "node-{version}-linux-{arch}",
-        # Node names its builds x64 and arm64 (`{arch}` in its asset names); the digests stay keyed by aisland's names.
-        "arch_names": {"amd64": "x64", "arm64": "arm64"},
-        "binaries": ["node", "npm", "npx"],
-        # https://nodejs.org/dist/v22.11.0/SHASUMS256.txt
-        "sha256": {
-            "amd64": "83bf07dd343002a26211cf1fcd46a9d9534219aad42ee02847816940bf610a72",
-            "arm64": "6031d04b98f59ff0f7cb98566f65b115ecd893d3b7870821171708cdbaf7ae6e",
-        },
-    },
-    # The aisland service supervisor (see aisland/supervisor.py). macOS gets it
-    # via Homebrew (f1bonacc1/tap, in aisland.setup.provision.AISLAND_TOOLS);
-    # this entry covers Linux. Flat archive: the binary sits at the tarball
-    # root (bin_subdir "" — no bin/ directory), and upstream publishes
-    # per-architecture assets ({arch} = amd64 / arm64).
-    "process-compose": {
-        "version": "v1.116.0",
-        "url": (
-            "https://github.com/F1bonacc1/process-compose/releases/download/"
-            "{version}/process-compose_linux_{arch}.tar.gz"
-        ),
-        "extract_subdir": "process-compose-{version}",
-        "bin_subdir": "",
-        "binaries": ["process-compose"],
-        # github.com/F1bonacc1/process-compose/releases/download/v1.116.0/process-compose_checksums.txt
-        "sha256": {
-            "amd64": "f3550750dd17c3d0d5e378aa6239b87ee8405dd0eeb460a83b8cc03ef48a87fb",
-            "arm64": "b82c4d6c633b4775d6f11c41dc5f7943f7b94a99ff6699298de813cb9c9ba76d",
-        },
-    },
-}
 
 
 # platform.machine() → the architecture token used in release-asset names.
@@ -352,29 +289,3 @@ def offer_shell_switch(required_pkgs: AbstractSet[str]) -> None:
         console.echo("  - Open a new terminal window for it to take effect.")
     except subprocess.CalledProcessError as e:
         console.echo(f"  - chsh failed: {e}")
-
-
-def ensure_uv_in_venv(venv_bin: Path) -> str:
-    """Guarantee ``uv`` is present in the workspace venv and return its path.
-
-    Every Jenkins .local job, every ``aisland setup`` run, and every call into the
-    workspace's Python tools assumes ``${VENV_BIN}/uv`` exists. If the venv was
-    created without uv (or uv got uninstalled by some downstream ``uv pip install``
-    shenanigan), this function installs it via the venv's own ``pip``.
-
-    Idempotent: if uv is already executable, returns its path immediately.
-    """
-    uv_path = venv_bin / "uv"
-    if uv_path.exists() and os.access(uv_path, os.X_OK):
-        return str(uv_path)
-
-    pip_path = venv_bin / "pip"
-    if not pip_path.exists():
-        # A venv made by `uv venv` without `--seed` has no pip (setup.sh seeds one with ensurepip).
-        remedy = "Re-run aisland/setup.sh." if locations.FROM_CHECKOUT else "Recreate it with `uv venv --seed .venv`."
-        raise AislandError(f"{pip_path} not found. Cannot bootstrap uv; the venv is broken. {remedy}")
-
-    console.echo(f"==> Bootstrapping uv into {venv_bin}...")
-    logger.debug("running %s install --quiet --upgrade uv", pip_path)
-    subprocess.check_call([str(pip_path), "install", "--quiet", "--upgrade", "uv"])
-    return str(uv_path)

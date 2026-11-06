@@ -22,7 +22,8 @@ import click
 import pytest
 from click.testing import CliRunner
 
-from aisland import cli, console, locations, paths, supervisor
+from aisland import cli, console, locations, paths
+from aisland.services import supervisor
 from aisland.setup import installers, manager, provision
 
 

@@ -268,7 +268,7 @@ def test_set_refuses_a_project_the_file_does_not_list(at: Path) -> None:
 
 
 def test_active_is_a_plugin_of_configure() -> None:
-    from aisland.workspace import configure
+    from aisland.setup import configure
 
     plugin = configure.PLUGINS["active"]
     assert (plugin.main.name, plugin.main.choices, plugin.options) == ("active", ("true", "false"), ())

@@ -14,7 +14,8 @@ from pathlib import Path
 import pytest
 
 from aisland import paths
-from aisland.services import base, jenkins_jobs
+from aisland.ci import jenkins_job_config as job_config
+from aisland.services import base, jenkins_jobs, jenkins_settings
 from aisland.services.jenkins import JenkinsService
 
 PASSWORD = "0123456789abcdef0123456789abcdef"
@@ -76,7 +77,7 @@ CONFIG = """<?xml version='1.1' encoding='UTF-8'?>
 
 def test_anonymous_read_keeps_the_login_and_csrf_protection(tmp_path: Path) -> None:
     (tmp_path / "config.xml").write_text(CONFIG)
-    jenkins_jobs.allow_anonymous_read(tmp_path)
+    jenkins_settings.allow_anonymous_read(tmp_path)
     root = ET.parse(tmp_path / "config.xml").getroot()
     assert root.findtext("authorizationStrategy/denyAnonymousReadAccess") == "false"
     assert root.findtext("useSecurity") == "true"
@@ -86,7 +87,7 @@ def test_anonymous_read_keeps_the_login_and_csrf_protection(tmp_path: Path) -> N
 def test_a_config_without_the_setting_is_left_as_it_is(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
     text = CONFIG.replace("<denyAnonymousReadAccess>true</denyAnonymousReadAccess>", "")
     (tmp_path / "config.xml").write_text(text)
-    jenkins_jobs.allow_anonymous_read(tmp_path)
+    jenkins_settings.allow_anonymous_read(tmp_path)
     assert (tmp_path / "config.xml").read_text() == text
     assert "left as it is" in capsys.readouterr().out
 
@@ -95,7 +96,7 @@ def test_a_remote_url_reaches_the_job_xml_escaped_and_is_printed_without_its_tok
     """A url from a `.gitmodules` is another person's text: an `&` must not break (or change) the job, and a token
     in it must not reach scrollback, CI logs or an AI client."""
     url = "https://user:ghp_secret@example.com/acme/models.git?a=1&b=<2>"
-    xml = jenkins_jobs._multibranch_config("models", url, "github-token")
+    xml = job_config.multibranch_config("models", url, "github-token")
     assert ET.fromstring(xml).find(".//remote").text == url  # type: ignore[union-attr]
     assert jenkins_jobs._without_userinfo(url) == "https://example.com/acme/models.git?a=1&b=<2>"
     assert jenkins_jobs._without_userinfo("git@github.com:acme/models.git") == "git@github.com:acme/models.git"

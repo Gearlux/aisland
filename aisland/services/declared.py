@@ -13,7 +13,8 @@ from __future__ import annotations
 
 from typing import Optional
 
-from aisland import console, supervisor
+from aisland import console
+from aisland.services import supervisor
 from aisland.services.base import BaseService
 from aisland.workspace.discovery import Service
 

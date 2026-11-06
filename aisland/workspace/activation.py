@@ -20,7 +20,7 @@ from aisland import console, gitcmd, machine_config
 from aisland.workspace import file as workspace_file
 from aisland.workspace import local as local_workspace
 from aisland.workspace import tracking
-from aisland.workspace.projects import submodule_active_map
+from aisland.workspace.projects import ProjectFolder, submodule_active_map
 from aisland.workspace.sources import detached_projects
 
 #: The project's setting in ``workspace.toml`` and the last part of this machine's ``aisland.active.<project>.active``.
@@ -91,8 +91,8 @@ def _submodule_names(root: Path) -> Dict[str, str]:
     return {path: name for name, path, _active in _gitmodules(root)}
 
 
-def _gitmodules(root: Path) -> List[tuple[str, str, bool]]:
-
+def _gitmodules(root: Path) -> List[ProjectFolder]:
+    """The submodules ``.gitmodules`` declares (a seam the tests replace)."""
     return submodule_active_map(root)
 
 

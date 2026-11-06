@@ -1,5 +1,5 @@
 """A workspace combines harness sets: aisland's own, a project's, a folder of the workspace, an installed package's and
-a repository elsewhere, listed in `workspace.toml`'s `[harness] sets` (`aisland/harness.py`)."""
+a repository elsewhere, listed in `workspace.toml`'s `[harness] sets` (`aisland/setup/harness.py`)."""
 
 from __future__ import annotations
 
@@ -12,8 +12,9 @@ from typing import Dict
 import pytest
 from click.testing import CliRunner
 
-from aisland import cli, harness
+from aisland import cli
 from aisland.cli import workspace as cli_workspace
+from aisland.setup import harness
 from aisland.workspace import check as workspace_check
 from aisland.workspace import file as workspace_file
 

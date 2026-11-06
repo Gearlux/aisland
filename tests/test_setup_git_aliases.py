@@ -156,3 +156,56 @@ def test_the_one_line_aliases_still_run(sandbox: tuple[Path, dict]) -> None:
     status = subprocess.run(["git", "status-all"], cwd=root, env=env, capture_output=True, text=True)
     assert status.returncode == 0, status.stderr
     assert status.stdout.startswith("ROOT") and "\nsubproject" in status.stdout
+
+
+def _fake_gates(tmp_path: Path, env: dict) -> Path:
+    """isort, black, flake8, mypy and pytest on PATH as scripts that only log their call; returns the log."""
+    log = tmp_path / "gates.log"
+    bin_dir = tmp_path / "gates"
+    bin_dir.mkdir()
+    for tool in ("isort", "black", "flake8", "mypy", "pytest"):
+        (bin_dir / tool).write_text(f'#!/bin/sh\necho "{tool}" >> "{log}"\n')
+        (bin_dir / tool).chmod(0o755)
+    env["PATH"] = f"{bin_dir}{os.pathsep}{env['PATH']}"
+    return log
+
+
+def test_safe_on_no_branch_is_refused_before_any_gate_runs(sandbox: tuple[Path, dict], tmp_path: Path) -> None:
+    root, env = sandbox
+    _run_script(root, env)
+    log = _fake_gates(tmp_path, env)
+    sub = root / "subproject"
+    subprocess.check_call(["git", "switch", "-q", "--detach"], cwd=sub, env=env)
+    (sub / "f.txt").write_text("change\n")
+
+    done = subprocess.run(["git", "safe", "feat: x"], cwd=sub, env=env, capture_output=True, text=True)
+
+    assert done.returncode == 1
+    assert "git safe pushes the branch you are on, and you are on none" in done.stdout
+    assert not log.exists()
+    assert _git("status", "--porcelain", cwd=sub, env=env) == "?? f.txt"
+
+
+def test_safe_pushes_only_the_branch_it_is_on_and_a_refused_push_fails(
+    sandbox: tuple[Path, dict], tmp_path: Path
+) -> None:
+    """No fallback to another branch: a refused push of `feature` leaves origin's `dev/main` as it was."""
+    root, env = sandbox
+    _run_script(root, env)
+    _fake_gates(tmp_path, env)
+    origin = tmp_path / "bare-origin.git"
+    subprocess.check_call(["git", "init", "-q", "--bare", str(origin)], env=env)
+    hook = origin / "hooks" / "pre-receive"
+    hook.write_text('#!/bin/sh\nwhile read old new ref; do [ "$ref" = refs/heads/feature ] && exit 1; done; exit 0\n')
+    hook.chmod(0o755)
+    sub = root / "subproject"
+    subprocess.check_call(["git", "remote", "set-url", "origin", str(origin)], cwd=sub, env=env)
+    subprocess.check_call(["git", "switch", "-q", "-c", "feature"], cwd=sub, env=env)
+    (sub / "f.txt").write_text("change\n")
+
+    done = subprocess.run(["git", "safe", "feat: x"], cwd=sub, env=env, capture_output=True, text=True)
+
+    assert done.returncode == 1
+    assert "the push of feature failed; the commit stays here" in done.stdout
+    assert _git("log", "-1", "--format=%s", cwd=sub, env=env) == "feat: x"
+    assert _git("for-each-ref", "--format=%(refname)", cwd=origin, env=env) == ""

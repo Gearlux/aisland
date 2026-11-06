@@ -18,10 +18,10 @@ import click
 import pytest
 from click.testing import CliRunner
 
-from aisland import failures, locations, paths, supervisor
+from aisland import failures, locations, paths
 from aisland.cli import main
 from aisland.errors import AislandError
-from aisland.services import base
+from aisland.services import base, supervisor
 from aisland.setup import manager
 from aisland.workspace.projects import get_project_metadata
 from tests import code_rules
@@ -91,7 +91,7 @@ def test_the_next_command_starts_with_no_failure(monkeypatch: pytest.MonkeyPatch
 
 def test_every_exception_aisland_defines_is_an_aisland_error_and_the_builtin_it_stands_for() -> None:
     from aisland import editor, pypi, server
-    from aisland.ci import nightly
+    from aisland.services import nightly
     from aisland.wheels import prune as wheels_prune
     from aisland.workspace import discovery
     from aisland.workspace import file as workspace_file
@@ -272,7 +272,7 @@ def test_docker_that_fails_to_start_is_reported(monkeypatch: pytest.MonkeyPatch,
     monkeypatch.setattr(engine, "is_running", lambda: False)
     monkeypatch.setattr(docker.shutil, "which", lambda name: f"/usr/local/bin/{name}")  # colima and docker are there
 
-    def _fails(argv: list[str]) -> int:
+    def _fails(argv: list[str], **kwargs: object) -> int:
         raise subprocess.CalledProcessError(1, argv)
 
     monkeypatch.setattr(subprocess, "check_call", _fails)

@@ -124,7 +124,18 @@ git status-all
 
 ### Safely Pushing Changes (`safe`)
 
-A custom Git alias exists to enforce the workspace mandates before pushing code. Run it from inside any project submodule (or the workspace root): it activates the shared workspace `.venv`, formats the code with `isort` and `black`, lints with `flake8`, type-checks with `mypy` (executed **from the workspace root** so the root `mypy.ini`'s `mypy_path` is honored), and runs `pytest`. If everything passes, it commits and pushes safely to the remote.
+`git safe "<message>"` runs a project's quality gates, then commits and pushes it. Run it from inside a project
+submodule (or the workspace root), on the branch you want pushed:
+
+1. It activates the workspace's `.venv`.
+2. It **rewrites** the code with `isort` and `black` (`aisland check` only checks).
+3. It lints with `flake8`, type-checks with `mypy` from the workspace root (so the root `mypy.ini`'s `mypy_path`
+   applies) and runs `pytest`. The first gate that fails stops it, with nothing committed.
+4. It commits **everything** in the repository with `git add .` — untracked files included, ignored ones not —
+   and pushes the branch you are on to `origin`.
+
+On no branch (a detached HEAD) it stops before the first gate. A push that fails is an error: the commit stays in
+your clone, and nothing is pushed to any other branch.
 
 To use the shortcut:
 

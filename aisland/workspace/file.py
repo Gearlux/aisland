@@ -38,8 +38,13 @@ FILE_NAME = "workspace.toml"
 _SECTIONS = ("workspace", "ci", "harness", "project")
 #: The section naming the CI template set and its variables (:mod:`aisland.ci.ci_templates`).
 CI_SECTION = "ci"
-#: The section listing the agent harness sets the workspace combines (:mod:`aisland.harness`).
+#: The key of ``[ci]`` and of a project's ``ci`` table naming the set; every other key of a project's ``ci`` is a
+#: variable's value. ``[ci] variables`` gives every project's.
+CI_TEMPLATES_KEY = "templates"
+CI_VARIABLES_KEY = "variables"
+#: The section listing the agent harness sets the workspace combines (:mod:`aisland.setup.harness`), and its key.
 HARNESS_SECTION = "harness"
+HARNESS_SETS_KEY = "sets"
 
 #: The ``[workspace]`` key naming the workspace (else its origin's repository, else its folder:
 #: :func:`aisland.workspace.projects.get_workspace_name`); no selection may take it.

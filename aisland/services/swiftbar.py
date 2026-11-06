@@ -3,6 +3,7 @@
 import os
 import platform
 import subprocess
+import time
 from pathlib import Path
 from typing import Any, List, Optional, Tuple
 from urllib.parse import quote
@@ -10,14 +11,16 @@ from urllib.parse import quote
 import click
 
 from aisland import console, failures, gitcmd, locations, paths, probe
-from aisland.github import github_repository
 from aisland.services.base import BaseService, ServiceState, service_state, styled_state
 from aisland.services.jenkins import JenkinsService
 from aisland.setup import provision
+from aisland.workspace.github import github_repository
 from aisland.workspace.projects import dependency_order, discover_projects, get_project_metadata, get_workspace_root
 
 #: The bodies of the menu scripts ``aisland swiftbar init`` writes, each ``<[ name ]>`` filled in by :func:`_render_script`.
 TEMPLATES_DIR = locations.PACKAGE_DIR / "templates" / "swiftbar"
+#: How long a call to macOS about SwiftBar (`defaults`, `open`, `pkill`) may take; each answers in well under a second.
+SWIFTBAR_SECONDS = 30
 
 
 def _render_script(template: str, **values: str) -> str:
@@ -113,16 +116,22 @@ class SwiftBarService(BaseService):
         try:
             self.stop()  # SwiftBar writes its settings cleanly only when it is not running
             for key in ("PluginDirectory", "PluginsDirectory"):
-                subprocess.run([*defaults, key, str(self.plugins_dir)], check=True)
-            subprocess.run([*defaults, "MakePluginExecutable", "-bool", "YES"], check=True)
-            subprocess.run([*defaults, "DisabledPlugins", "-array", "CLAUDE.md", "AGENTS.md", "GEMINI.md"], check=True)
+                subprocess.run([*defaults, key, str(self.plugins_dir)], check=True, timeout=SWIFTBAR_SECONDS)
+            subprocess.run([*defaults, "MakePluginExecutable", "-bool", "YES"], check=True, timeout=SWIFTBAR_SECONDS)
+            subprocess.run(
+                [*defaults, "DisabledPlugins", "-array", "CLAUDE.md", "AGENTS.md", "GEMINI.md"],
+                check=True,
+                timeout=SWIFTBAR_SECONDS,
+            )
             console.echo(f"  - SwiftBar configured to use: {self.plugins_dir}")
             # The URL scheme as well, so a running app makes its bookmark of the folder.
             subprocess.run(
-                ["open", "-g", f"swiftbar://changePluginsDirectory?path={quote(str(self.plugins_dir))}"], check=False
+                ["open", "-g", f"swiftbar://changePluginsDirectory?path={quote(str(self.plugins_dir))}"],
+                check=False,
+                timeout=SWIFTBAR_SECONDS,
             )
             self.launch()
-        except (OSError, subprocess.CalledProcessError) as e:
+        except (OSError, subprocess.SubprocessError) as e:
             failures.report(f"  - Error: failed to configure SwiftBar: {e}")
 
     def launch(self) -> None:
@@ -134,9 +143,9 @@ class SwiftBarService(BaseService):
 
         console.echo("Starting SwiftBar...")
         try:
-            subprocess.run(["open", "-a", "SwiftBar"], check=True)
+            subprocess.run(["open", "-a", "SwiftBar"], check=True, timeout=SWIFTBAR_SECONDS)
             console.echo("  - SwiftBar launched.")
-        except subprocess.CalledProcessError as e:
+        except subprocess.SubprocessError as e:
             failures.report(f"  - Error launching SwiftBar: {e}")
 
     def stop(self) -> None:
@@ -146,9 +155,10 @@ class SwiftBarService(BaseService):
 
         console.echo("Stopping SwiftBar...")
         try:
-            subprocess.run(["pkill", "SwiftBar"], check=False)
+            # -x: the process named SwiftBar, never one whose name merely contains it.
+            subprocess.run(["pkill", "-x", "SwiftBar"], check=False, timeout=SWIFTBAR_SECONDS)
             console.echo("  - SwiftBar stopped.")
-        except OSError as e:
+        except (OSError, subprocess.TimeoutExpired) as e:
             failures.report(f"  - Error stopping SwiftBar: {e}")
 
     def restart(self, **kwargs: Any) -> None:  # Any: launch's options, each typed there
@@ -156,8 +166,6 @@ class SwiftBarService(BaseService):
         if not self._require_macos():
             return
         self.stop()
-        import time
-
         time.sleep(1)
         self.launch()
 
@@ -168,16 +176,20 @@ class SwiftBarService(BaseService):
         keys = ["PluginDirectory", "PluginsDirectory"]
         for key in keys:
             try:
-                current = subprocess.check_output(["defaults", "read", "com.ameba.SwiftBar", key], text=True).strip()
+                current = subprocess.check_output(
+                    ["defaults", "read", "com.ameba.SwiftBar", key], text=True, timeout=SWIFTBAR_SECONDS
+                ).strip()
                 if current == str(self.plugins_dir):
                     console.echo(f"Clearing SwiftBar {key} setting (was {self.plugins_dir})...")
                     self.stop()
-                    subprocess.run(["defaults", "delete", "com.ameba.SwiftBar", key], check=True)
+                    subprocess.run(
+                        ["defaults", "delete", "com.ameba.SwiftBar", key], check=True, timeout=SWIFTBAR_SECONDS
+                    )
                     console.echo(f"  - SwiftBar {key} configuration cleared.")
             except subprocess.CalledProcessError:
                 # Key might not exist or app not installed
                 pass
-            except OSError as e:
+            except (OSError, subprocess.TimeoutExpired) as e:
                 failures.report(f"  - Error clearing SwiftBar {key} configuration: {e}")
 
     def reset(self) -> None:

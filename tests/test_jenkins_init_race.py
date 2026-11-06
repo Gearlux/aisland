@@ -19,7 +19,8 @@ from typing import Callable, List, Tuple
 import click
 import pytest
 
-from aisland.services import jenkins_jobs
+from aisland.ci import jenkins_job_config as job_config
+from aisland.services import jenkins_jobs, jenkins_settings
 from aisland.services.jenkins import JenkinsService
 
 #: ``run(running=..., local=..., config_appears=...)`` → (what init_pipelines did, in order; what it printed).
@@ -71,13 +72,17 @@ def recorded_init(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytes
         monkeypatch.setattr(svc, "launch", lambda port=9080, background=False: calls.append(f"launch ({_state()})"))
         monkeypatch.setattr(svc, "stop", lambda: calls.append(f"stop ({_state()})"))
         jobs = jenkins_jobs
-        monkeypatch.setattr(jobs, "setup_dashboard_view", lambda home, name=None: calls.append("setup_dashboard_view"))
-        monkeypatch.setattr(jobs, "setup_global_properties", lambda home: calls.append("setup_global_properties"))
+        monkeypatch.setattr(
+            jenkins_settings, "setup_dashboard_view", lambda home, name=None: calls.append("setup_dashboard_view")
+        )
+        monkeypatch.setattr(
+            jenkins_settings, "setup_global_properties", lambda home: calls.append("setup_global_properties")
+        )
         monkeypatch.setattr(
             jobs, "_create_orchestrator_job", lambda home, local, names: calls.append("orchestrator job")
         )
         monkeypatch.setattr(jobs, "_create_nightly_check_job", lambda home: calls.append("nightly-check job"))
-        monkeypatch.setattr(jobs, "local_job_config", lambda *a: "<flow-definition/>")
+        monkeypatch.setattr(job_config, "local_job_config", lambda *a: "<flow-definition/>")
         monkeypatch.setattr(jobs, "_get_git_remote", lambda path: "git@github.com:Gearlux/app.git")
         monkeypatch.setattr(jobs, "_find_credentials", lambda home, url: "github")
         monkeypatch.setattr(jobs, "time", _Clock(config, config_appears, calls))

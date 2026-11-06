@@ -81,7 +81,7 @@ def read(workspace_root: Optional[Path] = None) -> Dict[str, str]:
     and Jenkins sees the values a run in a terminal sees: ``export`` and quotes understood, ``$VAR`` and ``${VAR}``
     expanded (an earlier line first, then the environment), a trailing comment dropped. A line the shell reads as no
     assignment (``KEY = value``, a name with a dash) sets nothing. The one reader of the file: used by the services
-    that publish and consume workspace configuration, by :func:`aisland.supervisor.apply` for ``${VAR}`` expansion,
+    that publish and consume workspace configuration, by :func:`aisland.services.supervisor.apply` for ``${VAR}`` expansion,
     and by Jenkins. ``workspace_root`` defaults to the discovered root."""
     env_file = (workspace_root or locations.workspace_root()) / ".env"
     if not env_file.exists():

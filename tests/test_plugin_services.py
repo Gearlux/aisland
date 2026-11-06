@@ -76,9 +76,9 @@ def workspace(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     monkeypatch.syspath_prepend(str(site))
     monkeypatch.delitem(sys.modules, "acme_plugin", raising=False)
     monkeypatch.setattr(locations, "workspace_root", lambda: root)
-    monkeypatch.setattr("aisland.supervisor._workspace_root", lambda: root)
+    monkeypatch.setattr("aisland.services.supervisor._workspace_root", lambda: root)
     monkeypatch.setattr(registry, "ENTRIES", ())
-    monkeypatch.setattr("aisland.supervisor.print_status", lambda: None)
+    monkeypatch.setattr("aisland.services.supervisor.print_status", lambda: None)
     return root
 
 

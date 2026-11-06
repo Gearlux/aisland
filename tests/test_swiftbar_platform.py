@@ -17,6 +17,7 @@ from unittest.mock import patch
 
 import pytest
 
+from aisland.services import swiftbar
 from aisland.services.swiftbar import SwiftBarService
 
 GUARDED_ACTIONS = ["launch", "stop", "restart", "remove", "reset", "init_scripts"]
@@ -69,7 +70,7 @@ def test_launch_runs_on_macos() -> None:
         patch("aisland.services.swiftbar.subprocess.run") as run_mock,
     ):
         svc.launch()
-    run_mock.assert_called_once_with(["open", "-a", "SwiftBar"], check=True)
+    run_mock.assert_called_once_with(["open", "-a", "SwiftBar"], check=True, timeout=swiftbar.SWIFTBAR_SECONDS)
 
 
 def test_stop_runs_on_macos() -> None:
@@ -79,7 +80,7 @@ def test_stop_runs_on_macos() -> None:
         patch("aisland.services.swiftbar.subprocess.run") as run_mock,
     ):
         svc.stop()
-    run_mock.assert_called_once_with(["pkill", "SwiftBar"], check=False)
+    run_mock.assert_called_once_with(["pkill", "-x", "SwiftBar"], check=False, timeout=swiftbar.SWIFTBAR_SECONDS)
 
 
 @pytest.mark.parametrize(

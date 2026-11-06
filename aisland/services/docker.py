@@ -44,6 +44,10 @@ logger = logging.getLogger(__name__)
 #: The Colima profile aisland drives (its default profile). ``colima start --save-config``
 #: (default true) writes the effective flags — mounts included — into ``colima.yaml`` here.
 COLIMA_PROFILE_DIR = Path(".colima") / "default"
+#: How long `colima start` may take: a first start downloads the VM image and boots it, minutes on a slow line.
+COLIMA_START_SECONDS = 15 * 60
+#: How long `colima stop` and `colima delete` may take.
+COLIMA_STOP_SECONDS = 5 * 60
 
 
 @dataclass(frozen=True)
@@ -175,13 +179,13 @@ class DockerService(BaseService):
         try:
             # Colima start itself backgrounds by default; we only check that it succeeds.
             # Colima persists these flags into its profile, so a later bare start keeps the mounts.
-            subprocess.check_call(self._start_argv(wanted))
+            subprocess.check_call(self._start_argv(wanted), timeout=COLIMA_START_SECONDS)
 
             # Ensure Docker socket is configured
             self.configure_socket()
 
             console.echo("Docker (Colima) started successfully.")
-        except subprocess.CalledProcessError as e:
+        except (subprocess.CalledProcessError, subprocess.TimeoutExpired) as e:
             failures.report(f"Error starting Docker (Colima): {e}")
 
     def stop(self) -> None:
@@ -192,9 +196,9 @@ class DockerService(BaseService):
 
         console.echo("Stopping Docker (Colima)...")
         try:
-            subprocess.check_call(["colima", "stop"])
+            subprocess.check_call(["colima", "stop"], timeout=COLIMA_STOP_SECONDS)
             console.echo("Docker (Colima) stopped.")
-        except subprocess.CalledProcessError as e:
+        except (subprocess.CalledProcessError, subprocess.TimeoutExpired) as e:
             failures.report(f"Error stopping Docker (Colima): {e}")
 
     def state(self) -> ServiceState:
@@ -283,6 +287,13 @@ class DockerService(BaseService):
                     return
                 console.echo(f"  - Removing existing {standard_socket}...")
                 subprocess.run(["sudo", "rm", "-f", str(standard_socket)], check=True)
+            elif not provision.agree(f"Link {standard_socket} to {colima_socket} (sudo)?"):
+                # No one asked (a script, CI, an MCP tool) or a "no": sudo never runs unasked.
+                failures.warn(
+                    f"  - Warning: {standard_socket} is missing; clients that use it find no engine. To link it to "
+                    f"Colima: sudo ln -s {colima_socket} {standard_socket}"
+                )
+                return
 
             # Create symlink (requires sudo for /var/run)
             console.echo(f"  - Creating symlink: {standard_socket} -> {colima_socket}")
@@ -304,9 +315,9 @@ class DockerService(BaseService):
                 self.stop()
             console.echo("Deleting Colima instance...")
             try:
-                subprocess.check_call(["colima", "delete"])
+                subprocess.check_call(["colima", "delete"], timeout=COLIMA_STOP_SECONDS)
                 console.echo("Docker (Colima) reset complete.")
-            except subprocess.CalledProcessError as e:
+            except (subprocess.CalledProcessError, subprocess.TimeoutExpired) as e:
                 failures.report(f"Error resetting Docker (Colima): {e}")
 
 

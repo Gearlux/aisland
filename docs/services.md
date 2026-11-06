@@ -45,8 +45,10 @@ needs = { tracker = "aim" }                    # optional: offered only while th
 ```
 
 It gets its own `aisland notes start|stop|restart|status|info|reset` and joins `aisland services`, started when
-named (`aisland services start notes`), never by default. A name aisland already uses — one of its services or a
-command — is refused, naming the file and the line.
+named (`aisland services start notes`), never by default. The name of one of aisland's own services (`docker`,
+`jenkins`, `swiftbar`) is refused, naming the file and the line. A name an aisland command already has is not: the
+service is still `aisland services <verb> <name>`, but has no `aisland <name>` shortcut, and `aisland workspace show`
+says so.
 
 A project can also implement a service in its own code, importing nothing of aisland: an entry point in the
 `aisland.plugins` group whose object has `kind = "service"` and a `start(ctx)` method.
@@ -190,7 +192,7 @@ itself requires Full Disk Access on the invoking shell, so an unreadable
 database skips the check silently rather than crying wolf.
 
 ## Manage Jenkins
-For a complete guide on setting up project pipelines and credentials, see the [Jenkins Setup Workflow](jenkins.md).
+Setting it up — the unlock, the GitHub credential, the jobs — is on [Jenkins](jenkins.md).
 
 ```bash
 # Start Jenkins (foreground)
@@ -317,7 +319,9 @@ limit.
 The `act` tool and other containerized services require a Docker engine.
 
 - **macOS:** aisland runs Docker in **Colima**'s VM, and installs Colima and the Docker client the first time
-  `aisland docker start` needs them, after asking.
+  `aisland docker start` needs them, after asking. It then links `/var/run/docker.sock` to Colima's socket with
+  `sudo`, once you agree; without a terminal, or when the socket belongs to another engine and you say no, it leaves
+  the socket as it is and prints the `sudo` command that links it.
 - **Linux:** Docker runs on the host as a system service, installed and started by root. aisland only checks it:
   `aisland docker start` says `Docker engine is running.`, or how to get it running
   (`Install Docker Engine: https://docs.docker.com/engine/install/`, `Start it: sudo systemctl start docker`).

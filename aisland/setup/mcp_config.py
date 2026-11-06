@@ -6,11 +6,9 @@ import shutil
 from pathlib import Path
 from typing import Dict, List, Optional, Required, TypedDict
 
-import click
-
-from aisland import console, failures, locations
+from aisland import console, failures
 from aisland import pyproject as pyproject_toml
-from aisland.errors import AislandError
+from aisland.venv import no_venv
 from aisland.workspace.projects import discover_projects, get_workspace_root
 
 
@@ -138,16 +136,6 @@ def write_mcp_json(workspace_root: Path, venv_bin: Path) -> None:
     out.write_text(json.dumps({"mcpServers": _with_workspace_env(workspace_root, servers)}, indent=2) + "\n")
     listed = ", ".join(sorted(servers)) or "none"
     console.echo(f"==> Wrote {out} ({len(servers)} MCP server(s): {listed})")
-
-
-def no_venv(workspace_root: Path) -> click.ClickException:
-    """The refusal of a command that needs the workspace's ``.venv`` when it has none, with how to make one."""
-    if locations.FROM_CHECKOUT:
-        return AislandError(f"Virtual environment not found at {workspace_root / '.venv'}. Run aisland/setup.sh first.")
-    return AislandError(
-        f"Virtual environment not found at {workspace_root / '.venv'}. Create it and install aisland "
-        "into it: uv venv --seed .venv && .venv/bin/pip install aisland"
-    )
 
 
 def _venv_bin_or_none(workspace_root: Path) -> Optional[Path]:

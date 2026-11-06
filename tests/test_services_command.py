@@ -68,7 +68,7 @@ def calls(monkeypatch: pytest.MonkeyPatch) -> List[Tuple[str, ...]]:
     )
     monkeypatch.setattr(registry, "ENTRIES", entries)
     monkeypatch.setattr(registry, "declared", lambda root, reserved=(): [])  # no project declares one here
-    monkeypatch.setattr("aisland.supervisor.print_status", lambda: recorded.append(("supervisor",)))
+    monkeypatch.setattr("aisland.services.supervisor.print_status", lambda: recorded.append(("supervisor",)))
     return recorded
 
 

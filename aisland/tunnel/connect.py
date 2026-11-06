@@ -46,7 +46,7 @@ from pathlib import Path
 from types import FrameType, ModuleType
 from typing import Callable, Dict, Iterator, List, Mapping, Optional, Tuple
 
-from aisland import probe
+from aisland import atomic, probe
 from aisland.errors import AislandError
 from aisland.tunnel import shell as tunnel_shell
 from aisland.tunnel.state import state_dir
@@ -219,7 +219,7 @@ def cache_path() -> Path:
 def _save_cache(tunnels: List[Tunnel]) -> None:
     try:
         cache_path().parent.mkdir(parents=True, exist_ok=True)
-        cache_path().write_text(json.dumps(tunnels_payload(tunnels), indent=2) + "\n")
+        atomic.write_text(cache_path(), json.dumps(tunnels_payload(tunnels), indent=2) + "\n")
     except OSError:  # pragma: no cover - a cache that cannot be written only costs TAB its answer
         pass
 

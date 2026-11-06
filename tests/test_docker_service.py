@@ -175,7 +175,9 @@ def test_launch_starts_colima_with_the_mounts_when_it_is_stopped(home: Path, tmp
         with patch.object(DockerService, "configure_socket"):
             with patch("subprocess.check_call") as call_mock:
                 svc.launch(mounts=[f"{data}:r"])
-    call_mock.assert_called_once_with(["colima", "start", "--mount", f"{home}:w", "--mount", f"{data}:r"])
+    call_mock.assert_called_once_with(
+        ["colima", "start", "--mount", f"{home}:w", "--mount", f"{data}:r"], timeout=docker_mod.COLIMA_START_SECONDS
+    )
 
 
 def test_launch_refuses_to_change_mounts_under_a_running_engine(home: Path, tmp_path: Path) -> None:

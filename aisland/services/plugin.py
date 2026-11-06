@@ -16,7 +16,7 @@ class may declare options of its own (``options = {"repo": "help"}``), offered o
     ctx.echo(text), ctx.fail(message)             print; stop with one `Error:` line
 
 :mod:`aisland.plugins` types it (``ServiceContext``, ``ServicePlugin``) for a project to name under ``TYPE_CHECKING``,
-and a class may declare the contract version it is written for, ``aisland_api`` (``discovery.PLUGIN_API``).
+and a class may declare the contract version it is written for, ``aisland_api`` (``aisland.plugins.PLUGIN_API``).
 """
 
 from __future__ import annotations
@@ -24,8 +24,9 @@ from __future__ import annotations
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Callable, Dict, List, Mapping, NoReturn, Optional, Sequence
 
-from aisland import console, envfile, plugins, supervisor
+from aisland import console, envfile, plugins
 from aisland.errors import AislandError
+from aisland.services import supervisor
 from aisland.services.base import BaseService, ServiceState, service_state
 from aisland.workspace import projects
 from aisland.workspace.selection import add_command

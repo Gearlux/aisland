@@ -18,7 +18,7 @@ from pathlib import Path
 import pytest
 
 from aisland import locations
-from aisland.services import jenkins_jobs
+from aisland.services import jenkins_settings
 from aisland.services.jenkins import JenkinsService
 
 _MINIMAL_CONFIG_XML = """<?xml version='1.1' encoding='UTF-8'?>
@@ -70,7 +70,7 @@ def test_setup_global_properties_injects_dotenv_keys(tmp_path: Path, monkeypatch
         encoding="utf-8",
     )
 
-    jenkins_jobs.setup_global_properties(svc.service_data_dir)
+    jenkins_settings.setup_global_properties(svc.service_data_dir)
 
     envvars = _read_envvars(svc.service_data_dir / "config.xml")
     assert envvars["WORKSPACE_ROOT"] == str(workspace)
@@ -83,7 +83,7 @@ def test_setup_global_properties_no_dotenv_only_computed_keys(tmp_path: Path, mo
     svc, workspace = _make_service(tmp_path, monkeypatch)
     # No .env in workspace.
 
-    jenkins_jobs.setup_global_properties(svc.service_data_dir)
+    jenkins_settings.setup_global_properties(svc.service_data_dir)
 
     envvars = _read_envvars(svc.service_data_dir / "config.xml")
     assert envvars == {
@@ -100,7 +100,7 @@ def test_setup_global_properties_computed_keys_win_collision(tmp_path: Path, mon
         encoding="utf-8",
     )
 
-    jenkins_jobs.setup_global_properties(svc.service_data_dir)
+    jenkins_settings.setup_global_properties(svc.service_data_dir)
 
     envvars = _read_envvars(svc.service_data_dir / "config.xml")
     assert envvars["WORKSPACE_ROOT"] == str(workspace)
@@ -113,7 +113,7 @@ def test_setup_global_properties_envvars_int_size_matches(tmp_path: Path, monkey
     svc, workspace = _make_service(tmp_path, monkeypatch)
     (workspace / ".env").write_text("A=1\nB=2\nC=3\n", encoding="utf-8")
 
-    jenkins_jobs.setup_global_properties(svc.service_data_dir)
+    jenkins_settings.setup_global_properties(svc.service_data_dir)
 
     tree = ET.parse(svc.service_data_dir / "config.xml")
     tree_map = tree.getroot().find(".//tree-map")

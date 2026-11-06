@@ -2,7 +2,7 @@
 
 import re
 from pathlib import Path
-from typing import Dict, List, Optional, Tuple, TypedDict
+from typing import Dict, List, NamedTuple, Optional, TypedDict
 
 from packaging.requirements import InvalidRequirement, Requirement
 from packaging.utils import NormalizedName, canonicalize_name
@@ -160,8 +160,17 @@ def dependency_order(projects: List[ProjectMetadata]) -> List[ProjectMetadata]:
     return [project for group in install_groups(projects) for project in group]
 
 
-def submodule_active_map(workspace_root: Path) -> List[Tuple[str, str, bool]]:
-    """Return ``(name, path, active)`` for every submodule declared in ``.gitmodules``.
+class ProjectFolder(NamedTuple):
+    """A project of the workspace by its folder: its ``name``, its ``path`` relative to the root, and whether this
+    checkout carries it (``active``). A tuple, so ``for name, path, active in …`` reads it as before."""
+
+    name: str
+    path: str
+    active: bool
+
+
+def submodule_active_map(workspace_root: Path) -> List[ProjectFolder]:
+    """Return a :class:`ProjectFolder` for every submodule declared in ``.gitmodules``.
 
     ``active`` is the declared intent: ``False`` only when the entry has an explicit
     ``active = false`` key; otherwise ``True`` (git's default — a submodule with no ``active``
@@ -169,11 +178,13 @@ def submodule_active_map(workspace_root: Path) -> List[Tuple[str, str, bool]]:
     checkout should carry; an ``active = false`` marks one this workspace deliberately skips
     (e.g. an optional or access-gated remote).
     """
-    return [(submodule.name, submodule.path, submodule.active) for submodule in gitmodules.read(workspace_root)]
+    return [
+        ProjectFolder(submodule.name, submodule.path, submodule.active) for submodule in gitmodules.read(workspace_root)
+    ]
 
 
-def workspace_folders(workspace_root: Path) -> List[Tuple[str, str, bool]]:
-    """Return ``(name, path, active)`` for every project of the workspace.
+def workspace_folders(workspace_root: Path) -> List[ProjectFolder]:
+    """Return a :class:`ProjectFolder` for every project of the workspace.
 
     With ``.gitmodules``, its submodules (:func:`submodule_active_map`). Without one, every direct, non-hidden
     subfolder holding a ``pyproject.toml``, active and named by its folder — the workspace is read as if each were
@@ -183,7 +194,7 @@ def workspace_folders(workspace_root: Path) -> List[Tuple[str, str, bool]]:
     if (workspace_root / ".gitmodules").is_file():
         return submodule_active_map(workspace_root)
     return [
-        (child.name, child.name, True)
+        ProjectFolder(child.name, child.name, True)
         for child in sorted(workspace_root.iterdir(), key=lambda c: c.name)
         if child.is_dir()
         and not child.name.startswith(".")

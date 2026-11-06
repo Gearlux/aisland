@@ -38,6 +38,8 @@ SYSTEM_JDK_GLOBS: Tuple[str, ...] = (
 #: The Homebrew formulae holding one Java release each (`openjdk@25`); the bare `openjdk` follows
 #: the newest Java and is never what aisland installs.
 VERSIONED_FORMULA = "openjdk@"
+#: How long `brew search` may take: it may read the formula index over the network.
+BREW_SEARCH_SECONDS = 120
 
 #: Seconds a `--version` probe may take; the launcher answers in about 0.1 s.
 PROBE_TIMEOUT = 60
@@ -257,16 +259,20 @@ def choose_java(war: Path, runtimes: Sequence[JavaRuntime]) -> JenkinsJava:
 def newest_versioned_formula() -> Optional[str]:
     """The highest-numbered `openjdk@N` Homebrew offers — what to install when no Java can ask the WAR.
 
-    None without Homebrew, or when the search fails (offline with no cached index).
+    None without Homebrew, or when the search fails (offline with no cached index) or gives no answer in time.
     """
     if shutil.which("brew") is None:
         return None
-    completed = subprocess.run(
-        ["brew", "search", "--formula", f"/^{VERSIONED_FORMULA}[0-9]+$/"],
-        capture_output=True,
-        text=True,
-        env={**os.environ, "HOMEBREW_NO_AUTO_UPDATE": "1"},
-    )
+    try:
+        completed = subprocess.run(
+            ["brew", "search", "--formula", f"/^{VERSIONED_FORMULA}[0-9]+$/"],
+            capture_output=True,
+            text=True,
+            env={**os.environ, "HOMEBREW_NO_AUTO_UPDATE": "1"},
+            timeout=BREW_SEARCH_SECONDS,
+        )
+    except subprocess.TimeoutExpired:  # a network that stops answering: no answer, as offline
+        return None
     if completed.returncode != 0:
         return None
     numbers = [int(match.group(1)) for line in completed.stdout.split() if (match := _FORMULA_RE.match(line))]

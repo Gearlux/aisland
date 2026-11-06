@@ -2,7 +2,7 @@
 description: List every next action this session proposed that has not been carried out yet — numbered, each with where it was proposed and why it is still open. Read-only.
 allowed-tools: [Bash(git status:*), Bash(git log:*), Bash(git diff:*), Bash(git -C * status:*), Bash(git -C * log:*), Bash(git -C * diff:*)]
 ---
-<!-- Shipped by aisland (aisland/harness/commands/list-actions.md), installed into .agents/workflows/ by `aisland setup` (aisland/harness.py). Change it in aisland; the rules it cites are aisland's (.agents/aisland/AGENTS.md). -->
+<!-- Shipped by aisland (aisland/harness/commands/list-actions.md), installed into .agents/workflows/ by `aisland setup` (aisland/setup/harness.py). Change it in aisland; the rules it cites are aisland's (.agents/aisland/AGENTS.md). -->
 
 # Workflow: List Actions (what this session offered and has not done)
 

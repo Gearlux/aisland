@@ -306,6 +306,23 @@ class TestRunningTheZip:
         ]
         assert done.stdout == f"unpacked app-wheels.zip into {clone / 'wheels'}\n"
 
+    @pytest.mark.parametrize("member", ["wheels/../escaped.txt", "wheels/sub/x.txt", "wheels/..", "wheels/a\\b"])
+    def test_a_member_that_would_leave_the_folder_is_refused_before_anything_changes(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, member: str
+    ) -> None:
+        root, _folder = _built_folder(tmp_path, monkeypatch)
+        archive = w.zip_wheels(root, "app")
+        with zipfile.ZipFile(archive, "a") as zipped:
+            zipped.writestr(member, "planted")
+        clone = _clone(tmp_path)
+
+        done = _run_zip(archive, clone, "--unpack-only")
+
+        assert done.returncode == 2
+        assert f"its member {member!r} is no file of the wheels/ folder; nothing was unpacked" in done.stderr
+        assert not (clone / "escaped.txt").exists()
+        assert sorted(p.name for p in (clone / "wheels").iterdir()) == ["libx-0.0.9-py3-none-any.whl", "notes.txt"]
+
     def test_the_rest_of_the_line_goes_to_install_py(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
         root, _folder = _built_folder(tmp_path, monkeypatch)
         archive = w.zip_wheels(root, "app")

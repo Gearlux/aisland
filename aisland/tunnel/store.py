@@ -17,7 +17,7 @@ from urllib.parse import parse_qs, urlparse
 
 import click
 
-from aisland import console
+from aisland import atomic, console
 from aisland.errors import AislandError
 from aisland.tunnel.state import sanitize_name, state_dir
 
@@ -127,7 +127,7 @@ def save_store(entries: Sequence[Workspace]) -> Path:
     path = store_path()
     path.parent.mkdir(parents=True, exist_ok=True)
     payload = {"version": STORE_VERSION, "entries": [asdict(entry) for entry in entries[:STORE_LIMIT]]}
-    path.write_text(json.dumps(payload, indent=2) + "\n")
+    atomic.write_text(path, json.dumps(payload, indent=2) + "\n")
     return path
 
 

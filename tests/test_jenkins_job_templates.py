@@ -13,6 +13,7 @@ from pathlib import Path
 import jinja2
 import pytest
 
+from aisland.ci import jenkins_job_config as job_config
 from aisland.services import jenkins_jobs
 
 #: Text that breaks XML written unescaped, would be escaped twice by a careless template, or looks like Jinja.
@@ -33,7 +34,7 @@ def _text(xml: str, path: str) -> str:
 
 
 def test_a_multibranch_job_holds_its_project_remote_and_credential_as_given() -> None:
-    xml = jenkins_jobs._multibranch_config(HOSTILE, "https://u:t@example.com/a.git?a=1&b=<2>&" + HOSTILE, HOSTILE)
+    xml = job_config.multibranch_config(HOSTILE, "https://u:t@example.com/a.git?a=1&b=<2>&" + HOSTILE, HOSTILE)
     assert _text(xml, ".//source/id") == HOSTILE + "-remote"
     assert _text(xml, ".//source/remote") == "https://u:t@example.com/a.git?a=1&b=<2>&" + HOSTILE
     assert _text(xml, ".//source/credentialsId") == HOSTILE
@@ -41,7 +42,7 @@ def test_a_multibranch_job_holds_its_project_remote_and_credential_as_given() ->
 
 def test_a_local_job_holds_its_name_script_and_folder_as_given(tmp_path: Path) -> None:
     folder = tmp_path / HOSTILE.replace("/", "_")
-    xml = jenkins_jobs.local_job_config(HOSTILE, SCRIPT, folder)
+    xml = job_config.local_job_config(HOSTILE, SCRIPT, folder)
     assert _text(xml, "description") == f"Local development pipeline for {HOSTILE}"
     assert _text(xml, "definition/script") == SCRIPT
     assert _text(xml, "customWorkspace") == str(folder.absolute())
@@ -50,11 +51,11 @@ def test_a_local_job_holds_its_name_script_and_folder_as_given(tmp_path: Path) -
 
 @pytest.mark.parametrize("local", [True, False])
 def test_an_orchestrator_holds_its_description_and_script_as_given(local: bool) -> None:
-    xml = jenkins_jobs._orchestrator_config(SCRIPT, HOSTILE, local)
+    xml = job_config.orchestrator_config(SCRIPT, HOSTILE, local)
     assert _text(xml, "description") == HOSTILE
     assert _text(xml, "definition/script") == SCRIPT
     timer = ET.fromstring(xml).find(".//hudson.triggers.TimerTrigger/spec")
-    assert (timer.text if timer is not None else None) == (jenkins_jobs.NIGHTLY_CRON if local else None)
+    assert (timer.text if timer is not None else None) == (job_config.NIGHTLY_CRON if local else None)
 
 
 def test_the_nightly_check_holds_the_workspace_name_as_given(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
@@ -63,18 +64,18 @@ def test_the_nightly_check_holds_the_workspace_name_as_given(monkeypatch: pytest
     jenkins_jobs._create_nightly_check_job(tmp_path)
     xml = (tmp_path / "jobs" / f"{name}.nightly-check" / "config.xml").read_text()
     assert _text(xml, "description") == f"Reports the nightly runs of {name}.local each weekday morning."
-    assert _text(xml, ".//hudson.triggers.TimerTrigger/spec") == jenkins_jobs.NIGHTLY_CHECK_CRON
+    assert _text(xml, ".//hudson.triggers.TimerTrigger/spec") == job_config.NIGHTLY_CHECK_CRON
     assert "${env.WORKSPACE_ROOT}/.venv/bin/aisland tests nightly" in _text(xml, "definition/script")
 
 
 def test_a_script_keeps_its_quotes_as_written_in_the_file() -> None:
     """XML element text needs only `&`, `<` and `>` escaped; a script's quotes stay readable in the job's file."""
-    xml = jenkins_jobs._orchestrator_config("cron('0 1 * * *'); sh \"a && b\"", "d", local=False)
+    xml = job_config.orchestrator_config("cron('0 1 * * *'); sh \"a && b\"", "d", local=False)
     assert "<script>cron('0 1 * * *'); sh \"a &amp;&amp; b\"</script>" in xml
 
 
 def test_every_template_refuses_a_value_it_was_not_given() -> None:
-    templates = sorted(path.name for path in jenkins_jobs.TEMPLATES_DIR.glob("*.xml.jinja"))
+    templates = sorted(path.name for path in job_config.TEMPLATES_DIR.glob("*.xml.jinja"))
     assert templates == [
         "local_job.xml.jinja",
         "multibranch.xml.jinja",
@@ -83,4 +84,4 @@ def test_every_template_refuses_a_value_it_was_not_given() -> None:
     ]
     for template in templates:
         with pytest.raises(jinja2.UndefinedError):
-            jenkins_jobs.render_job(template)
+            job_config.render_job(template)

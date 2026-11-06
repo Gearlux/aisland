@@ -123,17 +123,24 @@ def _run_aisland(args: List[str]) -> "subprocess.CompletedProcess[str]":
     ``-P`` keeps the root's ``aisland/`` checkout off ``sys.path`` (it would shadow the package); the root is the
     working folder because aisland installed from a wheel finds its workspace from there. Its stdin is empty, never
     the server's: that is the client's JSON-RPC stream, and a question the command asked (or a git credential
-    prompt) would eat the protocol's bytes. A command that needs an answer gets none and refuses.
+    prompt) would eat the protocol's bytes. A command that needs an answer gets none and refuses; one still running
+    after :data:`SERVICE_TIMEOUT` seconds is a :class:`ToolRefusal` saying so.
     """
-    return subprocess.run(
-        [sys.executable, "-P", "-m", "aisland.cli", *args],
-        cwd=get_workspace_root(),
-        stdin=subprocess.DEVNULL,
-        capture_output=True,
-        text=True,
-        timeout=SERVICE_TIMEOUT,
-        check=False,
-    )
+    try:
+        return subprocess.run(
+            [sys.executable, "-P", "-m", "aisland.cli", *args],
+            cwd=get_workspace_root(),
+            stdin=subprocess.DEVNULL,
+            capture_output=True,
+            text=True,
+            timeout=SERVICE_TIMEOUT,
+            check=False,
+        )
+    except subprocess.TimeoutExpired as exc:
+        raise ToolRefusal(
+            f"aisland {' '.join(args)} was still running after {SERVICE_TIMEOUT} s and was stopped; run it in a "
+            "terminal to see where it waits"
+        ) from exc
 
 
 def _service_entry(name: str) -> service_registry.Entry:

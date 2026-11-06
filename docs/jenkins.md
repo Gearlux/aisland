@@ -1,8 +1,8 @@
-# Jenkins Setup Workflow
+# Jenkins
 
-This document describes the end-to-end workflow for setting up and managing a local Jenkins CI/CD environment using the `aisland` tool.
-The Java Jenkins runs on, the nightly run and each stage's time limit are on [services](services.md#manage-jenkins);
-the files the jobs run, on [ci](ci.md).
+A Jenkins of the workspace's own, on this machine: started, unlocked, given the GitHub credential, then seeded with a
+job per project. The Java Jenkins runs on, the nightly run and each stage's time limit are on
+[services](services.md#manage-jenkins); the files the jobs run, on [ci](ci.md).
 
 ## Starting Jenkins
 
@@ -106,8 +106,14 @@ aisland jenkins init models
 
 ## Troubleshooting
 
-### Plugin Failures
-If Jenkins reports missing dependencies during startup, ensure you are using the latest version of the `aisland` tool and perform a `aisland jenkins reset` to force a clean re-download of the plugin suite.
+### A plugin is missing
 
-### Credentials Matching
-The `init` command expects credentials for GitHub repositories to be named exactly `aisland-github`. If it warns you during `init` that it cannot find this ID, delete your current credentials in Jenkins and recreate them, ensuring the **ID** field explicitly says `aisland-github`.
+When Jenkins reports a missing plugin or dependency at start, run `aisland jenkins init` again: it installs every
+required plugin that is missing and keeps the jobs. `aisland jenkins reset` downloads every plugin again too, but it
+deletes every job, build and setting first, so keep it for a Jenkins you mean to start over.
+
+### The credential is not found
+
+`init` looks for the GitHub credential under the ID `aisland-github` exactly. When it warns that it found none, open
+the credential in Jenkins and set its **ID** to `aisland-github`. Jenkins cannot rename an ID, so delete the credential
+and add it again with that ID, then run `aisland jenkins init` again.

@@ -12,17 +12,17 @@ from __future__ import annotations
 
 import ast
 import json
+import logging
 import os
 import shutil
 import subprocess
 import sys
 import tomllib
 from pathlib import Path
-from typing import List
+from typing import Dict, List, Optional
 
 import grimp
 import pytest
-from importlinter.cli import lint_imports
 
 import aisland
 
@@ -94,10 +94,28 @@ def _contracts() -> List[dict[str, object]]:
     return contracts
 
 
-def test_the_import_graph_keeps_every_contract(capsys: pytest.CaptureFixture[str]) -> None:
+def _lint_imports(
+    cwd: Path, *arguments: str, env: Optional[Dict[str, str]] = None
+) -> "subprocess.CompletedProcess[str]":
+    """``lint_imports(<arguments>)`` in a process of its own: import-linter configures logging with the standard
+    library's ``dictConfig``, which disables every logger already made — aisland's too, so a later test of this
+    process that reads aisland's debug log through ``caplog`` would read nothing."""
+    call = f"import sys; from importlinter.cli import lint_imports; sys.exit(lint_imports({', '.join(arguments)}))"
+    return subprocess.run([sys.executable, "-c", call], cwd=cwd, env=env, capture_output=True, text=True, timeout=120)
+
+
+def test_the_import_graph_keeps_every_contract() -> None:
     """``lint-imports``, as a person runs it from aisland's folder: every contract of ``[tool.importlinter]`` kept."""
-    status = lint_imports(config_filename=str(PYPROJECT), no_cache=True)
-    assert status == 0, capsys.readouterr().out
+    result = _lint_imports(PYPROJECT.parent, f"config_filename={str(PYPROJECT)!r}", "no_cache=True")
+    assert result.returncode == 0, result.stdout + result.stderr
+
+
+def test_linting_the_imports_leaves_aislands_loggers_on() -> None:
+    """Why the lint runs out of process: in this one, import-linter turned aisland's loggers off, and the tests that
+    read aisland's debug log after it on the same worker read nothing."""
+    test_the_import_graph_keeps_every_contract()
+    assert not logging.getLogger("aisland").disabled
+    assert not logging.getLogger("aisland.setup.installers").disabled
 
 
 def test_the_standard_library_contract_names_every_third_party_package_aisland_imports() -> None:
@@ -113,14 +131,28 @@ def test_the_standard_library_contract_names_every_third_party_package_aisland_i
     assert imported - set(forbidden) == set()
 
 
+def test_every_top_level_module_is_in_a_layer_or_a_leaf() -> None:
+    """A module the layers do not name and the leaves do not list would be held to nothing: a new one joins a list."""
+    (layers,) = [c for c in _contracts() if c["id"] == "layers"]
+    (leaves,) = [c for c in _contracts() if c["id"] == "leaves"]
+    assert isinstance(layers["layers"], list) and isinstance(leaves["source_modules"], list)
+    named = {name.strip() for layer in layers["layers"] for name in str(layer).split("|")}
+    graph = grimp.build_graph("aisland", exclude_type_checking_imports=True, cache_dir=None)
+    top = {module for module in graph.modules if module.count(".") == 1}
+    assert top - named - set(leaves["source_modules"]) == set()
+    assert set(leaves["forbidden_modules"]) == named, "the leaves are forbidden every layer, and only those"
+
+
 @pytest.mark.parametrize(
     "module, line, contract",
     [
-        ("doctor.py", "from aisland.cli import main", "cli-on-top"),
-        ("server.py", "import aisland.cli._base", "cli-on-top"),
-        ("tunnel/state.py", "from aisland.workspace import projects", "tunnel-alone"),
-        ("wheels/report.py", "from aisland.ci import quality", "wheels-below-ci-and-services"),
-        ("workspace/file.py", "from aisland.services import registry", "setup-and-workspace-below-services-and-wheels"),
+        ("doctor.py", "from aisland.cli import main", "layers"),
+        ("server.py", "import aisland.cli._base", "layers"),
+        ("tunnel/state.py", "from aisland.workspace import projects", "layers"),
+        ("wheels/report.py", "from aisland.ci import quality", "layers"),
+        ("workspace/file.py", "from aisland.services import registry", "layers"),
+        ("workspace/sources.py", "from aisland.setup import editor_files", "layers"),
+        ("paths.py", "from aisland.workspace import projects", "leaves"),
         ("atomic.py", "import click", "stdlib-only"),
         ("tunnel/shell.py", "from aisland import locations", "runs-without-aisland"),
     ],
@@ -136,19 +168,12 @@ def test_a_contract_breaks_on_the_import_it_forbids(tmp_path: Path, module: str,
     environment = {**os.environ, "PYTHONPATH": str(tmp_path), "COLUMNS": "400"}
     broken = []
     for each in _contracts():
-        result = subprocess.run(
-            [
-                sys.executable,
-                "-c",
-                "import sys; from importlinter.cli import lint_imports;"
-                f"sys.exit(lint_imports(config_filename='pyproject.toml', limit_to_contracts=('{each['id']}',),"
-                " no_cache=True))",
-            ],
-            cwd=tmp_path,
+        result = _lint_imports(
+            tmp_path,
+            "config_filename='pyproject.toml'",
+            f"limit_to_contracts=('{each['id']}',)",
+            "no_cache=True",
             env=environment,
-            capture_output=True,
-            text=True,
-            timeout=120,
         )
         kept = result.returncode == 0 and "Contracts: 1 kept, 0 broken." in result.stdout
         assert kept or (result.returncode == 1 and "Contracts: 0 kept, 1 broken." in result.stdout), (

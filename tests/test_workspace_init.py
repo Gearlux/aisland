@@ -23,8 +23,8 @@ import pytest
 from click.testing import CliRunner, Result
 
 from aisland.cli import main
+from aisland.setup import init as workspace
 from aisland.workspace import file as workspace_file
-from aisland.workspace import init as workspace
 
 FILES = [".gitignore", ".env", "mypy.ini", "vscode-init-bash.sh"]
 HARNESS = [".agents", ".claude", "AGENTS.md", "CLAUDE.md", "GEMINI.md"]
@@ -86,7 +86,7 @@ def test_a_new_folder_becomes_a_workspace(tmp_path: Path) -> None:
     root = tmp_path / "acme"
     assert (root / ".git").is_dir()
     # `.gitattributes` comes with the aliases: setup_git.sh registers the notebook-output filter there; `.agents/`,
-    # `.claude/` and the three rule files with the agent harness (aisland.harness).
+    # `.claude/` and the three rule files with the agent harness (aisland.setup.harness).
     assert sorted(p.name for p in root.iterdir() if p.name != ".git") == sorted([*FILES, ".gitattributes", *HARNESS])
     assert "pull-all" in _git(root, "config", "--local", "--get-regexp", r"^alias\.")
     assert result.stdout.splitlines()[0] == f"==> Created workspace acme in {root}"

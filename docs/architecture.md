@@ -19,15 +19,23 @@ The package is `aisland/`. A command is a click function in `aisland/cli/` that 
 
 | area | modules |
 |---|---|
-| The workspace and its file | `workspace/` (`init`, `file`, `check`, `local`, `projects`, `gitmodules`, `clones`, `discovery`), `locations`, `paths`, `pyproject`, `toml_places` (a table's line in a TOML file) |
-| What a project or a machine chooses | `workspace/` (`configure` and its plugins `activation`, `selection`, `sources`, `mirrors`; `tracking`, `recording`), `machine_config` (this machine's `git config --local`) |
-| Setting a machine up | `setup/` (`manager`, the driver, and its steps `provision`, `installers`, `bashrc`, `uv_config`, `editor_files`, `mcp_config`, `env_example`, `completion`, `playwright_browser`, `git_settings`), `downloads`, `editor`, `harness` |
-| Services | `services/` (`base`, `registry`, `plugin`, `declared`, `jenkins`, `jenkins_jobs`, `jenkins_java`, `docker`, `swiftbar`), `supervisor`, `envfile` (the workspace's `.env`) |
-| CI and tests | `ci/` (`ci_scaffold`, `ci_templates` — the sets under `templates/` —, `quality`, `stats_report`, `nightly`), `pytest_stats` (the plugin, standard library only) |
+| The workspace and its file | `workspace/` (`file`, `check`, `local`, `projects`, `gitmodules`, `clones`, `discovery`, `github`), `locations`, `paths`, `pyproject`, `toml_places` (a table's line in a TOML file) |
+| What a project or a machine chooses | `workspace/` (the plugins `activation`, `selection`, `sources` — the model — with `source_apply`, `mirrors`; `tracking`, `recording`), `machine_config` (this machine's `git config --local`) |
+| Setting a machine up | `setup/` (`manager`, the driver, and its steps `provision`, `installers`, `bashrc`, `uv_config`, `editor_files`, `mcp_config`, `env_example`, `completion`, `playwright_browser`, `git_settings`, `harness`; `init`, `workspace init`; `configure` and `source_commands`, the configure commands), `downloads`, `editor`, `venv` (the `.venv` and its uv), `userspace_tools` |
+| Services | `services/` (`base`, `registry`, `plugin`, `declared`, `supervisor`, `jenkins`, `jenkins_jobs`, `jenkins_settings`, `jenkins_java`, `docker`, `swiftbar`, `nightly`), `envfile` (the workspace's `.env`) |
+| CI and tests | `ci/` (`ci_scaffold`, `ci_templates` — the sets under `templates/` —, `jenkins_job_config`, `quality`, `stats_report`), `pytest_stats` (the plugin, standard library only) |
 | Wheels | `wheels/` (`build`, the run, and `projects`, `published`, `export`, `report`, `files`, `check`, `bundle`, `extra`, `scrub`, `prune` with `filter_repo`, `install`, `unzip`) |
 | Reaching a remote machine | `tunnel/` (`host`, `state`, `binary`, `store`, `connect`, `shell`) |
 | Diagnosis and housekeeping | `doctor`, `clean`, `backups`, `probe`, `git_exclude`, `notebook_utils`, `css_colors` |
-| Shared plumbing | `gitcmd` (every git call), `downloads` (every file fetch), `pypi` (PyPI's JSON document and the release question), `github` (a project's repository from its remote), `errors`, `failures`, `console` (what library code says and asks), `atomic` (a file written whole or not at all), `server` (the MCP server) |
+| Shared plumbing | `gitcmd` (every git call), `downloads` (every file fetch), `pypi` (PyPI's JSON document and the release question), `errors`, `failures`, `console` (what library code says and asks), `atomic` (a file written whole or not at all), `server` (the MCP server) |
+
+The subpackages are layers, held by import-linter's `layers` contract (`pyproject.toml`): `cli | server`, then
+`doctor | clean`, `backups | services`, `ci`, `wheels`, `setup`, `workspace | tunnel` — each importing only those below
+it — over the leaf modules every layer shares. Decided 2026-11-06, when ten imports going up a layer were all that kept
+`workspace`, `setup`, `ci` and `services` in cycles: the piece a lower layer needed moved down (`venv`,
+`userspace_tools`, the `[ci]` and `[harness]` keys into `workspace/file`), and the commands that drive a lower layer
+moved up (`init`, `configure`, `source_commands` and `harness` into `setup/`, `supervisor` and `nightly` into
+`services/`, the job text into `ci/jenkins_job_config`).
 
 A subject of several modules is a package. Three modules stay at the top level whatever their subject: `pytest_stats`
 is the `pytest11` entry point every workspace's venv has installed (moved, every pytest run there fails to load its
@@ -399,7 +407,7 @@ Generate the whole file on every `aisland setup` and every `aisland workspace co
 
 An AI client working in the workspace should check the environment, read test statistics, start Jenkins or MLflow
 and set the editor's colours without parsing terminal text. Another project of the workspace serves its libraries'
-tools over MCP; the user ruled that aisland's commands never become that server's tools — aisland runs where that
+tools over MCP; the maintainer ruled that aisland's commands never become that server's tools — aisland runs where that
 project is not installed, and it installs the projects that server needs. liquifai, which turns
 one signature into a command and a tool, is out for the same reason: `aisland setup` installs it.
 
@@ -695,7 +703,7 @@ guard. A line added above it re-arms exactly this. Pin:
 
 Click offers a command's options only once the word being completed starts with `-`:
 `aisland wheels build app <TAB>` offered nothing, though the command takes nothing more but options, and
-the same held for every aisland command. The user asked for the options there.
+the same held for every aisland command. The maintainer asked for the options there.
 
 ### Decision
 
@@ -1292,7 +1300,7 @@ Finished: FAILURE
   report's paths unmeasured), an abort before the limit is rethrown, and every pytest step removes
   its report files first.
 
-**Amendment (2026-10-28, user pick: three times the table): GitHub's jobs get limits too.** The push pipelines had
+**Amendment (2026-10-28, chosen: three times the table): GitHub's jobs get limits too.** The push pipelines had
 none, waiting for a runner's durations to measure; until then a hung job held a GitHub runner for its six-hour
 default. `ci.yml`'s jobs that run the project's code now get `RUNNER_LIMIT_FACTOR` × their stage's limit — unit tests
 45, slow tests 180, examples 45, notebooks 45 minutes — from the same table, so a change to `STAGE_LIMITS` moves both;
@@ -1348,7 +1356,7 @@ purpose — and a doctor that reported them would fail on every healthy machine.
 
 - A recurrence costs one command and one fix line instead of a forensic session.
 - A laptop that does not run Docker passes the preflight.
-- The `colima-tls` remedy stays manual (user ruling 2026-08-31). Installing the network's CA
+- The `colima-tls` remedy stays manual (decided 2026-08-31). Installing the network's CA
   automatically at `aisland docker start` would silently trust whatever intercepts TLS on any
   network the machine joins, to save a rare one-command fix. The CA install does not survive
   `colima delete`, which is why the check exists at all.
@@ -1453,7 +1461,7 @@ Pylance changes its wording; the 16 GB of the second remedy.
 
 The workspace splits each project's tests into a fast run (plain `pytest`, within five minutes)
 and a slow run (`pytest -m slow`, CI's), and keeps in the fast run only the integration tests
-that break (user ruling 2026-10-05, aisland rules → "Two Test Runs"). Both halves of that rule
+that break (decided 2026-10-05, aisland rules → "Two Test Runs"). Both halves of that rule
 are measurements — how long a test takes, how often it fails — so the rule needs a record. The
 local Jenkins already keeps one (each build's `junitResult.xml`), but it measured the wrong
 thing: code reaches CI only after it passes on the developer's machine, and of the 351 builds it
@@ -1506,12 +1514,12 @@ happen in the runs nobody kept: the ones agents and developers make while they w
   a schedule nothing ran the slow runs at all. The timer sits in the job's properties (armed when
   the job is seeded) and in the pipeline's `triggers` (re-applied at each run). A machine asleep
   at 01:00 misses that night. Only that run asks for the slow tests: a manual build is the fast
-  run (user ruling 2026-10-06). The project jobs learn which run they belong to from a
+  run (decided 2026-10-06). The project jobs learn which run they belong to from a
   `SLOW_TESTS` parameter the orchestrator passes — true when its build cause is the timer —
   because a downstream job cannot see its upstream's cause; rejected: a second, nightly-only
   orchestrator job (two lists of projects to keep in step).
 - A night's failure is reported by Jenkins, and the tests are moved by an AI agent (decided
-  2026-10-06). `aisland tests nightly` (`aisland/ci/nightly.py`), run by the
+  2026-10-06). `aisland tests nightly` (`aisland/services/nightly.py`), run by the
   `<workspace>.nightly-check` job at 09:30 on weekdays, writes `aisland/data/nightly/<date>.md`,
   notifies and turns red when a night failed or had no run — it runs whether or not the agent's
   app is open, and its result shows in Jenkins beside the night it judges. Moving a test between
@@ -1684,7 +1692,7 @@ root                   recorded submodule pointers: beta
 - The wording, with `tests/test_git_pull_push_all.py` and `tests/test_folder_git_aliases.py`.
 - What must not change: with an origin, a submodule off the root's branch and outside `dev/*` is
   never pulled (`::test_a_submodule_off_the_roots_branch_is_not_pulled`).
-- (2026-10-28, user request) A submodule on a `dev/<name>` branch of its own is pulled on THAT
+- (2026-10-28, on request) A submodule on a `dev/<name>` branch of its own is pulled on THAT
   branch — commits go to any `dev/*` branch, and `/push-all` pushes it, so it must be pulled first
   or its push is rejected. The root, on another branch, records no pointer for it: the root's
   branch is not where that work lives
@@ -1807,7 +1815,7 @@ datasets 0.1.0a2 on PyPI lacks, so an install that resolves fine fails at `impor
 
 ### Decision
 
-`aisland wheels <project>` (`aisland/wheels/build.py`, user choice 2026-10-08: an aisland command
+`aisland wheels <project>` (`aisland/wheels/build.py`, chosen 2026-10-08: an aisland command
 rather than a root script; only what the project needs; both checks below):
 
 - **What it needs** is the closure of its `[project] dependencies` over the workspace's
@@ -1910,7 +1918,7 @@ report.to_dict()["ok"]    # True: what an MCP tool would return
 
 Shipping only what PyPI lacks leaves the other machine at the mercy of the PyPI releases: on
 2026-10-08 a project's modules could not import because datasets 0.1.0a2 on PyPI lacked
-`datasets.draws`. The user asked for an option that ships the published dependencies as
+`datasets.draws`. The maintainer asked for an option that ships the published dependencies as
 wheels too, and one that ships every workspace project. A wheel built from a checkout ahead of
 its release carries the SAME version as the release, and the old install line
 (`pip install --find-links wheels -e .`) then took PyPI's: measured 2026-10-09 in an empty venv,
@@ -1921,15 +1929,15 @@ installed the folder's.
 
 ### Decision
 
-- **A run has a scope** (`WheelsScope`, user choice 2026-10-09): `unpublished` (the default, the
+- **A run has a scope** (`WheelsScope`, chosen 2026-10-09): `unpublished` (the default, the
   previous record), `needed` (`--include-published`: every project the target needs that has a
   checkout here) and `all` (`--all`: every workspace project that has one). A project the scope
   covers without a checkout is not built and is said so; a needed one comes from PyPI (user
   choice: report and go on, rather than stop). A dirty project is refused in every scope,
-  including one `--all` builds although the target does not need it (user choice).
+  including one `--all` builds although the target does not need it (chosen).
 - **`wheels.yaml` lists the wheels; its `install:` values are the user's.** Each entry carries the
   wheel, the commit, `needed`, the version PyPI has and `install:`, which defaults to `needed`. A
-  rerun reads the file it replaces and keeps every `install:` the user set (user choice); a file
+  rerun reads the file it replaces and keeps every `install:` the user set (chosen); a file
   it cannot read stops the run at its line before anything is built, because rewriting it would
   drop the choices.
 - **`install.py` is one generic script** (`aisland/wheels/install.py`, copied under a generated
@@ -1996,7 +2004,7 @@ workspace nor aisland (`aisland` was not on PyPI then), so carrying them must no
 
 ### Decision
 
-User choices 2026-10-18: the opt-in flag commits by itself; both command shapes; a project's
+Chosen 2026-10-18: the opt-in flag commits by itself; both command shapes; a project's
 already-tracked wheels untracked.
 
 - **Every run writes `wheels/.gitignore` holding `*`.** The folder ignores itself, the ignore file
@@ -2017,7 +2025,7 @@ already-tracked wheels untracked.
   project to build, and `--install ZIP` on the group is the short form of `install`.
 
 Rejected:
-- **A flag that only leaves the folder visible to git** (`--track`): the user wanted the command to
+- **A flag that only leaves the folder visible to git** (`--track`): the maintainer wanted the command to
   commit.
 - **Installing from the zip through aisland only**: the machine that needs the zip has no aisland.
 
@@ -2055,7 +2063,7 @@ report.committed, report.commit_note, report.zip_file
 ### Context
 
 `aisland wheels build` shipped what a project NEEDS; the project itself was installed editable from its
-folder, so the other machine needed a checkout of it. The user asked for an option that builds the named
+folder, so the other machine needed a checkout of it. The maintainer asked for an option that builds the named
 project's wheel too, and for its zip to install from any folder (option 2 of the choice put to them).
 
 ### Decision
@@ -2077,7 +2085,7 @@ project's wheel too, and for its zip to install from any folder (option 2 of the
 Rejected:
 - **A `needed`/`target` field in `wheels.yaml`**: the file already names its project, and an older
   `install.py` would choke on the field.
-- **Unpacking a standalone zip into `./<project>-wheels/`**: the user chose `./wheels`, as everywhere else.
+- **Unpacking a standalone zip into `./<project>-wheels/`**: the maintainer chose `./wheels`, as everywhere else.
 
 ### Consequences
 
@@ -2112,7 +2120,7 @@ report.project_wheel, report.zip_standalone
 
 ### Context
 
-The wheels folder installs through `install.py` or the zip, both run with `python`. The user asked for the
+The wheels folder installs through `install.py` or the zip, both run with `python`. The maintainer asked for the
 wheels packaged into ONE wheel, to install with plain `pip install <file>.whl`, and accepted what that costs
 (option 1 of the choice put to them): pip knows the bundle's name only.
 
@@ -2195,7 +2203,7 @@ syncing (pulling from both) would make a second primary, with merges between the
 - `aisland workspace mirror sync` (`aisland mirror sync` until 2026-10-22) pushes the PRIMARY's `dev/main`, `main`
   and tags (read with
   `git ls-remote origin`, the missing objects fetched by id), never the local branches.
-- (2026-10-28, user request) It also copies every other branch the local checkout has — the
+- (2026-10-28, on request) It also copies every other branch the local checkout has — the
   local branch list chooses WHICH branches, the primary still says WHAT each holds. `dev/main` and
   `main` stay always copied, so a checkout on `dev/<name>` alone keeps the mirror's `main` current.
   A local branch the primary lacks is reported `not on the primary`, not pushed and not a failure;
@@ -2204,11 +2212,11 @@ syncing (pulling from both) would make a second primary, with merges between the
 - It never forces and never deletes: a branch the mirror has commits on that the primary lacks
   is refused with the commit and the merge command; a differing tag is refused; a mirror-only
   branch or tag is left alone.
-- `/push-all` and `/ship` run it as their last step (user choice 2026-10-16, option A), so a
+- `/push-all` and `/ship` run it as their last step (chosen 2026-10-16, option A), so a
   refused or unreachable mirror is a row in their report, not a lost line of git output.
 - Two layers like a project's source: committed, the project's `mirror` in `workspace.toml`; per machine,
   `aisland.mirror.<project>.mirror`; both set with `aisland workspace configure mirror set|unset [--machine-only]`
-  (a `[mirrors.<project>] url` table and one key `aisland.mirror.<project>` until 2026-10-22, no longer read). Only submodules (user choice 2026-10-16).
+  (a `[mirrors.<project>] url` table and one key `aisland.mirror.<project>` until 2026-10-22, no longer read). Only submodules (chosen 2026-10-16).
 - The remote is marked `remote.mirror.aislandManaged`; setup and `unset` remove only a marked
   one, and `set` refuses to take over an unmarked one.
 - Every network call runs with `GIT_TERMINAL_PROMPT=0`.
@@ -2255,7 +2263,7 @@ wanted exactly that work on the other machine.
 
 ### Decision
 
-`aisland wheels build … --force` (user choice 2026-10-20) builds such a project from its files as they
+`aisland wheels build … --force` (chosen 2026-10-20) builds such a project from its files as they
 are (`export_worktree`), not from its commit:
 
 - the files are the ones git tracks plus the untracked ones it does not ignore
@@ -2310,7 +2318,7 @@ checked (the same commits again, a zip for a machine where they will be tried an
 
 ### Decision
 
-`aisland wheels build … --no-check` (user choice 2026-10-20) skips both checks and nothing else:
+`aisland wheels build … --no-check` (chosen 2026-10-20) skips both checks and nothing else:
 
 - the closure, the PyPI lookup (it still decides what is built), every refusal, the wheels, `wheels.yaml`,
   `install.py`, the README, `.gitignore` and `--zip` are those of a checked run — the generated files byte
@@ -2362,7 +2370,7 @@ DATA_DIR      : …/venv/lib/python3.13/site-packages/data
 template      : …/site-packages/code-workspace.json False
 ```
 
-The workspace that owns this checkout must keep working exactly as it does (user ruling
+The workspace that owns this checkout must keep working exactly as it does (decided
 2026-10-19), and a wheel must find a workspace of the user's choosing.
 
 ### Decision
@@ -2445,7 +2453,7 @@ $ AISLAND_WORKSPACE=…/acme aisland wheels build beta
 Error: no project 'beta' in the workspace …/acme
 ```
 
-The user asked for such a folder to work "as if that directory contains all subdirectories as
+The maintainer asked for such a folder to work "as if that directory contains all subdirectories as
 submodules", `git pull-all` and `git push-all` included.
 
 ### Decision
@@ -2530,7 +2538,7 @@ from `aisland setup` and `aisland workspace init`):
 - **Link or copy:** from a checkout each file is a relative link into the package, so an edit made where an agent
   reads it is an edit of aisland's file, reviewed and committed in aisland. From a wheel a link would point into
   `site-packages`, which a reinstall replaces, so each file is a copy.
-- **A copy someone edited is kept** (user choice 2026-10-20): `installed.json` records each copy's fingerprint; a
+- **A copy someone edited is kept** (chosen 2026-10-20): `installed.json` records each copy's fingerprint; a
   copy still equal to it (or to aisland's file) is replaced, anything else is reported and left. Rejected:
   overwriting with a report — it destroys the edit it reports.
 - **Never the workspace's own files:** a command aisland does not ship is not touched; each installed file is
@@ -2601,7 +2609,7 @@ same.
   found either: a project lives in a project folder, a link only names one.
 - Setup only appends to `mypy.ini`: entries an earlier setup added through a link stay until removed by hand.
 - A workspace without such links gets byte-identical files.
-- `workspace.toml` writes the short name as the project's `path` (user ruling 2026-10-21: links come back as direct
+- `workspace.toml` writes the short name as the project's `path` (decided 2026-10-21: links come back as direct
   checkouts): a root link to a project, or a folder checked out under a name other than its repository's (the
   project is then named after its repository), is written as `path`; `init --from` clones the project straight into
   that folder — never a link, which stays a choice a user makes by hand. (The `alias` key the removed
@@ -2710,7 +2718,7 @@ stdin echoed back through `cat`.
   (from its password entry — `$SHELL` is empty there) in the home folder or `--cwd`. The box needs a Python and
   nothing else; the helper imports only the standard library. Its stdin is framed — one-byte kind, four-byte length —
   so one stream carries keystrokes and window sizes; its stdout is the terminal's bytes.
-- **The shell is interactive, not a login shell** (user choice 2026-10-21), as an editor's terminal starts it on
+- **The shell is interactive, not a login shell** (chosen 2026-10-21), as an editor's terminal starts it on
   Linux. Started as a login shell it read `~/.profile` only, and on a box whose `~/.profile` was trimmed of the block
   that loads `~/.bashrc` it had no colour prompt and no `ls --color` (measured: `PS1` was `/etc/bash.bashrc`'s,
   `alias ls` not found); interactive, `~/.bashrc` runs. `~/.profile`'s PATH lines are not lost: the tunnel's
@@ -2905,7 +2913,7 @@ distribution often written equal to its name.
 `source` is the first: its settings go into the project's table of `workspace.toml` (`source`, `version`, and
 `distribution` only where it differs from the name; a git source's ref is the project's own `branch`), this machine's
 into `.git/config` as `aisland.source.<project>.source|branch|version`. No backward compatibility: an old table or
-one-key override is simply not read (user ruling 2026-10-22, `mirror`'s step). `source apply` is gone: setup applies.
+one-key override is simply not read (decided 2026-10-22, `mirror`'s step). `source apply` is gone: setup applies.
 `mirror` followed the same way: the project's `mirror`, `aisland.mirror.<project>.mirror`, the action
 `aisland workspace mirror sync` one level up.
 
@@ -3011,10 +3019,10 @@ In a workspace of submodules, a repository cloned into its folder by hand was in
 ### Decision
 
 `aisland setup` finds each clone `.gitmodules` does not list (a `.git` folder, an `origin`, a `pyproject.toml`) and runs
-`git submodule add -b <its branch> <its origin> <folder>`, which keeps the clone as it is — without asking (user ruling
+`git submodule add -b <its branch> <its origin> <folder>`, which keeps the clone as it is — without asking (decided
 2026-10-23: a question about a project the workspace already lists in `workspace.toml` was the wrong default). The new project is tracked as the workspace says: `[workspace] track = false` in `workspace.toml` (`init --untracked`,
 `track unset` with no project named) untracks every project without a `track` of its own, those added later included —
-a workspace-wide choice, never inferred from the other projects (user correction 2026-10-23: the first rule, "like the
+a workspace-wide choice, never inferred from the other projects (corrected 2026-10-23: the first rule, "like the
 others", left a workspace made untracked with its new projects tracked).
 
 ### Consequences
@@ -3167,7 +3175,7 @@ installed it in a workspace that had both checked out: uv replaced the local che
 
 A project marks such extras in `[tool.aisland] manual-extras`. They stay on the menu, marked `(only when named)`, but
 a blank answer, `-y` and `--all` leave them out; naming one (at the prompt or with `aisland workspace configure
-extras set`) installs it. The user chose the declaration over a structural rule (leave out an extra that pins a
+extras set`) installs it. The maintainer chose the declaration over a structural rule (leave out an extra that pins a
 workspace project by URL): the project knows what its extra is for, and the declaration holds in every workspace.
 
 ### Consequences
@@ -3207,7 +3215,7 @@ until `python wheels/install.py` had run by hand.
 The generated root `uv.toml` lists each activated project's `wheels/` folder (marked by its `wheels.yaml`) under
 `find-links`, relative to the file. Measured: uv resolves the relative path against the file's folder, from the root
 and from a folder below it; it installs a wheel only the folder has; and it takes the folder's `corelib-0.4.1` over
-PyPI's `corelib-0.4.1` whose files differ — pip, through `--find-links`, takes PyPI's. The user chose every such
+PyPI's `corelib-0.4.1` whose files differ — pip, through `--find-links`, takes PyPI's. The maintainer chose every such
 folder, tracked in git or not.
 
 ### Consequences
@@ -3444,7 +3452,7 @@ True
 ### Context
 
 A project installed outside the workspace from a checkout took two commands: `python wheels/install.py --installer uv
---all --no-project --reinstall`, then `uv pip install -e ./<project> --no-deps`. The user wanted one:
+--all --no-project --reinstall`, then `uv pip install -e ./<project> --no-deps`. The maintainer wanted one:
 `uv pip install -e ./<project>[wheels]`. An extra holds requirement names; what makes uv take the folder's wheels
 is a source per name. Measured with uv 0.13.5: a `[tool.uv.sources]` entry conditional on an extra
 (`{ path = "wheels/<file>", extra = "wheels" }`) is read by `uv pip install` of the project, applies only while that
@@ -3479,7 +3487,7 @@ uv pip install -e ./app[wheels]        # from the folder holding app, on the oth
 ### What you may change
 
 - Another name than `wheels`, or several runs writing several extras (each its own markers) — not built yet.
-- Remembering (user request 2026-10-27): a build without `--extra` keeps an existing block current, since a
+- Remembering (asked for 2026-10-27): a build without `--extra` keeps an existing block current, since a
   forgotten flag left the sources naming wheel files the rebuild deleted and the install failed on the other
   machine. Not with `--include-project`, whose build installs the project's own wheel and leaves the block unless
   `--extra` is given; the regenerate command names `--extra` only there.
@@ -3537,7 +3545,7 @@ $ aisland workspace test-stats off models
 
 `aisland wheels build --commit` commits `wheels/`; every rebuild that changes a wheel adds its bytes to the history
 for good. Measured on a project with seven wheel commits: 59 wheel versions in its history (14.6 MiB), 32 of them
-held by a branch tip or a tag (7.5 MiB) — half of every clone was wheels no ref holds. The user asked to keep the
+held by a branch tip or a tag (7.5 MiB) — half of every clone was wheels no ref holds. The maintainer asked to keep the
 wheels a branch or a tag holds and to drop the accumulated versions, aisland to force-push, and every other machine
 to be fixable afterwards.
 
@@ -3579,7 +3587,7 @@ The first reset on another machine failed twice where a person expected one comm
 2.47.0 (the newest release) reads `git config --list` as `key=value` lines and died with `ValueError: dictionary
 update sequence element #25 has length 1` on aisland's own multi-line aliases of before that day, and a clone with
 an edit was refused. Afterwards the root still recorded the old commit (`32da69a`), which `git submodule update`
-would fetch back. The user ruled that `aisland wheels reset <project>` must work whatever the clone's state,
+would fetch back. The maintainer ruled that `aisland wheels reset <project>` must work whatever the clone's state,
 tracked or untracked.
 
 - **The config:** git-filter-repo runs as `python -m aisland.wheels.filter_repo`, which replaces its one config reader by
@@ -3672,7 +3680,7 @@ scrub_wheel(Path("app/wheels/models-0.1.0-py3-none-any.whl"), ("acme", "acmeorg"
 
 Every config and project reads machine settings from the workspace's `.env` (`DATA_ROOT`, a service's token, a
 library's switch), and a new machine had nothing to start from but `workspace init`'s five-line template; which
-variables a project reads lived in its README if anywhere, and drifted. The user asked for the variables in every
+variables a project reads lived in its README if anywhere, and drifted. The maintainer asked for the variables in every
 project and an aisland command that concatenates them into a file to copy to `.env`; their choices: two files per
 project — `env.complete` (every variable, written by the agent) and `env.example` (the ones a person normally sets,
 written by the user) — the workspace's two files generated per machine and never committed, a variable several
@@ -4105,7 +4113,7 @@ workspace. The off switch did not help there: `test-stats off --machine-only` sa
 
 ### Decision
 
-Record only in an aisland workspace (user choice 2026-10-29, option 1): `locations.is_workspace` — from a checkout
+Record only in an aisland workspace (chosen 2026-10-29, option 1): `locations.is_workspace` — from a checkout
 always; from a wheel a folder holding `workspace.toml` or `.gitmodules`, or the one `AISLAND_WORKSPACE` names.
 `test-stats on|off` refuses outside one, and `--machine-only` refuses where the workspace is no git repository.
 `find_workspace` keeps its rules: `workspace init` and `setup` still start in a lone repository.
@@ -4226,7 +4234,7 @@ and Docker, SwiftBar and every other project's service could not be reached. A s
 
 ### Decision
 
-`name` is a string; the tool checks it when it runs against the workspace's services (user choice 2026-10-29,
+`name` is a string; the tool checks it when it runs against the workspace's services (chosen 2026-10-29,
 replacing jenkins and mlflow only) and passes `--background` only where the service takes it.
 
 ### Consequences
@@ -4325,7 +4333,7 @@ and escaped backslashes made even aisland's own pipeline hard to read or change.
 
 ### Decision
 
-The function works out the facts and renders a template set (user picks 2026-10-30): Jinja2 in the core install, the
+The function works out the facts and renders a template set (chosen 2026-10-30): Jinja2 in the core install, the
 built-in set in `aisland/templates/ci/`, a workspace's set chosen by `[ci] templates` — a folder of the workspace or
 the name an installed package registers (`aisland.ci_templates`) — with variables the set declares. Delimiters
 `<[ ]>`, `<% %>`, `<# #>`: Jinja's own braces collide with GitHub's `${{ }}`, and `[[`, first proposed, with Groovy's

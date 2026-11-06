@@ -172,6 +172,8 @@ set_alias status-all '!f() {
 # is honored (a project-local `mypy .` yields spurious import-not-found).
 set_alias safe '!f() {
     if [ -z "$1" ]; then echo "Error: Please provide a commit message. Example: git safe \"feat: my message\""; exit 1; fi;
+    CURRENT_BRANCH=$(git branch --show-current);
+    if [ -z "$CURRENT_BRANCH" ]; then echo "Error: git safe pushes the branch you are on, and you are on none: git switch <branch> first"; exit 1; fi;
     WS_ROOT=$(git rev-parse --show-superproject-working-tree);
     PROJECT=$(basename "$(git rev-parse --show-toplevel)");
     if [ -z "$WS_ROOT" ]; then WS_ROOT=$(git rev-parse --show-toplevel); PROJECT=.; fi;
@@ -182,9 +184,7 @@ set_alias safe '!f() {
     echo "Running tests (pytest)..."; pytest || { echo "Tests failed!"; exit 1; };
     echo "All checks passed! Committing and pushing...";
     git add . && git commit -m "$1";
-    CURRENT_BRANCH=$(git branch --show-current);
-    if [ -z "$CURRENT_BRANCH" ]; then git push origin HEAD:dev/main || git push origin HEAD:main;
-    else git push origin "$CURRENT_BRANCH" || { echo "Falling back to dev/main push..."; git push origin HEAD:dev/main; }; fi;
+    git push origin "$CURRENT_BRANCH" || { echo "Error: the push of $CURRENT_BRANCH failed; the commit stays here - git push origin $CURRENT_BRANCH once the cause is fixed"; exit 1; };
 }; f'
 
 echo "==> Configuring Notebook Clean Filter..."

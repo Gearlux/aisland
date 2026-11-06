@@ -51,10 +51,9 @@ SET_FILE = "template.toml"
 #: The format of ``template.toml`` this aisland reads; a set without ``format`` is format 1, one asking for a newer
 #: format is refused naming the upgrade (a later aisland may add facts, never change what format 1 means).
 SET_FORMAT = 1
-#: The key of ``[ci]`` and of a project's ``ci`` table naming the set; every other key of a project's ``ci`` is a
-#: variable's value.
-TEMPLATES_KEY = "templates"
-VARIABLES_KEY = "variables"
+#: The keys of ``[ci]`` (``workspace.toml``'s, read by :mod:`aisland.workspace.check` too).
+TEMPLATES_KEY = workspace_file.CI_TEMPLATES_KEY
+VARIABLES_KEY = workspace_file.CI_VARIABLES_KEY
 
 
 class TemplateError(AislandError, ValueError):

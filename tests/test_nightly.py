@@ -7,6 +7,9 @@ The Jenkins API is replaced by a stand-in answering the same paths, so no test n
 
 import json
 import os
+import shutil
+import subprocess
+import sys
 from datetime import datetime, timedelta, tzinfo
 from pathlib import Path
 from typing import Any, Dict, List, Optional
@@ -14,12 +17,11 @@ from typing import Any, Dict, List, Optional
 import pytest
 from click.testing import CliRunner
 
-from aisland.ci import nightly
 from aisland.ci.ci_scaffold import TIMED_OUT_MESSAGE
+from aisland.ci.jenkins_job_config import NIGHTLY_CHECK_CRON
 from aisland.cli import main
-from aisland.services import jenkins_jobs
+from aisland.services import jenkins_jobs, nightly
 from aisland.services.jenkins import JenkinsService
-from aisland.services.jenkins_jobs import NIGHTLY_CHECK_CRON
 
 TIMER = "hudson.triggers.TimerTrigger$TimerTriggerCause"
 USER = "hudson.model.Cause$UserIdCause"
@@ -269,9 +271,20 @@ def test_on_macos_the_notification_is_a_desktop_banner(monkeypatch: pytest.Monke
     monkeypatch.setattr(nightly.sys, "platform", "darwin")
     monkeypatch.setattr(nightly.subprocess, "run", lambda argv, **_: calls.append(argv))
     nightly.notify_desktop('nightly 10-07: "beta" failed \\ 2 tests')
-    assert calls == [
-        ["osascript", "-e", 'display notification "nightly 10-07: \\"beta\\" failed \\\\ 2 tests" with title "acme"']
-    ]
+    assert calls == [["osascript", *nightly._BANNER_SCRIPT, 'nightly 10-07: "beta" failed \\ 2 tests', "acme"]]
+
+
+@pytest.mark.skipif(sys.platform != "darwin" or not shutil.which("osascript"), reason="osascript is macOS's")
+def test_a_title_or_message_with_applescript_in_it_is_shown_as_text(tmp_path: Path) -> None:
+    """The banner's script, run by the real osascript with a planted title: it runs nothing the text says."""
+    planted = tmp_path / "planted"
+    title = f'x" & (do shell script "touch {planted}") & "'
+    script = [line for line in nightly._BANNER_SCRIPT if line != "-e"]
+    script[1] = 'return (item 1 of argv) & "|" & (item 2 of argv)'  # what the banner shows, without a banner
+    argv = ["osascript"] + [part for line in script for part in ("-e", line)] + ["a message", title]
+    shown = subprocess.run(argv, capture_output=True, text=True, timeout=30)
+    assert shown.stdout.strip() == f"a message|{title}"
+    assert not planted.exists()
 
 
 def test_elsewhere_without_a_notifier_nothing_is_run(monkeypatch: pytest.MonkeyPatch) -> None:

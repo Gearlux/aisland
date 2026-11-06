@@ -25,7 +25,7 @@ import sys
 import tomllib
 import zipfile
 from pathlib import Path
-from typing import List, Optional, Sequence, Tuple
+from typing import List, Optional, Sequence, Tuple, Union
 
 #: The project this zip was built for; the generated copy names it.
 PROJECT = "<project>"
@@ -82,6 +82,20 @@ def _wheels_project(folder: Path) -> Optional[str]:
     return match.group(1) if match else None
 
 
+def _members(zipped: zipfile.ZipFile) -> Union[List[Tuple[str, str]], str]:
+    """Each ``wheels/<name>`` member with the file name it is unpacked as, or why the zip is refused: the folder is
+    flat, so a name with a folder in it (``wheels/../x``, ``wheels/a/b``, ``wheels/C:x``) would write elsewhere."""
+    members: List[Tuple[str, str]] = []
+    for member in zipped.namelist():
+        if not member.startswith(f"{_FOLDER}/") or member.endswith("/"):
+            continue
+        name = member.split("/", 1)[1]
+        if name in ("", ".", "..") or any(sign in name for sign in ("/", "\\", ":")):
+            return f"its member {member!r} is no file of the {_FOLDER}/ folder"
+        members.append((member, name))
+    return members
+
+
 def main(argv: Sequence[str], archive: Optional[Path] = None, cwd: Optional[Path] = None) -> int:
     """Unpack, then run install.py with the rest of the line; returns the exit status (2: usage or wrong folder)."""
     archive = archive or Path(__file__).resolve().parent  # run as `python x.zip`, __file__ is x.zip/__main__.py
@@ -113,13 +127,16 @@ def main(argv: Sequence[str], archive: Optional[Path] = None, cwd: Optional[Path
                 file=sys.stderr,
             )
             return 2
-    folder.mkdir(parents=True, exist_ok=True)
-    for old in folder.glob("*.whl"):
-        old.unlink()
     with zipfile.ZipFile(archive) as zipped:
-        for member in zipped.namelist():
-            if member.startswith(f"{_FOLDER}/") and not member.endswith("/"):
-                (folder / member.split("/", 1)[1]).write_bytes(zipped.read(member))
+        members = _members(zipped)
+        if isinstance(members, str):
+            print(f"{archive.name}: {members}; nothing was unpacked", file=sys.stderr)
+            return 2
+        folder.mkdir(parents=True, exist_ok=True)
+        for old in folder.glob("*.whl"):
+            old.unlink()
+        for member, name in members:
+            (folder / name).write_bytes(zipped.read(member))
     if unpack_only:
         print(f"unpacked {archive.name} into {folder}")
         return 0

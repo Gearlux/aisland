@@ -63,7 +63,7 @@ def supervised(monkeypatch: pytest.MonkeyPatch) -> List[Dict[str, Any]]:
     monkeypatch.setattr(base.BaseService, "stop", lambda self: calls.append({"stop": self.name}))
     monkeypatch.setattr(base.BaseService, "status", lambda self: calls.append({"status": self.name}))
     monkeypatch.setattr(base.BaseService, "is_running", lambda self: False)
-    monkeypatch.setattr("aisland.supervisor.print_status", lambda: None)
+    monkeypatch.setattr("aisland.services.supervisor.print_status", lambda: None)
     return calls
 
 

@@ -3,7 +3,7 @@ description: Commit only the changes made by the running session — its own fil
 model: sonnet
 allowed-tools: [Bash(git add:*), Bash(git commit:*), Bash(git status:*), Bash(git diff:*), Bash(git log:*), Bash(git apply:*), Bash(git rev-parse:*), Bash(git branch:*), Bash(git -C * branch:*), Bash(git -C * add:*), Bash(git -C * commit:*), Bash(git -C * status:*), Bash(git -C * diff:*), Bash(git -C * log:*), Bash(git -C * apply:*), Bash(git -C * rev-parse:*), Bash(git -C * config:*), Bash(cd:*), Bash(for *), Bash(while *), Bash(if *), Bash(python3:*)]
 ---
-<!-- Shipped by aisland (aisland/harness/commands/commit-session.md), installed into .agents/workflows/ by `aisland setup` (aisland/harness.py). Change it in aisland; the rules it cites are aisland's (.agents/aisland/AGENTS.md). -->
+<!-- Shipped by aisland (aisland/harness/commands/commit-session.md), installed into .agents/workflows/ by `aisland setup` (aisland/setup/harness.py). Change it in aisland; the rules it cites are aisland's (.agents/aisland/AGENTS.md). -->
 
 # Workflow: Commit Session (commit only what this session changed)
 

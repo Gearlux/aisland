@@ -22,7 +22,7 @@ from click.testing import CliRunner
 from aisland import cli, gitcmd, locations
 from aisland import pyproject as pyproject_toml
 from aisland.cli import _base as cli_base
-from aisland.services import docker, jenkins_jobs
+from aisland.services import docker, jenkins_settings
 from aisland.services.jenkins import JenkinsService
 from aisland.workspace import gitmodules
 
@@ -281,7 +281,7 @@ def test_the_env_keys_jenkins_reads_are_said_in_the_debug_log_only(
     service.service_data_dir = tmp_path / "jenkins"
     service.service_data_dir.mkdir()
     (service.service_data_dir / "config.xml").write_text("<?xml version='1.1' encoding='UTF-8'?>\n<hudson/>\n")
-    jenkins_jobs.setup_global_properties(service.service_data_dir)
+    jenkins_settings.setup_global_properties(service.service_data_dir)
     assert "key(s) from" not in capsys.readouterr().out
     assert f"read 2 key(s) from {workspace / '.env'}" in debug_log.messages
 

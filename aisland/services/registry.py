@@ -19,8 +19,9 @@ from typing import TYPE_CHECKING, Any, Callable, Collection, List, Mapping, Opti
 
 import click
 
-from aisland import failures, supervisor
+from aisland import failures
 from aisland.errors import AislandError
+from aisland.services import supervisor
 from aisland.services.base import ServiceState
 from aisland.services.declared import DeclaredService
 from aisland.services.docker import docker_service

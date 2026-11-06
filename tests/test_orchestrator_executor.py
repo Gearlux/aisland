@@ -15,8 +15,9 @@ from typing import Sequence
 import pytest
 
 from aisland import locations
+from aisland.ci import jenkins_job_config as job_config
+from aisland.ci.jenkins_job_config import NIGHTLY_CRON
 from aisland.services import jenkins_jobs
-from aisland.services.jenkins_jobs import NIGHTLY_CRON
 
 
 def _orchestrator_script(monkeypatch: pytest.MonkeyPatch, tmp_path: Path, local: bool, slow: Sequence[str] = ()) -> str:
@@ -126,12 +127,12 @@ def test_a_seeded_local_job_accepts_the_slow_switch_before_its_first_run(tmp_pat
     """Jenkins drops a parameter the job does not define yet; a pipeline's `parameters` are defined by its first run.
     So the seeded job carries SLOW_TESTS from the start, or the first nightly run would run the fast tests only."""
     script = "pipeline {\n    parameters {\n        booleanParam(name: 'SLOW_TESTS', defaultValue: false)\n    }\n}"
-    config = jenkins_jobs.local_job_config("p", script, tmp_path / "p")
+    config = job_config.local_job_config("p", script, tmp_path / "p")
     definition = config[config.index("<hudson.model.BooleanParameterDefinition>") :]
     assert "<name>SLOW_TESTS</name>" in definition and "<defaultValue>false</defaultValue>" in definition
     assert f"<customWorkspace>{(tmp_path / 'p').absolute()}</customWorkspace>" in config
 
 
 def test_a_seeded_job_without_the_switch_defines_no_parameter(tmp_path: Path) -> None:
-    config = jenkins_jobs.local_job_config("p", "pipeline {\n}", tmp_path / "p")
+    config = job_config.local_job_config("p", "pipeline {\n}", tmp_path / "p")
     assert "ParametersDefinitionProperty" not in config

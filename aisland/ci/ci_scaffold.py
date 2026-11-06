@@ -25,10 +25,10 @@ from aisland import console, gitcmd
 from aisland import pyproject as pyproject_toml
 from aisland.ci import ci_templates
 from aisland.errors import AislandError
-from aisland.github import GitHubRepository, project_repositories
 from aisland.pypi import released_on_pypi
 from aisland.setup.playwright_browser import PLAYWRIGHT_BROWSER
 from aisland.wheels import extra as wheels_extra
+from aisland.workspace.github import GitHubRepository, project_repositories
 from aisland.workspace.projects import get_project_metadata, get_workspace_name, get_workspace_root
 from aisland.workspace.selection import axes as sel_axes
 from aisland.workspace.selection import declared as sel_declared
@@ -138,7 +138,7 @@ def node_test_folders(project_dir: Path) -> List[str]:
 def discover_github_projects(workspace_root: Path) -> Dict[str, GitHubRepository]:
     """Every workspace project whose remote is on GitHub, by its PyPI distribution name, with that repository.
 
-    The remote is the project's own (``.gitmodules``, or a clone's ``origin``: :func:`aisland.github.project_repositories`),
+    The remote is the project's own (``.gitmodules``, or a clone's ``origin``: :func:`aisland.workspace.github.project_repositories`),
     so the owner is whoever's the workspace's projects are — no organisation is written into aisland. The name is the
     ``[project] name`` of the project's ``pyproject.toml``; a project without one is skipped (it is no Python project
     aisland installs) unless it is DETACHED (a ``github`` / ``pypi`` source empties its folder), whose name is the

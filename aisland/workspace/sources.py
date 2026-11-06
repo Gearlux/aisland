@@ -1,8 +1,7 @@
-"""Per-project dependency-source management (``aisland workspace configure source``).
+"""Per-project dependency sources (``aisland workspace configure source``): what each project's source is.
 
-A workspace project can be consumed in exactly three ways ON THIS MACHINE, and this module owns
-the choice plus the artifacts that have to agree with it — the checkout, the shared ``.venv``
-and the editor folder list:
+A workspace project can be consumed in exactly three ways ON THIS MACHINE; the choice drives
+what has to agree with it — the checkout, the shared ``.venv`` and the editor folder list:
 
 ========== ================================= =====================================
 source     directory                         ``.venv``
@@ -13,7 +12,7 @@ source     directory                         ``.venv``
 ========== ================================= =====================================
 
 **No CI file reads a source.** A runner installs a RELEASED dependency from PyPI and an
-unreleased one from GitHub ``main`` (:func:`released_on_pypi`, asked by
+unreleased one from GitHub ``main`` (:func:`aisland.pypi.released_on_pypi`, asked by
 :func:`aisland.ci.ci_scaffold.project_facts`): CI installs what is released, and from GitHub what is not. So
 ``aisland workspace configure source set`` / ``unset`` never regenerate a CI file.
 
@@ -41,30 +40,25 @@ tracked file:
 * *committed source only* -> the registry's ``distribution`` field, which lets the CI scaffolder
   DISCOVER a detached project whose directory is empty (never to choose its install line);
 * *effective source* (override, else committed) -> submodule init/deinit + branch switch and the
-  editable/PyPI install into the shared ``.venv`` (via :func:`apply_source`) — and, through the
-  checkout, the folder list of the generated, gitignored ``*.code-workspace`` file
-  (:func:`aisland.setup.editor_files.write_code_workspace`, rewritten after every source change).
+  editable/PyPI install into the shared ``.venv`` (:func:`aisland.workspace.source_apply.apply_source`) — and,
+  through the checkout, the folder list of the generated, gitignored ``*.code-workspace`` file, rewritten after
+  every source change (:mod:`aisland.setup.source_commands`).
+
+This module is the model: the kinds, both layers and the effective source. Applying one is
+:mod:`aisland.workspace.source_apply`; ``set`` and ``unset`` are :mod:`aisland.setup.source_commands`.
 """
 
 from __future__ import annotations
 
 import logging
-import subprocess
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Dict, List, Literal, Optional, Tuple, cast, get_args
 
-from aisland import console, failures, gitcmd, locations, machine_config
+from aisland import failures, gitcmd, locations, machine_config
 from aisland import pyproject as pyproject_toml
-from aisland.errors import AislandError
-from aisland.github import github_repository
-from aisland.pypi import PypiInfo, PypiProject, points_at_owner, pypi_json
-from aisland.setup.editor_files import write_code_workspace
-from aisland.setup.installers import ensure_uv_in_venv
-from aisland.setup.mcp_config import no_venv
 from aisland.workspace import file as workspace_file
-from aisland.workspace.projects import get_workspace_root, set_submodule_active, submodule_active_map
-from aisland.workspace.selection import editable_target
+from aisland.workspace.projects import get_workspace_root, submodule_active_map
 
 logger = logging.getLogger(__name__)
 
@@ -311,141 +305,7 @@ def pip_vcs_url(url: str, ref: str) -> str:
     return f"{url}@{ref}"
 
 
-def _run(cmd: List[str], cwd: Path, *, quiet: bool = False, env: Optional[Dict[str, str]] = None) -> bool:
-    """Run ``cmd`` (in ``env``, else this environment); return True on success. A failure is reported, never raised.
-
-    One project's unreachable remote or dirty checkout must not abort a whole
-    ``aisland setup`` sweep — the same non-fatal contract as
-    :func:`aisland.workspace.activation.reconcile`.
-    """
-    logger.debug("running %s (in %s)", " ".join(cmd), cwd)
-    try:
-        subprocess.check_call(cmd, cwd=str(cwd), env=env)
-        return True
-    except (subprocess.CalledProcessError, FileNotFoundError) as e:
-        if not quiet:
-            failures.report(f"  - Error: `{' '.join(cmd)}` failed: {e}")
-        return False
-
-
-def _deinit_remedy(workspace_root: Path, path: Path, rel: str) -> str:
-    """Name the remedy for a refused ``git submodule deinit`` — matching the ACTUAL blocker.
-
-    Deinit refuses on two different conditions, and git reports both with the same wording
-    ("contains local modifications") even though the fix lives in a DIFFERENT repository for
-    each:
-
-    * a dirty work tree INSIDE the submodule — fixed there, by committing or stashing;
-    * a **stale gitlink** — the submodule is checked out at a commit other than the one the
-      SUPERPROJECT records. This refuses even when the submodule's own tree is spotless, and
-      it is the common case right after someone commits in the submodule without bumping the
-      pointer in the workspace repo.
-
-    Guessing the wrong one sends the operator hunting through a clean tree (the message used
-    to say "commit or stash the changes in <sub>" unconditionally), so probe for each and
-    report only what is true — and when neither probe can answer, stay generic rather than
-    assert something unverified.
-    """
-    clauses: List[str] = []
-    # A probe that cannot answer degrades to "unknown": never raise into the middle of a source switch.
-    if gitcmd.read(path, "status", "--porcelain"):
-        clauses.append(f"Commit or stash the changes in {rel}.")
-    head = gitcmd.read(path, "rev-parse", "HEAD")
-    recorded = gitcmd.read(workspace_root, "rev-parse", f"HEAD:{rel}")
-    if head and recorded and head != recorded:
-        clauses.append(
-            f"The superproject records {recorded[:7]} for {rel} but the checkout is at "
-            f"{head[:7]} — commit the pointer with `git add {rel} && git commit -- {rel}`."
-        )
-    if not clauses:
-        return "Resolve the local modifications in the checkout or the superproject, then re-run."
-    return " ".join(clauses) + " Then re-run."
-
-
-# --- applying a source --------------------------------------------------------------------
-
-
-def apply_source(workspace_root: Path, project: str, source: ProjectSource, uv_cmd: str) -> bool:
-    """Bring the checkout and the shared ``.venv`` in line with ``source``. Returns success.
-
-    ``local``: activate the submodule, initialize it if needed, fetch, switch to ``ref``, install
-    editable. ``github`` / ``pypi``: resolve the distribution name while the directory is still
-    readable, deinit (protectively — no ``-f``, so uncommitted work refuses and aborts BEFORE the
-    venv is touched), then install from the remote at ``ref`` / from PyPI.
-    """
-    path = project_path(workspace_root, project)
-    rel = str(path.relative_to(workspace_root))
-
-    if source.kind == "local":
-        console.echo(f"==> {project}: local checkout @ {source.ref}")
-        set_submodule_active(workspace_root, project, True)
-        if not (path / ".git").exists():
-            # It clones: no credential prompt, and a remote that stops sending is given up (gitcmd's guard).
-            clone = ["git", *gitcmd.network_options(), "submodule", "update", "--init", "--", rel]
-            if not _run(clone, workspace_root, env=gitcmd.network_env()):
-                return False
-        # Non-fatal: an offline machine can still switch to a branch it already has.
-        gitcmd.fetch(path, "--quiet", "origin")
-        # No ``-f``: a switch that would discard uncommitted work refuses, protecting it. The
-        # bare ref relies on git's DWIM (--guess) to create a tracking branch from origin/<ref>.
-        # The ref comes from workspace.toml, another person's file: a branch name, never an option (`--orphan=x`).
-        if source.ref.startswith("-"):
-            failures.report(f"  - Error: {project}: {source.ref!r} is no branch name (a branch never starts with '-')")
-            return False
-        if not _run(["git", "switch", source.ref], path):
-            console.echo(f"  - {project}: left on its current branch; resolve local changes and re-run.", err=True)
-            return False
-        # The SAME target `aisland setup` installs (dev extra + the selected framework/tracker
-        # extras) — the bare directory used to drop every extra the machine had selected.
-        return _run([uv_cmd, "pip", "install", "-e", editable_target(workspace_root, path, project)], workspace_root)
-
-    # github / pypi — both detach. Read the distribution name while the directory still exists
-    # (afterwards there is no pyproject.toml left to ask), then empty it.
-    distribution = source.distribution or discover_distribution(path) or project
-    if source.kind == "github":
-        url = remote_url(workspace_root, project)
-        if url is None:
-            failures.report(
-                f"Error: {project} has no submodule URL in .gitmodules, so a github source has "
-                f"nothing to install from. Use: aisland workspace configure source set {project} local",
-            )
-            return False
-        target = pip_vcs_url(url, source.ref)
-        console.echo(f"==> {project}: github @ {source.ref} ({target})")
-    else:
-        target = ProjectSource(kind="pypi", version=source.version, distribution=distribution).requirement(project)
-        console.echo(f"==> {project}: pypi ({target})")
-
-    if (path / ".git").exists():
-        if not _run(["git", "submodule", "deinit", rel], workspace_root):
-            console.echo(
-                f"  - {project}: deinit refused; the venv was left untouched. "
-                f"{_deinit_remedy(workspace_root, path, rel)}",
-                err=True,
-            )
-            return False
-    set_submodule_active(workspace_root, project, False)
-    # Uninstall first, unconditionally: an editable install would otherwise keep its .pth entry,
-    # and re-pinning github:main -> github:dev/main reports the SAME version, which uv would
-    # treat as already satisfied and skip.
-    _run([uv_cmd, "pip", "uninstall", distribution], workspace_root, quiet=True)
-    return _run([uv_cmd, "pip", "install", "-U", target], workspace_root)
-
-
-def apply_all(workspace_root: Path, uv_cmd: str) -> None:
-    """Apply every managed project's EFFECTIVE source. Unmanaged projects are not touched."""
-    committed = read_committed_sources(workspace_root)
-    managed = sorted(set(committed) | set(_overridden_projects(workspace_root)))
-    if not managed:
-        return
-    console.echo(f"==> Applying per-project sources ({workspace_file.FILE_NAME} + local overrides)...")
-    for project in managed:
-        source = effective_source(workspace_root, project, committed)
-        if source is not None:
-            apply_source(workspace_root, project, source, uv_cmd)
-
-
-def _overridden_projects(workspace_root: Path) -> List[str]:
+def overridden_projects(workspace_root: Path) -> List[str]:
     """Project names carrying a per-machine source in ``.git/config`` (``aisland.source.<project>.source``)."""
     return [project for project, settings in _machine_settings(workspace_root).items() if "source" in settings]
 
@@ -457,7 +317,7 @@ def detached_projects(workspace_root: Path) -> set[str]:
     source machinery cannot fight over the same submodule.
     """
     committed = read_committed_sources(workspace_root)
-    managed = set(committed) | set(_overridden_projects(workspace_root))
+    managed = set(committed) | set(overridden_projects(workspace_root))
     result: set[str] = set()
     for project in managed:
         source = effective_source(workspace_root, project, committed)
@@ -488,264 +348,12 @@ def known_projects(workspace_root: Path) -> List[str]:
     return sorted(names)
 
 
-def _pypi_provenance(distribution: str, owner: Optional[str]) -> Tuple[Optional[bool], str]:
-    """Whether PyPI's ``distribution`` really is THIS workspace's project.
-
-    Returns ``(True, version)``; ``(False, reason)`` when the name is absent or belongs to an
-    unrelated project; ``(None, reason)`` when PyPI could not be reached.
-
-    Two failures this prevents, both of which would otherwise land AFTER the directory had
-    already been deinit'd. The obvious one: an unpublished project fails deep inside
-    ``uv pip install`` with "not found in the package registry". The subtle and worse one: PyPI
-    names are GLOBAL, so a workspace project can share a name with a stranger's package, and a
-    bare existence check would happily install that stranger's code into the shared venv. A
-    project's published metadata names its repository, so a release whose URLs point at the GitHub
-    owner of the project's own remote (``owner``) is the project's; a project whose remote is not on
-    GitHub (``owner`` None) cannot be matched to a release and is refused.
-
-    An unreachable index yields ``None`` (warn and continue) — never a false negative that would
-    block an offline machine.
-    """
-    status, data = pypi_json(distribution)
-    if status == "missing":
-        return False, "is not published on PyPI"
-    if status == "unreachable":
-        return None, str(data)
-
-    project: PypiProject = data
-    info: PypiInfo = project.get("info") or {}
-    if owner is None:
-        return False, (
-            f"is published on PyPI (version {info.get('version')}), but its remote is not on GitHub, so aisland "
-            "cannot tell its release from a stranger's package of the same name"
-        )
-    if not points_at_owner(info, owner):
-        return False, (
-            f"is published on PyPI (version {info.get('version')}) but its metadata does not point at "
-            f"github.com/{owner}/… — that name is owned by a different project"
-        )
-    return True, str(info.get("version") or "unknown")
-
-
-#: Seconds `git ls-remote` may take to answer whether a ref exists.
-REMOTE_TIMEOUT = 60
-
-
-def _remote_ref_exists(workspace_root: Path, project: str, ref: str) -> bool:
-    """Whether ``ref`` resolves on ``project``'s remote. Unreachable remote => ``True``.
-
-    The counterpart of :func:`_pypi_provenance` for the ``github`` kind: a ref that does not
-    exist would fail INSIDE ``uv pip install``, i.e. after the deinit had already emptied the
-    directory. An unreachable remote (offline, auth prompt) is inconclusive, not a rejection —
-    same rule as the PyPI probe: never block a machine on a check it cannot perform.
-    """
-    url = remote_url(workspace_root, project)
-    if url is None:
-        return True
-    # One call answers both questions: a non-zero exit means the remote could not be reached,
-    # while exit 0 with empty output means it answered and has no such ref.
-    # Never a password prompt (a script or the MCP server would wait on it), never longer than a minute.
-    try:
-        probe = gitcmd.git(
-            workspace_root, "ls-remote", "--heads", "--tags", "--", url, ref, network=True, timeout=REMOTE_TIMEOUT
-        )
-    except subprocess.TimeoutExpired:
-        probe = subprocess.CompletedProcess([], 1)
-    if probe.returncode != 0:
-        failures.warn(f"  - Warning: could not reach {project}'s remote to verify '{ref}'; continuing.")
-        return True
-    return bool(probe.stdout.strip())
-
-
-def _refuse_unmanageable(root: Path, project: str, kind: str) -> None:
-    """Refuse a project the workspace does not know, a kind there is none of, and a detached kind for a folder."""
-    if project not in known_projects(root):
-        raise AislandError(f"'{project}' is not a workspace project. Known: {', '.join(known_projects(root))}")
-    if kind not in SOURCE_KINDS:
-        raise AislandError(f"unknown source kind '{kind}'; expected one of {', '.join(SOURCE_KINDS)}")
-    if kind in DETACHED_KINDS and project not in {name for name, _path, _active in submodule_active_map(root)}:
-        # A folder project (no .gitmodules entry) has no submodule to deinit and none to check out again.
-        raise AislandError(
-            f"'{project}' is a folder of the workspace, not a submodule: a {kind} source empties its folder, "
-            "and nothing could check it out again. Keep it local."
-        )
-
-
-def _checked_source(
-    root: Path, project: str, kind: str, ref: Optional[str], version: Optional[str], distribution: str
-) -> ProjectSource:
-    """The source to set, checked before anything changes: a ``pypi`` release must be this workspace's project, a
-    ``github`` ref must exist on the remote — a detached source empties the folder, so a bad one would only show
-    after the checkout was gone."""
-    if kind == "pypi":
-        repository = github_repository(remote_url(root, project) or "")
-        owner = repository.owner if repository else None
-        published, detail = _pypi_provenance(distribution, owner)
-        if published is False:
-            raise AislandError(
-                f"'{distribution}' {detail}. Publish it first, or use: "
-                f"aisland workspace configure source set {project} github"
-            )
-        if published is None:
-            failures.warn(f"  - Warning: {detail}; continuing without verifying '{distribution}'.")
-        else:
-            console.echo(f"  - Verified {distribution} {detail} on PyPI (published from github.com/{owner}).")
-        return ProjectSource(kind="pypi", version=version, distribution=distribution)
-    listed = workspace_file.load(root).projects.get(project)
-    branch = ref or (listed.branch if listed else None) or DEFAULT_REF  # no --branch: the project's own
-    source = ProjectSource(kind=cast(SourceKind, kind), ref=branch, distribution=distribution)
-    if kind == "github" and not _remote_ref_exists(root, project, source.ref):
-        raise AislandError(
-            f"'{source.ref}' does not exist on {project}'s remote, so a github source "
-            f"could never install. Push the branch first, or pick an existing ref."
-        )
-    return source
-
-
-def _record_source(
-    root: Path, project: str, source: ProjectSource, committed: Dict[str, ProjectSource], machine_only: bool
-) -> Dict[str, ProjectSource]:
-    """Write ``source`` to this machine's layer, or commit it (dropping this machine's deviation); the committed
-    sources that follow."""
-    if machine_only:
-        set_local_override(root, project, source)
-        console.echo(f"==> {project}: per-machine override set to {source.spec()} (nothing committed).")
-        return committed
-    set_local_override(root, project, None)
-    committed = {**committed, project: source}
-    path = write_committed_sources(root, committed)
-    console.echo(f"==> {project}: committed source set to {source.spec()} in {path.name}")
-    return committed
-
-
-def set_project_source(
-    project: str,
-    kind: str,
-    ref: Optional[str] = None,
-    version: Optional[str] = None,
-    machine_only: bool = False,
-    workspace_root: Optional[Path] = None,
-) -> int:
-    """Record and apply a project's source. Returns a process exit code (0 = success).
-
-    Order matters: validate first, then write configuration, then apply to the checkout + venv,
-    then rewrite this machine's workspace file, whose folder list follows the checkouts.
-    No CI file is touched: CI installs what is RELEASED, never what this machine checked out
-    (see :func:`released_on_pypi`).
-    A failed apply ROLLS THE CONFIGURATION BACK — a registry claiming a state the working tree
-    does not have is worse than no change at all (and `aisland setup` would keep retrying it). So
-    does an apply that raises or is interrupted (Ctrl-C); the exception then goes on as it was.
-    """
-    root = workspace_root or get_workspace_root()
-    _refuse_unmanageable(root, project, kind)
-    venv_bin = root / ".venv" / "bin"
-    if not venv_bin.exists():
-        raise no_venv(root)
-
-    original = read_committed_sources(root)
-    previous_override = local_override(root, project)
-    previous = original.get(project)
-    distribution = (
-        discover_distribution(project_path(root, project)) or (previous.distribution if previous else None) or project
-    )
-    source = _checked_source(root, project, kind, ref, version, distribution)
-
-    file = root / workspace_file.FILE_NAME
-    before = file.read_text() if file.is_file() else None
-
-    def roll_back() -> None:
-        set_local_override(root, project, previous_override)
-        if not machine_only:
-            # The file as it was, byte for byte: a branch the set wrote goes too, and a workspace that had no
-            # file keeps none.
-            if before is None:
-                file.unlink(missing_ok=True)
-            else:
-                file.write_text(before)
-
-    try:
-        committed = _record_source(root, project, source, original, machine_only)
-        uv_cmd = ensure_uv_in_venv(venv_bin)
-        applied = apply_source(root, project, effective_source(root, project, committed) or source, uv_cmd)
-    except BaseException:
-        roll_back()
-        raise
-    if not applied:
-        roll_back()
-        raise AislandError(f"{project}: source change reverted; configuration is unchanged")
-
-    # The workspace file is per machine and gitignored, so a --machine-only change rewrites it too.
-    write_code_workspace(root)
-    return 0
-
-
-def unset_project_source(
-    project: str,
-    machine_only: bool = False,
-    workspace_root: Optional[Path] = None,
-) -> int:
-    """Return a project to *unmanaged*. Returns a process exit code (0 = success).
-
-    Deliberately does NOT touch the checkout or the venv: "unmanaged" means aisland holds no
-    opinion, not that the current state is wrong. Dropping a ``pypi`` entry therefore leaves the
-    directory empty until the next ``aisland setup`` (whose ``.gitmodules``-driven
-    :func:`aisland.workspace.activation.reconcile` re-inits it) — set an explicit ``git`` source
-    instead if you want the checkout back now.
-    """
-
-    root = workspace_root or get_workspace_root()
-    committed = read_committed_sources(root)
-
-    if machine_only:
-        if local_override(root, project) is None:
-            console.echo(f"'{project}' has no per-machine override; nothing to clear.")
-            return 0
-        set_local_override(root, project, None)
-        console.echo(f"==> {project}: per-machine override cleared (committed source still applies).")
-        return 0
-
-    if project not in committed and local_override(root, project) is None:
-        console.echo(f"'{project}' is already unmanaged.")
-        return 0
-
-    set_local_override(root, project, None)
-    committed.pop(project, None)
-    path = write_committed_sources(root, committed)
-    console.echo(f"==> {project}: removed from {path.name} — now unmanaged.")
-
-    write_code_workspace(root)
-    return 0
-
-
-def apply_configured(project: Optional[str] = None, workspace_root: Optional[Path] = None) -> int:
-    """Re-apply configured source(s) without changing configuration. Returns an exit code."""
-
-    root = workspace_root or get_workspace_root()
-    venv_bin = root / ".venv" / "bin"
-    if not venv_bin.exists():
-        raise no_venv(root)
-    uv_cmd = ensure_uv_in_venv(venv_bin)
-
-    if project is None:
-        apply_all(root, uv_cmd)
-        write_code_workspace(root)
-        return 0
-
-    source = effective_source(root, project)
-    if source is None:
-        console.echo(f"'{project}' has no configured source — it is unmanaged. Nothing to apply.")
-        return 0
-    applied = apply_source(root, project, source, uv_cmd)
-    write_code_workspace(root)
-    return 0 if applied else 1
-
-
 def describe(workspace_root: Optional[Path] = None) -> List[Dict[str, str]]:
     """One row per managed project for ``aisland workspace configure source``."""
     root = workspace_root or get_workspace_root()
     committed = read_committed_sources(root)
     rows: List[Dict[str, str]] = []
-    for project in sorted(set(committed) | set(_overridden_projects(root))):
+    for project in sorted(set(committed) | set(overridden_projects(root))):
         override = local_override(root, project)
         effective = effective_source(root, project, committed)
         rows.append(

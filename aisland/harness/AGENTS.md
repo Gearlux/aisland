@@ -1,5 +1,5 @@
 <!-- Shipped by aisland (aisland/harness/AGENTS.md), installed into .agents/aisland/AGENTS.md by `aisland setup`
-     (aisland/harness.py) when the workspace's [harness] sets include "aisland". .agents/rules.md imports it, and a
+     (aisland/setup/harness.py) when the workspace's [harness] sets include "aisland". .agents/rules.md imports it, and a
      workspace's AGENTS.md imports that with its first line, @.agents/rules.md.
      Change a rule here, in aisland — never in the installed file. -->
 

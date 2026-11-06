@@ -23,9 +23,9 @@ from mcp.client.stdio import StdioServerParameters, stdio_client
 from mcp.server.lowlevel.server import NotificationOptions
 from mcp.server.mcpserver.exceptions import ToolError
 
-from aisland import cli, console, doctor, editor, failures, locations, server, supervisor
+from aisland import cli, console, doctor, editor, failures, locations, server
 from aisland.ci import stats_report
-from aisland.services import docker, registry, swiftbar
+from aisland.services import docker, registry, supervisor, swiftbar
 from aisland.services.base import ServiceState, service_state
 from aisland.setup import editor_files, mcp_config
 from aisland.tunnel import store as tunnel_store

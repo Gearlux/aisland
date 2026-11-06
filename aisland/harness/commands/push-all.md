@@ -3,7 +3,7 @@ description: Publish the whole workspace — /pull-all first (so no push is reje
 model: sonnet
 allowed-tools: [Bash(git pull-all:*), Bash(aisland workspace mirror sync:*), Bash(git push:*), Bash(git status:*), Bash(git diff:*), Bash(git log:*), Bash(git show:*), Bash(git add:*), Bash(git commit:*), Bash(git reset:*), Bash(git stash:*), Bash(git rev-parse:*), Bash(git rev-list:*), Bash(git merge-base:*), Bash(git -C * push:*), Bash(git -C * status:*), Bash(git -C * diff:*), Bash(git -C * log:*), Bash(git -C * show:*), Bash(git -C * add:*), Bash(git -C * commit:*), Bash(git -C * reset:*), Bash(git -C * stash:*), Bash(git -C * rev-parse:*), Bash(git -C * rev-list:*), Bash(git -C * merge-base:*), Bash(git -C * branch:*), Bash(cd:*), Bash(source:*), Bash(isort:*), Bash(black:*), Bash(flake8:*), Bash(mypy:*), Bash(pytest:*)]
 ---
-<!-- Shipped by aisland (aisland/harness/commands/push-all.md), installed into .agents/workflows/ by `aisland setup` (aisland/harness.py). Change it in aisland; the rules it cites are aisland's (.agents/aisland/AGENTS.md). -->
+<!-- Shipped by aisland (aisland/harness/commands/push-all.md), installed into .agents/workflows/ by `aisland setup` (aisland/setup/harness.py). Change it in aisland; the rules it cites are aisland's (.agents/aisland/AGENTS.md). -->
 
 # Workflow: Push All (pull, publish)
 

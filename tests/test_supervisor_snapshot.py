@@ -16,8 +16,7 @@ from typing import Any, Callable, List
 
 import pytest
 
-from aisland import supervisor
-from aisland.services import registry
+from aisland.services import registry, supervisor
 
 PROCESSES = [{"name": "jenkins", "status": "Running", "is_running": True, "pid": 7}, {"name": "mlflow"}]
 

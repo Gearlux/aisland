@@ -1,5 +1,5 @@
 # Shipped by aisland (aisland/harness/scripts/stage_hunks.py), installed into .agents/scripts/ by `aisland setup`
-# (aisland/harness.py). Change it in aisland; `aisland setup` installs it again.
+# (aisland/setup/harness.py). Change it in aisland; `aisland setup` installs it again.
 """Stage only some of a file's hunks, each exactly where it was written — the step /commit-session uses when another
 session has changed the same file.
 

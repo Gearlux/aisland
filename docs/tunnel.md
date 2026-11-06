@@ -35,6 +35,9 @@ aisland tunnel logs -n 50
 aisland tunnel stop
 ```
 
+The first start downloads the VS Code CLI once for this machine and installs it only when its SHA-256 is the one
+the VS Code update service lists for that build; an archive given with `--cli` is yours to have checked.
+
 The first start signs in — a code to enter in a browser — and keeps the account, so later starts need
 no interaction; `aisland tunnel login --provider microsoft` picks the other account. The sign-in
 happens before the tunnel is spawned, because `code tunnel` takes no account options and asks

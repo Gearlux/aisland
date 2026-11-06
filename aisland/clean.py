@@ -39,7 +39,7 @@ from typing import Iterator, List, Optional, Tuple
 
 import click
 
-from aisland import console, gitcmd
+from aisland import atomic, console, gitcmd
 from aisland.backups import (
     DEFAULT_KEEP_DAYS,
     MANIFEST_NAME,
@@ -280,4 +280,4 @@ def _write_manifest(
         "failed": [{"path": entry.rel, "error": error} for entry, error in failed],
     }
     destination.mkdir(parents=True, exist_ok=True)
-    (destination / MANIFEST_NAME).write_text(json.dumps(manifest, indent=2) + "\n")
+    atomic.write_text((destination / MANIFEST_NAME), json.dumps(manifest, indent=2) + "\n")

@@ -16,7 +16,7 @@ import pytest
 from click.testing import CliRunner, Result
 
 from aisland import cli, locations
-from aisland.workspace import configure
+from aisland.setup import configure, source_commands
 from aisland.workspace import sources as s
 
 
@@ -169,7 +169,7 @@ def test_configure_source_set_sets_and_applies_the_source(
         seen.append(kwargs)
         return 0
 
-    monkeypatch.setattr(s, "set_project_source", set_project_source)
+    monkeypatch.setattr(source_commands, "set_project_source", set_project_source)
     result = _run("source", "set", *args)
     assert result.exit_code == 0, result.output
     assert seen == [{**called, "workspace_root": root}]
@@ -182,7 +182,7 @@ def test_configure_source_unset(root: Path, monkeypatch: pytest.MonkeyPatch) -> 
         seen.append(kwargs)
         return 0
 
-    monkeypatch.setattr(s, "unset_project_source", unset_project_source)
+    monkeypatch.setattr(source_commands, "unset_project_source", unset_project_source)
     assert _run("source", "unset", "loggair", "--machine-only").exit_code == 0
     assert seen == [{"project": "loggair", "machine_only": True, "workspace_root": root}]
 

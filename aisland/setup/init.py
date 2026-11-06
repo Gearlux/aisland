@@ -37,11 +37,11 @@ import click
 
 from aisland import atomic, console, gitcmd, locations
 from aisland.errors import AislandError
-from aisland.harness import install_harness
-from aisland.harness import sets as harness_sets
-from aisland.harness import summary as harness_summary
 from aisland.setup import env_example
 from aisland.setup.git_settings import install_git_aliases
+from aisland.setup.harness import install_harness
+from aisland.setup.harness import sets as harness_sets
+from aisland.setup.harness import summary as harness_summary
 from aisland.workspace import file as workspace_file
 from aisland.workspace import local as local_workspace
 from aisland.workspace import tracking
@@ -56,7 +56,7 @@ VSCODE_INIT_BASH = locations.PACKAGE_DIR / "templates" / "vscode-init-bash.sh"
 
 _HEADER = """\
 # =========================================================================
-# Written by: aisland workspace init (aisland/aisland/workspace/init.py)
+# Written by: aisland workspace init (aisland/aisland/setup/init.py)
 # A starting point that is yours to edit. Written over only on request: aisland workspace init . --rewrite <file>
 # =========================================================================
 """

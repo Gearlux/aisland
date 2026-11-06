@@ -22,7 +22,7 @@ from typing import Dict
 import pytest
 from click.testing import CliRunner
 
-from aisland import cli, locations
+from aisland import cli, locations, plugins
 from aisland.workspace import discovery
 
 MATRAINER = """\
@@ -302,9 +302,9 @@ def test_a_plugin_written_for_the_contract_this_aisland_serves_loads(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     root = _workspace(tmp_path, {"acme": PLUGIN_PROJECT})
-    _install(tmp_path, monkeypatch, _with_api(str(discovery.PLUGIN_API)))
+    _install(tmp_path, monkeypatch, _with_api(str(plugins.PLUGIN_API)))
     loaded = discovery.load(discovery.discover(root))["acme-db"]
-    assert (loaded.state, loaded.kind, loaded.obj.aisland_api) == ("installed", "service", discovery.PLUGIN_API)
+    assert (loaded.state, loaded.kind, loaded.obj.aisland_api) == ("installed", "service", plugins.PLUGIN_API)
 
 
 def test_a_plugin_written_for_a_newer_contract_is_refused_naming_the_upgrade(
@@ -312,13 +312,13 @@ def test_a_plugin_written_for_a_newer_contract_is_refused_naming_the_upgrade(
 ) -> None:
     """Refused before its kind is read: a plugin for a newer aisland may be of a kind this one does not know."""
     root = _workspace(tmp_path, {"acme": PLUGIN_PROJECT})
-    newer = discovery.PLUGIN_API + 1
+    newer = plugins.PLUGIN_API + 1
     _install(tmp_path, monkeypatch, _with_api(str(newer)).replace('kind = "service"', 'kind = "widget"'))
     with pytest.raises(discovery.DeclarationError) as refused:
         discovery.load(discovery.discover(root))
     assert refused.value.message == (
         f"{root / 'acme' / 'pyproject.toml'}:6: plugin 'acme-db' (acme_plugin:Database) of project acme asks for "
-        f"aisland_api {newer}, written for a newer aisland; this one serves aisland_api {discovery.PLUGIN_API}. "
+        f"aisland_api {newer}, written for a newer aisland; this one serves aisland_api {plugins.PLUGIN_API}. "
         "Upgrade it: pip install --upgrade aisland"
     )
 
@@ -333,7 +333,7 @@ def test_a_contract_version_that_is_no_whole_number_is_refused_saying_its_shape(
         discovery.load(discovery.discover(root))
     assert refused.value.message == (
         f"{root / 'acme' / 'pyproject.toml'}:6: plugin 'acme-db' (acme_plugin:Database): aisland_api must be a "
-        f"whole number, as aisland_api = {discovery.PLUGIN_API}"
+        f"whole number, as aisland_api = {plugins.PLUGIN_API}"
     )
 
 

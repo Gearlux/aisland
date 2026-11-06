@@ -3,7 +3,7 @@ description: Commit all uncommitted code across the root repository and all subm
 model: sonnet
 allowed-tools: [Bash(git add:*), Bash(git commit:*), Bash(git status:*), Bash(git diff:*), Bash(git log:*), Bash(git branch:*), Bash(git -C * branch:*), Bash(git -C * add:*), Bash(git -C * commit:*), Bash(git -C * status:*), Bash(git -C * diff:*), Bash(git -C * log:*), Bash(git -C * config:*), Bash(cd:*), Bash(for *), Bash(while *), Bash(if *), Bash(python3:*), Bash(python:*), Bash(aisland:*)]
 ---
-<!-- Shipped by aisland (aisland/harness/commands/commit-all.md), installed into .agents/workflows/ by `aisland setup` (aisland/harness.py). Change it in aisland; the rules it cites are aisland's (.agents/aisland/AGENTS.md). -->
+<!-- Shipped by aisland (aisland/harness/commands/commit-all.md), installed into .agents/workflows/ by `aisland setup` (aisland/setup/harness.py). Change it in aisland; the rules it cites are aisland's (.agents/aisland/AGENTS.md). -->
 
 # Workflow: Commit All (Recursive Submodule Commit)
 

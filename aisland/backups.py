@@ -24,7 +24,7 @@ from typing import Any, Dict, List, Mapping, Optional, Sequence, Set, Tuple
 
 import click
 
-from aisland import console, gitcmd, paths
+from aisland import atomic, console, gitcmd, paths
 from aisland.errors import AislandError
 from aisland.workspace.projects import get_workspace_root
 from aisland.workspace.sources import known_projects, project_path
@@ -387,7 +387,7 @@ def _forget_restored(backup: Backup, restored: Set[str]) -> None:
     manifest["entries"] = kept
     manifest["bytes"] = sum(_as_int(entry.get("bytes")) for entry in kept)
     manifest["files"] = sum(_as_int(entry.get("files")) for entry in kept)
-    (backup.path / MANIFEST_NAME).write_text(json.dumps(manifest, indent=2) + "\n")
+    atomic.write_text((backup.path / MANIFEST_NAME), json.dumps(manifest, indent=2) + "\n")
 
 
 @dataclass(frozen=True)

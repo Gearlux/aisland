@@ -20,7 +20,8 @@ import pytest
 
 from aisland.errors import AislandError
 from aisland.setup import editor_files
-from aisland.workspace import projects
+from aisland.setup import source_commands as sc
+from aisland.workspace import projects, source_apply
 from aisland.workspace import sources as s
 
 
@@ -260,14 +261,13 @@ def test_an_unchanged_file_is_not_rewritten(workspace: Path) -> None:
 @pytest.fixture
 def written(monkeypatch: pytest.MonkeyPatch) -> List[Path]:
     calls: List[Path] = []
-    monkeypatch.setattr(s, "write_code_workspace", lambda root: calls.append(root))
-    monkeypatch.setattr(s, "ensure_uv_in_venv", lambda venv_bin: "uv")
+    monkeypatch.setattr(sc, "write_code_workspace", lambda root: calls.append(root))
+    monkeypatch.setattr(sc, "ensure_uv_in_venv", lambda venv_bin: "uv")
     monkeypatch.setattr(s, "project_path", lambda root, project: root / project)
     monkeypatch.setattr(s, "known_projects", lambda root: ["loggair"])
     monkeypatch.setattr(s, "local_override", lambda root, project: None)
     monkeypatch.setattr(s, "set_local_override", lambda *a, **k: None)
-    monkeypatch.setattr(s, "apply_source", lambda *a, **k: True)
-    monkeypatch.setattr(s, "apply_all", lambda *a, **k: None)
+    monkeypatch.setattr(source_apply, "apply_source", lambda *a, **k: True)
     return calls
 
 
@@ -279,34 +279,27 @@ def venv_root(tmp_path: Path) -> Path:
 
 def test_a_machine_only_source_change_rewrites_the_file(venv_root: Path, written: List[Path]) -> None:
     """It used to print `Skipped editor regeneration`, because the file was tracked."""
-    assert s.set_project_source("loggair", "local", machine_only=True, workspace_root=venv_root) == 0
+    assert sc.set_project_source("loggair", "local", machine_only=True, workspace_root=venv_root) == 0
     assert written == [venv_root]
 
 
 def test_a_committed_source_change_rewrites_the_file(venv_root: Path, written: List[Path]) -> None:
-    assert s.set_project_source("loggair", "local", workspace_root=venv_root) == 0
+    assert sc.set_project_source("loggair", "local", workspace_root=venv_root) == 0
     assert written == [venv_root]
 
 
 def test_a_failed_source_change_rewrites_nothing(
     venv_root: Path, written: List[Path], monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    monkeypatch.setattr(s, "apply_source", lambda *a, **k: False)
+    monkeypatch.setattr(source_apply, "apply_source", lambda *a, **k: False)
     with pytest.raises(AislandError, match="source change reverted"):
-        s.set_project_source("loggair", "local", workspace_root=venv_root)
+        sc.set_project_source("loggair", "local", workspace_root=venv_root)
     assert written == []
 
 
 def test_unset_rewrites_the_file(venv_root: Path, written: List[Path]) -> None:
     s.write_committed_sources(venv_root, {"loggair": s.ProjectSource(kind="pypi")})
-    assert s.unset_project_source("loggair", workspace_root=venv_root) == 0
-    assert written == [venv_root]
-
-
-@pytest.mark.parametrize("project", [None, "loggair"])
-def test_apply_rewrites_the_file(venv_root: Path, written: List[Path], project: Optional[str]) -> None:
-    s.write_committed_sources(venv_root, {"loggair": s.ProjectSource(kind="local", ref="dev/main")})
-    assert s.apply_configured(project, workspace_root=venv_root) == 0
+    assert sc.unset_project_source("loggair", workspace_root=venv_root) == 0
     assert written == [venv_root]
 
 

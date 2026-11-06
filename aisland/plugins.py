@@ -31,6 +31,13 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Dict, List, Mapping, NoReturn, Optional, Protocol, Sequence
 
+#: The version of the contract this aisland serves. A plugin declares the one it is written for as
+#: ``aisland_api = <whole number>``, 1 when absent: an older or equal one loads, a newer one is refused naming the
+#: upgrade. It rises only when a release changes what a plugin gets or must have, with the protocols below.
+PLUGIN_API = 1
+#: The class attribute a plugin declares its version in.
+PLUGIN_API_ATTRIBUTE = "aisland_api"
+
 
 class ServiceContext(Protocol):
     """What aisland hands a service plugin's methods (``start(ctx)``, and ``stop``, ``status``, ``info``, ``reset``

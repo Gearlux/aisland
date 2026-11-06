@@ -20,7 +20,10 @@ from __future__ import annotations
 
 import io
 import json
+import os
 import signal
+import subprocess
+import sys
 import tarfile
 from pathlib import Path
 from subprocess import CompletedProcess
@@ -296,20 +299,69 @@ def test_installing_from_an_archive_never_reaches_the_network(state: Path, tmp_p
     assert installed.stat().st_mode & 0o111
 
 
+_ARCHIVE_URL = "https://download.example/vscode_cli.tar.gz"
+
+
+def _serve(archive: Path, fetched: List[str], digest: Optional[str] = None, release: Optional[str] = None) -> Any:
+    """A stand-in for ``downloads.download``: the update service's document for the release url, else the archive."""
+
+    def fetch(url: str, target: Path, timeout: float = downloads.TIMEOUT) -> None:
+        fetched.append(url)
+        if url.startswith("https://update.code.visualstudio.com/"):
+            listed = digest if digest is not None else downloads.sha256(archive)
+            target.write_text(
+                release if release is not None else json.dumps({"url": _ARCHIVE_URL, "sha256hash": listed})
+            )
+        else:
+            target.write_bytes(archive.read_bytes())
+
+    return fetch
+
+
 def test_the_cli_is_fetched_through_the_shared_download_and_installed(state: Path, tmp_path: Path) -> None:
     archive = _cli_archive(tmp_path)
     fetched: List[str] = []
 
-    def fetch(url: str, target: Path, timeout: float = downloads.TIMEOUT) -> None:
-        fetched.append(url)
-        target.write_bytes(archive.read_bytes())
-
-    with patch.object(downloads, "download", fetch):
+    with patch.object(downloads, "download", _serve(archive, fetched)):
         installed = tunnel_binary.install_cli()
 
-    assert fetched == [tunnel_binary.CLI_DOWNLOAD_URL.format(asset=tunnel_binary.cli_asset())]
+    assert fetched == [tunnel_binary.CLI_RELEASE_URL.format(asset=tunnel_binary.cli_asset()), _ARCHIVE_URL]
     assert installed == state / "code"
     assert installed.stat().st_mode & 0o111
+
+
+def test_a_cli_whose_digest_differs_from_the_listed_one_is_refused_and_never_installed(
+    state: Path, tmp_path: Path
+) -> None:
+    archive = _cli_archive(tmp_path)
+
+    with patch.object(downloads, "download", _serve(archive, [], digest="0" * 64)):
+        with pytest.raises(AislandError, match=f"has SHA-256 {downloads.sha256(archive)}, not the 0{{64}}"):
+            tunnel_binary.install_cli()
+
+    assert not (state / "code").exists()
+
+
+@pytest.mark.parametrize(
+    "release",
+    [
+        "not json",
+        json.dumps({"url": _ARCHIVE_URL}),
+        json.dumps({"url": "http://plain.example/x", "sha256hash": "a" * 64}),
+    ],
+)
+def test_an_archive_the_update_service_gives_no_digest_or_https_url_for_is_never_fetched(
+    state: Path, tmp_path: Path, release: str
+) -> None:
+    archive = _cli_archive(tmp_path)
+    fetched: List[str] = []
+
+    with patch.object(downloads, "download", _serve(archive, fetched, release=release)):
+        with pytest.raises(AislandError, match="VS Code update service"):
+            tunnel_binary.install_cli()
+
+    assert _ARCHIVE_URL not in fetched
+    assert not (state / "code").exists()
 
 
 def test_a_cli_download_that_fails_names_the_url_and_the_way_around_it(state: Path) -> None:
@@ -453,3 +505,51 @@ def test_the_relay_probe_counts_any_http_answer_as_reachable() -> None:
         ok, detail = tunnel.relay_reachable()
     assert ok is False
     assert "unreachable" in detail
+
+
+def test_a_tunnel_another_start_spawned_meanwhile_is_never_spawned_twice(state: Path) -> None:
+    """The check before the sign-in finds none; by the time this start holds the lock, another one has spawned it."""
+    popen = _spawn()
+    answers = iter([False, True])
+    with (
+        patch.object(tunnel_binary, "install_cli", return_value=state / "code"),
+        patch.object(tunnel.subprocess, "Popen", popen),
+        patch.object(tunnel, "running", lambda: next(answers)),
+        patch.object(tunnel, "signed_in", return_value="user@example.invalid"),
+    ):
+        payload = tunnel.start(timeout=0)
+
+    assert popen.calls == []
+    assert payload["already_running"] is True
+
+
+def test_two_starts_at_once_spawn_one_tunnel(state: Path, tmp_path: Path) -> None:
+    """Two processes run `start` together against a CLI that takes a moment to come up: one tunnel, one pidfile."""
+    cli = tmp_path / "code"
+    cli.write_text("#!/bin/sh\nsleep 5\n")
+    cli.chmod(0o755)
+    script = (
+        "import sys, time; from pathlib import Path; from unittest.mock import patch\n"
+        "from aisland.tunnel import binary, host\n"
+        "spawn = host.subprocess.Popen\n"
+        "def slow(*args, **kwargs):\n"  # the window between the check and the pidfile, wide enough to land in
+        "    time.sleep(0.5)\n"
+        "    return spawn(*args, **kwargs)\n"
+        "with patch.object(host.subprocess, 'Popen', slow), "
+        "patch.object(binary, 'install_cli', return_value=Path(sys.argv[1])), "
+        "patch.object(host, 'signed_in', return_value='user@example.invalid'), "
+        "patch.object(host, '_is_tunnel', lambda pid: True):\n"
+        "    print(host.start(timeout=0).get('already_running', False))\n"
+    )
+    environment = {**os.environ, tunnel_state.TUNNEL_HOME_ENV: str(state)}
+    runs = [
+        subprocess.Popen([sys.executable, "-c", script, str(cli)], env=environment, stdout=subprocess.PIPE, text=True)
+        for _ in range(2)
+    ]
+    answers = sorted(run.communicate(timeout=60)[0].strip() for run in runs)
+    try:
+        assert answers == ["False", "True"]
+    finally:
+        pid = tunnel.read_pid()
+        if pid:
+            os.kill(pid, signal.SIGKILL)

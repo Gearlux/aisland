@@ -3,7 +3,7 @@ description: Pull the whole workspace — every submodule, then the root — and
 model: sonnet
 allowed-tools: [Bash(git pull-all:*), Bash(git status:*), Bash(git diff:*), Bash(git log:*), Bash(git show:*), Bash(git add:*), Bash(git commit:*), Bash(git reset:*), Bash(git stash:*), Bash(git rev-parse:*), Bash(git -C * status:*), Bash(git -C * diff:*), Bash(git -C * log:*), Bash(git -C * show:*), Bash(git -C * add:*), Bash(git -C * commit:*), Bash(git -C * reset:*), Bash(git -C * stash:*), Bash(git -C * rev-parse:*), Bash(cd:*), Bash(source:*), Bash(isort:*), Bash(black:*), Bash(flake8:*), Bash(mypy:*), Bash(pytest:*)]
 ---
-<!-- Shipped by aisland (aisland/harness/commands/pull-all.md), installed into .agents/workflows/ by `aisland setup` (aisland/harness.py). Change it in aisland; the rules it cites are aisland's (.agents/aisland/AGENTS.md). -->
+<!-- Shipped by aisland (aisland/harness/commands/pull-all.md), installed into .agents/workflows/ by `aisland setup` (aisland/setup/harness.py). Change it in aisland; the rules it cites are aisland's (.agents/aisland/AGENTS.md). -->
 
 # Workflow: Pull All (merge everything that came in)
 

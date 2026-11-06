@@ -1,4 +1,4 @@
-"""Tests for :mod:`aisland.supervisor` — the process-compose backend.
+"""Tests for :mod:`aisland.services.supervisor` — the process-compose backend.
 
 The supervisor's contract has two halves:
 
@@ -25,7 +25,8 @@ import click
 import pytest
 import yaml
 
-from aisland import paths, supervisor
+from aisland import paths
+from aisland.services import supervisor
 
 
 @pytest.fixture(autouse=True)
@@ -121,8 +122,8 @@ def test_load_config_recovers_from_corrupt_yaml(isolated_config: Path) -> None:
 def test_apply_updates_running_server(isolated_config: Path) -> None:
     supervisor.register_process("svc", ["sleep", "60"], enabled=True)
     with (
-        patch("aisland.supervisor.is_server_running", return_value=True),
-        patch("aisland.supervisor._run_client", return_value=_completed()) as run_mock,
+        patch("aisland.services.supervisor.is_server_running", return_value=True),
+        patch("aisland.services.supervisor._run_client", return_value=_completed()) as run_mock,
         patch("aisland.envfile.read", return_value={}),
     ):
         supervisor.apply()
@@ -139,8 +140,8 @@ def test_apply_expands_refs_from_workspace_env(isolated_config: Path) -> None:
 
     supervisor.register_process("svc", ["sleep", "60"], enabled=True)
     with (
-        patch("aisland.supervisor.is_server_running", return_value=True),
-        patch("aisland.supervisor._run_client", return_value=_completed()) as run_mock,
+        patch("aisland.services.supervisor.is_server_running", return_value=True),
+        patch("aisland.services.supervisor._run_client", return_value=_completed()) as run_mock,
         patch("aisland.envfile.read", return_value={"LABELSTUDIO_TOKEN": "tok-from-dotenv"}),
         patch.dict(os.environ, {"LABELSTUDIO_TOKEN": "stale-shell-value"}),
     ):
@@ -153,8 +154,8 @@ def test_apply_expands_refs_from_workspace_env(isolated_config: Path) -> None:
 def test_apply_raises_on_failed_update(isolated_config: Path) -> None:
     supervisor.register_process("svc", ["sleep", "60"], enabled=True)
     with (
-        patch("aisland.supervisor.is_server_running", return_value=True),
-        patch("aisland.supervisor._run_client", return_value=_completed(returncode=1, stderr="boom")),
+        patch("aisland.services.supervisor.is_server_running", return_value=True),
+        patch("aisland.services.supervisor._run_client", return_value=_completed(returncode=1, stderr="boom")),
     ):
         with pytest.raises(click.ClickException, match="boom"):
             supervisor.apply()
@@ -163,8 +164,8 @@ def test_apply_raises_on_failed_update(isolated_config: Path) -> None:
 def test_apply_starts_server_when_something_is_enabled(isolated_config: Path) -> None:
     supervisor.register_process("svc", ["sleep", "60"], enabled=True)
     with (
-        patch("aisland.supervisor.is_server_running", return_value=False),
-        patch("aisland.supervisor._start_server") as start_mock,
+        patch("aisland.services.supervisor.is_server_running", return_value=False),
+        patch("aisland.services.supervisor._start_server") as start_mock,
     ):
         supervisor.apply()
     start_mock.assert_called_once()
@@ -174,8 +175,8 @@ def test_apply_skips_server_start_when_all_disabled(isolated_config: Path) -> No
     """An all-disabled document needs no supervisor process at all."""
     supervisor.register_process("svc", ["sleep", "60"], enabled=False)
     with (
-        patch("aisland.supervisor.is_server_running", return_value=False),
-        patch("aisland.supervisor._start_server") as start_mock,
+        patch("aisland.services.supervisor.is_server_running", return_value=False),
+        patch("aisland.services.supervisor._start_server") as start_mock,
     ):
         supervisor.apply()
     start_mock.assert_not_called()
@@ -184,9 +185,9 @@ def test_apply_skips_server_start_when_all_disabled(isolated_config: Path) -> No
 def test_start_server_command_shape(isolated_config: Path) -> None:
     """The server must run detached, keep-project, against our config/socket."""
     with (
-        patch("aisland.supervisor.ensure_binary", return_value="/usr/bin/process-compose"),
-        patch("aisland.supervisor._preflight_full_disk_access") as preflight_mock,
-        patch("aisland.supervisor.subprocess.run", return_value=_completed()) as run_mock,
+        patch("aisland.services.supervisor.ensure_binary", return_value="/usr/bin/process-compose"),
+        patch("aisland.services.supervisor._preflight_full_disk_access") as preflight_mock,
+        patch("aisland.services.supervisor.subprocess.run", return_value=_completed()) as run_mock,
     ):
         supervisor._start_server()
     preflight_mock.assert_called_once()
@@ -206,8 +207,8 @@ def test_start_server_command_shape(isolated_config: Path) -> None:
 def test_list_processes_parses_json(isolated_config: Path) -> None:
     payload = '[{"name": "mlflow", "status": "Running", "is_running": true, "pid": 42}]'
     with (
-        patch("aisland.supervisor._client_reachable", return_value=True),
-        patch("aisland.supervisor._run_client", return_value=_completed(stdout=payload)),
+        patch("aisland.services.supervisor._client_reachable", return_value=True),
+        patch("aisland.services.supervisor._run_client", return_value=_completed(stdout=payload)),
     ):
         processes = supervisor.list_processes()
     assert processes["mlflow"]["pid"] == 42
@@ -215,7 +216,7 @@ def test_list_processes_parses_json(isolated_config: Path) -> None:
 
 
 def test_get_process_returns_none_without_server(isolated_config: Path) -> None:
-    with patch("aisland.supervisor._client_reachable", return_value=False):
+    with patch("aisland.services.supervisor._client_reachable", return_value=False):
         assert supervisor.get_process("mlflow") is None
         assert supervisor.list_processes() == {}
         assert supervisor.get_ports("mlflow") == []
@@ -226,30 +227,30 @@ def test_get_ports_parses_cli_output(isolated_config: Path) -> None:
     # Repeated entries (one per worker socket) must dedupe.
     out = "Process mlflow TCP ports: [5005 9080 5005]\n"
     with (
-        patch("aisland.supervisor._client_reachable", return_value=True),
-        patch("aisland.supervisor._run_client", return_value=_completed(stdout=out)),
+        patch("aisland.services.supervisor._client_reachable", return_value=True),
+        patch("aisland.services.supervisor._run_client", return_value=_completed(stdout=out)),
     ):
         assert supervisor.get_ports("mlflow") == [5005, 9080]
 
 
 def test_get_ports_handles_unexpected_output(isolated_config: Path) -> None:
     with (
-        patch("aisland.supervisor._client_reachable", return_value=True),
-        patch("aisland.supervisor._run_client", return_value=_completed(stdout="no ports here")),
+        patch("aisland.services.supervisor._client_reachable", return_value=True),
+        patch("aisland.services.supervisor._run_client", return_value=_completed(stdout="no ports here")),
     ):
         assert supervisor.get_ports("mlflow") == []
 
 
 def test_wait_for_returns_when_state_matches(isolated_config: Path) -> None:
     states: Dict[str, Any] = {"name": "svc", "is_running": True}
-    with patch("aisland.supervisor.get_process", return_value=states):
+    with patch("aisland.services.supervisor.get_process", return_value=states):
         result = supervisor.wait_for("svc", running=True, timeout=2)
     assert result is states
 
 
 def test_wait_for_outcome_ready(isolated_config: Path) -> None:
     state = {"is_ready": "Ready", "is_running": True, "has_ready_probe": True}
-    with patch("aisland.supervisor.get_process", return_value=state):
+    with patch("aisland.services.supervisor.get_process", return_value=state):
         outcome, result = supervisor.wait_for_outcome("svc", timeout=2)
     assert outcome == "ready"
     assert result is state
@@ -263,7 +264,7 @@ def test_wait_for_outcome_failed_when_supervisor_gave_up(isolated_config: Path) 
     is_running poll reported success while the service was dying.
     """
     state = {"is_ready": "-", "is_running": False, "status": "Completed", "exit_code": 1, "restarts": 3}
-    with patch("aisland.supervisor.get_process", return_value=state):
+    with patch("aisland.services.supervisor.get_process", return_value=state):
         outcome, result = supervisor.wait_for_outcome("svc", timeout=2)
     assert outcome == "failed"
     assert result is state
@@ -271,14 +272,14 @@ def test_wait_for_outcome_failed_when_supervisor_gave_up(isolated_config: Path) 
 
 def test_wait_for_outcome_running_without_probe(isolated_config: Path) -> None:
     state = {"is_ready": "-", "is_running": True, "has_ready_probe": False, "status": "Running"}
-    with patch("aisland.supervisor.get_process", return_value=state):
+    with patch("aisland.services.supervisor.get_process", return_value=state):
         outcome, _result = supervisor.wait_for_outcome("svc", timeout=5)
     assert outcome == "running"
 
 
 def test_wait_for_outcome_pending_on_slow_readiness(isolated_config: Path) -> None:
     state = {"is_ready": "Not Ready", "is_running": True, "has_ready_probe": True, "status": "Running"}
-    with patch("aisland.supervisor.get_process", return_value=state):
+    with patch("aisland.services.supervisor.get_process", return_value=state):
         outcome, _result = supervisor.wait_for_outcome("svc", timeout=1)
     assert outcome == "pending"
 
@@ -316,7 +317,7 @@ def test_get_registered_port(isolated_config: Path) -> None:
 
 
 def test_start_process_command_shape(isolated_config: Path) -> None:
-    with patch("aisland.supervisor._run_client", return_value=_completed()) as run_mock:
+    with patch("aisland.services.supervisor._run_client", return_value=_completed()) as run_mock:
         assert supervisor.start_process("svc") is True
     run_mock.assert_called_once_with(["process", "start", "svc"])
 
@@ -328,9 +329,9 @@ def test_start_process_command_shape(isolated_config: Path) -> None:
 
 def test_find_binary_prefers_path_then_vendored(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(paths, "bin_dir", lambda: tmp_path)
-    with patch("aisland.supervisor.shutil.which", return_value="/on/path/process-compose"):
+    with patch("aisland.services.supervisor.shutil.which", return_value="/on/path/process-compose"):
         assert supervisor.find_binary() == "/on/path/process-compose"
-    with patch("aisland.supervisor.shutil.which", return_value=None):
+    with patch("aisland.services.supervisor.shutil.which", return_value=None):
         assert supervisor.find_binary() is None
         vendored = tmp_path / "process-compose"
         vendored.touch()
@@ -343,7 +344,7 @@ def test_ensure_binary_raises_when_uninstallable(monkeypatch: pytest.MonkeyPatch
 
     monkeypatch.setattr(provision, "agree", lambda question: True)
     with (
-        patch("aisland.supervisor.find_binary", return_value=None),
+        patch("aisland.services.supervisor.find_binary", return_value=None),
         patch("aisland.setup.installers.install_brew_packages"),
         patch("aisland.setup.installers.install_userspace_tool"),
     ):
@@ -428,8 +429,8 @@ def _clear_protected_env(monkeypatch: pytest.MonkeyPatch) -> None:
 
 def test_preflight_skips_on_non_darwin(monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture) -> None:
     with (
-        patch("aisland.supervisor.platform.system", return_value="Linux"),
-        patch("aisland.supervisor.ensure_binary") as binary_mock,
+        patch("aisland.services.supervisor.platform.system", return_value="Linux"),
+        patch("aisland.services.supervisor.ensure_binary") as binary_mock,
     ):
         supervisor._preflight_full_disk_access()
     binary_mock.assert_not_called()
@@ -442,9 +443,9 @@ def test_preflight_skips_without_external_volume_paths(
     _clear_protected_env(monkeypatch)
     monkeypatch.setenv("DATA_ROOT", "/data/local")  # not under /Volumes/
     with (
-        patch("aisland.supervisor.platform.system", return_value="Darwin"),
+        patch("aisland.services.supervisor.platform.system", return_value="Darwin"),
         patch("aisland.envfile.read", return_value={}),
-        patch("aisland.supervisor.ensure_binary") as binary_mock,
+        patch("aisland.services.supervisor.ensure_binary") as binary_mock,
     ):
         supervisor._preflight_full_disk_access()
     binary_mock.assert_not_called()
@@ -458,10 +459,10 @@ def test_preflight_warns_with_grant_path_when_absent(
     binary = tmp_path / "process-compose"
     binary.touch()
     with (
-        patch("aisland.supervisor.platform.system", return_value="Darwin"),
+        patch("aisland.services.supervisor.platform.system", return_value="Darwin"),
         patch("aisland.envfile.read", return_value={"DATA_ROOT": "/Volumes/Store"}),
-        patch("aisland.supervisor.ensure_binary", return_value=str(binary)),
-        patch("aisland.supervisor._tcc_full_disk_access_granted", return_value=False),
+        patch("aisland.services.supervisor.ensure_binary", return_value=str(binary)),
+        patch("aisland.services.supervisor._tcc_full_disk_access_granted", return_value=False),
     ):
         supervisor._preflight_full_disk_access()
     err = capsys.readouterr().err
@@ -476,10 +477,10 @@ def test_preflight_silent_when_granted(
 ) -> None:
     _clear_protected_env(monkeypatch)
     with (
-        patch("aisland.supervisor.platform.system", return_value="Darwin"),
+        patch("aisland.services.supervisor.platform.system", return_value="Darwin"),
         patch("aisland.envfile.read", return_value={"HF_HOME": "/Volumes/Store/huggingface"}),
-        patch("aisland.supervisor.ensure_binary", return_value=str(tmp_path / "process-compose")),
-        patch("aisland.supervisor._tcc_full_disk_access_granted", return_value=True),
+        patch("aisland.services.supervisor.ensure_binary", return_value=str(tmp_path / "process-compose")),
+        patch("aisland.services.supervisor._tcc_full_disk_access_granted", return_value=True),
     ):
         supervisor._preflight_full_disk_access()
     assert capsys.readouterr().err == ""
@@ -490,10 +491,10 @@ def test_preflight_silent_when_probe_inconclusive(
 ) -> None:
     _clear_protected_env(monkeypatch)
     with (
-        patch("aisland.supervisor.platform.system", return_value="Darwin"),
+        patch("aisland.services.supervisor.platform.system", return_value="Darwin"),
         patch("aisland.envfile.read", return_value={"DATA_ROOT": "/Volumes/Store"}),
-        patch("aisland.supervisor.ensure_binary", return_value=str(tmp_path / "process-compose")),
-        patch("aisland.supervisor._tcc_full_disk_access_granted", return_value=None),
+        patch("aisland.services.supervisor.ensure_binary", return_value=str(tmp_path / "process-compose")),
+        patch("aisland.services.supervisor._tcc_full_disk_access_granted", return_value=None),
     ):
         supervisor._preflight_full_disk_access()
     assert capsys.readouterr().err == ""

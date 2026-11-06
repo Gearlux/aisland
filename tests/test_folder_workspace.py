@@ -15,9 +15,10 @@ import pytest
 
 from aisland import locations, pytest_stats
 from aisland.errors import AislandError
+from aisland.setup import source_commands
 from aisland.wheels import build as wheels
 from aisland.wheels import projects as wheels_projects
-from aisland.workspace import projects, sources
+from aisland.workspace import projects
 
 
 def _project(folder: Path, name: str, deps: str = "") -> Path:
@@ -115,7 +116,7 @@ def test_a_test_run_of_a_folder_project_is_recorded(acme: Path, monkeypatch: pyt
 @pytest.mark.parametrize("kind", ["pypi", "github"])
 def test_a_source_that_would_empty_a_folder_project_is_refused(acme: Path, kind: str) -> None:
     with pytest.raises(AislandError) as refusal:
-        sources.set_project_source("alpha", kind, workspace_root=acme)
+        source_commands.set_project_source("alpha", kind, workspace_root=acme)
     assert refusal.value.format_message() == (
         f"'alpha' is a folder of the workspace, not a submodule: a {kind} source empties its folder, "
         "and nothing could check it out again. Keep it local."

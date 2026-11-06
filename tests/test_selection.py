@@ -25,7 +25,7 @@ import pytest
 from click.testing import CliRunner, Result
 
 from aisland import cli, locations
-from aisland.workspace import configure
+from aisland.setup import configure
 from aisland.workspace import file as workspace_file
 from aisland.workspace import selection as s
 from aisland.workspace.discovery import DeclarationError

@@ -14,15 +14,15 @@ from pathlib import Path
 from typing import Iterable, List, Tuple
 
 from aisland import console, failures
-from aisland.harness import install_harness
 from aisland.setup import env_example, provision
 from aisland.setup.bashrc import link_project_bashrc
 from aisland.setup.editor_files import sync_mypy_path, write_code_workspace, write_pyrightconfig
 from aisland.setup.git_settings import install_git_aliases, merge_on_pull
-from aisland.setup.installers import ensure_uv_in_venv
-from aisland.setup.mcp_config import no_venv, write_gemini_settings, write_mcp_json
+from aisland.setup.harness import install_harness
+from aisland.setup.mcp_config import write_gemini_settings, write_mcp_json
 from aisland.setup.playwright_browser import install_browsers
 from aisland.setup.uv_config import write_root_uv_toml
+from aisland.venv import ensure_uv_in_venv, no_venv
 from aisland.workspace import activation
 from aisland.workspace import check as workspace_check
 from aisland.workspace import clones
@@ -37,7 +37,7 @@ from aisland.workspace.projects import (
     internal_dependencies,
 )
 from aisland.workspace.selection import axes, resolve_for_setup
-from aisland.workspace.sources import apply_all
+from aisland.workspace.source_apply import apply_all
 
 logger = logging.getLogger(__name__)
 
@@ -119,7 +119,7 @@ def setup_workspace(non_interactive: bool = False, install_all: bool = False) ->
     uv_cmd = ensure_uv_in_venv(venv_bin)
     # 0b. The root's `project.bashrc`, a link to aisland's copy, so `source ./project.bashrc` works from the root.
     link_project_bashrc(workspace_root)
-    # 0c. The agent harness in `.agents/` (aisland.harness) — linked from a checkout, copied from a wheel. Before
+    # 0c. The agent harness in `.agents/` (aisland.setup.harness) — linked from a checkout, copied from a wheel. Before
     #     provisioning, which can stop a setup half-way.
     _say(install_harness(workspace_root))
     # 0c'. A clone of the workspace's folder that .gitmodules does not list: added as a submodule, never asked about

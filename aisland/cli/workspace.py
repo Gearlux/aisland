@@ -10,7 +10,7 @@ from typing import Callable, Optional, Tuple
 
 import click
 
-from aisland import failures, harness, locations
+from aisland import failures, locations
 from aisland.cli import configure as configure_cli
 from aisland.cli import editor as editor_cli
 from aisland.cli._base import (
@@ -23,11 +23,11 @@ from aisland.cli._base import (
 )
 from aisland.errors import AislandError
 from aisland.services.jenkins import JenkinsService
-from aisland.setup import bashrc, editor_files, env_example, provision
+from aisland.setup import bashrc, configure, editor_files, env_example, harness
+from aisland.setup import init as workspace_mod
+from aisland.setup import provision
 from aisland.workspace import check as workspace_check
-from aisland.workspace import configure, discovery
-from aisland.workspace import init as workspace_mod
-from aisland.workspace import recording, tracking
+from aisland.workspace import discovery, recording, tracking
 from aisland.workspace.mirrors import run_sync
 from aisland.workspace.projects import get_install_order, get_workspace_root, workspace_folders
 

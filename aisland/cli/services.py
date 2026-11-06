@@ -8,11 +8,11 @@ from typing import Optional, Tuple
 
 import click
 
-from aisland import supervisor as supervisor_mod
 from aisland.ci import ci_scaffold, ci_templates
 from aisland.cli._base import _Group, _service_entries
 from aisland.services import jenkins_jobs
 from aisland.services import registry as service_registry
+from aisland.services import supervisor as supervisor_mod
 from aisland.services.docker import docker_service
 from aisland.services.jenkins import JenkinsService
 from aisland.services.swiftbar import SwiftBarService

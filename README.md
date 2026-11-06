@@ -84,6 +84,7 @@ commands that create the workspace on a machine that has no aisland yet:
 
 ```toml
 [workspace]
+format = 1
 name = "acme"
 
 [project."models"]
@@ -115,6 +116,20 @@ aisland workspace projects                                  # the project folder
 
 A project tells aisland what it brings — a selection to choose from, a service to run, the system tools it
 needs — in its own `pyproject.toml`, under `[tool.aisland]`. It never imports aisland.
+
+## What aisland assumes
+
+aisland comes with the habits of the workspace it grew in. Each one can be left alone, or turned off:
+
+- **Two branches per project**: work on `dev/main`, release from `main`. The git aliases and
+  `aisland workspace mirror sync` know both by name. Other branches work too, but they get no special handling.
+- **Two test runs**: a fast `pytest` that stays under five minutes, and a slow `pytest -m slow`.
+  `aisland tests report` proposes which tests to move between them, measured against that budget.
+- **Python with machine-learning dependencies**: the generated root `uv.toml` installs `opencv-python-headless` in place
+  of `opencv-python` everywhere. `aisland doctor` also checks for known problems with OpenCV, `huggingface_hub` and
+  torch's extension builds; a check passes with a note where its package is not installed.
+- **AI coding agents**: `aisland setup` installs aisland's agent rules and six commands into `.agents/`. With
+  `[harness] sets = []` in `workspace.toml` it installs none ([harness](https://github.com/Gearlux/aisland/blob/main/docs/harness.md)).
 
 ## Common tasks
 
@@ -200,6 +215,8 @@ None is needed; each changes one default. `env.complete` lists them with every v
   change in any release
 - [Design decisions](https://github.com/Gearlux/aisland/blob/main/docs/architecture.md) — for contributors: the
   decision log, why each mechanism is the way it is
+- [Contributing](https://github.com/Gearlux/aisland/blob/main/CONTRIBUTING.md) — a checkout that runs the tests, the
+  layers, where a change goes, the release
 
 The examples in [`examples/`](https://github.com/Gearlux/aisland/tree/main/examples) run as written and check what
 the pages show.

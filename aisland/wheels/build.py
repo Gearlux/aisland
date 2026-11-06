@@ -76,9 +76,8 @@ from packaging.version import InvalidVersion, Version
 
 from aisland import console, gitcmd
 from aisland.errors import AislandError
-from aisland.github import GitHubRepository, project_repositories
 from aisland.pypi import PypiProject
-from aisland.setup.installers import ensure_uv_in_venv
+from aisland.venv import ensure_uv_in_venv
 from aisland.wheels import check as wheels_check
 from aisland.wheels import extra as wheels_extra
 from aisland.wheels import scrub as wheels_scrub
@@ -123,6 +122,7 @@ from aisland.wheels.report import (
     bundle_command,
     regenerate_command,
 )
+from aisland.workspace.github import GitHubRepository, project_repositories
 from aisland.workspace.projects import get_workspace_name
 
 # --- building wheels -------------------------------------------------------------------------

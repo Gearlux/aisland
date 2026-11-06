@@ -21,7 +21,7 @@ asks "which frameworks?" before the project that defines that question is instal
 
 STAGE 2 (:func:`load`) loads those entry points once their project is installed, and checks each against the
 methods its kind needs. A project never imports aisland: a plugin is any object with a ``kind`` and those methods,
-and an ``aisland_api`` (:data:`PLUGIN_API`) when it is written for a later contract than the first.
+and an ``aisland_api`` (:data:`aisland.plugins.PLUGIN_API`) when it is written for a later contract than the first.
 
 Everything refused names the file and the line of the table it is about (:class:`DeclarationError`).
 """
@@ -36,8 +36,9 @@ from typing import Any, Dict, List, Literal, Mapping, Optional, Sequence, Tuple,
 
 from aisland import pyproject as pyproject_toml
 from aisland.errors import AislandError
-from aisland.setup.installers import USERSPACE_TOOLS
+from aisland.plugins import PLUGIN_API, PLUGIN_API_ATTRIBUTE
 from aisland.toml_places import Where, key_line, table_line
+from aisland.userspace_tools import USERSPACE_TOOLS
 from aisland.workspace.projects import workspace_folders
 
 #: The entry-point group a project's code plugins are declared in.
@@ -49,12 +50,6 @@ ENTRY_POINT_GROUP = "aisland.plugins"
 PluginKind = Literal["service"]
 PLUGIN_KINDS: Tuple[str, ...] = get_args(PluginKind)
 _KIND_METHODS: Dict[str, Tuple[str, ...]] = {"service": ("start",)}
-
-#: The version of the plugin contract this aisland serves (what :mod:`aisland.plugins` types). A plugin declares the
-#: one it is written for as ``aisland_api = <whole number>``, 1 when absent: an older or equal one loads, a newer one
-#: is refused naming the upgrade. It rises only when a release changes what a plugin gets or must have.
-PLUGIN_API = 1
-PLUGIN_API_ATTRIBUTE = "aisland_api"
 
 #: ``workspace.toml``'s ``[workspace]`` key for the workspace's name (``workspace_file.NAME_KEY``, which imports this
 #: module): a selection's choice is committed under its own name in that table, so none may take this one.

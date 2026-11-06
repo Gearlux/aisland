@@ -7,47 +7,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-### Added
-- **The plugin contract has a version**: a plugin class may declare `aisland_api = <n>` (1 when absent); one asking
-  for a newer version than this aisland serves is refused when it loads, naming the upgrade. `aisland.plugins` types
-  what a service plugin gets (`ServiceContext`) and must have (`ServicePlugin`), for a project to name under
-  `TYPE_CHECKING` ([services](docs/services.md)).
-
-### Changed
-- **aisland needs click 8.2.1 or newer** (was 8.0.0): every floor of the dependencies and extras is now a version the
-  test suite ran on, installed with `--resolution lowest-direct`, and below 8.2.1 an empty word after a command offers
-  no options. jinja2 3.1.6, MarkupSafe 2.0, PyYAML 6.0.1,
-  packaging 23.0, msgpack 1.2, mcp 2.0 and git-filter-repo 2.47 hold as they were. The `dev` extra asks for
-  `wheel>=0.34` (no floor before) and adds `import-linter`, which holds the package's import layers.
-- **The package is grouped by subject**: `aisland.workspace` (the projects, what they declare and what a machine
-  chooses), `aisland.setup` (`aisland setup` and its steps), `aisland.ci` (generated CI, `aisland check`, the test-run
-  report), and smaller modules split out of large ones (`backups`, `envfile`, `probe`, `tunnel.store`, `wheels.projects`,
-  …). Modules are no interface ([stability](docs/stability.md)); commands, files and entry points are unchanged.
-
-### Fixed
-- **A harness set's name is one plain folder name**: a `name` (or a git url's last part) such as `..`, `a/b` or `/`
-  is refused naming its line before anything is cloned or removed. Before, setup could remove a folder outside
-  aisland's state for it.
-- **Install order reads every PEP 508 spelling of a dependency**: `~=`, `<`, `>`, `!=`, extras, environment markers
-  and the name as PEP 503 normalizes it (`Foo_Bar` is `foo-bar`). `aisland setup`, `aisland workspace projects` and
-  the SwiftBar menu take the order from one place.
-- **The MCP server's service tools always run `aisland services <action> <name>`**, so a project's service named like
-  an aisland command is still that service.
-- **A status question never hangs**: `colima status`, `pgrep`, `brew list` and `lsof`, asked by `aisland services
-  status`, the doctor and the MCP tools, are given up after 30 s.
-- **Every git command that reaches a remote gives up on one that stops sending and never prompts**, the submodule
-  clone of `workspace configure source set … local` and `workspace init`'s `submodule add` included; a `branch` that
-  starts with `-` is refused before `git switch`.
-- **`aisland clean` lists the expired backups its sweep deletes and asks about them too**, also when there is nothing
-  to move.
-- **A remote url reaches a Jenkins job's `config.xml` escaped**, and `jenkins init` prints it without its
-  `user:token@`.
-- A harness file never lands in `.git` in any letter case or at any depth; the restore commands `clean` and
-  `wheels prune` print keep a path with spaces one word; the wheel `aisland wheels` downloads from PyPI to compare is
-  checked against the SHA-256 PyPI lists; `aisland tunnel` recognises its process however long its path;
-  `backups restore` refuses a manifest entry that names the whole project.
-
-## [0.1.0] - 2026-11-03
+## [0.1.0] - 2026-11-06
 
 The first release on PyPI: `pip install aisland`.
 
@@ -68,7 +28,10 @@ The first release on PyPI: `pip install aisland`.
   the projects offer.
 - **`aisland services`** runs the local services under process-compose or Docker — Jenkins, the container engine,
   SwiftBar — and a service a project declares in its own `pyproject.toml` or implements in its own
-  code; `aisland --help` names the project that brings each without importing its code. One service that cannot
+  code; `aisland --help` names the project that brings each without importing its code. A plugin class may declare the
+  contract version it was written for (`aisland_api`, 1 when absent); one asking for a newer version than this
+  aisland serves is refused naming the upgrade, and `aisland.plugins` types the contract for a project's
+  `TYPE_CHECKING` ([services](docs/services.md)). One service that cannot
   start never keeps the others down: its error is printed and the command exits 1. `aisland services status --json`
   prints each service's state for a script. A service a project brings is also `aisland <name> …` while no aisland
   command has its name. On Linux the container engine is the system's own Docker Engine, which aisland checks and never
@@ -132,7 +95,8 @@ The first release on PyPI: `pip install aisland`.
   project's ignored files into a backup **`aisland backups`** can restore.
 - **`aisland completion install`** writes shell completion for every command-line tool in the workspace; a project
   names its click scripts in `[tool.aisland] click-commands`.
-- **`aisland tunnel`** opens a VS Code Remote Tunnel to a remote machine, and `aisland tunnel connect` (the
+- **`aisland tunnel`** opens a VS Code Remote Tunnel to a remote machine (the VS Code CLI it downloads installed only
+  when its SHA-256 is the one VS Code's update service lists), and `aisland tunnel connect` (the
   `[connect]` extra) a terminal on it over that tunnel.
 - **The agent harness**: `aisland setup` installs the commands, helper scripts and rules every AI coding session
   in the workspace reads, from the harness sets `workspace.toml`'s `[harness] sets` lists — aisland's own, a

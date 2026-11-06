@@ -27,9 +27,9 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional, Protocol, Tuple
 
 from aisland import paths
+from aisland.ci.jenkins_job_config import NIGHTLY_CRON
 from aisland.errors import AislandError
 from aisland.services.jenkins import JenkinsService
-from aisland.services.jenkins_jobs import NIGHTLY_CRON
 from aisland.workspace.projects import get_workspace_name
 
 
@@ -339,12 +339,23 @@ def render_markdown(report: NightlyReport) -> str:
     return "\n".join(lines) + "\n"
 
 
+#: ``osascript``'s ``-e`` lines of the banner: it shows its first argument under its second.
+_BANNER_SCRIPT = (
+    "-e",
+    "on run argv",
+    "-e",
+    "display notification (item 1 of argv) with title (item 2 of argv)",
+    "-e",
+    "end run",
+)
+
+
 def notify_desktop(message: str) -> None:
     """A desktop banner: `osascript` on macOS, `notify-send` where it exists; never fails the check."""
     title = get_workspace_name()
     if sys.platform == "darwin":
-        quoted = message.replace("\\", "\\\\").replace('"', '\\"')
-        argv = ["osascript", "-e", f'display notification "{quoted}" with title "{title}"']
+        # The texts are the script's arguments, never part of its source: no name or message is read as AppleScript.
+        argv = ["osascript", *_BANNER_SCRIPT, message, title]
     elif shutil.which("notify-send"):
         argv = ["notify-send", title, message]
     else:

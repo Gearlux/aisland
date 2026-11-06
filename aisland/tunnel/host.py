@@ -9,7 +9,7 @@ through the ingress and no inbound route is needed.
 Three decisions worth knowing, because they are what makes this work on a bare remote box:
 
 * **No supervisor.** Every other aisland service runs under process-compose
-  (:mod:`aisland.supervisor`), which a remote container does not have — and the remote box is
+  (:mod:`aisland.services.supervisor`), which a remote container does not have — and the remote box is
   precisely where the least is installed. The tunnel is one detached process with a pidfile.
 * **One state folder per machine, not per workspace** (:func:`aisland.tunnel.state.state_dir`):
   ``~/.aisland/tunnel/`` holds the downloaded CLI (:mod:`aisland.tunnel.binary`), the log, the pidfile,
@@ -23,6 +23,8 @@ Three decisions worth knowing, because they are what makes this work on a bare r
 
 from __future__ import annotations
 
+import contextlib
+import fcntl
 import os
 import re
 import shutil
@@ -33,8 +35,9 @@ import time
 import urllib.error
 import urllib.request
 from pathlib import Path
-from typing import Any, Dict, Optional, Tuple
+from typing import Any, Dict, Iterator, Optional, Tuple
 
+from aisland import atomic
 from aisland.errors import AislandError
 from aisland.tunnel import binary, store
 from aisland.tunnel.state import sanitize_name, state_dir
@@ -193,6 +196,20 @@ def signed_in() -> Optional[str]:
     return text.splitlines()[0].strip()
 
 
+@contextlib.contextmanager
+def _one_start_at_a_time() -> Iterator[None]:
+    """Hold this machine's tunnel start lock (``flock`` on a file in the state folder), so the check that no tunnel
+    runs, the spawn and the pidfile are one step: two starts at once otherwise both spawn, and the pidfile keeps the
+    last. The lock goes with the process, so a start killed half way holds nothing."""
+    state_dir().mkdir(parents=True, exist_ok=True)
+    with open(state_dir() / "start.lock", "a") as lock:
+        fcntl.flock(lock, fcntl.LOCK_EX)
+        try:
+            yield
+        finally:
+            fcntl.flock(lock, fcntl.LOCK_UN)
+
+
 def start(
     name: Optional[str] = None,
     cli: Optional[Path] = None,
@@ -227,7 +244,7 @@ def start(
     program = binary.install_cli(tarball=cli)
     if provider:
         state_dir().mkdir(parents=True, exist_ok=True)
-        provider_path().write_text(f"{provider}\n")
+        atomic.write_text(provider_path(), f"{provider}\n")
 
     chosen_provider = provider or read_provider()
     if signed_in() is None:
@@ -244,11 +261,16 @@ def start(
 
     command = [str(program), "tunnel", "--accept-server-license-terms", "--name", tunnel_name]
 
-    state_dir().mkdir(parents=True, exist_ok=True)
-    log_path().write_text("")
-    with open(log_path(), "ab") as log:
-        process = subprocess.Popen(command, stdout=log, stderr=log, stdin=subprocess.DEVNULL, start_new_session=True)
-    pid_path().write_text(f"{process.pid}\n")
+    with _one_start_at_a_time():
+        # Asked again under the lock: another start (a terminal's, an MCP tool's) may have spawned one meanwhile.
+        if running():
+            return {**status(), "already_running": True}
+        log_path().write_text("")
+        with open(log_path(), "ab") as log:
+            process = subprocess.Popen(
+                command, stdout=log, stderr=log, stdin=subprocess.DEVNULL, start_new_session=True
+            )
+        atomic.write_text(pid_path(), f"{process.pid}\n")
 
     found = _watch_log(timeout)
     return {**status(), "name": tunnel_name, **found}
@@ -354,7 +376,7 @@ def login(provider: Optional[str] = None) -> int:
     completed = subprocess.run(command)
     if completed.returncode == 0 and chosen:
         state_dir().mkdir(parents=True, exist_ok=True)
-        provider_path().write_text(f"{chosen}\n")
+        atomic.write_text(provider_path(), f"{chosen}\n")
     return completed.returncode
 
 

@@ -19,10 +19,8 @@ import tomllib
 from pathlib import Path
 from typing import List, Tuple
 
-from aisland import harness
 from aisland import pyproject as pyproject_toml
 from aisland import pytest_stats
-from aisland.ci import ci_templates
 from aisland.toml_places import FORMAT_KEY, Where, key_line, table_line
 from aisland.workspace import activation, discovery
 from aisland.workspace import file as workspace_file
@@ -83,7 +81,7 @@ def unknown_keys(root: Path) -> List[str]:
                 warnings.append(f"Warning: {where}: [workspace] {key} is no setting aisland reads{_hint(key, known)}")
     ci = data.get(workspace_file.CI_SECTION)
     if isinstance(ci, dict):
-        known = (ci_templates.TEMPLATES_KEY, ci_templates.VARIABLES_KEY)
+        known = (workspace_file.CI_TEMPLATES_KEY, workspace_file.CI_VARIABLES_KEY)
         header = table_line(text, workspace_file.CI_SECTION)
         for key in ci:
             if key not in known:
@@ -91,7 +89,7 @@ def unknown_keys(root: Path) -> List[str]:
                 warnings.append(f"Warning: {where}: [ci] {key} is no setting aisland reads{_hint(key, known)}")
     harness_table = data.get(workspace_file.HARNESS_SECTION)
     if isinstance(harness_table, dict):
-        known = (harness.SETS_KEY,)
+        known = (workspace_file.HARNESS_SETS_KEY,)
         header = table_line(text, workspace_file.HARNESS_SECTION)
         for key in harness_table:
             if key not in known:

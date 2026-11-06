@@ -280,7 +280,8 @@ def acme(tmp_path: Path) -> Path:
 
 _REPORT = """
 import json
-from aisland import locations, paths, pytest_stats, supervisor
+from aisland import locations, paths, pytest_stats
+from aisland.services import supervisor
 from aisland.setup import editor_files
 from aisland.workspace import projects
 print(json.dumps({
@@ -567,7 +568,8 @@ _FLOOR_SMOKE = """
 import importlib, json, pkgutil
 import aisland
 from aisland.workspace import projects
-from aisland import pypi, supervisor
+from aisland import pypi
+from aisland.services import supervisor
 failures = {}
 for module in pkgutil.walk_packages(aisland.__path__, "aisland."):
     if module.name.endswith("__main__"):

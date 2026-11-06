@@ -19,8 +19,8 @@ from typing import Dict, List
 import pytest
 import yaml
 
-from aisland import harness, locations
-from aisland.setup import manager
+from aisland import locations
+from aisland.setup import harness, manager
 from tests.private_names import DOMAIN, PRIVATE, words_named
 
 
