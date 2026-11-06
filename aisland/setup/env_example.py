@@ -21,7 +21,7 @@ from typing import Dict, List, Literal, Optional, Tuple, get_args
 
 from aisland import console, locations
 from aisland.errors import AislandError
-from aisland.workspace.projects import dependency_order, discover_projects, get_project_metadata, workspace_folders
+from aisland.workspace.model import Workspace
 
 #: The two lists: every variable (``complete``), and the ones a person normally sets (``example``).
 Kind = Literal["complete", "example"]
@@ -164,9 +164,9 @@ def project_order(root: Path) -> List[Tuple[str, Path]]:
     """``(name, folder)`` of every checked-out project, each library before the projects that depend on it — the
     order of the editor's workspace file (``dependency_order`` over folder names) — so the first project
     reading a variable is the one that defines it."""
-    checkouts = {(root / path).resolve(): name for name, path, _active in workspace_folders(root)}
-    projects = sorted((get_project_metadata(p) for p in discover_projects(root)), key=lambda p: p["path"].name)
-    ordered = [Path(p["path"]).resolve() for p in dependency_order(projects)]
+    workspace = Workspace(root)
+    checkouts = {project.path.resolve(): project.name for project in workspace.projects}
+    ordered = [Path(p["path"]).resolve() for p in workspace.install_order]
     out = [(checkouts[folder], folder) for folder in ordered if folder in checkouts and checked_out(folder)]
     named = {name for name, _folder in out}
     out += [  # a checkout discovery does not know (no installable pyproject.toml): after the others, as listed
@@ -186,7 +186,7 @@ def collect(root: Path, kind: Kind) -> Collected:
         else:
             without.append((name, f"no {FILE_NAMES[kind]}"))
     present = {name for name, _folder in order}
-    without += [(name, "no checkout") for name, _path, _active in workspace_folders(root) if name not in present]
+    without += [(project.name, "no checkout") for project in Workspace(root).projects if project.name not in present]
     return Collected(kind, projects, without)
 
 

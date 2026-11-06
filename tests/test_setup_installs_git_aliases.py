@@ -15,6 +15,7 @@ from click.testing import CliRunner
 
 from aisland import cli, locations
 from aisland.setup import manager
+from aisland.workspace.model import Workspace
 
 
 @pytest.fixture
@@ -31,7 +32,7 @@ def stubbed_setup(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> List[Path]
     monkeypatch.setattr("aisland.workspace.activation.reconcile", lambda root: [])
     monkeypatch.setattr("aisland.setup.manager.apply_all", lambda *a, **k: None)
     monkeypatch.setattr("aisland.setup.manager.apply_mirrors", lambda *a, **k: None)
-    monkeypatch.setattr(manager, "get_install_order", lambda root: [])
+    monkeypatch.setattr(Workspace, "install_order", [])
     monkeypatch.setattr(manager, "write_pyrightconfig", lambda *a: None)
     monkeypatch.setattr(manager, "sync_mypy_path", lambda *a: None)
     monkeypatch.setattr("aisland.setup.manager.resolve_for_setup", lambda *a, **k: ([], False))

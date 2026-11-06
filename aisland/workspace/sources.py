@@ -55,7 +55,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Dict, List, Literal, Optional, Tuple, cast, get_args
 
-from aisland import failures, gitcmd, locations, machine_config
+from aisland import failures, gitcmd, machine_config
 from aisland import pyproject as pyproject_toml
 from aisland.workspace import file as workspace_file
 from aisland.workspace.projects import get_workspace_root, submodule_active_map
@@ -336,16 +336,6 @@ def checkout_state(workspace_root: Path, project: str) -> str:
         return "empty"
     branch = gitcmd.git(path, "rev-parse", "--abbrev-ref", "HEAD").stdout.strip()
     return f"on {branch}" if branch else "checked out"
-
-
-def known_projects(workspace_root: Path) -> List[str]:
-    """Every project ``aisland workspace configure source`` can manage: declared submodules plus any sibling with a pyproject (a link to
-    another folder of the workspace is none, :func:`aisland.locations.is_alias`)."""
-    names = {name for name, _path, _active in submodule_active_map(workspace_root)}
-    for child in workspace_root.iterdir():
-        if child.is_dir() and (child / "pyproject.toml").exists() and not locations.is_alias(child, workspace_root):
-            names.add(child.name)
-    return sorted(names)
 
 
 def describe(workspace_root: Optional[Path] = None) -> List[Dict[str, str]]:

@@ -15,7 +15,8 @@ from aisland.services.base import BaseService, ServiceState, service_state, styl
 from aisland.services.jenkins import JenkinsService
 from aisland.setup import provision
 from aisland.workspace.github import github_repository
-from aisland.workspace.projects import dependency_order, discover_projects, get_project_metadata, get_workspace_root
+from aisland.workspace.model import Workspace
+from aisland.workspace.projects import dependency_order, get_workspace_root
 
 #: The bodies of the menu scripts ``aisland swiftbar init`` writes, each ``<[ name ]>`` filled in by :func:`_render_script`.
 TEMPLATES_DIR = locations.PACKAGE_DIR / "templates" / "swiftbar"
@@ -78,7 +79,7 @@ class SwiftBarService(BaseService):
     def _dependency_ordered_projects(self, workspace_root: Path) -> List[Path]:
         """Project folders, dependencies before their dependents and otherwise by name, so the order is the same
         on every machine. The workspace root itself is excluded (it has no ``pyproject.toml``); callers add it."""
-        projects = sorted((get_project_metadata(p) for p in discover_projects(workspace_root)), key=lambda p: p["name"])
+        projects = sorted(Workspace(workspace_root).metadata, key=lambda p: p["name"])
         return [p["path"] for p in dependency_order([p for p in projects if p["name"]])]
 
     def init_scripts(self) -> None:

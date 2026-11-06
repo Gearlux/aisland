@@ -61,6 +61,7 @@ from aisland import pyproject as pyproject_toml
 from aisland.errors import AislandError
 from aisland.toml_places import FORMAT_KEY, Where, format_refusal, key_line, table_line
 from aisland.workspace import file as workspace_file
+from aisland.workspace.model import Workspace
 from aisland.workspace.projects import workspace_folders
 
 logger = logging.getLogger(__name__)
@@ -529,20 +530,6 @@ def _link_claude_commands(root: Path, folder: Path, own_set: bool) -> Optional[s
     return None
 
 
-def _project_folders(root: Path) -> List[Path]:
-    """The workspace's project folders: each direct, non-hidden subfolder holding a ``pyproject.toml`` (a submodule
-    whose source is detached has an empty folder and gets nothing; a link to another folder of the workspace is none,
-    :func:`aisland.locations.is_alias`)."""
-    return sorted(
-        child
-        for child in root.iterdir()
-        if child.is_dir()
-        and not child.name.startswith(".")
-        and (child / "pyproject.toml").is_file()
-        and not locations.is_alias(child, root)
-    )
-
-
 def _write_index(root: Path, found: List[HarnessSet]) -> None:
     """``.agents/rules.md``: an import of each set's rules, in the list's order; removed when no set has rules."""
     index = root / RULES_INDEX
@@ -617,7 +604,7 @@ def install_harness(root: Path, link: Optional[bool] = None) -> List[str]:
     for line in (_link_claude_commands(root, root, False), _workspace_agents_md(root) if _has_rules(found) else None):
         if line:
             report.append(line)
-    for project in _project_folders(root):
+    for project in Workspace(root).top_level_folders:
         line = _link_claude_commands(root, project, project.resolve() in own)
         if line:
             report.append(line)

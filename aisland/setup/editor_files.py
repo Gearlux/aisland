@@ -11,13 +11,8 @@ from typing import Any, Dict, List, Optional
 
 from aisland import console, editor, envfile, failures, git_exclude, locations
 from aisland.paths import SERVICES_DIR
-from aisland.workspace.projects import (
-    ProjectMetadata,
-    dependency_order,
-    discover_projects,
-    get_project_metadata,
-    get_workspace_name,
-)
+from aisland.workspace.model import Workspace
+from aisland.workspace.projects import ProjectMetadata, dependency_order, get_workspace_name
 
 # Shared pyright exclude globs for the root and per-project configs below.
 _PYRIGHT_EXCLUDE = [
@@ -271,9 +266,7 @@ def write_code_workspace(workspace_root: Path) -> Optional[Path]:
     An unchanged file is not rewritten, so VS Code does not reload it.
     """
     name = get_workspace_name(workspace_root)
-    projects = sorted(
-        (get_project_metadata(p) for p in discover_projects(workspace_root)), key=lambda p: p["path"].name
-    )
+    projects = Workspace(workspace_root).metadata
     short_names = locations.alias_names(workspace_root)
     folders = [{"name": name, "path": "."}]
     folders += [

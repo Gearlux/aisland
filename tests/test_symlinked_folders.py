@@ -17,9 +17,10 @@ from typing import Any, Dict, List
 import pytest
 
 from aisland import locations
-from aisland.setup import editor_files, harness
+from aisland.setup import editor_files
 from aisland.workspace import file as workspace_file
-from aisland.workspace import projects, selection, sources
+from aisland.workspace import projects, selection
+from aisland.workspace.model import Workspace
 
 
 def _project(folder: Path, name: str, extras: str = "dev") -> Path:
@@ -90,11 +91,11 @@ def test_a_workspace_without_gitmodules_lists_each_folder_once(acme: Path) -> No
 
 
 def test_aisland_source_knows_each_project_once(acme: Path) -> None:
-    assert sources.known_projects(acme) == ["ext", "machine_learning", "object_detection"]
+    assert Workspace(acme).known_names == ["ext", "machine_learning", "object_detection"]
 
 
 def test_the_agent_commands_go_into_each_project_folder_once(acme: Path) -> None:
-    assert harness._project_folders(acme) == [acme / "ext", acme / "machine_learning", acme / "object_detection"]
+    assert Workspace(acme).top_level_folders == [acme / "ext", acme / "machine_learning", acme / "object_detection"]
 
 
 def test_the_workspace_file_lists_each_clone_once(acme: Path) -> None:

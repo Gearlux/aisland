@@ -18,6 +18,7 @@ from aisland import locations
 from aisland.ci import jenkins_job_config as job_config
 from aisland.ci.jenkins_job_config import NIGHTLY_CRON
 from aisland.services import jenkins_jobs
+from aisland.workspace.model import Workspace
 
 
 def _orchestrator_script(monkeypatch: pytest.MonkeyPatch, tmp_path: Path, local: bool, slow: Sequence[str] = ()) -> str:
@@ -31,9 +32,9 @@ def _orchestrator_script(monkeypatch: pytest.MonkeyPatch, tmp_path: Path, local:
     monkeypatch.setattr(locations, "workspace_root", lambda: tmp_path)
     monkeypatch.setattr(jenkins_jobs, "get_workspace_name", lambda: "ws")
     monkeypatch.setattr(
-        jenkins_jobs,
-        "get_install_order",
-        lambda root: [
+        Workspace,
+        "install_order",
+        [
             {"name": "libcore", "dependencies": []},
             {"name": "app_a", "dependencies": ["libcore>=0.1.0"]},
             {"name": "app_b", "dependencies": ["libcore>=0.1.0"]},

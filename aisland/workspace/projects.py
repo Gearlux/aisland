@@ -148,12 +148,6 @@ def install_groups(projects: List[ProjectMetadata]) -> List[List[ProjectMetadata
     return groups
 
 
-def get_install_order(workspace_root: Path) -> List[ProjectMetadata]:
-    """Determine the correct installation order using topological sort based on workspace dependencies."""
-    pyprojects = discover_projects(workspace_root)
-    return dependency_order([get_project_metadata(p) for p in pyprojects])
-
-
 def dependency_order(projects: List[ProjectMetadata]) -> List[ProjectMetadata]:
     """``projects`` with every workspace dependency before its dependents; otherwise in the order given. A dependency
     cycle's members stand together (:func:`install_groups`, which setup installs as one unit)."""

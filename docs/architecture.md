@@ -19,7 +19,7 @@ The package is `aisland/`. A command is a click function in `aisland/cli/` that 
 
 | area | modules |
 |---|---|
-| The workspace and its file | `workspace/` (`file`, `check`, `local`, `projects`, `gitmodules`, `clones`, `discovery`, `github`), `locations`, `paths`, `pyproject`, `toml_places` (a table's line in a TOML file) |
+| The workspace and its file | `workspace/` (`model`, the workspace as one record; `file`, `check`, `local`, `projects`, `gitmodules`, `clones`, `discovery`, `github`), `locations`, `paths`, `pyproject`, `toml_places` (a table's line in a TOML file) |
 | What a project or a machine chooses | `workspace/` (the plugins `activation`, `selection`, `sources` — the model — with `source_apply`, `mirrors`; `tracking`, `recording`), `machine_config` (this machine's `git config --local`) |
 | Setting a machine up | `setup/` (`manager`, the driver, and its steps `provision`, `installers`, `bashrc`, `uv_config`, `editor_files`, `mcp_config`, `env_example`, `completion`, `playwright_browser`, `git_settings`, `harness`; `init`, `workspace init`; `configure` and `source_commands`, the configure commands), `downloads`, `editor`, `venv` (the `.venv` and its uv), `userspace_tools` |
 | Services | `services/` (`base`, `registry`, `plugin`, `declared`, `supervisor`, `jenkins`, `jenkins_jobs`, `jenkins_settings`, `jenkins_java`, `docker`, `swiftbar`, `nightly`), `envfile` (the workspace's `.env`) |
@@ -2592,7 +2592,7 @@ same.
 - `locations.is_alias(folder, workspace)`: a symbolic link whose resolved target lies inside the (resolved)
   workspace is an alias. Every reader of the workspace's projects skips it — `projects.discover_projects` (which
   recurses with the workspace root, so a link inside a project is judged against the workspace),
-  `projects.workspace_folders`, `harness._project_folders`, `sources.known_projects`,
+  `projects.workspace_folders`, `model.Workspace.top_level_folders`, `model.Workspace.known_names`,
   `workspace.file.workspace_projects`.
   The folder it names is found under its own name.
 - A link to a folder OUTSIDE the workspace is no alias: it is how a checkout kept elsewhere joins the workspace.
@@ -4278,8 +4278,9 @@ that broke the old cycle in `registry`, `quality`, `selection` and `sources` bec
 ### Example
 
 ```python
-from aisland.workspace.projects import get_install_order, get_workspace_root   # was aisland.setup.manager
-from aisland.setup.installers import USERSPACE_TOOLS, install_userspace_tool
+from aisland.workspace.projects import get_workspace_root        # was aisland.setup.manager
+from aisland.workspace.model import Workspace                    # the install order: Workspace(root).install_order
+from aisland.setup.installers import install_userspace_tool      # its table: aisland.userspace_tools.USERSPACE_TOOLS
 ```
 
 ### What you may change

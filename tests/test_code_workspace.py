@@ -21,8 +21,9 @@ import pytest
 from aisland.errors import AislandError
 from aisland.setup import editor_files
 from aisland.setup import source_commands as sc
-from aisland.workspace import projects, source_apply
+from aisland.workspace import model, projects, source_apply
 from aisland.workspace import sources as s
+from aisland.workspace.model import Workspace
 
 
 def _project(root: Path, folder: str, name: Optional[str] = None, deps: Optional[List[str]] = None) -> None:
@@ -89,7 +90,7 @@ def test_the_order_does_not_follow_the_order_the_disk_lists_folders_in(
     editor_files.write_code_workspace(workspace)
     expected = _paths(workspace)
     found = projects.discover_projects(workspace)
-    monkeypatch.setattr(editor_files, "discover_projects", lambda root: list(reversed(found)))
+    monkeypatch.setattr(model, "discover_projects", lambda root: list(reversed(found)))
     editor_files.code_workspace_path(workspace).unlink()
     editor_files.write_code_workspace(workspace)
     assert _paths(workspace) == expected
@@ -264,7 +265,7 @@ def written(monkeypatch: pytest.MonkeyPatch) -> List[Path]:
     monkeypatch.setattr(sc, "write_code_workspace", lambda root: calls.append(root))
     monkeypatch.setattr(sc, "ensure_uv_in_venv", lambda venv_bin: "uv")
     monkeypatch.setattr(s, "project_path", lambda root, project: root / project)
-    monkeypatch.setattr(s, "known_projects", lambda root: ["loggair"])
+    monkeypatch.setattr(Workspace, "known_names", ["loggair"])
     monkeypatch.setattr(s, "local_override", lambda root, project: None)
     monkeypatch.setattr(s, "set_local_override", lambda *a, **k: None)
     monkeypatch.setattr(source_apply, "apply_source", lambda *a, **k: True)

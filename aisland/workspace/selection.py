@@ -44,7 +44,8 @@ from aisland.errors import AislandError
 from aisland.venv import ensure_uv_in_venv
 from aisland.workspace import discovery
 from aisland.workspace import file as workspace_file
-from aisland.workspace.projects import discover_projects, get_install_order, get_project_metadata
+from aisland.workspace.model import Workspace
+from aisland.workspace.projects import discover_projects, get_project_metadata
 
 logger = logging.getLogger(__name__)
 
@@ -359,14 +360,14 @@ def apply_selection(root: Path, axis: Axis, uv_cmd: Optional[str] = None) -> int
     many failed.
 
     Only the OFFERING projects are touched: reinstalling the workspace to change one extra would take minutes. The
-    order is setup's (:func:`aisland.workspace.projects.get_install_order`): a consumer's extra can name a sibling's
+    order is setup's (:attr:`aisland.workspace.model.Workspace.install_order`): a consumer's extra can name a sibling's
     (``models[keras]`` requiring ``trainer[keras]``), and installed first it resolves against the sibling's OLD
     metadata. uv never uninstalls an extra no longer chosen — which packages "belonged" to it is unknowable, and a
     stale wheel costs disk, not correctness."""
 
     uv = uv_cmd or ensure_uv_in_venv(root / ".venv" / "bin")
     failures = 0
-    for project in get_install_order(root):
+    for project in Workspace(root).install_order:
         if not declared(project["path"] / "pyproject.toml", axis):
             continue
         target = editable_target(root, project["path"], project["name"])

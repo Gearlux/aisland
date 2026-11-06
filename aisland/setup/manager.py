@@ -29,13 +29,8 @@ from aisland.workspace import clones
 from aisland.workspace import file as workspace_file
 from aisland.workspace import selection
 from aisland.workspace.mirrors import apply_all as apply_mirrors
-from aisland.workspace.projects import (
-    ProjectMetadata,
-    get_install_order,
-    get_workspace_root,
-    install_groups,
-    internal_dependencies,
-)
+from aisland.workspace.model import Workspace
+from aisland.workspace.projects import ProjectMetadata, get_workspace_root, install_groups, internal_dependencies
 from aisland.workspace.selection import axes, resolve_for_setup
 from aisland.workspace.source_apply import apply_all
 
@@ -145,7 +140,7 @@ def setup_workspace(non_interactive: bool = False, install_all: bool = False) ->
 
     # 2. Dependency discovery (now reflects the active checkouts), and the editor and type-checker files from it.
     console.echo(f"==> Resolving workspace dependency graph in {workspace_root}...")
-    install_order = get_install_order(workspace_root)
+    install_order = Workspace(workspace_root).install_order
     write_pyrightconfig(workspace_root, install_order)
     sync_mypy_path(workspace_root, install_order)  # append-only: the root mypy.ini is committed
     # 2b. The selections — after discovery (their menus come from the projects), before the installs that read them. A

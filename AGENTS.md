@@ -83,6 +83,12 @@ The workspace's dev-infrastructure CLI, `aisland` (click, the `aisland/cli/` pac
   (`tests/test_no_real_workspace.py`). **Nor its state:** from a checkout `locations.state_dir()` is the checkout itself,
   so the autouse `tests/conftest.py::no_real_state` answers a folder of the test's own instead (a test pointing
   `state_dir` elsewhere replaces it; `real_workspace` keeps the real one).
+- **`workspace/model.py`**: the workspace as one record — `Workspace(root)`, each part read when first asked: `file`,
+  `name`, `submodules`, `folders`, `top_level_folders`, `metadata` (by folder name, never the folder listing's order),
+  `install_order`, `known_names`, and `projects`, a frozen `Project` per folder joining its submodule, its
+  `workspace.toml` row (`listed`) and its metadata. A reader that needs two of those asks the model, never zips the
+  lists itself. A `Workspace` is a SNAPSHOT: build one where it is used, never keep one across a step that writes
+  `workspace.toml` or adds a submodule (`tests/test_workspace_model.py`).
 - **`setup/init.py`**: `aisland workspace init <folder>` sets up a new workspace or an existing repository in place
   (`--local`, `--untracked`; the file: "Workspace root and paths").
 - **`workspace/local.py`**: a local workspace (`init --local`) is a root repository that tracks only the projects:
@@ -1079,7 +1085,7 @@ An aisland command, only the named project's closure, both checks; each flag's m
   `tests/test_submodule_active_map.py`).
 - **A link to a folder inside the workspace is a short name, never a project.** [aliases] Every reader of the
   workspace's projects skips a folder for which `locations.is_alias(folder, workspace)` holds (`discover_projects`,
-  `workspace_folders`, `harness._project_folders`, `sources.known_projects`, `workspace.file.workspace_projects`); a new
+  `workspace_folders`, `model.Workspace.top_level_folders` and `known_names`, `workspace.file.workspace_projects`); a new
   reader does the same, never an `is_symlink` test of its own. A link to a folder OUTSIDE the workspace stays a
   project. The generated `.code-workspace` names such a folder by its link (`locations.alias_names`), its `path` the
   real folder; `workspace.toml` writes it as the project's `path` (`tests/test_symlinked_folders.py`).

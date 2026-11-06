@@ -26,8 +26,9 @@ import click
 
 from aisland import atomic, console, gitcmd, paths
 from aisland.errors import AislandError
+from aisland.workspace.model import Workspace
 from aisland.workspace.projects import get_workspace_root
-from aisland.workspace.sources import known_projects, project_path
+from aisland.workspace.sources import project_path
 
 #: Backup store, under aisland's own data directory (git-ignored via `data/`, and NOT touched
 #: by `aisland services reset` — that command wipes each *service's* subdirectory, not the whole tree).
@@ -242,7 +243,7 @@ def resolve_project_dir(project: str, workspace_root: Path, *, action: str = "cl
             "Name one project instead."
         )
 
-    known = known_projects(workspace_root)
+    known = Workspace(workspace_root).known_names
     if project not in known:
         raise AislandError(f"Unknown project '{project}'. Known projects: {', '.join(known)}")
 

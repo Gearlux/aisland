@@ -29,7 +29,8 @@ from aisland.setup import provision
 from aisland.workspace import check as workspace_check
 from aisland.workspace import discovery, recording, tracking
 from aisland.workspace.mirrors import run_sync
-from aisland.workspace.projects import get_install_order, get_workspace_root, workspace_folders
+from aisland.workspace.model import Workspace
+from aisland.workspace.projects import get_workspace_root, workspace_folders
 
 # --- Workspace Commands ---
 
@@ -262,7 +263,7 @@ def workspace_projects(as_json: bool) -> None:
     """
     if not locations.workspace_found():
         raise AislandError(locations.missing_workspace_message())
-    projects = [{"folder": p["path"].name, "name": p["name"]} for p in get_install_order(get_workspace_root())]
+    projects = [{"folder": p["path"].name, "name": p["name"]} for p in Workspace(get_workspace_root()).install_order]
     if as_json:
         click.echo(json.dumps({"projects": projects}, indent=2))
         return

@@ -20,7 +20,8 @@ from aisland import atomic, console, failures, gitcmd
 from aisland.ci import jenkins_job_config as job_config
 from aisland.errors import AislandError
 from aisland.services import jenkins_settings
-from aisland.workspace.projects import get_install_order, get_workspace_name, get_workspace_root
+from aisland.workspace.model import Workspace
+from aisland.workspace.projects import get_workspace_name, get_workspace_root
 
 if TYPE_CHECKING:
     from aisland.services.jenkins import JenkinsService
@@ -194,7 +195,7 @@ def _find_credentials(home: Path, remote_url: str) -> str:
 def _create_orchestrator_job(home: Path, local: bool, initialized_projects: List[str]) -> None:
     """Create an orchestrator job that builds all discovered projects in topological order."""
     workspace_root = get_workspace_root()
-    install_order = get_install_order(workspace_root)
+    install_order = Workspace(workspace_root).install_order
     base_name = get_workspace_name()
     pipeline_script = job_config.orchestrator_pipeline(install_order, initialized_projects, local, workspace_root)
 

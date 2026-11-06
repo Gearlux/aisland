@@ -11,7 +11,8 @@ from aisland import console
 from aisland.errors import AislandError
 from aisland.setup import provision
 from aisland.venv import no_venv
-from aisland.workspace.projects import discover_projects, get_project_metadata, get_workspace_root
+from aisland.workspace.model import Workspace
+from aisland.workspace.projects import get_workspace_root
 
 #: The gates, in the order they run. ``isort`` and ``black`` are formatters: they only check (as the CI jobs do) unless
 #: ``aisland check --write`` lets them rewrite the files they find.
@@ -91,7 +92,7 @@ def run_quality_gates(arg1: Optional[str] = None, arg2: Optional[str] = None, wr
     env["PATH"] = f"{venv_bin}:{env.get('PATH', '')}"
     env["PYTHONPATH"] = str(workspace_root)
 
-    all_projects = [get_project_metadata(p) for p in discover_projects(workspace_root)]
+    all_projects = Workspace(workspace_root).metadata
     target_project, target_tool = _targets(arg1, arg2, {p["name"] for p in all_projects})
 
     if target_project:
