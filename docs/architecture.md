@@ -21,7 +21,7 @@ The package is `aisland/`. A command is a click function in `aisland/cli/` that 
 |---|---|
 | The workspace and its file | `workspace/` (`init`, `file`, `check`, `local`, `projects`, `gitmodules`, `clones`, `discovery`), `locations`, `paths`, `pyproject`, `toml_places` (a table's line in a TOML file) |
 | What a project or a machine chooses | `workspace/` (`configure` and its plugins `activation`, `selection`, `sources`, `mirrors`; `tracking`, `recording`), `machine_config` (this machine's `git config --local`) |
-| Setting a machine up | `setup/` (`manager`, the driver, and its steps `provision`, `installers`, `uv_config`, `editor_files`, `mcp_config`, `env_example`, `completion`, `playwright_browser`, `git_settings`), `downloads`, `editor`, `harness` |
+| Setting a machine up | `setup/` (`manager`, the driver, and its steps `provision`, `installers`, `bashrc`, `uv_config`, `editor_files`, `mcp_config`, `env_example`, `completion`, `playwright_browser`, `git_settings`), `downloads`, `editor`, `harness` |
 | Services | `services/` (`base`, `registry`, `plugin`, `declared`, `jenkins`, `jenkins_jobs`, `jenkins_java`, `docker`, `swiftbar`), `supervisor`, `envfile` (the workspace's `.env`) |
 | CI and tests | `ci/` (`ci_scaffold`, `ci_templates` — the sets under `templates/` —, `quality`, `stats_report`, `nightly`), `pytest_stats` (the plugin, standard library only) |
 | Wheels | `wheels/` (`build`, the run, and `projects`, `published`, `export`, `report`, `files`, `check`, `bundle`, `extra`, `scrub`, `prune` with `filter_repo`, `install`, `unzip`) |

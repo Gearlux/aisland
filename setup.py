@@ -2,7 +2,7 @@
 
 The file stays at ``aisland/project.bashrc`` in the checkout — the workspace root's ``project.bashrc`` links to it,
 and the file finds the root as its own folder's parent — so it cannot move into the package. A wheel still needs it:
-from a wheel ``aisland setup`` copies it into ``<workspace>/.aisland/`` (``manager._copy_packaged_bashrc``). An
+from a wheel ``aisland setup`` copies it into ``<workspace>/.aisland/`` (``aisland.setup.bashrc``). An
 editable install reads the checkout's file and needs no copy. ``MANIFEST.in`` puts the file into the source package,
 from which ``python -m build`` builds the wheel. Pinned by
 ``tests/test_packaging.py::test_the_wheel_carries_the_shell_init_beside_the_package`` and

@@ -22,7 +22,7 @@ import pytest
 from click.testing import CliRunner
 
 from aisland import cli, locations
-from aisland.setup import env_example, manager
+from aisland.setup import env_example
 
 LIB = """\
 # lib: where the library finds its data
@@ -299,17 +299,17 @@ def test_init_without_projects_writes_the_short_template(tmp_path: Path) -> None
 
 
 def test_setup_writes_both_files_and_says_each(root: Path, capsys: pytest.CaptureFixture[str]) -> None:
-    manager.write_generated_env_example(root)
+    env_example.write_for_setup(root)
     assert capsys.readouterr().out == (
         "==> Wrote env.complete (3 variables from 2 projects)\n==> Wrote env.example (1 variable from 1 project)\n"
     )
-    manager.write_generated_env_example(root)
+    env_example.write_for_setup(root)
     assert capsys.readouterr().out == ""  # nothing changed, nothing said
 
 
 def test_setup_says_a_malformed_project_file_and_goes_on(root: Path, capsys: pytest.CaptureFixture[str]) -> None:
     (root / "app" / env_example.COMPLETE).write_text("APP_LEVEL=INFO\n")
-    manager.write_generated_env_example(root)
+    env_example.write_for_setup(root)
     assert "env.complete and env.example not written:" in capsys.readouterr().out
 
 
@@ -321,7 +321,7 @@ def test_setup_hands_the_workspace_root_to_the_writer(root: Path, monkeypatch: p
         return {}
 
     monkeypatch.setattr(env_example, "write", write)
-    manager.write_generated_env_example(root)
+    env_example.write_for_setup(root)
     assert written == {"root": root}
 
 

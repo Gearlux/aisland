@@ -1,4 +1,5 @@
-"""Tests for aisland.setup.manager's installers (Homebrew, the userspace registry) and shell-switch offer.
+"""Tests for aisland.setup.installers (Homebrew, the userspace registry), the shell-switch offer and
+aisland.setup.bashrc (the project.bashrc link).
 
 Which tools are installed, and the command: `tests/test_workspace_provision.py`.
 
@@ -24,7 +25,7 @@ import click
 import pytest
 
 from aisland import locations, paths
-from aisland.setup import installers, manager
+from aisland.setup import bashrc, installers
 
 
 def _current_arch() -> str:
@@ -375,7 +376,7 @@ def test_a_clone_no_workspace_lists_copies_its_own_shell_init(monkeypatch: pytes
     monkeypatch.setattr(locations, "PACKAGE_DIR", clone / "aisland")
     monkeypatch.setattr(locations, "CHECKOUT_DIR", clone)
     monkeypatch.setattr(paths, "state_dir", lambda: workspace / ".aisland")
-    manager.link_project_bashrc(workspace)
+    bashrc.link_project_bashrc(workspace)
     assert (workspace / "project.bashrc").read_text() == "# the clone's shell init\n"
     assert os.readlink(workspace / "project.bashrc") == ".aisland/project.bashrc"
 
@@ -396,7 +397,7 @@ def test_link_project_bashrc_creates_symlink(monkeypatch: pytest.MonkeyPatch, tm
     target.write_text("# fake aisland bashrc\n")
 
     monkeypatch.setattr(paths, "state_dir", lambda: aisland_dir)
-    manager.link_project_bashrc(workspace)
+    bashrc.link_project_bashrc(workspace)
 
     link = workspace / "project.bashrc"
     assert link.is_symlink()
@@ -415,7 +416,7 @@ def test_link_project_bashrc_idempotent(monkeypatch: pytest.MonkeyPatch, tmp_pat
     (workspace / "project.bashrc").symlink_to("aisland/project.bashrc")
 
     monkeypatch.setattr(paths, "state_dir", lambda: aisland_dir)
-    manager.link_project_bashrc(workspace)
+    bashrc.link_project_bashrc(workspace)
 
     assert capsys.readouterr().out == ""
 
@@ -434,7 +435,7 @@ def test_link_project_bashrc_refuses_to_clobber_real_file(
     real_file.write_text("# USER's hand-edited bashrc\n")
 
     monkeypatch.setattr(paths, "state_dir", lambda: aisland_dir)
-    manager.link_project_bashrc(workspace)
+    bashrc.link_project_bashrc(workspace)
 
     assert real_file.read_text() == "# USER's hand-edited bashrc\n"
     assert not real_file.is_symlink()
@@ -454,7 +455,7 @@ def test_link_project_bashrc_replaces_stale_symlink(monkeypatch: pytest.MonkeyPa
     (workspace / "project.bashrc").symlink_to("old-bashrc")
 
     monkeypatch.setattr(paths, "state_dir", lambda: aisland_dir)
-    manager.link_project_bashrc(workspace)
+    bashrc.link_project_bashrc(workspace)
 
     link = workspace / "project.bashrc"
     assert link.resolve() == target.resolve()

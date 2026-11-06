@@ -15,7 +15,7 @@ from typing import Dict, Optional, Tuple
 import pytest
 
 from aisland import locations, paths
-from aisland.setup import manager
+from aisland.setup import bashrc
 
 BASHRC = Path(__file__).resolve().parents[1] / "project.bashrc"
 
@@ -261,10 +261,10 @@ def test_setup_from_a_wheel_copies_the_packaged_file_and_links_the_root_to_the_c
     monkeypatch.setattr(locations, "FROM_CHECKOUT", False)
     monkeypatch.setattr(locations, "PACKAGE_DIR", package)
     monkeypatch.setattr(paths, "state_dir", lambda: root / ".aisland")
-    manager.link_project_bashrc(root)
+    bashrc.link_project_bashrc(root)
     assert (root / ".aisland" / "project.bashrc").read_text() == BASHRC.read_text()
     assert os.readlink(root / "project.bashrc") == ".aisland/project.bashrc"
     # A newer packaged file replaces the copy on the next setup: the copy is aisland's, never the user's.
     (package / "project.bashrc").write_text(BASHRC.read_text() + "# newer\n")
-    manager.link_project_bashrc(root)
+    bashrc.link_project_bashrc(root)
     assert (root / ".aisland" / "project.bashrc").read_text().endswith("# newer\n")

@@ -3,22 +3,20 @@ one ``.venv``, and write the files the workspace generates per machine (the shel
 the editor and MCP client files, the root ``uv.toml``, the example environment files, the git aliases).
 
 The pieces live in their own modules — :mod:`aisland.workspace.projects` (the workspace and its projects),
-:mod:`aisland.setup.installers` (system tools), :mod:`aisland.setup.editor_files`, :mod:`aisland.setup.mcp_config`,
-:mod:`aisland.setup.uv_config`, :mod:`aisland.setup.git_settings`, :mod:`aisland.setup.playwright_browser` — and this module runs them in
-order.
+:mod:`aisland.setup.installers` (system tools), :mod:`aisland.setup.bashrc`, :mod:`aisland.setup.editor_files`,
+:mod:`aisland.setup.mcp_config`, :mod:`aisland.setup.uv_config`, :mod:`aisland.setup.env_example`,
+:mod:`aisland.setup.git_settings`, :mod:`aisland.setup.playwright_browser` — and this module runs them in order.
 """
 
 import logging
-import os
 import subprocess
 from pathlib import Path
 from typing import Iterable, List, Tuple
 
-import click
-
-from aisland import console, failures, locations, paths
+from aisland import console, failures
 from aisland.harness import install_harness
 from aisland.setup import env_example, provision
+from aisland.setup.bashrc import link_project_bashrc
 from aisland.setup.editor_files import sync_mypy_path, write_code_workspace, write_pyrightconfig
 from aisland.setup.git_settings import install_git_aliases, merge_on_pull
 from aisland.setup.installers import ensure_uv_in_venv
@@ -77,71 +75,6 @@ def _run_installs(workspace_root: Path, uv_cmd: str, projects: List[ProjectMetad
             failures.report(f"  - Error: Failed to install {', '.join(names)}: {e}")
             failed.extend(names)
     return failed, skipped
-
-
-def _copy_packaged_bashrc(target: Path) -> None:
-    """From a wheel: put the packaged ``project.bashrc`` at ``target`` (``<workspace>/.aisland/``), replacing an older
-    copy. The copy is aisland's (its header says so), and its place there makes the workspace its parent folder. A
-    clone of aisland no workspace lists, installed editable, works like a wheel but carries no packaged copy: its own
-    file, beside the package, is the one copied."""
-    packaged = locations.PACKAGE_DIR / "project.bashrc"
-    if not packaged.is_file():
-        packaged = locations.CHECKOUT_DIR / "project.bashrc"
-    text = packaged.read_text()
-    if target.exists() and target.read_text() == text:
-        return
-    target.parent.mkdir(parents=True, exist_ok=True)
-    target.write_text(text)
-
-
-def link_project_bashrc(workspace_root: Path) -> None:
-    """Symlink ``<workspace>/project.bashrc`` to the canonical aisland-managed copy.
-
-    The source of truth lives at ``aisland/project.bashrc`` (tracked); from a wheel, the packaged copy is first
-    written to ``<workspace>/.aisland/project.bashrc`` and the link points there. The
-    workspace-root entry is a symlink so `source ./project.bashrc` from the
-    workspace still works for muscle-memory. Replaces a stale symlink in place,
-    but refuses to clobber a real file — that would silently destroy the user's
-    customizations if they ever predated this migration.
-    """
-    target = paths.state_dir() / "project.bashrc"
-    link = workspace_root / "project.bashrc"
-    if not locations.FROM_CHECKOUT:
-        _copy_packaged_bashrc(target)
-
-    if not target.exists():
-        failures.warn(f"  - Warning: {target} not found; skipping project.bashrc symlink.")
-        return
-
-    if link.is_symlink():
-        if link.resolve() == target.resolve():
-            logger.debug("%s already links to %s", link, target)
-            return
-        link.unlink()
-    elif link.exists():
-        failures.warn(
-            f"  - Warning: {link} exists as a regular file. Move or delete it manually so "
-            f"`aisland setup` can symlink it to {target}."
-        )
-        return
-
-    rel = os.path.relpath(target, workspace_root)
-    os.symlink(rel, link)
-    console.echo(f"==> Linked {link} -> {rel}")
-
-
-def write_generated_env_example(workspace_root: Path) -> None:
-    """Setup's step: the workspace's ``env.complete`` and ``env.example`` (``aisland workspace env-example``); a
-    project's malformed file is said and setup goes on."""
-
-    try:
-        written = env_example.write(workspace_root)
-    except click.ClickException as error:
-        console.echo(f"==> env.complete and env.example not written: {error.message}")
-        return
-    for kind, result in written.items():
-        if result.changed:
-            console.echo(f"==> Wrote {env_example.FILE_NAMES[kind]} ({env_example.counts(result)})")
 
 
 def _say(lines: Iterable[str]) -> None:
@@ -235,7 +168,7 @@ def setup_workspace(non_interactive: bool = False, install_all: bool = False) ->
     # 5. The VS Code workspace file (its loggair log folder needs loggair installed to be asked), then the workspace's
     #    example environment made of each project's env.example (never .env itself).
     write_code_workspace(workspace_root)
-    write_generated_env_example(workspace_root)
+    env_example.write_for_setup(workspace_root)
     # 6. The git aliases, however aisland is installed: from a wheel they name the scripts by their path in the venv,
     #    so a recreated venv or a new aisland is pointed at by the next setup; a newly activated submodule gets them.
     install_git_aliases(workspace_root)

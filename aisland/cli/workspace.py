@@ -23,7 +23,7 @@ from aisland.cli._base import (
 )
 from aisland.errors import AislandError
 from aisland.services.jenkins import JenkinsService
-from aisland.setup import editor_files, env_example, manager, provision
+from aisland.setup import bashrc, editor_files, env_example, provision
 from aisland.workspace import check as workspace_check
 from aisland.workspace import configure, discovery
 from aisland.workspace import init as workspace_mod
@@ -393,7 +393,7 @@ def workspace_bashrc() -> None:
             "and run `aisland workspace bashrc` again"
         )
     before = os.readlink(link) if link.is_symlink() else None
-    manager.link_project_bashrc(root)
+    bashrc.link_project_bashrc(root)
     if before is not None and os.readlink(link) == before:
         click.echo(f"==> {link.name} already links to {before}")
 

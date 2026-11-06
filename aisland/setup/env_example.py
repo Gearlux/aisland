@@ -19,7 +19,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Dict, List, Literal, Optional, Tuple, get_args
 
-from aisland import locations
+from aisland import console, locations
 from aisland.errors import AislandError
 from aisland.workspace.projects import dependency_order, discover_projects, get_project_metadata, workspace_folders
 
@@ -251,6 +251,18 @@ def write(root: Path) -> Dict[Kind, Written]:
         variables = len({e.name for env in collected[kind].projects for e in env.entries})
         out[kind] = Written(target, changed, variables, len(collected[kind].projects), collected[kind].without)
     return out
+
+
+def write_for_setup(root: Path) -> None:
+    """Setup's step: :func:`write`, each changed file said; a project's malformed file is said and setup goes on."""
+    try:
+        written = write(root)
+    except AislandError as error:
+        console.echo(f"==> {COMPLETE} and {EXAMPLE} not written: {error.message}")
+        return
+    for kind, result in written.items():
+        if result.changed:
+            console.echo(f"==> Wrote {FILE_NAMES[kind]} ({counts(result)})")
 
 
 def missing(root: Path, env_file: Path) -> List[Tuple[str, Entry]]:

@@ -118,7 +118,7 @@ where = ["."]
 include = ["aisland*"]
 
 # The non-Python files the package reads or runs, so a wheel carries them:
-# the workspace-file template (manager.write_code_workspace), the git alias scripts and the
+# the workspace-file template (setup/editor_files.py), the git alias scripts and the
 # files `aisland workspace init` writes (aisland/workspace/init.py), and the agent harness `aisland setup` installs
 # into every workspace (aisland/harness.py: the commands, their helper script, the generic rules — `harness/` is no
 # Python package, so its script is data too). setup.py adds project.bashrc.
