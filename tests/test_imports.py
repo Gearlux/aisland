@@ -135,12 +135,13 @@ def test_every_top_level_module_is_in_a_layer_or_a_leaf() -> None:
     """A module the layers do not name and the leaves do not list would be held to nothing: a new one joins a list."""
     (layers,) = [c for c in _contracts() if c["id"] == "layers"]
     (leaves,) = [c for c in _contracts() if c["id"] == "leaves"]
-    assert isinstance(layers["layers"], list) and isinstance(leaves["source_modules"], list)
+    leaf_modules, forbidden = leaves["source_modules"], leaves["forbidden_modules"]
+    assert isinstance(layers["layers"], list) and isinstance(leaf_modules, list) and isinstance(forbidden, list)
     named = {name.strip() for layer in layers["layers"] for name in str(layer).split("|")}
     graph = grimp.build_graph("aisland", exclude_type_checking_imports=True, cache_dir=None)
     top = {module for module in graph.modules if module.count(".") == 1}
-    assert top - named - set(leaves["source_modules"]) == set()
-    assert set(leaves["forbidden_modules"]) == named, "the leaves are forbidden every layer, and only those"
+    assert top - named - set(leaf_modules) == set()
+    assert set(forbidden) == named, "the leaves are forbidden every layer, and only those"
 
 
 @pytest.mark.parametrize(
