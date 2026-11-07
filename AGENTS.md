@@ -90,7 +90,10 @@ The workspace's dev-infrastructure CLI, `aisland` (click, the `aisland/cli/` pac
   lists itself. A `Workspace` is a SNAPSHOT: build one where it is used, never keep one across a step that writes
   `workspace.toml` or adds a submodule (`tests/test_workspace_model.py`).
 - **`setup/init.py`**: `aisland workspace init <folder>` sets up a new workspace or an existing repository in place
-  (`--local`, `--untracked`; the file: "Workspace root and paths").
+  (`--local`, `--untracked`; the file: "Workspace root and paths"). **A root `init` makes itself adopts the clones
+  already in the folder** as submodules (`clones.found` + `clones.add`, after the `--from`/`--add` projects), so they
+  follow `--untracked` and never sit in the root as embedded repositories; an existing repository's layout is its own
+  and left (`tests/test_workspace_init.py`).
 - **`workspace/local.py`**: a local workspace (`init --local`) is a root repository that tracks only the projects:
   `.gitignore` `/*`, `.gitmodules` and the projects committed, marked by `aisland.workspace.local` in `.git/config`
   (never a tracked file: the root is no one else's). `settle` commits `.gitmodules` and the projects' paths — nothing
@@ -103,7 +106,8 @@ The workspace's dev-infrastructure CLI, `aisland` (click, the `aisland/cli/` pac
   link, in a workspace with `.gitmodules` or a local root. `git submodule add -b <its branch> <its origin> <folder>`
   keeps it as it is (`-f` only in a local root); a refused add is said and setup goes on. Its tracking is
   `tracking.apply`'s (the workspace's `[workspace] track`, this machine's `aisland.track.default`), never inferred from
-  the other projects. It runs before `workspace.file.refresh`.
+  the other projects. It runs before `workspace.file.refresh`. `found` is the same search without the
+  folder-of-clones exception, for `init`'s new root.
 - **`tracking.py`**: `aisland workspace track set|unset|status [PROJECT…]` — whether the root records a project's
   commits. Committed: the project's `track = false` in `workspace.toml` (written as `ignore = all` in `.gitmodules`);
   this machine: `aisland.track.<project>.track` (written as git's `submodule.<name>.ignore` in `.git/config`, which

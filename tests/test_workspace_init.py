@@ -1,10 +1,10 @@
 """`aisland workspace init <folder>`.
 
 `init` makes a folder a workspace aisland runs in: it writes the starting files — never over one that exists —, runs
-`git init`, adds each project of a `--from` workspace.toml and each `--add` repository as a submodule, writes the new
-workspace's `workspace.toml` (the `--from` file, copied in) and installs the workspace git aliases. A folder that
-already is a git repository is refused untouched, and so is a workspace file that cannot be read, before anything is
-written.
+`git init`, adds each project of a `--from` workspace.toml and each `--add` repository as a submodule — and, in a root
+it made, each clone already in the folder, as it is —, writes the new workspace's `workspace.toml` (the `--from` file,
+copied in) and installs the workspace git aliases. A folder that already is a git repository is refused untouched, and
+so is a workspace file that cannot be read, before anything is written.
 """
 
 from __future__ import annotations
@@ -531,6 +531,69 @@ def test_untracked_in_an_existing_repository_untracks_its_submodules(tmp_path: P
     assert result.exit_code == 0, result.output
     assert _git(root, "config", "-f", ".gitmodules", "submodule.models.ignore") == "all"
     assert workspace_file.load(root).settings["track"] is False  # the projects to come follow it too
+
+
+def _clone_into(tmp_path: Path, remote: Path, branch: str) -> Path:
+    """``remote`` cloned on ``branch`` into the folder init is given, before init runs — as a person cloned it by hand."""
+    folder = tmp_path / "acme" / remote.name
+    folder.parent.mkdir(parents=True, exist_ok=True)
+    subprocess.run(["git", "clone", "-q", "-b", branch, str(remote), str(folder)], check=True)
+    return folder
+
+
+def test_a_clone_already_in_a_new_root_becomes_a_submodule_as_it_is(tmp_path: Path) -> None:
+    models = _remote(tmp_path, "models", branches=("dev",))
+    clone = _clone_into(tmp_path, models, "dev")
+    head = _git(clone, "rev-parse", "HEAD")
+    (clone / "work.txt").write_text("uncommitted\n")
+    result = _init(tmp_path)
+    assert result.exit_code == 0, result.output
+    root = tmp_path / "acme"
+    assert _git(root, "config", "-f", ".gitmodules", "submodule.models.url") == str(models)
+    assert _git(root, "config", "-f", ".gitmodules", "submodule.models.branch") == "dev"
+    assert (clone / ".git").is_dir() and _git(clone, "rev-parse", "HEAD") == head
+    assert (clone / "work.txt").read_text() == "uncommitted\n"
+    assert "models" in workspace_file.load(root).projects
+    assert "mypy_path = models" in (root / "mypy.ini").read_text().splitlines()
+    assert (
+        f"    models/                   submodule {models} (dev) — the clone already here, kept as it is"
+        in result.output.splitlines()
+    )
+    added = subprocess.run(["git", "add", "-n", "-A"], cwd=root, capture_output=True, text=True)
+    assert "embedded git repository" not in added.stderr
+
+
+def test_untracked_untracks_the_clones_already_in_a_new_root(tmp_path: Path) -> None:
+    _clone_into(tmp_path, _remote(tmp_path, "models", branches=("dev",)), "dev")
+    result = _init(tmp_path, "--untracked")
+    assert result.exit_code == 0, result.output
+    root = tmp_path / "acme"
+    assert _git(root, "config", "-f", ".gitmodules", "submodule.models.ignore") == "all"
+    assert "    models                    untracked: the root records none of its commits" in result.output.splitlines()
+
+
+def test_a_projects_folder_that_holds_its_clone_is_added_as_it_is_beside_the_others(tmp_path: Path) -> None:
+    models = _remote(tmp_path, "models", branches=("dev",))
+    tools = _remote(tmp_path, "tools")
+    clone = _clone_into(tmp_path, models, "dev")
+    (clone / "work.txt").write_text("uncommitted\n")
+    listed = _workspace_toml(tmp_path, _project("models", models, "dev"))
+    result = _init(tmp_path, "--from", str(listed), "--add", str(tools))
+    assert result.exit_code == 0, result.output
+    root = tmp_path / "acme"
+    assert [path for path, _url, _branch in workspace_file.submodules(root)] == ["models", "tools"]
+    assert (clone / ".git").is_dir() and (clone / "work.txt").is_file()
+    assert set(workspace_file.load(root).projects) == {"models", "tools"}
+
+
+def test_an_existing_repository_keeps_its_clones_as_they_are(tmp_path: Path, models: Path) -> None:
+    root = tmp_path / "acme"
+    root.mkdir()
+    subprocess.run(["git", "init", "-q"], cwd=root, check=True)
+    subprocess.run(["git", "clone", "-q", str(models), str(root / "models")], check=True)
+    result = _init(tmp_path)
+    assert result.exit_code == 0, result.output
+    assert not (root / ".gitmodules").exists()  # a folder of clones is a layout of its own (aisland.workspace.clones)
 
 
 @pytest.mark.slow
