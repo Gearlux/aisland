@@ -5,7 +5,9 @@ usually submodules. ``aisland setup`` then needs a ``.venv`` at the root and rea
 ``workspace.toml`` (its projects and their settings, kept current by setup: :mod:`aisland.workspace.file`),
 ``.env`` (exported by ``project.bashrc``) and ``mypy.ini`` (its ``mypy_path`` kept complete).
 ``init`` writes the starting files, runs ``git init``, adds each project of a ``--from`` file and each ``--add``
-repository as a submodule, writes ``workspace.toml`` and installs the workspace git aliases. It works the same
+repository as a submodule, then each clone already in the folder (:func:`aisland.workspace.clones.found`: a subfolder
+with a ``.git`` folder, an ``origin`` and a ``pyproject.toml``) as it is — its checkout, branch and edits kept —,
+writes ``workspace.toml`` and installs the workspace git aliases. It works the same
 whichever way aisland is installed; the workspace it makes is one that aisland from a wheel works in
 (:mod:`aisland.locations`).
 
@@ -42,6 +44,7 @@ from aisland.setup.git_settings import install_git_aliases
 from aisland.setup.harness import install_harness
 from aisland.setup.harness import sets as harness_sets
 from aisland.setup.harness import summary as harness_summary
+from aisland.workspace import clones
 from aisland.workspace import file as workspace_file
 from aisland.workspace import local as local_workspace
 from aisland.workspace import tracking
@@ -361,8 +364,22 @@ def _build(
 
     already = {path for path, _url, _branch in workspace_file.submodules(root)}
     _clone(root, plan)
+    # A root init has just made holds no folder of clones of its own: a clone already here (one a --from project's
+    # folder did not take) is a project, added as a submodule as it is.
+    kept: List[str] = []
+    if not existing:
+        here = clones.found(root)
+        if here:
+            _say(f"{_INDENT}adding the clones already here as submodules …")
+        rows += [_row("", line) for line in clones.add(root, here) if line.startswith("could not add")]
+        kept = [clone.path for clone in here]
     rows += [
-        _row(f"{path}/", f"submodule {url}" + (f" ({branch})" if branch else ""))
+        _row(
+            f"{path}/",
+            f"submodule {url}"
+            + (f" ({branch})" if branch else "")
+            + (" — the clone already here, kept as it is" if path in kept else ""),
+        )
         for path, url, branch in workspace_file.submodules(root)
         if path not in already
     ]

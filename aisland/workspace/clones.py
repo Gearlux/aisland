@@ -13,13 +13,16 @@ The new project is tracked as the workspace says (:mod:`aisland.workspace.tracki
 project, tracked otherwise. So in such a workspace a clone needs only ``aisland setup``: it becomes a submodule, is
 listed in ``workspace.toml``, untracked, in the editor's workspace file, and committed in a local root. A workspace without ``.gitmodules``
 that is no local root is a folder of clones, where each clone already is a project: it has none to add.
+
+``aisland workspace init`` adds them too when it makes the root itself (``git init`` in a folder that already held
+clones): :func:`found` is the same search without that exception, and :func:`add` adds what it found.
 """
 
 from __future__ import annotations
 
 from dataclasses import dataclass
 from pathlib import Path
-from typing import List, Optional
+from typing import List, Optional, Sequence
 
 from aisland import gitcmd, locations
 from aisland.workspace import file as workspace_file
@@ -37,9 +40,16 @@ class Clone:
 
 
 def unlisted(root: Path) -> List[Clone]:
-    """Every clone in ``root`` that ``.gitmodules`` does not list, by folder name (the module docstring)."""
+    """Every clone in ``root`` that ``.gitmodules`` does not list, by folder name (the module docstring); none in a
+    folder of clones (no ``.gitmodules``, no local root)."""
     if not (root / ".gitmodules").is_file() and not local_workspace.is_local(root):
         return []
+    return found(root)
+
+
+def found(root: Path) -> List[Clone]:
+    """Every clone in ``root`` that ``.gitmodules`` does not list, by folder name, whether or not ``root`` has a
+    ``.gitmodules``: what ``init`` adds in the root it has just made."""
     listed = set(local_workspace.submodule_names(root))
     found = []
     for child in sorted(root.iterdir(), key=lambda c: c.name):
@@ -54,12 +64,17 @@ def unlisted(root: Path) -> List[Clone]:
 
 
 def add_unlisted(root: Path) -> List[str]:
-    """Add each clone :func:`unlisted` finds as a submodule, without asking; one line per thing done.
+    """Add each clone :func:`unlisted` finds as a submodule, without asking; one line per thing done."""
+    return add(root, unlisted(root))
+
+
+def add(root: Path, clones: Sequence[Clone]) -> List[str]:
+    """Add each of ``clones`` as a submodule; one line per thing done.
 
     A clone git refuses to add is said and the others still added; ``workspace.toml`` lists each one added."""
     lines: List[str] = []
     force = ["-f"] if local_workspace.is_local(root) else []
-    for clone in unlisted(root):
+    for clone in clones:
         branch = ["-b", clone.branch] if clone.branch else []
         added = gitcmd.git(root, "submodule", "add", "-q", *force, *branch, "--", clone.url, clone.path)
         if added.returncode != 0:
