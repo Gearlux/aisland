@@ -16,7 +16,7 @@ from typing import Optional, Set
 
 import click
 
-from aisland import console, failures, paths
+from aisland import console, failures, paths, venv
 from aisland.downloads import download, sha256
 from aisland.errors import AislandError
 from aisland.services import supervisor
@@ -341,7 +341,7 @@ class JenkinsService(BaseService):
             f"--httpListenAddress={self.LISTEN_ADDRESS}",
         ]
         workspace_root = get_workspace_root()
-        venv_bin = workspace_root / ".venv" / "bin"
+        venv_bin = venv.venv_bin(workspace_root)
         # The bin folder (aisland/bin) hosts symlinks to userspace-installed tools like
         # node/npm/npx (see installers.install_userspace_tool). Putting it on
         # Jenkins' PATH means every job inherits these without per-Jenkinsfile

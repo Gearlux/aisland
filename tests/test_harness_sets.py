@@ -362,7 +362,7 @@ def test_the_rules_index_says_where_it_comes_from_and_how_to_write_it_again(root
 
 @pytest.fixture
 def at_root(root: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
-    monkeypatch.setattr(cli_workspace, "_configure_root", lambda: root)
+    monkeypatch.setattr(cli_workspace, "workspace_root_found", lambda: root)
     return root
 
 

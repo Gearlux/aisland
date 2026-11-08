@@ -108,7 +108,7 @@ def apply_source(workspace_root: Path, project: str, source: sources.ProjectSour
             return False
         # The SAME target `aisland setup` installs (dev extra + the selected framework/tracker
         # extras) — the bare directory used to drop every extra the machine had selected.
-        return _run([uv_cmd, "pip", "install", "-e", editable_target(workspace_root, path, project)], workspace_root)
+        return _run([uv_cmd, "pip", "install", "-e", editable_target(workspace_root, path)], workspace_root)
 
     # github / pypi — both detach. Read the distribution name while the directory still exists
     # (afterwards there is no pyproject.toml left to ask), then empty it.

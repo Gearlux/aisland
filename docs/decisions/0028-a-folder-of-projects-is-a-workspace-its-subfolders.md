@@ -66,8 +66,8 @@ alpha                  merged origin/main (1 commit)
 
 ## What you may change
 
-- Which subfolders count as projects (`workspace_folders`, `locations.holds_projects` — keep the two
-  the same test), with `tests/test_folder_workspace.py`.
+- Which subfolders count as projects (`locations.is_project_folder`, the one test `workspace_folders` and
+  `locations.holds_projects` both make), with `tests/test_folder_workspace.py`.
 - Which aliases a folder workspace gets, with `tests/test_folder_git_aliases.py`.
 - Never: a second project list beside `workspace_folders`, or `.gitmodules` overruled by the folders.
 

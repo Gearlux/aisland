@@ -13,14 +13,7 @@ import click
 from aisland import failures, locations
 from aisland.cli import configure as configure_cli
 from aisland.cli import editor as editor_cli
-from aisland.cli._base import (
-    _complete_submodules,
-    _complete_workspace_projects,
-    _configure_root,
-    _editor_root,
-    _Group,
-    main,
-)
+from aisland.cli._base import Group, complete_submodules, complete_workspace_projects, main, workspace_root_found
 from aisland.errors import AislandError
 from aisland.services.jenkins import JenkinsService
 from aisland.setup import bashrc, configure, editor_files, env_example, harness
@@ -35,7 +28,7 @@ from aisland.workspace.projects import get_workspace_root, workspace_folders
 # --- Workspace Commands ---
 
 
-@click.group("workspace", cls=_Group)
+@click.group("workspace", cls=Group)
 def workspace_group() -> None:
     """Create a workspace aisland runs in, or write this one down for another machine."""
 
@@ -107,12 +100,12 @@ def workspace_init(
 
 
 def _track(projects: Tuple[str, ...], track: bool, machine_only: bool) -> None:
-    for line in tracking.track_command(_configure_root(), projects, track, machine_only):
+    for line in tracking.track_command(workspace_root_found(), projects, track, machine_only):
         click.echo(line)
 
 
 _TRACK_ARGUMENTS = [
-    click.argument("projects", nargs=-1, metavar="[PROJECT]...", shell_complete=_complete_submodules),
+    click.argument("projects", nargs=-1, metavar="[PROJECT]...", shell_complete=complete_submodules),
     click.option("--machine-only", is_flag=True, help="Change this machine only (.git/config); commit nothing."),
 ]
 
@@ -124,7 +117,7 @@ def _with_track_arguments(command: Callable[..., None]) -> Callable[..., None]:
     return command
 
 
-@workspace_group.group("track", cls=_Group)
+@workspace_group.group("track", cls=Group)
 def workspace_track() -> None:
     """Whether the root records the projects' commits: set it, unset it, or see what is set.
 
@@ -161,7 +154,7 @@ def workspace_track_set(projects: Tuple[str, ...], machine_only: bool) -> None:
 
 
 @workspace_track.command("status")
-@click.argument("projects", nargs=-1, metavar="[PROJECT]...", shell_complete=_complete_submodules)
+@click.argument("projects", nargs=-1, metavar="[PROJECT]...", shell_complete=complete_submodules)
 @click.option("--json", "as_json", is_flag=True, help="Print the rows as one JSON object.")
 def workspace_track_status(projects: Tuple[str, ...], as_json: bool) -> None:
     """Whether the root records PROJECT's commits, whose choice that is and whether git agrees (no PROJECT: every
@@ -170,7 +163,7 @@ def workspace_track_status(projects: Tuple[str, ...], as_json: bool) -> None:
     With no PROJECT it says the workspace's choice and lists the projects that differ from it, or that git does not
     yet agree with (`aisland setup` writes git's setting); the others are counted. With PROJECTs it gives a line each.
     """
-    root = _configure_root()
+    root = workspace_root_found()
     if as_json:
         click.echo(json.dumps(tracking.status_json(root, projects), indent=2))
         return
@@ -178,7 +171,7 @@ def workspace_track_status(projects: Tuple[str, ...], as_json: bool) -> None:
         click.echo(line)
 
 
-@workspace_group.group("test-stats", cls=_Group)
+@workspace_group.group("test-stats", cls=Group)
 def workspace_test_stats() -> None:
     """Whether the pytest plugin records the projects' test runs (for `aisland tests report`).
 
@@ -191,7 +184,7 @@ def workspace_test_stats() -> None:
 
 
 _TEST_STATS_ARGUMENTS = [
-    click.argument("projects", nargs=-1, metavar="[PROJECT]...", shell_complete=_complete_workspace_projects),
+    click.argument("projects", nargs=-1, metavar="[PROJECT]...", shell_complete=complete_workspace_projects),
     click.option("--machine-only", is_flag=True, help="Change this machine only (.git/config); commit nothing."),
 ]
 
@@ -211,7 +204,7 @@ def workspace_test_stats_off(projects: Tuple[str, ...], machine_only: bool) -> N
     Written for everyone as `test-stats = false` in workspace.toml (commit it), or with --machine-only in .git/config
     alone; this machine's choice wins over the committed one.
     """
-    for line in recording.command(_configure_root(), projects, False, machine_only):
+    for line in recording.command(workspace_root_found(), projects, False, machine_only):
         click.echo(line)
 
 
@@ -220,7 +213,7 @@ def workspace_test_stats_off(projects: Tuple[str, ...], machine_only: bool) -> N
 def workspace_test_stats_on(projects: Tuple[str, ...], machine_only: bool) -> None:
     """Record PROJECT's test runs again (no PROJECT: every project). Without --machine-only it also drops this
     machine's own choice for them."""
-    for line in recording.command(_configure_root(), projects, True, machine_only):
+    for line in recording.command(workspace_root_found(), projects, True, machine_only):
         click.echo(line)
 
 
@@ -285,7 +278,7 @@ def workspace_provision(ctx: click.Context, as_json: bool) -> None:
 
     if ctx.invoked_subcommand is not None:
         return
-    rows = provision.rows(_configure_root())
+    rows = provision.rows(workspace_root_found())
     if as_json:
         click.echo(json.dumps({"rows": rows}, indent=2))
         return
@@ -297,13 +290,13 @@ def workspace_provision(ctx: click.Context, as_json: bool) -> None:
 def workspace_provision_install() -> None:
     """Install every system tool this machine needs: aisland's own and the projects' sys-dependencies."""
 
-    provision.install(_configure_root())
+    provision.install(workspace_root_found())
     if provision.this_platform() == "brew":
         # Jenkins' Java is no declared formula: the WAR names the Java it runs on (services/jenkins_java.py).
         JenkinsService().provision_java()
 
 
-@workspace_group.group("harness", cls=_Group, invoke_without_command=True)
+@workspace_group.group("harness", cls=Group, invoke_without_command=True)
 @click.option("--json", "as_json", is_flag=True, help="Print the sets as one JSON object.")
 @click.pass_context
 def workspace_harness(ctx: click.Context, as_json: bool) -> None:
@@ -318,7 +311,7 @@ def workspace_harness(ctx: click.Context, as_json: bool) -> None:
 
     if ctx.invoked_subcommand is not None:
         return
-    rows = harness.rows(_configure_root())
+    rows = harness.rows(workspace_root_found())
     if as_json:
         click.echo(json.dumps({"sets": rows}, indent=2))
         return
@@ -336,7 +329,7 @@ def workspace_harness(ctx: click.Context, as_json: bool) -> None:
 def workspace_harness_install() -> None:
     """Install the harness sets into the workspace, as `aisland setup` does."""
 
-    root = _configure_root()
+    root = workspace_root_found()
     notes = harness.install_harness(root)
     click.echo(f"==> Harness: {harness.summary(harness.sets(root))}")
     for line in notes:
@@ -386,7 +379,7 @@ def workspace_bashrc() -> None:
     A real file in its place is refused (it may hold your own lines: put them in user.bashrc); a link pointing
     elsewhere is replaced.
     """
-    root = _editor_root()
+    root = workspace_root_found()
     link = root / "project.bashrc"
     if link.exists() and not link.is_symlink():
         raise AislandError(
@@ -406,7 +399,7 @@ def workspace_code_workspace() -> None:
     Its folders follow what is checked out here, its settings the template, its theme and colours this machine's
     choice (`aisland workspace theme|color`). An unchanged file is left as it is, so VS Code does not reload.
     """
-    root = _editor_root()
+    root = workspace_root_found()
     if editor_files.write_code_workspace(root) is None:
         click.echo(f"==> {editor_files.code_workspace_path(root).name} is up to date")
 
@@ -423,7 +416,7 @@ def workspace_env_example(missing: bool) -> None:
     An unchanged file is left as it is; `aisland setup` writes them too. --missing prints, ready to paste, the
     variables of env.complete an existing .env does not mention.
     """
-    root = _editor_root()
+    root = workspace_root_found()
     written = env_example.write(root)
     for kind in env_example.KINDS:
         name = env_example.FILE_NAMES[kind]
@@ -454,14 +447,14 @@ def workspace_env_example(missing: bool) -> None:
 
 
 @workspace_group.command("env-test")
-@click.argument("projects", nargs=-1, shell_complete=_complete_workspace_projects)
+@click.argument("projects", nargs=-1, shell_complete=complete_workspace_projects)
 def workspace_env_test(projects: Tuple[str, ...]) -> None:
     """Write PROJECT's tests/test_env_example.py: it fails when the project reads a variable its env.complete lacks.
 
     No PROJECT: every project with a checkout. A project without an env.complete gets no test; an unchanged test is
     left as it is.
     """
-    root = _editor_root()
+    root = workspace_root_found()
     folders = {name: path for name, path, _active in workspace_folders(root)}
     for name in projects:
         if name not in folders:

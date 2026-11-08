@@ -8,11 +8,11 @@ the same held for every aisland command. The maintainer asked for the options th
 
 ## Decision
 
-- **`cli._base._Command` completes an empty word as `-`.** Click calls a command's `shell_complete` only when no
+- **`cli._base.Command` completes an empty word as `-`.** Click calls a command's `shell_complete` only when no
   argument is left to fill, so an argument's values still come first, and click's own filtering still leaves
   out a hidden option and one already typed.
-- **Every group is a `cli._base._Group`** (`command_class = _Command`, `group_class = _Group`): a command written with
-  `@<group>.command` gets the behaviour with no `cls=`, and a subgroup made with `@<group>.group` is a `_Group`
+- **Every group is a `cli._base.Group`** (`command_class = Command`, `group_class = Group`): a command written with
+  `@<group>.command` gets the behaviour with no `cls=`, and a subgroup made with `@<group>.group` is a `Group`
   too — never the root's `_WorkspaceGroup`, whose workspace refusal is for the root only.
 - **A group's own TAB is unchanged**: its commands (the `wheels` group: then the projects). Options mixed in
   would bury the commands.
@@ -33,7 +33,7 @@ aisland <TAB>                       →  backups check clean completion …   (c
 ```
 
 ```python
-class _Command(click.Command):
+class Command(click.Command):
     def shell_complete(self, ctx, incomplete):
         return super().shell_complete(ctx, incomplete or "-")
 ```
@@ -41,7 +41,7 @@ class _Command(click.Command):
 ## What you may change
 
 - Which words a group offers, with `tests/test_cli_option_completion.py`.
-- What must not change: every aisland group is a `_Group`, so no command misses the behaviour
+- What must not change: every aisland group is a `Group`, so no command misses the behaviour
   (`::test_every_group_makes_its_commands_and_subgroups_with_the_completing_classes`).
 
 ---

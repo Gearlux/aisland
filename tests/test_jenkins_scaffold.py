@@ -20,7 +20,7 @@ import pytest
 from aisland import locations
 from aisland.ci import ci_scaffold
 from aisland.ci.ci_scaffold import STAGE_LIMITS, TIMED_OUT_MESSAGE
-from aisland.services.jenkins import JenkinsService
+from tests.records import NO_JENKINS
 
 
 def _make_pyproject(dir_: Path, name: str) -> None:
@@ -59,7 +59,7 @@ def test_scaffold_all_projects_includes_aisland(monkeypatch: pytest.MonkeyPatch,
 
     monkeypatch.setattr(ci_scaffold, "scaffold", _spy)
 
-    ci_scaffold.scaffold(None, force=False, jenkins_url=JenkinsService().url())
+    ci_scaffold.scaffold(None, force=False, jenkins_url=NO_JENKINS)
 
     assert "aisland" in visited, "aisland must not be filtered out of the all-projects loop"
     assert {"aisland", "matrainer", "traidwind"} <= set(visited)
@@ -76,7 +76,7 @@ def test_scaffold_emits_directory_example_runner(monkeypatch: pytest.MonkeyPatch
     monkeypatch.setattr(locations, "workspace_root", lambda: tmp_path)
 
     # The Jenkins linter is unreachable in tests -> warn-and-skip, files still written.
-    ci_scaffold.scaffold("proj", force=True, jenkins_url=JenkinsService().url())
+    ci_scaffold.scaffold("proj", force=True, jenkins_url=NO_JENKINS)
 
     generated = {
         "Jenkinsfile": tmp_path / "proj" / "Jenkinsfile",
@@ -103,7 +103,7 @@ def test_the_regenerate_header_is_a_command_the_cli_accepts(monkeypatch: pytest.
     from aisland.cli.services import jenkins_scaffold
 
     monkeypatch.setattr(locations, "workspace_root", lambda: tmp_path)
-    ci_scaffold.scaffold("proj", force=True, jenkins_url=JenkinsService().url())
+    ci_scaffold.scaffold("proj", force=True, jenkins_url=NO_JENKINS)
 
     generated = [
         tmp_path / "proj" / "Jenkinsfile",
@@ -161,7 +161,7 @@ def _scaffolded(monkeypatch: pytest.MonkeyPatch, tmp_path: Path, make: Any) -> d
     make(tmp_path / "proj", "proj")
     (tmp_path / ".gitmodules").write_text("", encoding="utf-8")
     monkeypatch.setattr(locations, "workspace_root", lambda: tmp_path)
-    ci_scaffold.scaffold("proj", force=True, jenkins_url=JenkinsService().url())
+    ci_scaffold.scaffold("proj", force=True, jenkins_url=NO_JENKINS)
     return {
         "Jenkinsfile": (tmp_path / "proj" / "Jenkinsfile").read_text(encoding="utf-8"),
         "Jenkinsfile.local": (tmp_path / "proj" / "Jenkinsfile.local").read_text(encoding="utf-8"),
@@ -292,7 +292,7 @@ def _scaffold_app(monkeypatch: pytest.MonkeyPatch, tmp_path: Path, projects: dic
     _make_gearlux_workspace(tmp_path, projects)
     monkeypatch.setattr(locations, "workspace_root", lambda: tmp_path)
     monkeypatch.setattr("aisland.ci.ci_scaffold.is_private_repo", lambda repository: False)
-    ci_scaffold.scaffold("app", force=True, jenkins_url=JenkinsService().url())
+    ci_scaffold.scaffold("app", force=True, jenkins_url=NO_JENKINS)
     return {
         "Jenkinsfile": (tmp_path / "app" / "Jenkinsfile").read_text(encoding="utf-8"),
         "ci.yml": (tmp_path / "app" / ".github" / "workflows" / "ci.yml").read_text(encoding="utf-8"),
@@ -585,7 +585,7 @@ class TestTheWorkflowActionsRunOnNode24:
         monkeypatch.setattr(locations, "workspace_root", lambda: tmp_path)
         monkeypatch.setattr("aisland.ci.ci_scaffold.is_private_repo", lambda repository: True)
         _with_node_tests(tmp_path / "app")
-        ci_scaffold.scaffold("app", force=True, jenkins_url=JenkinsService().url())
+        ci_scaffold.scaffold("app", force=True, jenkins_url=NO_JENKINS)
         return (tmp_path / "app" / ".github" / "workflows" / "ci.yml").read_text(encoding="utf-8")
 
     def test_every_uses_line_comes_from_the_one_table(self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:

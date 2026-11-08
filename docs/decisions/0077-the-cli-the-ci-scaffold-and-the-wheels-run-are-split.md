@@ -13,7 +13,7 @@ ran its whole `aisland wheels build` in `vendor_wheels`, 277 lines with 83 branc
 
 - `aisland/cli/` is a package. `_base.py` holds `main`, the group and command classes and what several groups share;
   each command group is a module (`workspace`, `configure`, `editor`, `toplevel`, `wheels`, `services`, `tunnel`).
-  A module defines its group without `main` (`click.group(cls=_Group)`), and `__init__.py` adds every group, so no
+  A module defines its group without `main` (`click.group(cls=Group)`), and `__init__.py` adds every group, so no
   command module imports the package and nothing registers itself on import. The entry point stays `aisland.cli:main`.
 - `ci_scaffold.py` is `aisland jenkins scaffold`: `scaffold(project, force, jenkins_url)` over `project_facts`, which
   is the old method's body as functions of its own (the package folder, the selected extras, the internal

@@ -3,7 +3,7 @@
 `main` (the `--version` and `--debug` options), the group and command classes every group derives from (an empty word
 after a command offers its options; outside a workspace a workspace command is refused, and a failure a command went
 on past exits 1), the groups of the services a project brings, `aisland --debug`'s log, and the completers several
-groups use. :mod:`aisland.cli` adds every command group to `main`.
+groups use — public, as every name another module imports. :mod:`aisland.cli` adds every command group to `main`.
 """
 
 import logging
@@ -29,7 +29,7 @@ from aisland.workspace.projects import get_workspace_root
 _WORKSPACE_FREE = {"workspace", "wheels", "tunnel", "doctor", "notebooks"}
 
 
-class _Command(click.Command):
+class Command(click.Command):
     """A command whose TAB on an empty word offers its options.
 
     Click offers a command's options only once the word starts with `-`; it reaches this method only when no
@@ -41,17 +41,17 @@ class _Command(click.Command):
         return super().shell_complete(ctx, incomplete or "-")
 
 
-class _Group(click.Group):
-    """A group whose commands are :class:`_Command` and whose subgroups are its own kind, so every aisland
+class Group(click.Group):
+    """A group whose commands are :class:`Command` and whose subgroups are its own kind, so every aisland
     command gets the empty-word completion of its options. A group itself still offers its commands only."""
 
-    command_class = _Command
+    command_class = Command
 
 
-_Group.group_class = _Group
+Group.group_class = Group
 
 
-class _WorkspaceGroup(_Group):
+class _WorkspaceGroup(Group):
     """The top-level group, refusing a command that needs a workspace when there is none.
 
     From a wheel the workspace is where aisland runs (:mod:`aisland.locations`); outside one, every command that
@@ -126,12 +126,12 @@ class _WorkspaceGroup(_Group):
         return None
 
 
-def _service_entries() -> List["service_registry.Entry"]:
+def service_entries() -> List["service_registry.Entry"]:
     """Every service of this workspace: aisland's own, then the ones its projects declare."""
     return service_registry.entries(get_workspace_root(), reserved=main.commands)
 
 
-class _ServiceGroup(_Group):
+class _ServiceGroup(Group):
     """`aisland <name> start|stop|restart|status|info|reset` for a service a project brings.
 
     Its commands are built the first time they are asked for: they carry the class's own options, and reading those
@@ -273,28 +273,22 @@ def main(ctx: click.Context, debug: bool) -> None:
 
 
 @quiet_completion
-def _complete_submodules(ctx: click.Context, param: click.Parameter, incomplete: str) -> List[CompletionItem]:
+def complete_submodules(ctx: click.Context, param: click.Parameter, incomplete: str) -> List[CompletionItem]:
     """The workspace's submodules whose name starts with ``incomplete``; nothing for a workspace it cannot read."""
     names = tracking.submodule_projects(get_workspace_root())
     return [CompletionItem(name) for name in names if name.startswith(incomplete)]
 
 
 @quiet_completion
-def _complete_workspace_projects(ctx: click.Context, param: click.Parameter, incomplete: str) -> List[CompletionItem]:
+def complete_workspace_projects(ctx: click.Context, param: click.Parameter, incomplete: str) -> List[CompletionItem]:
     """The projects of ``workspace.toml`` whose name starts with ``incomplete``; nothing for a file it cannot read."""
     names = list(workspace_file.load(get_workspace_root()).projects)
     return [CompletionItem(name) for name in names if name.startswith(incomplete)]
 
 
-def _configure_root() -> Path:
-    """The workspace a `configure` command reads or changes (`workspace` is workspace-free)."""
-    if not locations.workspace_found():
-        raise AislandError(locations.missing_workspace_message())
-    return get_workspace_root()
-
-
-def _editor_root() -> Path:
-    """The workspace whose editor choice a `theme`/`color` command changes (`workspace` is workspace-free)."""
+def workspace_root_found() -> Path:
+    """The workspace a command of a workspace-free group reads or changes (`workspace configure`, the editor's
+    `theme`/`color`), refused when there is none."""
     if not locations.workspace_found():
         raise AislandError(locations.missing_workspace_message())
     return get_workspace_root()

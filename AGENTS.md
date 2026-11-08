@@ -12,11 +12,11 @@ The workspace's dev-infrastructure CLI, `aisland` (click, the `aisland/cli/` pac
 "Where things live" maps the modules, "The layers" the import contracts. The rules that bind them:
 
 - **`cli/`** [module-split]: `__init__.py` adds every group to `main`; `_base.py` holds `main`, the classes every group
-  derives from (`_Command`, `_Group`, `_WorkspaceGroup`), the groups of the services a project brings, `--debug`'s log
+  derives from (`Command`, `Group`, `_WorkspaceGroup`), the groups of the services a project brings, `--debug`'s log
   and the shared completers; each group is a module of its own (`workspace.py` with `configure.py` and `editor.py`
   added to it, `toplevel.py`, `wheels.py`, `services.py`, `tunnel.py`). A new command goes into its group's module, a
-  new group into a module of its own. A command module builds its group with `click.group(cls=_Group)` /
-  `click.command(cls=_Command)` — a `cls` left out loses the empty-word completion. `python -m aisland.cli` is how
+  new group into a module of its own. A command module builds its group with `click.group(cls=Group)` /
+  `click.command(cls=Command)` — a `cls` left out loses the empty-word completion. `python -m aisland.cli` is how
   `aisland-mcp` runs a command.
 - **`errors.py`** [errors-root]: `AislandError`, the root of every exception aisland defines. **`downloads.py`**:
   `download(url, target)` (a time limit, no part file left) is how every file aisland fetches arrives; `sha256(path)`
@@ -24,8 +24,9 @@ The workspace's dev-infrastructure CLI, `aisland` (click, the `aisland/cli/` pac
 - **`pypi.py`**: PyPI's JSON document (`pypi_json`) and the CI scaffolder's question of it (`released_on_pypi`);
   **`workspace/github.py`**: a project's GitHub repository from its remote (`github_repository`,
   `project_repositories`). Both were split out of `sources.py`, which keeps the source choice itself [module-split].
-- **`venv.py`**: the workspace's `.venv` — `no_venv(root)`, the refusal naming how to make one, and
-  `ensure_uv_in_venv(venv_bin)`; **`userspace_tools.py`**: `USERSPACE_TOOLS`, the pinned Linux downloads (the table
+- **`venv.py`**: the workspace's `.venv` — `venv_dir(root)` and `venv_bin(root)`, the one spelling of its path (never
+  `root / ".venv" / "bin"` written out), `require_venv_bin(root)` for a command that needs it, `no_venv(root)`, the
+  refusal naming how to make one, and `ensure_uv_in_venv(venv_bin)`; **`userspace_tools.py`**: `USERSPACE_TOOLS`, the pinned Linux downloads (the table
   alone; `setup/installers.py` installs them). Leaves, so every layer asks them, never another layer's module.
 - **`gitcmd.py`**: `git(repo, *args, network=, timeout=, check=, input=, env=)` is the one helper that runs `git` and
   captures its text — `git -C <repo>` (a missing folder is git's exit code, never an exception), stdin empty unless
@@ -62,7 +63,9 @@ The workspace's dev-infrastructure CLI, `aisland` (click, the `aisland/cli/` pac
   A read answers "nothing" for an unset key or a folder that is no repository, and a write there is silent
   (`tests/test_machine_config.py`). `.gitmodules` keeps `gitmodules.py`; `pytest_stats.py` reads its own keys with the
   standard library.
-- **`locations.py`**: where the workspace and the state are (standard library only: the pytest plugin imports it).
+- **`locations.py`**: where the workspace and the state are (standard library only: the pytest plugin imports it), and
+  what a project folder is — `is_project_folder(folder, workspace)` (a folder holding a `pyproject.toml`, not hidden
+  by its own name, no alias) and `project_folders(folder)`, the one test every reader of the folders makes.
   **`paths.py`**: the state's folders as functions — `state_dir()`, `bin_dir()`, `data_dir()`, `tools_dir()` — asked
   each time, never a module constant fixed at import (a long-running process or a test may point the workspace
   elsewhere); a module calls them as `paths.data_dir()`, so `locations.state_dir` moves them all, and a module's own
@@ -328,7 +331,8 @@ naming the PID is the only signal). All service state lives under `<workspace>/a
   from the project folder beside the package
   (`tests/test_packaging.py::test_the_wheel_carries_every_file_of_the_package`).
 - **The workspace's name is `[workspace] name` in `workspace.toml`, else its origin's repository, else its folder.**
-  `projects.get_workspace_name` is the one reader (`workspace.file.name_of`); it names `<name>.code-workspace`, the
+  `projects.get_workspace_name` is the one reader (`workspace.file.name_of`; a repository's name from its address is
+  `workspace.file.repository_name`, for a harness set's too); it names `<name>.code-workspace`, the
   Jenkins jobs, the nightly report, the how-to and `init`'s first line. A name that is no plain name is refused naming
   its line; discovery refuses a selection named like a `[workspace]` key or a built-in plugin
   (`discovery.RESERVED_SELECTION_NAMES`: `name`, `format`, `track`, `test-stats`, `extras`, `active`, `mirror`,
@@ -623,7 +627,8 @@ aisland rules → "Two Test Runs, The Fast One Within 5 Minutes". [test-stats] (
   (`tests/test_workspace_dependency_specs.py::test_the_real_workspace_has_no_unsatisfiable_internal_specs`).
 - **`aisland setup` installs a dependency CYCLE in one `uv pip install` and skips the dependents of a failure**
   (`projects.install_groups` / `_run_installs`; the edges are `projects.internal_dependencies`, each requirement read
-  by `projects.requirement_name` — packaging's PEP 508 parse, PEP 503 names — and `dependency_order`, the SwiftBar
+  by `projects.requirement_name` — packaging's PEP 508 parse, PEP 503 names (`packaging.utils.canonicalize_name`, never
+  a regex of aisland's own; only the stdlib-only `wheels/unzip.py` keeps one) — and `dependency_order`, the SwiftBar
   menu's order among them, is the groups flattened: never a string split of a requirement, never a second graph): two projects can require each other (one through its `dev` extra), so
   installing either alone fails — and every dependent then failed too, burying the first error. `install_groups`
   returns dependency-first strongly-connected components (a cycle is ONE group); `_run_installs` runs one `uv pip
@@ -971,10 +976,10 @@ A bare `::` pin in this section is in `tests/test_jenkins_scaffold.py`.
     person's). Never add a line to the block that runs a program before the guard
     (`tests/test_completion.py::test_the_block_does_nothing_in_a_NON_interactive_shell`).
 - **An empty word after an aisland command with nothing left to fill offers its options** (click itself waits for a
-  `-`). `cli._base._Command.shell_complete` completes `""` as `"-"`; every group is a `cli._base._Group`
-  (`command_class = _Command`, `group_class = _Group`), so a command added with `@<group>.command` gets it without a
+  `-`). `cli._base.Command.shell_complete` completes `""` as `"-"`; every group is a `cli._base.Group`
+  (`command_class = Command`, `group_class = Group`), so a command added with `@<group>.command` gets it without a
   `cls=`. A group still offers its commands only; an argument still to fill comes first. A new group class derives from
-  `_Group`, never `click.Group` (`tests/test_cli_option_completion.py`).
+  `Group`, never `click.Group` (`tests/test_cli_option_completion.py`).
 
 ## `aisland clean` / `aisland backups`
 
@@ -1103,9 +1108,10 @@ An aisland command, only the named project's closure, both checks; each flag's m
   folder for good), a mirror, a wheel of a project in no git repository (`tests/test_folder_workspace.py`,
   `tests/test_submodule_active_map.py`).
 - **A link to a folder inside the workspace is a short name, never a project.** [aliases] Every reader of the
-  workspace's projects skips a folder for which `locations.is_alias(folder, workspace)` holds (`discover_projects`,
-  `workspace_folders`, `model.Workspace.top_level_folders` and `known_names`, `workspace.file.workspace_projects`); a new
-  reader does the same, never an `is_symlink` test of its own. A link to a folder OUTSIDE the workspace stays a
+  workspace's projects skips a folder for which `locations.is_alias(folder, workspace)` holds — through
+  `locations.project_folders` (`discover_projects`, `workspace_folders`, `model.Workspace.top_level_folders`,
+  `clones.found`) or, for a reader of clones rather than projects, `is_alias` itself
+  (`workspace.file.workspace_projects`); a new reader does the same, never an `is_symlink` test of its own. A link to a folder OUTSIDE the workspace stays a
   project. The generated `.code-workspace` names such a folder by its link (`locations.alias_names`), its `path` the
   real folder; `workspace.toml` writes it as the project's `path` (`tests/test_symlinked_folders.py`).
 - Without `.gitmodules`, `setup_git.sh` gives every subfolder that is its own clone (and the root when it is a

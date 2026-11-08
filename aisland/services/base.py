@@ -7,7 +7,7 @@ from typing import Any, Dict, List, Literal, Optional, Sequence, TypedDict
 
 import click
 
-from aisland import console, failures, paths
+from aisland import console, failures, paths, venv
 from aisland.services import supervisor
 from aisland.workspace.projects import get_workspace_root
 
@@ -140,7 +140,7 @@ class BaseService:
         """``env``, with the workspace venv put first on ``PATH`` unless the caller gave a ``PATH`` of its own."""
         process_env = dict(env or {})
         if "PATH" not in process_env:
-            venv_bin = get_workspace_root() / ".venv" / "bin"
+            venv_bin = venv.venv_bin(get_workspace_root())
             current_path = os.environ.get("PATH", "")
             if str(venv_bin) not in current_path:
                 current_path = f"{venv_bin}:{current_path}"

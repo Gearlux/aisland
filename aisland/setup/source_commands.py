@@ -16,7 +16,7 @@ from aisland import console, failures, gitcmd
 from aisland.errors import AislandError
 from aisland.pypi import PypiInfo, PypiProject, points_at_owner, pypi_json
 from aisland.setup.editor_files import write_code_workspace
-from aisland.venv import ensure_uv_in_venv, no_venv
+from aisland.venv import ensure_uv_in_venv, require_venv_bin
 from aisland.workspace import file as workspace_file
 from aisland.workspace import source_apply, sources
 from aisland.workspace.github import github_repository
@@ -179,9 +179,7 @@ def set_project_source(
     """
     root = workspace_root or get_workspace_root()
     _refuse_unmanageable(root, project, kind)
-    venv_bin = root / ".venv" / "bin"
-    if not venv_bin.exists():
-        raise no_venv(root)
+    venv_bin = require_venv_bin(root)
 
     original = sources.read_committed_sources(root)
     previous_override = sources.local_override(root, project)

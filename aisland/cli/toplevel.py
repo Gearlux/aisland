@@ -14,7 +14,7 @@ from aisland.ci import stats_report
 from aisland.ci.quality import run_quality_gates
 from aisland.ci.stats_report import DEFAULT_WINDOW_DAYS
 from aisland.clean import clean_project
-from aisland.cli._base import _Command, _Group
+from aisland.cli._base import Command, Group
 from aisland.doctor import run_doctor
 from aisland.notebook_utils import clean_notebook_stdin
 from aisland.services import nightly
@@ -25,7 +25,7 @@ from aisland.setup.mcp_config import generate_gemini_settings, generate_mcp_json
 # --- Notebook Commands ---
 
 
-@click.group(cls=_Group)
+@click.group(cls=Group)
 def notebooks() -> None:
     """Manage Jupyter notebooks in the workspace."""
     pass
@@ -41,7 +41,7 @@ def notebooks_clean() -> None:
     clean_notebook_stdin()
 
 
-@click.command(cls=_Command)
+@click.command(cls=Command)
 @click.option(
     "--non-interactive",
     "-y",
@@ -73,14 +73,14 @@ def setup(non_interactive: bool, install_all: bool) -> None:
     setup_workspace(non_interactive=non_interactive, install_all=install_all)
 
 
-@click.command(cls=_Command)
+@click.command(cls=Command)
 def doctor() -> None:
     """Check the shared .venv and the Docker/Colima setup for known recurring skew (exit 1 if any check fails)."""
 
     raise SystemExit(run_doctor())
 
 
-@click.command(name="clean", cls=_Command)
+@click.command(name="clean", cls=Command)
 @click.argument("project")
 @click.option(
     "--keep-days",
@@ -108,7 +108,7 @@ def clean(project: str, keep_days: int, dry_run: bool, yes: bool) -> None:
     raise SystemExit(clean_project(project, keep_days=keep_days, dry_run=dry_run, assume_yes=yes))
 
 
-@click.group(cls=_Group)
+@click.group(cls=Group)
 def backups() -> None:
     """Inspect and restore the backups `aisland clean` takes.
 
@@ -200,7 +200,7 @@ def backups_restore(
 # (`aisland/ci/stats_report.py`).
 
 
-@click.group(cls=_Group)
+@click.group(cls=Group)
 def tests() -> None:
     """Every pytest run in the workspace, recorded — read back per project."""
 
@@ -258,7 +258,7 @@ def tests_nightly(as_json: bool, no_notify: bool) -> None:
 # --- Completion Commands ---
 
 
-@click.group(cls=_Group)
+@click.group(cls=Group)
 def completion() -> None:
     """Install shell completion for every CLI in the workspace."""
     pass
@@ -300,7 +300,7 @@ def completion_install(target_rc: Optional[Path], shell: Optional[str], no_prune
     click.echo(f"\n    Open a new shell (or `exec {report.shell}`) to pick it up.")
 
 
-@click.command(name="check", cls=_Command)
+@click.command(name="check", cls=Command)
 @click.argument("arg1", required=False)
 @click.argument("arg2", required=False)
 @click.option(
@@ -324,7 +324,7 @@ def check(arg1: Optional[str], arg2: Optional[str], write: bool) -> None:
 # --- MCP Commands ---
 
 
-@click.group(cls=_Group)
+@click.group(cls=Group)
 def mcp() -> None:
     """Manage MCP client configuration for workspace MCP servers."""
     pass

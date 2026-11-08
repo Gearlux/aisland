@@ -9,7 +9,7 @@ from typing import Optional, Tuple
 import click
 
 from aisland.ci import ci_scaffold, ci_templates
-from aisland.cli._base import _Group, _service_entries
+from aisland.cli._base import Group, service_entries
 from aisland.services import jenkins_jobs
 from aisland.services import registry as service_registry
 from aisland.services import supervisor as supervisor_mod
@@ -20,7 +20,7 @@ from aisland.services.swiftbar import SwiftBarService
 # --- Docker Commands ---
 
 
-@click.group(cls=_Group)
+@click.group(cls=Group)
 def docker() -> None:
     """Manage the Docker engine: in Colima's VM on macOS, the system's own engine on Linux."""
     pass
@@ -75,7 +75,7 @@ def docker_reset() -> None:
 # --- Jenkins Commands ---
 
 
-@click.group(cls=_Group)
+@click.group(cls=Group)
 def jenkins() -> None:
     """Manage local Jenkins CI/CD server."""
     pass
@@ -154,7 +154,7 @@ def jenkins_scaffold(project: Optional[str], force: bool) -> None:
     ci_scaffold.scaffold(project, force, JenkinsService().url())
 
 
-@jenkins.group(name="templates", cls=_Group)
+@jenkins.group(name="templates", cls=Group)
 def jenkins_templates() -> None:
     """The template set `aisland jenkins scaffold` writes a project's CI files from.
 
@@ -193,7 +193,7 @@ def jenkins_remove(project: Optional[str]) -> None:
 # --- SwiftBar Commands ---
 
 
-@click.group(cls=_Group)
+@click.group(cls=Group)
 def swiftbar() -> None:
     """Manage SwiftBar menu bar plugins."""
     pass
@@ -244,7 +244,7 @@ def swiftbar_reset() -> None:
 # --- Global Commands ---
 
 
-@click.group(name="services", cls=_Group, invoke_without_command=True)
+@click.group(name="services", cls=Group, invoke_without_command=True)
 @click.pass_context
 def services(ctx: click.Context) -> None:
     """Every aisland service at once, or the ones named. Alone: the supervisor and each service's state.
@@ -259,7 +259,7 @@ def services(ctx: click.Context) -> None:
     aisland services stop
     """
     if ctx.invoked_subcommand is None:
-        every = _service_entries()  # a declaration aisland cannot use stops here, before anything is printed
+        every = service_entries()  # a declaration aisland cannot use stops here, before anything is printed
         click.echo("Aisland Infrastructure Status:")
         supervisor_mod.print_status()
         service_registry.status(every, ())
@@ -276,14 +276,14 @@ _BACKGROUND = click.option("--background", "-b", is_flag=True, help="Run in the 
 @_BACKGROUND
 def services_start(names: Tuple[str, ...], background: bool) -> None:
     """Start the services named (default: the services started by default)."""
-    service_registry.start(_service_entries(), names, background)
+    service_registry.start(service_entries(), names, background)
 
 
 @services.command(name="stop")
 @_SERVICE_NAMES
 def services_stop(names: Tuple[str, ...]) -> None:
     """Stop the services named (default: the services started by default, the container engine last)."""
-    service_registry.stop(_service_entries(), names)
+    service_registry.stop(service_entries(), names)
 
 
 @services.command(name="restart")
@@ -291,7 +291,7 @@ def services_stop(names: Tuple[str, ...]) -> None:
 @_BACKGROUND
 def services_restart(names: Tuple[str, ...], background: bool) -> None:
     """Restart the services named (default: the services started by default)."""
-    service_registry.restart(_service_entries(), names, background)
+    service_registry.restart(service_entries(), names, background)
 
 
 @services.command(name="status")
@@ -300,16 +300,16 @@ def services_restart(names: Tuple[str, ...], background: bool) -> None:
 def services_status(names: Tuple[str, ...], as_json: bool) -> None:
     """Each named service's state (default: every service)."""
     if as_json:
-        click.echo(json.dumps({"services": service_registry.states(_service_entries(), names)}, indent=2))
+        click.echo(json.dumps({"services": service_registry.states(service_entries(), names)}, indent=2))
         return
-    service_registry.status(_service_entries(), names)
+    service_registry.status(service_entries(), names)
 
 
 @services.command(name="info")
 @_SERVICE_NAMES
 def services_info(names: Tuple[str, ...]) -> None:
     """URLs, credentials and paths of the services named (default: every service)."""
-    service_registry.info(_service_entries(), names)
+    service_registry.info(service_entries(), names)
 
 
 @services.command(name="reset")
@@ -317,13 +317,13 @@ def services_info(names: Tuple[str, ...]) -> None:
 @click.confirmation_option(prompt="Stop these services and wipe their data?")
 def services_reset(names: Tuple[str, ...]) -> None:
     """Stop the services named and wipe their data (default: the services started by default)."""
-    service_registry.reset(_service_entries(), names)
+    service_registry.reset(service_entries(), names)
 
 
 # --- Supervisor Commands ---
 
 
-@click.group(cls=_Group)
+@click.group(cls=Group)
 def supervisor() -> None:
     """Manage the process-compose supervisor backing aisland services."""
     pass

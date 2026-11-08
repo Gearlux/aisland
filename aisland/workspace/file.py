@@ -337,11 +337,16 @@ def submodules(root: Path) -> List[Tuple[str, str, Optional[str]]]:
     return [(submodule.path, submodule.url or "", submodule.branch) for submodule in gitmodules.read(root)]
 
 
+def last_part(url: str) -> str:
+    """A repository address's last part, a ``.git`` at its end dropped (https, ssh and scp-style:
+    ``https://host/acme/models.git``, ``git@host:my.tools.git``, ``/srv/git/models/``), whatever it spells."""
+    return re.split(r"[/:]", url.rstrip("/"))[-1].removesuffix(".git")
+
+
 def repository_name(url: str) -> Optional[str]:
     """The repository's own name, read from its address (``…/models.git`` -> ``models``), or None when the address
-    ends in no folder name."""
-    last = re.split(r"[/:]", url.rstrip("/"))[-1]
-    name = last[: -len(".git")] if last.endswith(".git") else last
+    ends in no folder name (:func:`last_part`)."""
+    name = last_part(url)
     return name if _FOLDER_NAME.fullmatch(name) else None
 
 

@@ -23,12 +23,12 @@ from aisland.ci import ci_scaffold
 from aisland.ci.ci_scaffold import discover_github_projects, is_private_repo
 from aisland.errors import AislandError
 from aisland.pypi import released_on_pypi
-from aisland.services.jenkins import JenkinsService
 from aisland.setup import source_commands
 from aisland.wheels import published
 from aisland.workspace import projects, source_apply
 from aisland.workspace import sources as s
 from aisland.workspace.github import GitHubRepository, github_repository, project_repositories
+from tests.records import NO_JENKINS
 
 
 def _project(root: Path, name: str, deps: list[str]) -> None:
@@ -177,7 +177,7 @@ def test_the_scaffold_knows_each_github_project_by_its_distribution(acme: Path) 
 
 
 def test_an_unreleased_dependency_is_installed_from_its_owners_repository(acme: Path, pypi: Dict[str, Any]) -> None:
-    ci_scaffold.scaffold("app", force=True, jenkins_url=JenkinsService().url())
+    ci_scaffold.scaffold("app", force=True, jenkins_url=NO_JENKINS)
     files = _ci(acme, "app")
     assert "uv pip install --system --no-deps git+https://github.com/acme/lib.git@main" in files["ci.yml"]
     assert 'uv pip install --no-deps git+https://github.com/acme/lib.git@main"' in files["Jenkinsfile"]
@@ -186,13 +186,13 @@ def test_an_unreleased_dependency_is_installed_from_its_owners_repository(acme: 
 
 def test_a_dependency_released_from_its_owners_repository_is_left_to_pypi(acme: Path, pypi: Dict[str, Any]) -> None:
     pypi["lib"] = _release("https://github.com/acme/lib")
-    ci_scaffold.scaffold("app", force=True, jenkins_url=JenkinsService().url())
+    ci_scaffold.scaffold("app", force=True, jenkins_url=NO_JENKINS)
     assert "acme/lib.git" not in _ci(acme, "app")["ci.yml"]
 
 
 def test_a_strangers_release_under_the_same_name_is_not_the_dependency(acme: Path, pypi: Dict[str, Any]) -> None:
     pypi["lib"] = _release("https://github.com/someone-else/lib")
-    ci_scaffold.scaffold("app", force=True, jenkins_url=JenkinsService().url())
+    ci_scaffold.scaffold("app", force=True, jenkins_url=NO_JENKINS)
     assert "git+https://github.com/acme/lib.git@main" in _ci(acme, "app")["ci.yml"]
 
 
@@ -200,7 +200,7 @@ def test_a_private_dependency_gets_a_token_for_its_owner(
     acme: Path, pypi: Dict[str, Any], monkeypatch: pytest.MonkeyPatch
 ) -> None:
     monkeypatch.setattr("aisland.ci.ci_scaffold.is_private_repo", lambda repository: True)
-    ci_scaffold.scaffold("app", force=True, jenkins_url=JenkinsService().url())
+    ci_scaffold.scaffold("app", force=True, jenkins_url=NO_JENKINS)
     ci = _ci(acme, "app")["ci.yml"]
     assert "        owner: acme\n" in ci
     assert "${{ secrets.ACME_APP_ID }}" in ci and "${{ secrets.ACME_APP_PRIVATE_KEY }}" in ci
@@ -222,12 +222,12 @@ def test_private_dependencies_of_two_owners_are_refused_naming_both(
     )
     monkeypatch.setattr("aisland.ci.ci_scaffold.is_private_repo", lambda repository: True)
     with pytest.raises(click.ClickException, match="acme, other-org"):
-        ci_scaffold.scaffold("app", force=True, jenkins_url=JenkinsService().url())
+        ci_scaffold.scaffold("app", force=True, jenkins_url=NO_JENKINS)
 
 
 def test_a_project_off_github_is_never_installed_from_github(acme: Path, pypi: Dict[str, Any]) -> None:
     _project(acme, "app", ["lib>=0.0.0", "tools>=0.0.0"])
-    ci_scaffold.scaffold("app", force=True, jenkins_url=JenkinsService().url())
+    ci_scaffold.scaffold("app", force=True, jenkins_url=NO_JENKINS)
     assert "tools.git" not in _ci(acme, "app")["ci.yml"]
 
 
@@ -250,7 +250,7 @@ def test_a_project_off_github_installs_its_unreleased_dependencies_from_its_whee
     """A project that does not live on GitHub never names one in its CI files (a company's repository must not
     reveal the workspace it is developed in): its unreleased dependencies come from the wheels it commits."""
     _wheels_extra(acme, "tools", ["lib>=0.0.0"], ["lib"])
-    ci_scaffold.scaffold("tools", force=True, jenkins_url=JenkinsService().url())
+    ci_scaffold.scaffold("tools", force=True, jenkins_url=NO_JENKINS)
     files = _ci(acme, "tools")
     for name, text in files.items():
         assert "github.com" not in text and "acme" not in text, name
@@ -263,7 +263,7 @@ def test_a_project_off_github_without_wheels_for_an_unreleased_dependency_is_ref
 ) -> None:
     _project(acme, "tools", ["lib>=0.0.0"])
     with pytest.raises(click.ClickException) as refused:
-        ci_scaffold.scaffold("tools", force=True, jenkins_url=JenkinsService().url())
+        ci_scaffold.scaffold("tools", force=True, jenkins_url=NO_JENKINS)
     assert refused.value.message == (
         "tools does not live on GitHub, so its CI files never name a project that does, and lib is not released on "
         "PyPI. Ship it as wheels with the project — aisland wheels build tools --extra wheels --commit (the extra listed "
@@ -280,7 +280,7 @@ def test_a_wheels_extra_missing_an_unreleased_dependency_is_refused_naming_it(ac
     )
     _wheels_extra(acme, "tools", ["lib>=0.0.0", "util>=0.0.0"], ["lib"])
     with pytest.raises(click.ClickException, match="and util is not released on PyPI"):
-        ci_scaffold.scaffold("tools", force=True, jenkins_url=JenkinsService().url())
+        ci_scaffold.scaffold("tools", force=True, jenkins_url=NO_JENKINS)
     assert projects.get_workspace_root() == acme
 
 
@@ -289,7 +289,7 @@ def test_a_project_off_github_needing_only_released_dependencies_needs_no_wheels
 ) -> None:
     pypi["lib"] = _release("https://github.com/acme/lib")
     _project(acme, "tools", ["lib>=0.0.0"])
-    ci_scaffold.scaffold("tools", force=True, jenkins_url=JenkinsService().url())
+    ci_scaffold.scaffold("tools", force=True, jenkins_url=NO_JENKINS)
     assert "github.com" not in _ci(acme, "tools")["ci.yml"]
 
 

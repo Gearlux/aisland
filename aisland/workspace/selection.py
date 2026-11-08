@@ -30,18 +30,18 @@ from __future__ import annotations
 
 import dataclasses
 import logging
-import re
 import subprocess
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Dict, List, Optional, Sequence, Set, Tuple
 
 from packaging.requirements import InvalidRequirement, Requirement
+from packaging.utils import canonicalize_name
 
 from aisland import console, failures, machine_config
 from aisland import pyproject as pyproject_toml
 from aisland.errors import AislandError
-from aisland.venv import ensure_uv_in_venv
+from aisland.venv import ensure_uv_in_venv, venv_bin
 from aisland.workspace import discovery
 from aisland.workspace import file as workspace_file
 from aisland.workspace.model import Workspace
@@ -136,11 +136,6 @@ def manual(root: Path, axis: Axis) -> Set[str]:
     return out
 
 
-def _canonical(name: str) -> str:
-    """PEP 503 normalisation, so ``my-project`` and ``my_project`` compare equal."""
-    return re.sub(r"[-_.]+", "-", name).lower()
-
-
 def _selectable_extras(pyproject_path: Path) -> List[str]:
     """The defined extras WITHOUT the self-referential ones — the :data:`EXTRAS` menu.
 
@@ -152,7 +147,7 @@ def _selectable_extras(pyproject_path: Path) -> List[str]:
     distribution, whatever either is called.
     """
     project = pyproject_toml.read(pyproject_path).get("project", {})
-    me = _canonical(str(project.get("name", "")))
+    me = canonicalize_name(str(project.get("name", "")))
     out: List[str] = []
     for extra, requirements in sorted(project.get("optional-dependencies", {}).items()):
         if not me:
@@ -160,7 +155,7 @@ def _selectable_extras(pyproject_path: Path) -> List[str]:
             continue
         for raw in requirements:
             try:
-                if _canonical(Requirement(str(raw)).name) == me:
+                if canonicalize_name(Requirement(str(raw)).name) == me:
                     break
             except InvalidRequirement:
                 continue
@@ -225,10 +220,11 @@ def extras_for(declared_names: Sequence[str], selected: Optional[Sequence[str]])
     return [name for name in declared_names if name in chosen]
 
 
-def all_extras(root: Path, pyproject_path: Path) -> List[str]:
-    """Every extra one project installs, across every selection, each once."""
+def all_extras(root: Path, pyproject_path: Path, workspace_axes: Optional[Sequence[Axis]] = None) -> List[str]:
+    """Every extra one project installs, across every selection, each once. ``workspace_axes`` is :func:`axes`,
+    read once by a caller that asks for many projects (reading them scans every project of the workspace)."""
     out: List[str] = []
-    for axis in axes(root):
+    for axis in axes(root) if workspace_axes is None else workspace_axes:
         out += extras_for(declared(pyproject_path, axis), effective(root, axis.name))
     return list(dict.fromkeys(out))
 
@@ -240,18 +236,18 @@ def install_target(project_dir: Path, has_dev: bool, extras: Sequence[str]) -> s
     return f"{project_dir}[{','.join(parts)}]" if parts else str(project_dir)
 
 
-def editable_target(root: Path, project_dir: Path, project_name: str) -> str:
+def editable_target(root: Path, project_dir: Path, workspace_axes: Optional[Sequence[Axis]] = None) -> str:
     """The ``uv pip install -e`` target for one CHECKOUT: its ``dev`` extra plus every selected extra — the ONE
     spelling ``aisland setup`` and ``aisland workspace configure source … local`` share.
 
     Once :data:`EXTRAS` has been chosen it owns ``dev`` too: forcing ``[dev]`` back in would make "everything but
     dev" unexpressible. A workspace that never chose it keeps ``[dev]``. A checkout without a ``pyproject.toml``
-    yields the bare folder, so uv reports its own error for it."""
+    yields the bare folder, so uv reports its own error for it. ``workspace_axes`` as for :func:`all_extras`."""
     pyproject = project_dir / "pyproject.toml"
     if not pyproject.exists():
         return str(project_dir)
     has_dev = effective(root, EXTRAS.name) is None and bool(get_project_metadata(pyproject)["has_dev"])
-    return install_target(project_dir, has_dev, all_extras(root, pyproject))
+    return install_target(project_dir, has_dev, all_extras(root, pyproject, workspace_axes))
 
 
 # --- setup asks ---------------------------------------------------------------------------------------------------
@@ -365,12 +361,13 @@ def apply_selection(root: Path, axis: Axis, uv_cmd: Optional[str] = None) -> int
     metadata. uv never uninstalls an extra no longer chosen — which packages "belonged" to it is unknowable, and a
     stale wheel costs disk, not correctness."""
 
-    uv = uv_cmd or ensure_uv_in_venv(root / ".venv" / "bin")
+    uv = uv_cmd or ensure_uv_in_venv(venv_bin(root))
+    workspace_axes = axes(root)
     failures = 0
     for project in Workspace(root).install_order:
         if not declared(project["path"] / "pyproject.toml", axis):
             continue
-        target = editable_target(root, project["path"], project["name"])
+        target = editable_target(root, project["path"], workspace_axes)
         console.echo(f"==> Installing {project['name']} ({target})...")
         try:
             logger.debug("running %s pip install -e %s (in %s)", uv, target, root)
@@ -460,7 +457,7 @@ def add_command(root: Path, name: str, value: str) -> str:
 
 
 def dev_extra_names(pyproject_data: pyproject_toml.Table) -> Set[str]:
-    """The distribution names a parsed ``pyproject.toml`` lists under its ``dev`` extra, lower-cased.
+    """The distribution names a parsed ``pyproject.toml`` lists under its ``dev`` extra, normalised (PEP 503).
 
     Each spec is read with ``packaging.Requirement``, so ``playwright>=1.40``, ``foo[bar]; python_version
     > '3'`` and ``x @ git+…`` all yield their bare name; a spec that does not parse is skipped rather
@@ -469,7 +466,7 @@ def dev_extra_names(pyproject_data: pyproject_toml.Table) -> Set[str]:
     names: Set[str] = set()
     for spec in pyproject_data.get("project", {}).get("optional-dependencies", {}).get("dev", []) or []:
         try:
-            names.add(Requirement(str(spec)).name.lower())
+            names.add(canonicalize_name(Requirement(str(spec)).name))
         except InvalidRequirement:
             continue
     return names

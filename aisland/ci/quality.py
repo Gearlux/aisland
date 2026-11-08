@@ -10,7 +10,7 @@ import click
 from aisland import console
 from aisland.errors import AislandError
 from aisland.setup import provision
-from aisland.venv import no_venv
+from aisland.venv import require_venv_bin
 from aisland.workspace.model import Workspace
 from aisland.workspace.projects import get_workspace_root
 
@@ -83,10 +83,7 @@ def run_quality_gates(arg1: Optional[str] = None, arg2: Optional[str] = None, wr
     instead. Each gate runs once; a failed one shows what it printed.
     """
     workspace_root = get_workspace_root()
-    venv_bin = workspace_root / ".venv" / "bin"
-
-    if not venv_bin.exists():
-        raise no_venv(workspace_root)
+    venv_bin = require_venv_bin(workspace_root)
 
     env = os.environ.copy()
     env["PATH"] = f"{venv_bin}:{env.get('PATH', '')}"

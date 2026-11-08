@@ -395,7 +395,7 @@ def _one(root: Path, entry: object, where: Where) -> HarnessSet:
         url, ref = entry.get("git"), entry.get("ref")
         if not isinstance(url, str) or not isinstance(ref, str) or not ref or "set" in entry:
             raise HarnessError(f'{where}: a git set names its url and a ref, as {{ git = "<url>", ref = "v1" }}')
-        name = entry.get("name") or PurePosixPath(url.rstrip("/")).name.removesuffix(".git")
+        name = entry.get("name") or workspace_file.last_part(url)  # judged by _check_name below
         if not isinstance(name, str) or not name:
             raise HarnessError(f'{where}: name the git set, as name = "rules"')
         _check_name(name, where)

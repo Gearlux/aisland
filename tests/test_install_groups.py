@@ -7,7 +7,7 @@ old loop then also tried (and failed) every dependent, burying the first error i
 
 import subprocess
 from pathlib import Path
-from typing import Any, List
+from typing import Any, List, Tuple
 
 import pytest
 
@@ -75,7 +75,7 @@ class TestRunInstalls:
                 raise subprocess.CalledProcessError(1, cmd)
 
         monkeypatch.setattr(subprocess, "check_call", fake)
-        monkeypatch.setattr(selection, "editable_target", lambda root, path, name: f"{path}[dev]")
+        monkeypatch.setattr(selection, "editable_target", lambda root, path, workspace_axes: f"{path}[dev]")
         return seen
 
     def test_a_cycle_is_installed_with_one_command(self, calls: List[List[str]], tmp_path: Path) -> None:
@@ -100,3 +100,24 @@ class TestRunInstalls:
         captured = capsys.readouterr()
         assert "Failed to install bad" in captured.err  # a failure setup goes on past: stderr, and the run exits 1
         assert "Skipping child" in captured.out and "bad" in captured.out
+
+
+def test_setup_reads_the_selections_once_however_many_projects_it_installs(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Reading the selections scans every project of the workspace, so once per project would make setup quadratic."""
+    reads: List[Path] = []
+
+    def axes(root: Path) -> Tuple[selection.Axis, ...]:
+        reads.append(root)
+        return (selection.EXTRAS,)
+
+    monkeypatch.setattr(m, "axes", axes)
+    monkeypatch.setattr(selection, "axes", axes)
+    monkeypatch.setattr(subprocess, "check_call", lambda cmd, cwd=None: None)
+    for name in ("app", "lib", "tool"):
+        (tmp_path / name).mkdir()
+        (tmp_path / name / "pyproject.toml").write_text(f'[project]\nname = "{name}"\n')
+    projects = [project_metadata(name, tmp_path / name) for name in ("app", "lib", "tool")]
+    assert m._run_installs(tmp_path, "uv", projects) == ([], [])
+    assert reads == [tmp_path]

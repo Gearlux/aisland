@@ -145,6 +145,7 @@ aisland comes with the habits of the workspace it grew in. Each one can be left 
 | run the local services | `aisland services start [NAME…]` | [services](https://github.com/Gearlux/aisland/blob/main/docs/services.md) |
 | check the environment | `aisland doctor` | [doctor](https://github.com/Gearlux/aisland/blob/main/docs/doctor.md) |
 | see where a command failed | `aisland --debug <command>` (every error is one `Error:` line, exit 1; this adds its traceback and aisland's debug log) | [doctor](https://github.com/Gearlux/aisland/blob/main/docs/doctor.md) |
+| check every project, or one, before a push | `aisland check [<project>]` (isort, black, flake8, mypy, pytest, `act`; `--write` lets isort and black rewrite) | [ci](https://github.com/Gearlux/aisland/blob/main/docs/ci.md#check-quality-gates) |
 | write a project's CI files | `aisland jenkins scaffold <project>` | [ci](https://github.com/Gearlux/aisland/blob/main/docs/ci.md) |
 | see a project's test runs and slowest tests | `aisland tests report <project>` | [tests](https://github.com/Gearlux/aisland/blob/main/docs/tests.md) |
 | carry a project to a machine without the workspace | `aisland wheels build <project>` | [wheels](https://github.com/Gearlux/aisland/blob/main/docs/wheels.md) |
@@ -183,6 +184,26 @@ None is needed; each changes one default. `env.complete` lists them with every v
 | `WORKSPACE` | the name `aisland tunnel start` gives the tunnel when none is given (default: the machine's hostname) |
 | `DATA_ROOT`, `MODEL_ROOT`, `RUN_DIR` | the folders the `cdd`, `cdm` and `cdr` helpers of `project.bashrc` jump to (`cdd models` goes to `$DATA_ROOT/models`); set them in the workspace's `.env` |
 | `TORCH_EXTENSIONS_DIR` | the folder `aisland doctor` checks for a stale torch build lock (default: torch's own cache) |
+
+## Uninstall
+
+aisland keeps everything it writes in the workspace, except the tunnel's state and the programs it installed with
+your consent. To remove it from a workspace:
+
+1. Stop what it runs: `aisland services stop`, and `aisland tunnel stop` on a machine that serves a tunnel.
+2. Uninstall the package: `.venv/bin/pip uninstall aisland`, or delete `.venv` with the rest of the environment.
+3. Delete the files it generated in the root. They are listed in the `.gitignore` that `aisland workspace init`
+   writes: `env.complete`, `env.example`, `project.bashrc`, `.project.bashrc.completion`, `pyrightconfig.json`,
+   `uv.toml`, `.mcp.json`, `.gemini/settings.json` and `<name>.code-workspace`. `.agents/` holds the agent rules and
+   commands, and from a wheel `.aisland/` holds the services' data and the tools aisland downloaded (from a checkout
+   they sit in the checkout's `bin/`, `data/` and `tools/`). The root's `mypy.ini` is committed and stays: setup
+   only appends the projects' folders to its `mypy_path`.
+4. Remove the git settings from the local `.git/config` of the root and of each project: the workspace aliases
+   (`git config --local --get-regexp '^alias\.'` lists them), `filter.ipynb-cleaner.*`, `submodule.recurse`,
+   `pull.rebase` and the `aisland.*` keys. aisland writes nothing into the global git config.
+5. Outside the workspace: `~/.aisland/tunnel` (or `$AISLAND_TUNNEL_HOME`), SwiftBar's plugins folder setting on macOS,
+   and the Homebrew formulas setup installed after asking (`process-compose`, `docker`, `colima`, `act`, `swiftbar`,
+   and the `openjdk@<N>` Jenkins runs on), which `brew uninstall` removes.
 
 ## Documentation
 

@@ -1,5 +1,5 @@
 """TAB on an empty word after a command that takes nothing more offers that command's options (aisland/cli/_base.py,
-`_Command`): click by itself offers them only once the word starts with `-`.
+`Command`): click by itself offers them only once the word starts with `-`.
 
 Each case asks the way the generated bash completion asks (`_AISLAND_COMPLETE=bash_complete`), through
 `test_wheels._complete`.
@@ -96,9 +96,9 @@ def test_every_command_without_arguments_offers_its_options_on_an_empty_word(
 def test_every_group_makes_its_commands_and_subgroups_with_the_completing_classes() -> None:
     """A command added later gets the behaviour without anyone remembering it."""
     for group in _groups(main):
-        assert isinstance(group, cli_base._Group), group.name
+        assert isinstance(group, cli_base.Group), group.name
         for command in group.commands.values():
-            assert isinstance(command, (cli_base._Group, cli_base._Command)), command.name
+            assert isinstance(command, (cli_base.Group, cli_base.Command)), command.name
 
 
 def test_a_completion_callback_that_fails_offers_nothing_and_one_that_works_answers() -> None:

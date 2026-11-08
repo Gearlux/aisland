@@ -191,17 +191,36 @@ def alias_names(workspace: Path) -> Dict[Path, str]:
     return names
 
 
+def is_project_folder(folder: Path, workspace: Path) -> bool:
+    """Whether ``folder`` is a project folder of ``workspace``: a folder holding a ``pyproject.toml``, neither hidden
+    by its own name (``.venv``, ``.git``, a tool's cache) nor an alias of another folder of the workspace
+    (:func:`is_alias`). The one test every reader of a workspace's folders makes."""
+    return (
+        not folder.name.startswith(".")
+        and _is(folder, "folder")
+        and _is(folder / "pyproject.toml", "file")
+        and not is_alias(folder, workspace)
+    )
+
+
+def project_folders(folder: Path, workspace: Optional[Path] = None) -> List[Path]:
+    """The direct subfolders of ``folder`` that are project folders of ``workspace`` (default ``folder``), by name
+    (:func:`is_project_folder`). A folder that cannot be looked into holds none."""
+    try:
+        children = sorted(folder.iterdir(), key=lambda child: child.name)
+    except OSError:
+        return []
+    return [child for child in children if is_project_folder(child, workspace or folder)]
+
+
 def holds_projects(folder: Path) -> bool:
-    """Whether a direct, non-hidden subfolder of ``folder`` holds a ``pyproject.toml`` (a workspace's projects). A
-    subfolder that cannot be looked into holds none."""
+    """Whether a direct subfolder of ``folder`` is a project folder (:func:`is_project_folder`): a workspace's
+    projects."""
     try:
         children = list(folder.iterdir())
     except OSError:
         return False
-    return any(
-        not child.name.startswith(".") and _is(child, "folder") and _is(child / "pyproject.toml", "file")
-        for child in children
-    )
+    return any(is_project_folder(child, folder) for child in children)
 
 
 def find_workspace(start: Path) -> Optional[Path]:

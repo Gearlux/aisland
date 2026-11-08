@@ -30,6 +30,7 @@ from aisland.workspace import file as workspace_file
 from aisland.workspace import selection as s
 from aisland.workspace.discovery import DeclarationError
 from aisland.workspace.projects import get_workspace_root
+from tests.records import NO_JENKINS
 from tests.workspace_layout import needs_workspace
 
 QUESTION = "Which ML frameworks should this machine install?"
@@ -117,7 +118,7 @@ def test_choices_for_a_selection_no_project_defines_offer_nothing(tmp_path: Path
     """Without the project that asks the question there is no such selection; the workspace still sets up."""
     _project(tmp_path, "models", ["dev", "keras"], {"framework": ["keras"]})
     assert [axis.name for axis in s.axes(tmp_path)] == ["extras"]
-    assert s.editable_target(tmp_path, tmp_path / "models", "models").endswith("models[dev]")
+    assert s.editable_target(tmp_path, tmp_path / "models").endswith("models[dev]")
 
 
 def test_a_choice_that_is_no_extra_is_refused_naming_its_file_and_line(tmp_path: Path) -> None:
@@ -138,18 +139,18 @@ def test_the_extras_menu_is_every_extra_a_project_defines(workspace: Path) -> No
 
 def test_each_project_gets_only_the_extras_it_defines(workspace: Path) -> None:
     s.write_committed(workspace, "extras", ["dev", "keras", "aim"])
-    assert s.editable_target(workspace, workspace / "models", "models").endswith("models[dev,keras]")
-    assert s.editable_target(workspace, workspace / "plain", "plain").endswith("plain[dev]")
+    assert s.editable_target(workspace, workspace / "models").endswith("models[dev,keras]")
+    assert s.editable_target(workspace, workspace / "plain").endswith("plain[dev]")
 
 
 def test_a_resolved_extras_selection_owns_dev(workspace: Path) -> None:
     """Once extras is chosen, `dev` comes only from it: "everything but dev" must be expressible."""
     s.write_committed(workspace, "extras", ["keras"])
-    assert s.editable_target(workspace, workspace / "plain", "plain") == str(workspace / "plain")
+    assert s.editable_target(workspace, workspace / "plain") == str(workspace / "plain")
 
 
 def test_an_unresolved_extras_selection_keeps_dev(workspace: Path) -> None:
-    assert s.editable_target(workspace, workspace / "plain", "plain").endswith("plain[dev]")
+    assert s.editable_target(workspace, workspace / "plain").endswith("plain[dev]")
 
 
 def test_dev_is_never_listed_twice(workspace: Path) -> None:
@@ -237,18 +238,18 @@ def test_forgetting_the_machine_choice_falls_back_to_the_committed_one(workspace
 def test_a_project_installs_dev_and_every_selections_extras_in_its_declarations_order(workspace: Path) -> None:
     s.write_committed(workspace, "framework", ["torch", "lightning", "keras"])
     s.write_committed(workspace, "tracker", ["aim"])
-    assert s.editable_target(workspace, workspace / "trainer", "trainer").endswith("trainer[dev,torch,lightning,aim]")
-    assert s.editable_target(workspace, workspace / "models", "models").endswith("models[dev,keras,torch]")
+    assert s.editable_target(workspace, workspace / "trainer").endswith("trainer[dev,torch,lightning,aim]")
+    assert s.editable_target(workspace, workspace / "models").endswith("models[dev,keras,torch]")
 
 
 def test_a_project_declaring_nothing_installs_dev_only(workspace: Path) -> None:
     s.write_committed(workspace, "framework", ["torch"])
-    assert s.editable_target(workspace, workspace / "plain", "plain").endswith("plain[dev]")
+    assert s.editable_target(workspace, workspace / "plain").endswith("plain[dev]")
 
 
 def test_without_a_pyproject_the_target_is_the_bare_folder(workspace: Path) -> None:
     (workspace / "empty").mkdir()
-    assert s.editable_target(workspace, workspace / "empty", "empty") == str(workspace / "empty")
+    assert s.editable_target(workspace, workspace / "empty") == str(workspace / "empty")
 
 
 # --- setup asks ---------------------------------------------------------------------------------------------------
@@ -608,10 +609,9 @@ def test_adding_an_extra_to_an_unset_selection_keeps_the_dev_extras_it_installs(
 
 def _ci_install_line(workspace: Path, monkeypatch: pytest.MonkeyPatch, project: str) -> str:
     from aisland.ci import ci_scaffold
-    from aisland.services.jenkins import JenkinsService
 
     monkeypatch.setattr("aisland.ci.ci_scaffold.is_private_repo", lambda repository: False)
-    ci_scaffold.scaffold(project, force=True, jenkins_url=JenkinsService().url())
+    ci_scaffold.scaffold(project, force=True, jenkins_url=NO_JENKINS)
     text = (workspace / project / ".github" / "workflows" / "ci.yml").read_text()
     return next(line.strip() for line in text.splitlines() if '-e ".[' in line)
 

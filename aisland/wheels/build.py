@@ -77,7 +77,7 @@ from packaging.version import InvalidVersion, Version
 from aisland import console, gitcmd
 from aisland.errors import AislandError
 from aisland.pypi import PypiProject
-from aisland.venv import ensure_uv_in_venv
+from aisland.venv import ensure_uv_in_venv, venv_bin
 from aisland.wheels import check as wheels_check
 from aisland.wheels import extra as wheels_extra
 from aisland.wheels import scrub as wheels_scrub
@@ -157,7 +157,7 @@ def _wheel_version(wheel: Path) -> str:
 
 
 def _uv(workspace_root: Path) -> str:
-    return ensure_uv_in_venv(workspace_root / ".venv" / "bin")
+    return ensure_uv_in_venv(venv_bin(workspace_root))
 
 
 def _package_folders(path: Path) -> List[str]:

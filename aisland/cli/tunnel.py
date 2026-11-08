@@ -9,7 +9,7 @@ from typing import List, Optional, Tuple
 import click
 from click.shell_completion import CompletionItem
 
-from aisland.cli._base import _Group
+from aisland.cli._base import Group
 from aisland.errors import AislandError, quiet_completion
 from aisland.tunnel import connect as tunnel_connect_mod
 from aisland.tunnel import host as tunnel_mod
@@ -54,7 +54,7 @@ def complete_tunnel(
 # --- Remote Tunnel ---
 
 
-@click.group(cls=_Group)
+@click.group(cls=Group)
 def tunnel() -> None:
     """Reach a remote machine from your local editor, over a VS Code Remote Tunnel.
 

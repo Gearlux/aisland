@@ -44,6 +44,7 @@ from aisland.setup.git_settings import install_git_aliases
 from aisland.setup.harness import install_harness
 from aisland.setup.harness import sets as harness_sets
 from aisland.setup.harness import summary as harness_summary
+from aisland.venv import venv_dir
 from aisland.workspace import clones
 from aisland.workspace import file as workspace_file
 from aisland.workspace import local as local_workspace
@@ -199,7 +200,7 @@ def _add_submodule(
 
 def runs_from_venv_of(root: Path) -> bool:
     """Whether this aisland runs from ``root``'s own ``.venv`` (a folder or a link to one): then it needs none made."""
-    venv = root / ".venv"
+    venv = venv_dir(root)
     return venv.exists() and Path(sys.prefix).resolve() == venv.resolve()
 
 

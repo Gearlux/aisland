@@ -11,6 +11,7 @@ from typing import Any, Dict, List, Optional
 
 from aisland import console, editor, envfile, failures, git_exclude, locations
 from aisland.paths import SERVICES_DIR
+from aisland.venv import venv_bin
 from aisland.workspace.model import Workspace
 from aisland.workspace.projects import ProjectMetadata, dependency_order, get_workspace_name
 
@@ -189,7 +190,7 @@ def _loggair_log_dir(workspace_root: Path) -> Optional[Path]:
     (``python -m loggair --json``), which configures nothing and creates no folder. Out of process, so aisland
     takes no dependency on loggair; ``-P`` keeps the root's ``loggair/`` checkout from shadowing the package.
     """
-    python = workspace_root / ".venv" / "bin" / "python"
+    python = venv_bin(workspace_root) / "python"
     if not python.exists():
         return None
     env = {**os.environ, **envfile.read(workspace_root)}

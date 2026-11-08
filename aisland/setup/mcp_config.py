@@ -4,11 +4,11 @@ the workspace's projects ship, each started with the workspace's environment."""
 import json
 import shutil
 from pathlib import Path
-from typing import Dict, List, Optional, Required, TypedDict
+from typing import Dict, List, Required, TypedDict
 
 from aisland import console, failures
 from aisland import pyproject as pyproject_toml
-from aisland.venv import no_venv
+from aisland.venv import require_venv_bin
 from aisland.workspace.projects import discover_projects, get_workspace_root
 
 
@@ -138,24 +138,13 @@ def write_mcp_json(workspace_root: Path, venv_bin: Path) -> None:
     console.echo(f"==> Wrote {out} ({len(servers)} MCP server(s): {listed})")
 
 
-def _venv_bin_or_none(workspace_root: Path) -> Optional[Path]:
-    venv_bin = workspace_root / ".venv" / "bin"
-    if not venv_bin.exists():
-        raise no_venv(workspace_root)
-    return venv_bin
-
-
 def generate_gemini_settings() -> None:
     """Regenerate ``.gemini/settings.json`` for the local workspace + venv (standalone command)."""
     workspace_root = get_workspace_root()
-    venv_bin = _venv_bin_or_none(workspace_root)
-    if venv_bin is not None:
-        write_gemini_settings(workspace_root, venv_bin)
+    write_gemini_settings(workspace_root, require_venv_bin(workspace_root))
 
 
 def generate_mcp_json() -> None:
     """Regenerate ``.mcp.json`` (Claude Code) for the local workspace + venv (standalone command)."""
     workspace_root = get_workspace_root()
-    venv_bin = _venv_bin_or_none(workspace_root)
-    if venv_bin is not None:
-        write_mcp_json(workspace_root, venv_bin)
+    write_mcp_json(workspace_root, require_venv_bin(workspace_root))

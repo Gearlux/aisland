@@ -52,10 +52,8 @@ def found(root: Path) -> List[Clone]:
     ``.gitmodules``: what ``init`` adds in the root it has just made."""
     listed = set(local_workspace.submodule_names(root))
     found = []
-    for child in sorted(root.iterdir(), key=lambda c: c.name):
-        if child.name.startswith(".") or child.name in listed or not child.is_dir():
-            continue
-        if locations.is_alias(child, root) or not (child / ".git").is_dir() or not (child / "pyproject.toml").is_file():
+    for child in locations.project_folders(root):
+        if child.name in listed or not (child / ".git").is_dir():
             continue
         url = gitcmd.remote_url(child)
         if url:

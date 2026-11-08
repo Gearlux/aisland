@@ -29,10 +29,11 @@ Everything refused names the file and the line of the table it is about (:class:
 from __future__ import annotations
 
 import importlib.metadata
-import re
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Dict, List, Literal, Mapping, Optional, Sequence, Tuple, cast, get_args
+
+from packaging.utils import canonicalize_name
 
 from aisland import pyproject as pyproject_toml
 from aisland.errors import AislandError
@@ -381,11 +382,6 @@ def discover(root: Path) -> Discovery:
 # --- stage 2 --------------------------------------------------------------------------------------------------------
 
 
-def _normalized(name: str) -> str:
-    """A distribution name as packaging compares them (PEP 503)."""
-    return re.sub(r"[-_.]+", "-", name).lower()
-
-
 def _entry_point(
     plugin: Plugin, installed: Sequence[importlib.metadata.EntryPoint]
 ) -> Optional[importlib.metadata.EntryPoint]:
@@ -394,7 +390,7 @@ def _entry_point(
         if (
             entry.name == plugin.name
             and entry.dist is not None
-            and _normalized(entry.dist.name) == _normalized(plugin.distribution)
+            and canonicalize_name(entry.dist.name) == canonicalize_name(plugin.distribution)
         ):
             return entry
     return None

@@ -14,9 +14,9 @@ from click.testing import CliRunner
 
 from aisland import cli, locations
 from aisland.ci import ci_scaffold, ci_templates
-from aisland.services.jenkins import JenkinsService
 from aisland.workspace import check as workspace_check
 from aisland.workspace import file as workspace_file
+from tests.records import NO_JENKINS
 
 #: A company's Jenkinsfile: a shared library, a pod agent, a private index — and a Groovy list of maps, which Jinja's
 #: own `{{ }}` would not have read past.
@@ -77,7 +77,7 @@ def ws(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
 
 
 def _scaffold(project: str = "models") -> None:
-    ci_scaffold.scaffold(project, force=True, jenkins_url=JenkinsService().url())
+    ci_scaffold.scaffold(project, force=True, jenkins_url=NO_JENKINS)
 
 
 # --- aisland's own set -------------------------------------------------------------------------------------------
