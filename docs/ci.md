@@ -121,8 +121,8 @@ Two consequences worth knowing:
 
   The same applies to a dependency you just added to a project's `pyproject.toml`: until
   `aisland setup` has run, the local build fails with `ModuleNotFoundError` — run setup, the
-  pipeline will not install it for you. See [architecture: the local pipeline tests the venv, it
-  does not install](architecture.md#the-local-pipeline-tests-the-venv-it-does-not-install).
+  pipeline will not install it for you. See [the decision record: the local pipeline tests the venv, it
+  does not install](decisions/0012-the-local-pipeline-tests-the-venv-it-does-not-install.md).
 
 
 ## A `playwright` dev dependency installs its browser

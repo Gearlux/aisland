@@ -51,9 +51,20 @@ PluginKind = Literal["service"]
 PLUGIN_KINDS: Tuple[str, ...] = get_args(PluginKind)
 _KIND_METHODS: Dict[str, Tuple[str, ...]] = {"service": ("start",)}
 
-#: ``workspace.toml``'s ``[workspace]`` key for the workspace's name (``workspace_file.NAME_KEY``, which imports this
-#: module): a selection's choice is committed under its own name in that table, so none may take this one.
-_WORKSPACE_NAME_KEY = "name"
+#: The names no selection may take, each with why. A selection's choice is committed under its own name in
+#: ``workspace.toml``'s ``[workspace]`` table, so it may not be one of that table's own keys (``workspace_file``,
+#: ``tracking`` and ``pytest_stats`` define them and import this module, so they are spelled here; a test holds the two
+#: in step), and it becomes ``aisland workspace configure <name>``, so it may not be a built-in plugin's name either.
+RESERVED_SELECTION_NAMES: Dict[str, str] = {
+    "name": "workspace.toml's [workspace] name is the workspace's name",
+    "format": "workspace.toml's [workspace] format is the file's format version",
+    "track": "workspace.toml's [workspace] track says whether the root records its projects",
+    "test-stats": "workspace.toml's [workspace] test-stats turns the test-run record on or off",
+    "extras": "aisland's own selection of each project's extras has that name",
+    "active": "`aisland workspace configure active` is aisland's own",
+    "mirror": "`aisland workspace configure mirror` is aisland's own",
+    "source": "`aisland workspace configure source` is aisland's own",
+}
 
 #: The settings a declared selection and a declared service take.
 _SELECTION_KEYS = ("question", "choices")
@@ -192,10 +203,9 @@ def _selections(projects: List[_ProjectTable], found: Discovery) -> None:
             where = Where(path, table_line(text, "tool", "aisland", "selection", name))
             if not isinstance(table, dict):
                 raise DeclarationError(f"{where}: selection {name!r} is not a table")
-            if name == _WORKSPACE_NAME_KEY:
+            if name in RESERVED_SELECTION_NAMES:
                 raise DeclarationError(
-                    f"{where}: a selection cannot be called {name!r}: workspace.toml's [workspace] {name} is the "
-                    "workspace's name"
+                    f"{where}: a selection cannot be called {name!r}: {RESERVED_SELECTION_NAMES[name]}"
                 )
             unknown = [key for key in table if key not in _SELECTION_KEYS]
             if unknown:

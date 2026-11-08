@@ -89,7 +89,7 @@ def apply_source(workspace_root: Path, project: str, source: sources.ProjectSour
 
     if source.kind == "local":
         console.echo(f"==> {project}: local checkout @ {source.ref}")
-        set_submodule_active(workspace_root, project, True)
+        set_submodule_active(workspace_root, sources.submodule_name(workspace_root, project), True)
         if not (path / ".git").exists():
             # It clones: no credential prompt, and a remote that stops sending is given up (gitcmd's guard).
             clone = ["git", *gitcmd.network_options(), "submodule", "update", "--init", "--", rel]
@@ -137,7 +137,7 @@ def apply_source(workspace_root: Path, project: str, source: sources.ProjectSour
                 err=True,
             )
             return False
-    set_submodule_active(workspace_root, project, False)
+    set_submodule_active(workspace_root, sources.submodule_name(workspace_root, project), False)
     # Uninstall first, unconditionally: an editable install would otherwise keep its .pth entry,
     # and re-pinning github:main -> github:dev/main reports the SAME version, which uv would
     # treat as already satisfied and skip.

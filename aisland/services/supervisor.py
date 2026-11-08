@@ -208,6 +208,16 @@ def save_config(config: Dict[str, object]) -> None:
     atomic.write_text(config_file(), _PROVENANCE_HEADER + body)
 
 
+@contextmanager
+def _editing() -> Iterator[Dict[str, Any]]:  # Any: as load_config's
+    """The desired-state document to change, written back when the block ends — one step for every process: two
+    services started at once (an MCP client's tools run side by side) would otherwise each write over the other."""
+    with atomic.locked(config_file()):
+        config = load_config()
+        yield config
+        save_config(config)
+
+
 def register_process(
     name: str,
     command: List[str],
@@ -227,7 +237,6 @@ def register_process(
         readiness: Optional HTTP readiness probe: ``{"port": int, "path": str}``.
         enabled: Desired state — False registers the entry without starting it.
     """
-    config = load_config()
     entry: Dict[str, object] = {
         "command": shlex.join(command),
         "working_dir": str(_workspace_root()),
@@ -254,19 +263,17 @@ def register_process(
             # cold starts (Jenkins plugin scans) must eventually flip Ready.
             "failure_threshold": 60,
         }
-    config["processes"][name] = entry
-    save_config(config)
+    with _editing() as config:
+        config["processes"][name] = entry
 
 
 def set_enabled(name: str, enabled: bool) -> bool:
     """Flip the desired state of a registered process. False if unknown."""
-    config = load_config()
-    entry = config["processes"].get(name)
-    if entry is None:
-        return False
-    entry["disabled"] = not enabled
-    save_config(config)
-    return True
+    with _editing() as config:
+        entry = config["processes"].get(name)
+        if entry is not None:
+            entry["disabled"] = not enabled
+    return entry is not None
 
 
 def get_registered_port(name: str) -> Optional[int]:
@@ -278,12 +285,9 @@ def get_registered_port(name: str) -> Optional[int]:
 
 def remove_process(name: str) -> bool:
     """Drop a process from the desired-state document. False if unknown."""
-    config = load_config()
-    if name not in config["processes"]:
-        return False
-    del config["processes"][name]
-    save_config(config)
-    return True
+    with _editing() as config:
+        found = config["processes"].pop(name, None) is not None
+    return found
 
 
 def apply() -> None:

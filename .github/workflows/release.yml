@@ -73,11 +73,13 @@ jobs:
           echo "::error::Tag $GITHUB_REF_NAME does not match pyproject version $PKG_VERSION"
           exit 1
         fi
+    # The date is the tagged commit's: a heading written days before the tag (or never updated) is refused.
     - name: Guard - the CHANGELOG dates this version
       run: |
         VERSION=${GITHUB_REF_NAME#v}
-        if ! grep -Eq "^## \[${VERSION//./\\.}\] - [0-9]{4}-[0-9]{2}-[0-9]{2}$" CHANGELOG.md; then
-          echo "::error::CHANGELOG.md has no dated entry for $VERSION: write its heading as '## [$VERSION] - YYYY-MM-DD'"
+        DATE=$(git log -1 --format=%cs HEAD)
+        if ! grep -Eq "^## \[${VERSION//./\\.}\] - ${DATE}$" CHANGELOG.md; then
+          echo "::error::CHANGELOG.md does not date $VERSION as its tagged commit: write its heading as '## [$VERSION] - $DATE'"
           exit 1
         fi
     - name: Build sdist + wheel

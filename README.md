@@ -213,8 +213,8 @@ None is needed; each changes one default. `env.complete` lists them with every v
 - [Remote machines](https://github.com/Gearlux/aisland/blob/main/docs/tunnel.md)
 - [Stability](https://github.com/Gearlux/aisland/blob/main/docs/stability.md) — what a release keeps, and what may
   change in any release
-- [Design decisions](https://github.com/Gearlux/aisland/blob/main/docs/architecture.md) — for contributors: the
-  decision log, why each mechanism is the way it is
+- [Architecture](https://github.com/Gearlux/aisland/blob/main/docs/architecture.md) — for contributors: what aisland
+  is built of, and the decision records behind each mechanism
 - [Contributing](https://github.com/Gearlux/aisland/blob/main/CONTRIBUTING.md) — a checkout that runs the tests, the
   layers, where a change goes, the release
 

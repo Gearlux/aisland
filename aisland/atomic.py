@@ -3,13 +3,17 @@
 A state file written in place (``workspace.toml``, ``.env``, the supervisor's document, a shell start-up file) is
 truncated first: a crash, a full disk or a Ctrl-C half way leaves it cut short, and the next run reads what is left.
 :func:`write_text` writes a temporary file beside it and moves that into place, so a reader sees the old file or the
-new one, never part of either. Standard library only.
+new one, never part of either. :func:`locked` makes a read-modify-write of one file one step for every process that
+takes it: an MCP client's tools run side by side, and two edits read at once would each write over the other's.
+Standard library only.
 """
 
 import os
+import sys
 import tempfile
+from contextlib import contextmanager
 from pathlib import Path
-from typing import Optional
+from typing import Iterator, Optional
 
 #: The mode of a file that holds secrets (`.env`): readable and writable by its owner alone.
 PRIVATE = 0o600
@@ -43,3 +47,29 @@ def _umask() -> int:
     current = os.umask(0)
     os.umask(current)
     return current
+
+
+@contextmanager
+def locked(path: Path) -> Iterator[None]:
+    """Hold the exclusive lock of ``path`` — ``<path>.lock`` beside it, taken by every process editing ``path`` — until
+    the block ends. Another process waits for it; the lock goes with the process that held it, however that ends."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with open(path.with_name(path.name + ".lock"), "a+b") as handle:
+        if sys.platform == "win32":
+            import msvcrt
+
+            handle.seek(0)
+            msvcrt.locking(handle.fileno(), msvcrt.LK_LOCK, 1)
+            try:
+                yield
+            finally:
+                handle.seek(0)
+                msvcrt.locking(handle.fileno(), msvcrt.LK_UNLCK, 1)
+        else:
+            import fcntl
+
+            fcntl.flock(handle.fileno(), fcntl.LOCK_EX)
+            try:
+                yield
+            finally:
+                fcntl.flock(handle.fileno(), fcntl.LOCK_UN)

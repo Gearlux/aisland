@@ -27,6 +27,7 @@ from aisland.errors import AislandError
 from aisland.services.jenkins import JenkinsService
 from aisland.setup import source_commands as sc
 from aisland.workspace import file as workspace_file
+from aisland.workspace import gitmodules
 from aisland.workspace import source_apply as sa
 from aisland.workspace import sources as s
 
@@ -315,7 +316,7 @@ def recorder(monkeypatch: pytest.MonkeyPatch) -> _Recorder:
     monkeypatch.setattr(subprocess, "check_call", rec.check_call)
     monkeypatch.setattr(gitcmd, "fetch", rec.fetch)
     monkeypatch.setattr(sa, "set_submodule_active", lambda *a, **k: None)
-    monkeypatch.setattr(s, "submodule_active_map", lambda root: [("loggair", "loggair", True)])
+    monkeypatch.setattr(s, "submodule_of", lambda root, project: gitmodules.Submodule(project, project))
     monkeypatch.setattr(s, "remote_url", lambda root, project: "https://github.com/Gearlux/loggair.git")
     return rec
 
@@ -995,3 +996,17 @@ class TestUnsetProjectSource:
         sc.unset_project_source("loggair", machine_only=True, workspace_root=tmp_path)
         assert cleared == [("loggair", None)]
         assert set(s.read_committed_sources(tmp_path)) == {"loggair"}
+
+
+def test_a_row_renamed_in_workspace_toml_still_finds_its_submodule_by_its_folder(tmp_path: Path) -> None:
+    """`.gitmodules` names a submodule once; `workspace.toml` may call the project otherwise. Its url, folder and
+    git's active key are found by the folder the row gives, never by the row's name."""
+    (tmp_path / ".gitmodules").write_text(
+        '[submodule "models-old"]\n\tpath = models\n\turl = https://example.com/acme/models.git\n'
+    )
+    (tmp_path / "workspace.toml").write_text('[project."models"]\npath = "models"\n')
+    assert s.remote_url(tmp_path, "models") == "https://example.com/acme/models.git"
+    assert s.project_path(tmp_path, "models") == tmp_path / "models"
+    assert s.submodule_name(tmp_path, "models") == "models-old"
+    assert s.remote_url(tmp_path, "missing") is None
+    assert s.project_path(tmp_path, "missing") == tmp_path / "missing"

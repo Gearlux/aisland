@@ -12,13 +12,14 @@ import subprocess
 import urllib.request
 import xml.etree.ElementTree as ET
 from pathlib import Path
-from typing import Set
+from typing import Optional, Set
 
 import click
 
 from aisland import console, failures, paths
 from aisland.downloads import download, sha256
 from aisland.errors import AislandError
+from aisland.services import supervisor
 from aisland.services.base import BaseService
 from aisland.services.jenkins_java import JenkinsJava, choose_java, find_runtimes, newest_versioned_formula
 from aisland.setup import provision
@@ -72,13 +73,20 @@ class JenkinsService(BaseService):
 
     def __init__(self) -> None:
         super().__init__("jenkins")
-        self.war_file = paths.bin_dir() / "jenkins.war"
+        self.war_file = paths.bin_dir() / f"jenkins-{self.WAR_VERSION}.war"
         self.manager_jar = paths.bin_dir() / f"jenkins-plugin-manager-{self.MANAGER_VERSION}.jar"
 
     def ensure_war(self) -> bool:
-        """Download the pinned Jenkins WAR unless one is already in the bin dir; return whether it is there now. A WAR
-        already in the bin dir is used as it is."""
-        return _fetch_pinned(f"Jenkins {self.WAR_VERSION}", self.URL, self.war_file, self.WAR_SHA256)
+        """Download the pinned Jenkins WAR unless it is already in the bin dir; return whether it is there now. The file
+        is named by its version, so a new pin downloads its own; once it is there, the WARs of other versions (and the
+        unversioned ``jenkins.war`` of an older aisland) are removed. A WAR of the pinned version already there is used
+        as it is."""
+        if not _fetch_pinned(f"Jenkins {self.WAR_VERSION}", self.URL, self.war_file, self.WAR_SHA256):
+            return False
+        for other in [*self.war_file.parent.glob("jenkins-*.war"), self.war_file.parent / "jenkins.war"]:
+            if other != self.war_file:
+                other.unlink(missing_ok=True)
+        return True
 
     def ensure_manager(self) -> bool:
         """Download the pinned plugin manager unless it is already in the bin dir; return whether it is there now. Once
@@ -303,8 +311,9 @@ class JenkinsService(BaseService):
             )
             console.echo("=" * 65 + "\n")
 
-    def launch(self, port: int = DEFAULT_PORT, background: bool = False) -> None:
-        """Start the Jenkins server."""
+    def launch(self, port: Optional[int] = None, background: bool = False) -> None:
+        """Start the Jenkins server, on ``port``, else the port it last ran on (:meth:`port`)."""
+        port = self.port() if port is None else port
         self.setup()
         java = self.java_asking()
         console.echo(f"Jenkins: http://localhost:{port}")
@@ -359,10 +368,18 @@ class JenkinsService(BaseService):
         if self.is_running() and self.admin_password_file.exists():
             console.echo(f"    Initial admin password: in {self.admin_password_file}")
 
-    def url(self) -> str:
-        """Where Jenkins answers: the port it runs on, else :attr:`DEFAULT_PORT` (it is not running, or not here)."""
+    def port(self) -> int:
+        """The port Jenkins runs on, else the one it last ran on (its supervisor registration, which a ``reset``
+        drops), else :attr:`DEFAULT_PORT`: a restart, ``jenkins init`` and every link keep a ``--port`` once given."""
         ports = self.get_ports()
-        return f"http://localhost:{ports[0] if ports else self.DEFAULT_PORT}"
+        if ports:
+            return ports[0]
+        registered = supervisor.get_registered_port(self.name)
+        return self.DEFAULT_PORT if registered is None else registered
+
+    def url(self) -> str:
+        """Where Jenkins answers: ``http://localhost:<port>`` on :meth:`port`."""
+        return f"http://localhost:{self.port()}"
 
     def info(self) -> None:
         """Show detailed Jenkins configuration."""

@@ -4,7 +4,8 @@ The README is what PyPI shows, where a relative link resolves nowhere, so every 
 under ``docs/`` link each other relatively, and every link must land on a file and, with an anchor, on a heading
 of it. A user page names no project of the workspace aisland is developed in — those mean nothing to a reader of
 the package — but the tools aisland itself drives (process-compose, Jenkins, liquifai's completion, loggair's log
-folder) keep their names. ``docs/architecture.md`` is the decision record, not a user page. The same holds for
+folder) keep their names. ``docs/architecture.md`` and the decision records under ``docs/decisions/`` are for
+contributors, not user pages, but their links must land and they name no project either. The same holds for
 what the installed package shows: every command's ``--help`` and the usage text of the zip ``aisland wheels zip``
 writes.
 """
@@ -59,6 +60,15 @@ _LINK = re.compile(r"(?<!\!)\[[^\]]*\]\(([^)\s]+)\)")
 
 def _user_pages() -> List[Path]:
     return sorted(page for page in DOCS.glob("*.md") if page.name != "architecture.md")
+
+
+def _decision_records() -> List[Path]:
+    return sorted((DOCS / "decisions").glob("*.md"))
+
+
+def _contributor_pages() -> List[Path]:
+    """The architecture page and every decision record."""
+    return [DOCS / "architecture.md", *_decision_records()]
 
 
 def _outside_code(text: str) -> Iterator[Tuple[int, str]]:
@@ -122,7 +132,7 @@ def test_every_repository_link_in_the_readme_names_a_file_that_exists() -> None:
     assert wrong == []
 
 
-@pytest.mark.parametrize("page", _user_pages(), ids=lambda page: page.name)
+@pytest.mark.parametrize("page", [*_user_pages(), *_contributor_pages()], ids=lambda page: page.name)
 def test_every_link_of_a_page_lands_on_a_file_and_a_heading(page: Path) -> None:
     wrong = []
     for number, target in _links(page):
@@ -143,38 +153,41 @@ def test_the_readme_indexes_every_page() -> None:
     assert missing == []
 
 
-def _decisions_and_contents(page: Path) -> Tuple[List[str], List[Tuple[str, str]]]:
-    """The titles of the ``##`` decisions of ``page`` (its Contents section aside) and the ``(title, anchor)`` of
-    each link in that Contents section."""
-    decisions: List[str] = []
-    listed: List[Tuple[str, str]] = []
-    in_contents = False
-    for _, line in _outside_code(page.read_text(encoding="utf-8")):
-        if line.startswith("## "):
-            in_contents = line == "## Contents"
-            if not in_contents:
-                decisions.append(line[3:].strip())
-        elif in_contents:
-            listed += re.findall(r"^- \[(.+)\]\(#([^)\s]+)\)$", line)
-    return decisions, listed
+def _title(page: Path) -> str:
+    """The text of ``page``'s ``#`` heading."""
+    return next(
+        line[2:].strip() for _, line in _outside_code(page.read_text(encoding="utf-8")) if line.startswith("# ")
+    )
 
 
-def test_the_architecture_contents_lists_each_decision_once() -> None:
-    decisions, listed = _decisions_and_contents(DOCS / "architecture.md")
-    titles = [title for title, _ in listed]
-    assert sorted(titles) == sorted(decisions)
-
-
-def test_every_link_of_the_architecture_contents_lands_on_its_own_heading() -> None:
+def _index_entries() -> List[Tuple[str, str]]:
+    """The ``(text, target)`` of each list item of the architecture page that links a decision record: its index."""
     page = DOCS / "architecture.md"
-    _, listed = _decisions_and_contents(page)
-    anchors = _anchors(page)
-    wrong = []
-    for title, anchor in listed:
-        slug = re.sub(r"[^\w\- ]", "", title.lower()).replace(" ", "-")
-        if anchor != slug or anchor not in anchors:
-            wrong.append(f"{title}: #{anchor}")
+    return [
+        (text, target)
+        for _, line in _outside_code(page.read_text(encoding="utf-8"))
+        for text, target in re.findall(r"^- \[(.+)\]\((decisions/[^)\s#]+)\)$", line)
+    ]
+
+
+def test_the_architecture_page_indexes_every_decision_record_once() -> None:
+    """Every file under `docs/decisions/` once, and no entry for a file not there."""
+    indexed = [target for _, target in _index_entries()]
+    assert sorted(indexed) == sorted(f"decisions/{record.name}" for record in _decision_records())
+
+
+def test_an_index_entry_names_its_record_by_number_and_title() -> None:
+    wrong = [
+        f"{text} -> {target}"
+        for text, target in _index_entries()
+        if text != f"{(DOCS / target).name[:4]} — {_title(DOCS / target)}"
+    ]
     assert wrong == []
+
+
+def test_the_decision_records_are_numbered_without_a_gap() -> None:
+    numbers = [int(record.name[:4]) for record in _decision_records()]
+    assert numbers == list(range(1, len(numbers) + 1))
 
 
 #: A name not preceded by a letter or digit: `_labels_completion`, `planner_bundle-1.0.whl` and `datasets's` are
@@ -196,9 +209,9 @@ def _commands(group: click.Group, path: Tuple[str, ...] = ("aisland",)) -> Itera
             yield " ".join(path + (name,)), command
 
 
-@pytest.mark.parametrize("page", [README, *_user_pages(), DOCS / "architecture.md"], ids=lambda page: page.name)
+@pytest.mark.parametrize("page", [README, *_user_pages(), *_contributor_pages()], ids=lambda page: page.name)
 def test_a_user_page_names_no_project_of_the_workspace(page: Path) -> None:
-    """The decision log too: it is published with the docs, and names a project it measured on by its role."""
+    """The decision records too: they are published with the docs, and name a project they measured on by its role."""
     hits = [
         f"{page.name}:{number}: {line.strip()}"
         for number, line in enumerate(page.read_text(encoding="utf-8").splitlines(), start=1)

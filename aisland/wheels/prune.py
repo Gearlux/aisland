@@ -10,7 +10,8 @@ The run, in order (``--apply``; without it the run fetches, counts and changes n
 
 1. **Refusals** (:func:`_problems`): changes no commit holds, a branch with commits origin lacks or behind origin's,
    a tag that differs from origin's. A rewrite of such a clone would lose or tangle work.
-2. **A backup** of every ref, ``<git dir>/wheels-prune/<stamp>.bundle``, and the command that puts it back.
+2. **A backup** of every ref and of every commit only a reflog reaches, ``<git dir>/wheels-prune/<stamp>.bundle``, and
+   the command that puts it back.
 3. **The rewrite**, by git-filter-repo (the ``prune`` extra): ``--strip-blobs-with-ids`` with the versions to go,
    ``--preserve-commit-hashes`` and no pruning of commits left empty, so the rewrite is a pure function of each
    commit — another clone stripping the same versions gets the same commit ids (what :func:`reset` relies on).
@@ -76,6 +77,9 @@ _STASH = "refs/stash"
 
 #: Holds a detached HEAD's commit while the rewrite runs.
 _HEAD_REF = "refs/wheels-prune/head"
+
+#: In the backup bundle, each commit only a reflog reached, as ``<this><commit>``.
+_REFLOG_REFS = "refs/wheels-prune/reflog/"
 
 #: Holds a reset's changes no commit held (a ``git stash create`` commit) while the rewrite runs; never the user's
 #: stash, whose reflog git-filter-repo does not carry.
@@ -320,12 +324,30 @@ def _restore_command(repo: Path, bundle: Path) -> str:
     return f"git -C {at} fetch --update-head-ok {shlex.quote(str(bundle))} '+refs/*:refs/*' && git -C {at} reset --hard"
 
 
+def _reflog_only_tips(repo: Path) -> List[str]:
+    """The newest commits only a reflog reaches (a commit left by ``reset --hard``, an amended one): what the shrink's
+    reflog expiry would otherwise drop with no copy anywhere."""
+    lines = _git(repo, "rev-list", "--parents", "--reflog", "--not", "--all").splitlines()
+    commits = [line.split() for line in lines]
+    parents = {parent for _commit, *its_parents in commits for parent in its_parents}
+    return [commit for commit, *_its_parents in commits if commit not in parents]
+
+
 def _backup(repo: Path) -> Tuple[Path, str]:
-    """Every ref and every object it reaches, bundled into ``<git dir>/wheels-prune/<stamp>.bundle``."""
+    """Every ref and every object it reaches, bundled into ``<git dir>/wheels-prune/<stamp>.bundle``.
+
+    A commit only a reflog reaches is bundled too, under :data:`_REFLOG_REFS` ``<commit>`` — the restore brings it
+    back as that ref — since the shrink expires the reflogs that held it. The refs live only while the bundle is
+    written, so the rewrite never carries them."""
     folder = _git_dir(repo) / BACKUP_DIR
     folder.mkdir(exist_ok=True)
     bundle = folder / f"{datetime.datetime.now().strftime('%Y%m%d-%H%M%S-%f')}.bundle"
-    _git(repo, "bundle", "create", str(bundle), "--all")
+    held = [f"{_REFLOG_REFS}{commit}" for commit in _reflog_only_tips(repo)]
+    _git(repo, "update-ref", "--stdin", stdin="".join(f"create {ref} {ref[len(_REFLOG_REFS):]}\n" for ref in held))
+    try:
+        _git(repo, "bundle", "create", str(bundle), "--all")
+    finally:
+        _git(repo, "update-ref", "--stdin", stdin="".join(f"delete {ref}\n" for ref in held))
     return bundle, _restore_command(repo, bundle)
 
 

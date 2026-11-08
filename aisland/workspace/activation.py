@@ -131,13 +131,29 @@ def _reconcile(root: Path) -> List[str]:
         if want and not checked_out:
             if name is not None:
                 console.echo(f"  - init {project.path} (active)")
-                done = gitcmd.git(root, "submodule", "update", "--init", project.path)
+                # A clone: git's own prompts are off (a credential asked for with the output captured would hang
+                # unseen), and it may take as long as the download does.
+                done = gitcmd.git(
+                    root, "submodule", "update", "--init", project.path, network=True, timeout=gitcmd.NO_LIMIT
+                )
             elif project.url is not None:
                 console.echo(f"  - add {project.path} (active)")
                 branch = ["-b", project.branch] if project.branch else []
                 # A local workspace's `.gitignore` ignores everything: git adds the path only with `-f`.
                 force = ["-f"] if local_workspace.is_local(root) else []
-                done = gitcmd.git(root, "submodule", "add", "-q", *force, *branch, "--", project.url, project.path)
+                done = gitcmd.git(
+                    root,
+                    "submodule",
+                    "add",
+                    "-q",
+                    *force,
+                    *branch,
+                    "--",
+                    project.url,
+                    project.path,
+                    network=True,
+                    timeout=gitcmd.NO_LIMIT,
+                )
                 name = _submodule_names(root).get(project.path)
             else:
                 console.echo(f"    skip {project.path}: active, but workspace.toml gives it no url to clone from.")

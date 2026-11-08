@@ -183,5 +183,5 @@ password prompt. Use an SSH key, or an HTTPS token in `~/.netrc`, for both hosts
 - `aisland workspace configure mirror set` refuses a project whose checkout already has a remote named `mirror` that
   aisland did not create, and prints the `git remote rename` that frees the name.
 - `aisland setup` adds the remote for every committed mirror and removes the one aisland added
-  for a mirror unset on another machine. Why the mirror is push-only: [architecture.md](architecture.md),
-  "A mirror is push-only, fast-forward-only, and copies the primary".
+  for a mirror unset on another machine. Why the mirror is push-only: [the decision record
+  "A mirror is push-only, fast-forward-only, and copies the primary"](decisions/0024-a-mirror-is-push-only-fast-forward-only-and-copies.md).

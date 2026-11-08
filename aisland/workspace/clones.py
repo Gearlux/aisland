@@ -76,13 +76,28 @@ def add(root: Path, clones: Sequence[Clone]) -> List[str]:
     force = ["-f"] if local_workspace.is_local(root) else []
     for clone in clones:
         branch = ["-b", clone.branch] if clone.branch else []
-        added = gitcmd.git(root, "submodule", "add", "-q", *force, *branch, "--", clone.url, clone.path)
+        # A clone when the folder has none yet: no prompt (git's output is captured) and no time limit.
+        added = gitcmd.git(
+            root,
+            "submodule",
+            "add",
+            "-q",
+            *force,
+            *branch,
+            "--",
+            clone.url,
+            clone.path,
+            network=True,
+            timeout=gitcmd.NO_LIMIT,
+        )
         if added.returncode != 0:
             lines.append(f"could not add {clone.path}: {(added.stderr.strip().splitlines() or ['failed'])[-1]}")
             continue
         lines.append(f"added {clone.path} as a submodule ({clone.url}, {clone.branch or 'on no branch'})")
         workspace_file.refresh(root)
-        project = next(p.name for p in workspace_file.load(root).projects.values() if p.path == clone.path)
+        project = next((p.name for p in workspace_file.load(root).projects.values() if p.path == clone.path), None)
+        if project is None:  # the file lists it under another spelling of its path: tracking follows on setup's run
+            continue
         # Tracked as the workspace says: `[workspace] track = false` (or this machine's choice) untracks it.
         lines += [change.line() for change in tracking.apply(root) if change.project == project]
     return lines

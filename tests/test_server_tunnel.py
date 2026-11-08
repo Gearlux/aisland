@@ -79,8 +79,8 @@ def test_the_status_is_what_the_status_command_prints(monkeypatch: pytest.Monkey
     [
         ({}, ["tunnel", "start", "--json"]),
         (
-            {"name": "box", "provider": "github", "cli": "/tmp/vscode_cli.tar.gz"},
-            ["tunnel", "start", "--name", "box", "--provider", "github", "--cli", "/tmp/vscode_cli.tar.gz", "--json"],
+            {"name": "box", "provider": "github"},
+            ["tunnel", "start", "--name", "box", "--provider", "github", "--json"],
         ),
     ],
 )
@@ -117,11 +117,20 @@ def test_a_provider_aisland_does_not_offer_is_refused_before_anything_runs(comma
     assert commands.calls == []
 
 
-def test_the_status_only_reads_and_a_start_or_stop_destroys_nothing() -> None:
+def test_the_status_only_reads_a_start_destroys_nothing_and_a_stop_ends_the_sessions() -> None:
     assert server.mcp_server is not None
     hints = {tool.name: tool.annotations for tool in asyncio.run(server.mcp_server.list_tools())}
     status = hints["tunnel_status"]
     assert status is not None and status.read_only_hint is True
-    for name in ("tunnel_start", "tunnel_stop"):
+    for name, destructive in (("tunnel_start", False), ("tunnel_stop", True)):
         changing = hints[name]
-        assert changing is not None and changing.read_only_hint is False and changing.destructive_hint is False
+        assert changing is not None and changing.read_only_hint is False
+        assert changing.destructive_hint is destructive, name
+
+
+def test_a_cli_archive_of_ones_own_is_no_argument_of_the_tool(commands: _Commands) -> None:
+    """`--cli` installs and runs an archive unchecked: a person's choice at the command line, never a client's."""
+    assert _result("tunnel_start", {"cli": "/tmp/vscode_cli.tar.gz"}).is_error or commands.calls == [
+        ["tunnel", "start", "--json"]
+    ]
+    assert all("--cli" not in line for line in commands.calls)

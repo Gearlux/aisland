@@ -261,6 +261,8 @@ class BaseService:
         """Restart the service."""
         console.echo(f"Restarting {self.name}...")
         self.stop()
+        if self.is_running():  # the stop said why; a second copy would fight the first for its port
+            return
         # We assume launch is the method to start with default/stored config
         # Individual services might need to override this if launch signatures differ significantly
         if hasattr(self, "launch"):
@@ -269,9 +271,16 @@ class BaseService:
             failures.report(f"Error: {self.name} service does not have a launch method.")
 
     def reset(self) -> None:
-        """Stop the service and wipe its data directory, logs, and registration."""
+        """Stop the service and wipe its data directory, logs, and registration — never while it still runs: a
+        stop that failed leaves everything as it was, since a running service writes into the folder being wiped."""
         if self.is_running():
             self.stop()
+            if self.is_running():
+                failures.report(
+                    f"Error: {self.name.capitalize()} is still running, so its data was not wiped. "
+                    f"Stop it (aisland {self.name} stop), then reset again."
+                )
+                return
 
         # Drop the supervisor registration too — a reset service should not
         # linger (disabled) in the desired-state document.

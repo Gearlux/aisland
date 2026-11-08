@@ -189,6 +189,20 @@ def test_apply_strips_the_unheld_version_everywhere_and_keeps_every_tip_and_tag(
     assert "Every other clone of models: aisland wheels reset models, before its next pull" in text
 
 
+@pytest.mark.slow
+def test_a_commit_only_a_reflog_reaches_is_kept_in_the_backup(setup: Setup) -> None:
+    """The shrink expires every reflog: a commit a `reset --hard` left behind would go with no copy, so the backup
+    bundles it and the printed restore brings it back as a ref of its own."""
+    (setup.repo / "code.py").write_text("an idea\n")
+    dropped = _commit(setup.repo, "an idea, reset away")
+    _git(setup.repo, "reset", "-q", "--hard", "HEAD~1")
+    report = wp.prune(setup.root, "models", apply=True)
+    assert _gone(setup.repo, dropped)
+    assert not [ref for ref in _refs(setup.repo) if ref.startswith("refs/wheels-prune/reflog/")]
+    subprocess.run(report.restore or "", shell=True, check=True, capture_output=True)
+    assert _refs(setup.repo)[f"refs/wheels-prune/reflog/{dropped}"] == dropped
+
+
 def test_origin_keeps_a_record_of_the_versions_and_the_commits(setup: Setup) -> None:
     old = _git(setup.repo, "rev-list", "main").split()
     wp.prune(setup.root, "models", apply=True)

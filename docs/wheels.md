@@ -316,7 +316,9 @@ aisland wheels prune app --apply   rewrites history and force-pushes origin
 
 1. refuses a clone with changes no commit holds, a branch with commits origin lacks or behind origin's, and a tag
    that differs from origin's — each named in one `Error:` line, nothing changed;
-2. bundles every ref into `.git/wheels-prune/<stamp>.bundle` and prints the command that puts it back;
+2. bundles every ref into `.git/wheels-prune/<stamp>.bundle` and prints the command that puts it back. A commit
+   only a reflog still reaches (one a `reset --hard` left behind) is bundled too, and comes back from the bundle as
+   `refs/wheels-prune/reflog/<commit>`;
 3. rewrites the history, and checks that every kept branch and tag has the files it had;
 4. force-pushes origin's branches and tags in one atomic push, each leased on the commit it fetched: if someone
    pushed meanwhile, origin refuses the whole push and stays as it was;
@@ -443,5 +445,5 @@ The merge refuses what would install wrongly, naming it: a wheel that is not pur
 with different contents in two wheels, one entry point name pointing at two objects, a requirement
 the bundled version does not satisfy, a project whose `dependencies` are dynamic.
 
-Why it is built this way: [`architecture.md`](architecture.md) → "A project installed outside the
-workspace gets its unpublished dependencies as wheels" and "`--bundle`: one wheel, one name".
+Why it is built this way: the decision records ["A project installed outside the
+workspace gets its unpublished dependencies as wheels"](decisions/0019-a-project-installed-outside-the-workspace-gets.md) and ["`--bundle`: one wheel, one name"](decisions/0023-bundle-one-wheel-one-name.md).

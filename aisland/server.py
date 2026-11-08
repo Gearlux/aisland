@@ -10,9 +10,11 @@ The tools are a chosen set, never the whole CLI:
   ``tunnel_list``, ``tunnel_status``, ``track_status``: each the data its command prints with ``--json`` (or would),
   from the same function;
 * changing this machine, never destroying — ``editor_set_theme``, ``editor_set_color``, ``editor_unset`` (the
-  workspace window's theme and colours, :mod:`aisland.editor`), ``service_start``/``stop``/``restart`` for any
-  service of the workspace and ``tunnel_start``/``tunnel_stop`` (the remote tunnel to this machine), each run as the
-  ``aisland`` command itself so it behaves exactly as typed.
+  workspace window's theme and colours, :mod:`aisland.editor`), ``service_start`` for any service of the workspace
+  and ``tunnel_start`` (the remote tunnel to this machine);
+* ending something running, marked destructive — ``service_stop``, ``service_restart`` and ``tunnel_stop``.
+
+The service and tunnel tools each run the ``aisland`` command itself, so it behaves exactly as typed.
 
 What prompts (``setup``), runs for minutes or deletes (``clean``, ``backups prune``, ``* reset``, ``jenkins init``,
 ``source set``) stays a command. Every tool answers with one JSON object; a refusal is the tool's error, in the
@@ -287,16 +289,15 @@ def _tunnel_command(args: List[str]) -> Dict[str, object]:
     return payload
 
 
-def tool_tunnel_start(
-    name: Optional[str] = None, provider: Optional[TunnelProvider] = None, cli: Optional[str] = None
-) -> Dict[str, object]:
+def tool_tunnel_start(name: Optional[str] = None, provider: Optional[TunnelProvider] = None) -> Dict[str, object]:
     """Bring up a remote-editing tunnel to THIS machine (`aisland tunnel start --json`): its status, with `url` once
     it is up. When the account still needs a sign-in it answers `pending_signin` (`url`, `code`) at once instead of
     waiting — hand the code to the user, then ask `tunnel_status`. A tunnel already running is reported, never a
     second started. `name` defaults to $WORKSPACE, else the hostname; `provider` is the account to sign in with,
-    remembered afterwards; `cli` a VS Code CLI archive for a machine that cannot reach the download host."""
+    remembered afterwards. (A VS Code CLI archive of one's own, `aisland tunnel start --cli`, is installed and run
+    unchecked, so it is a person's choice at the command line, never a tool's argument.)"""
     args = ["start"]
-    for flag, value in (("--name", name), ("--provider", provider), ("--cli", cli)):
+    for flag, value in (("--name", name), ("--provider", provider)):
         if value:
             args += [flag, value]
     return _tunnel_command(args)
@@ -342,9 +343,13 @@ _CHANGING = (
     tool_editor_set_color,
     tool_editor_unset,
     tool_service_start,
+    tool_tunnel_start,
+)
+#: The tools that end something running: stopping the container engine stops every container in it, and a stopped
+#: tunnel drops every remote session — a client asks before it calls these.
+_STOPPING = (
     tool_service_stop,
     tool_service_restart,
-    tool_tunnel_start,
     tool_tunnel_stop,
 )
 
@@ -374,7 +379,8 @@ def _build_server() -> "Optional[MCPServer]":
         built._lowlevel_server._request_handlers.pop(request_type.model_fields["method"].default, None)
     reading = ToolAnnotations(read_only_hint=True)
     changing = ToolAnnotations(read_only_hint=False, destructive_hint=False)
-    for tools, annotations in ((_READING, reading), (_CHANGING, changing)):
+    stopping = ToolAnnotations(read_only_hint=False, destructive_hint=True)
+    for tools, annotations in ((_READING, reading), (_CHANGING, changing), (_STOPPING, stopping)):
         for function in tools:
             built.tool(name=function.__name__[len("tool_") :], annotations=annotations)(
                 _refusals_reach_the_client(function)

@@ -1,8 +1,8 @@
 # Contributing to aisland
 
 How to change aisland itself: get a checkout running, find where a change goes, and keep the gates green.
-Why each mechanism is the way it is lives in [docs/architecture.md](docs/architecture.md), the decision log; this page
-is the short way in.
+How the package is built is [docs/architecture.md](docs/architecture.md); why each mechanism is the way it is lives in
+the decision records under [docs/decisions/](docs/decisions/), which it indexes. This page is the short way in.
 
 ## A checkout that runs the tests
 
@@ -19,8 +19,8 @@ against folders they make themselves. The `dev` extra holds everything the gates
 The gates CI runs, each from the checkout:
 
 ```bash
-.venv/bin/black --check . && .venv/bin/isort --check-only . && .venv/bin/flake8 aisland tests
-.venv/bin/mypy aisland      # held to what --strict checks (mypy.ini)
+.venv/bin/black --check . && .venv/bin/isort --check-only . && .venv/bin/flake8 .
+.venv/bin/mypy .            # the package and the tests, held to what --strict checks (mypy.ini)
 .venv/bin/lint-imports --no-cache   # the import layers below
 ```
 
@@ -75,9 +75,10 @@ Never import inside a function to get round the order. A new top-level module go
 ## A release
 
 1. Changes go under `## [Unreleased]` in the [CHANGELOG](CHANGELOG.md) as they land.
-2. At release time, that section becomes `## [<version>] - <date>`, and `pyproject.toml`'s `version` matches it.
+2. At release time, that section becomes `## [<version>] - <date>`, dated the day of the commit you tag, and
+   `pyproject.toml`'s `version` matches it. Until then the next version's heading reads `- Unreleased`.
 3. Pushing the tag `v<version>` runs `.github/workflows/release.yml`. It runs the gates and both test runs, checks
-   the tag against the version and the CHANGELOG's date, builds the package, checks it with `twine check --strict`,
+   the tag against the version and the CHANGELOG's date against the tagged commit's, builds the package, checks it with `twine check --strict`,
    tests the wheel in a clean venv, and publishes it to PyPI.
 
 What a release must keep working for its users is listed in [docs/stability.md](docs/stability.md).

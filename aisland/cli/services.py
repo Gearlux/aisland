@@ -82,9 +82,13 @@ def jenkins() -> None:
 
 
 @jenkins.command(name="start")
-@click.option("--port", default=JenkinsService.DEFAULT_PORT, help="HTTP port for Jenkins.")
+@click.option(
+    "--port",
+    type=int,
+    help=f"HTTP port for Jenkins (default: the port it last ran on, else {JenkinsService.DEFAULT_PORT}).",
+)
 @click.option("--background", "-b", is_flag=True, help="Run in background.")
-def jenkins_start(port: int, background: bool) -> None:
+def jenkins_start(port: Optional[int], background: bool) -> None:
     """Start Jenkins."""
     JenkinsService().launch(port=port, background=background)
 
@@ -108,9 +112,13 @@ def jenkins_info() -> None:
 
 
 @jenkins.command(name="restart")
-@click.option("--port", default=JenkinsService.DEFAULT_PORT, help="HTTP port for Jenkins.")
+@click.option(
+    "--port",
+    type=int,
+    help=f"HTTP port for Jenkins (default: the port it last ran on, else {JenkinsService.DEFAULT_PORT}).",
+)
 @click.option("--background", "-b", is_flag=True, help="Run in background.")
-def jenkins_restart(port: int, background: bool) -> None:
+def jenkins_restart(port: Optional[int], background: bool) -> None:
     """Restart Jenkins."""
     JenkinsService().restart(port=port, background=background)
 

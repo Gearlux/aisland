@@ -78,3 +78,14 @@ def test_a_workspace_is_a_snapshot_read_once(acme: Path) -> None:
     assert workspace.name == "acme"
     (acme / "workspace.toml").write_text('[workspace]\nformat = 1\nname = "other"\n')
     assert workspace.name == "acme" and Workspace(acme).name == "other"
+
+
+def test_a_workspace_under_a_hidden_folder_still_finds_its_projects(tmp_path: Path) -> None:
+    """Only the folders' own names are read: a workspace whose path above it holds `.venv` is a workspace like any."""
+    from aisland.workspace.projects import discover_projects
+
+    root = tmp_path / ".venvs-work" / "acme"
+    for folder in ("app", ".venv/lib/stray", ".cache/tool"):
+        (root / folder).mkdir(parents=True)
+        (root / folder / "pyproject.toml").write_text('[project]\nname = "x"\n')
+    assert discover_projects(root) == [root / "app" / "pyproject.toml"]

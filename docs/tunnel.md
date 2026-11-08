@@ -136,5 +136,5 @@ the PATH, the `[connect]` extra, the sign-in — and prints the command that fix
 is nobody's intent, so it runs only where you ask for it. `aisland doctor` probes the relay only on a
 machine that has used the tunnel.
 
-Why it is built this way: [architecture.md](architecture.md) → "A terminal on the remote machine rides
-the VS Code tunnel it already runs".
+Why it is built this way: [the decision record "A terminal on the remote machine rides
+the VS Code tunnel it already runs"](decisions/0032-a-terminal-on-the-remote-machine-rides-the-vs-code.md).

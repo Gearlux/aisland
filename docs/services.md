@@ -26,7 +26,9 @@ aisland services reset jenkins    # stop it and wipe its data (asks first)
 ```
 
 Without a name, `start`, `stop`, `restart` and `reset` act on the services started by default — Docker, Jenkins and
-SwiftBar — and `status` and `info` on every service. Each service also has its own group with the same verbs
+SwiftBar — and `status` and `info` on every service. A service that does not stop in time is left as it is: `restart`
+starts no second copy, and `reset` wipes nothing while it still runs (`Error: Jenkins is still running, so its data
+was not wiped.`). Each service also has its own group with the same verbs
 (`aisland jenkins status`).
 
 `aisland services status --json` prints the same states for a script, one object per service:

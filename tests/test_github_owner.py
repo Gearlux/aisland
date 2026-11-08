@@ -156,6 +156,16 @@ def test_without_gitmodules_a_clones_origin_is_its_remote(tmp_path: Path) -> Non
     assert project_repositories(tmp_path) == {"lib": GitHubRepository("acme", "lib")}
 
 
+def test_a_project_folder_linked_outside_the_workspace_keeps_the_path_it_is_listed_under(tmp_path: Path) -> None:
+    """A link that leads outside the root used to stop every caller with a traceback (`relative_to`)."""
+    root, elsewhere = tmp_path / "ws", tmp_path / "elsewhere"
+    root.mkdir()
+    elsewhere.mkdir()
+    (root / "ext").symlink_to(elsewhere)
+    (root / ".gitmodules").write_text('[submodule "ext"]\n\tpath = ext\n\turl = git@github.com:acme/ext.git\n')
+    assert project_repositories(root) == {"ext": GitHubRepository("acme", "ext")}
+
+
 def test_the_scaffold_knows_each_github_project_by_its_distribution(acme: Path) -> None:
     assert discover_github_projects(acme) == {
         "app": GitHubRepository("acme", "app"),

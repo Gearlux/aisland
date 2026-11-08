@@ -479,6 +479,18 @@ class TestReporting:
         out = capsys.readouterr().out
         assert "✗ x" in out and "fix: do the thing" in out
 
+    def test_a_check_that_breaks_is_one_failed_line_and_the_others_still_report(
+        self, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture
+    ) -> None:
+        def check_broken_jdk() -> doctor.CheckResult:
+            raise OSError("exec format error: java")
+
+        monkeypatch.setattr(doctor, "CHECKS", (check_broken_jdk, lambda: doctor.CheckResult("x", True, "fine")))
+        assert doctor.run_doctor() == 1
+        out = capsys.readouterr().out
+        assert "✗ broken-jdk" in out and "the check itself failed: OSError: exec format error: java" in out
+        assert "fix: aisland --debug doctor" in out and "✓ x" in out
+
     @pytest.mark.usefixtures("empty_workspace")
     def test_every_registered_check_returns_a_result(self) -> None:
         results: List[doctor.CheckResult] = doctor.run_checks()

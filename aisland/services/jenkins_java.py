@@ -14,7 +14,7 @@ authority on what it runs on, so this module asks it: every installed JDK is fou
 `release` file — no JVM is started to find it), the newest are probed first with
 `java -jar jenkins.war --version`, and the first one the launcher accepts is the one Jenkins
 runs on, by its full path. No Java version is written into aisland. Rationale:
-`docs/architecture.md` → "Jenkins runs on the Java its WAR accepts".
+`docs/decisions/0018-jenkins-runs-on-the-java-its-war-accepts-by-full-path.md`.
 """
 
 import glob

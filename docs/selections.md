@@ -89,6 +89,10 @@ anything else up front, naming the file and the line:
 Error: /w/models/pyproject.toml:31: models offers 'mlx' for selection 'framework', but defines no extra of that name
 ```
 
+A selection's own name cannot be one aisland already reads: `name`, `format`, `track` and `test-stats` are
+`[workspace]` settings, and `extras`, `active`, `mirror` and `source` are `aisland workspace configure` commands of
+aisland's own. A selection named like one is refused the same way, naming its file and line.
+
 The names line up across projects on purpose (`keras` is `keras` everywhere), so one choice drives every project.
 Each project installs what it offers ∩ what is chosen, in the order it lists them:
 

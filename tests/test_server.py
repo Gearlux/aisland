@@ -49,11 +49,9 @@ CHANGING = {
     "editor_set_color",
     "editor_unset",
     "service_start",
-    "service_stop",
-    "service_restart",
     "tunnel_start",
-    "tunnel_stop",
 }
+STOPPING = {"service_stop", "service_restart", "tunnel_stop"}
 
 
 @pytest.fixture
@@ -125,16 +123,17 @@ def _local_config(root: Path) -> str:
 
 
 def test_the_tools_are_the_agreed_set() -> None:
-    assert set(_tools()) == READ_ONLY | CHANGING
+    assert set(_tools()) == READ_ONLY | CHANGING | STOPPING
 
 
-def test_a_reading_tool_says_it_only_reads_and_a_changing_one_that_it_destroys_nothing() -> None:
+def test_a_reading_tool_says_it_only_reads_and_a_stopping_one_that_it_ends_something() -> None:
+    """Stopping the container engine stops every container in it; a client asks before a destructive tool."""
     tools = _tools()
     for name in READ_ONLY:
         assert tools[name].annotations.read_only_hint is True, name
-    for name in CHANGING:
+    for name in CHANGING | STOPPING:
         assert tools[name].annotations.read_only_hint is False, name
-        assert tools[name].annotations.destructive_hint is False, name
+        assert tools[name].annotations.destructive_hint is (name in STOPPING), name
 
 
 def test_every_tool_says_what_it_does() -> None:
@@ -596,7 +595,7 @@ def test_over_stdio_a_print_goes_to_stderr_and_the_tools_still_answer(tmp_path: 
     result, listed = asyncio.run(asyncio.wait_for(go(), timeout=60))
     assert not result.is_error
     assert json.loads(result.content[0].text) == {"workspaces": []}
-    assert {tool.name for tool in listed.tools} == READ_ONLY | CHANGING
+    assert {tool.name for tool in listed.tools} == READ_ONLY | CHANGING | STOPPING
     assert "noise on stdout" in (tmp_path / "stderr.log").read_text()
 
 

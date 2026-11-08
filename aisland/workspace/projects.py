@@ -38,16 +38,13 @@ def get_workspace_name(root: Optional[Path] = None) -> str:
 def discover_projects(root: Path, workspace_root: Optional[Path] = None) -> List[Path]:
     """Recursively discover pyproject.toml files, but only in directories that are identified as projects.
 
-    A link to a folder inside the workspace (``workspace_root``, default ``root``) is skipped: it is a second name for
-    a folder found under its own (:func:`aisland.locations.is_alias`)."""
+    A hidden folder (``.venv``, ``.git``, a tool's cache) is never a project, nor is a link to a folder inside the
+    workspace (``workspace_root``, default ``root``): it is a second name for a folder found under its own
+    (:func:`aisland.locations.is_alias`). Only the folders' own names are read, never the path above the workspace."""
     workspace_root = workspace_root or root
     projects = []
-    # Skip standard ignored directories
-    if any(p in str(root) for p in [".venv", "aisland/data"]):
-        return []
-
     for item in root.iterdir():
-        if item.is_dir() and not locations.is_alias(item, workspace_root):
+        if item.is_dir() and not item.name.startswith(".") and not locations.is_alias(item, workspace_root):
             pyproject = item / "pyproject.toml"
             if pyproject.exists():
                 projects.append(pyproject)

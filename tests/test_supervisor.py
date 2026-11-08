@@ -498,3 +498,26 @@ def test_preflight_silent_when_probe_inconclusive(
     ):
         supervisor._preflight_full_disk_access()
     assert capsys.readouterr().err == ""
+
+
+def test_services_registered_at_once_are_all_kept(isolated_config: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """An MCP client's tools run side by side: each edit of the document reads, changes and writes it as one step, so
+    none writes over another's (without the lock, each thread here writes back the document it read, alone)."""
+    import threading
+    import time
+
+    read = supervisor.load_config
+
+    def slow_read() -> Dict[str, Any]:
+        loaded = read()
+        time.sleep(0.05)  # every thread reads before any writes, unless the reads wait their turn
+        return loaded
+
+    monkeypatch.setattr(supervisor, "load_config", slow_read)
+    names = [f"service{n}" for n in range(6)]
+    threads = [threading.Thread(target=supervisor.register_process, args=(name, ["true"])) for name in names]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join()
+    assert sorted(read()["processes"]) == names

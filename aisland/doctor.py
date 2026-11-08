@@ -19,6 +19,7 @@ skew with the exact command that fixes it, never a generic "something looks off"
 """
 
 import json
+import logging
 import os
 import shutil
 import subprocess
@@ -40,6 +41,8 @@ from aisland.tunnel import binary as tunnel_binary
 from aisland.tunnel import connect as tunnel_connect
 from aisland.tunnel import host as tunnel
 from aisland.tunnel import state as tunnel_state
+
+logger = logging.getLogger(__name__)
 
 #: The OpenCV variant the workspace keeps. Both distributions install the SAME files
 #: (`cv2/cv2.abi3.so` + `cv2/.dylibs/*` appear in BOTH RECORDs) with different bundled native
@@ -656,9 +659,24 @@ CHECKS: Tuple[Callable[[], CheckResult], ...] = (
 )
 
 
+def _guarded(check: Callable[[], CheckResult]) -> CheckResult:
+    """``check()``, or — when the check itself breaks (a JDK that will not run, a log deleted while it is read) — a
+    failed result naming the error, so the other checks still report. ``--debug`` shows the traceback."""
+    try:
+        return check()
+    except Exception as error:  # a broken check is one ✗ of the report, never the end of it
+        logger.debug("%s raised", check.__name__, exc_info=True)
+        return CheckResult(
+            name=check.__name__.removeprefix("check_").replace("_", "-"),
+            ok=False,
+            detail=f"the check itself failed: {type(error).__name__}: {error}",
+            remedy="aisland --debug doctor  (shows where it failed; the other checks ran)",
+        )
+
+
 def run_checks() -> List[CheckResult]:
-    """Run every registered check and return the results (no output)."""
-    return [check() for check in CHECKS]
+    """Run every registered check and return the results (no output); a check that raises is a failed result."""
+    return [_guarded(check) for check in CHECKS]
 
 
 def run_doctor() -> int:

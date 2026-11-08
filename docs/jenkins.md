@@ -17,8 +17,8 @@ aisland jenkins start --background
 - **Home Directory:** `.aisland/data/jenkins/` in the workspace (`aisland/data/jenkins/` when aisland runs from its own checkout)
 - **Which Jenkins:** one long-term-support release, pinned by version and sha256 (`JenkinsService.WAR_VERSION` and
   `WAR_SHA256`), downloaded from `get.jenkins.io` once and kept. A download that does not match the digest is refused
-  and nothing is installed. A WAR already in `.aisland/bin/jenkins.war` (`aisland/bin/jenkins.war` from a checkout) is
-  used as it is; delete it to get the pinned release.
+  and nothing is installed. The WAR is kept as `.aisland/bin/jenkins-<version>.war` (`aisland/bin/` from a checkout), so
+  a newer aisland pinning a newer release downloads that one and removes the older WARs once it is there.
 - **Its plugin manager:** the plugin installation manager `aisland jenkins init` runs is pinned the same way
   (`JenkinsService.MANAGER_VERSION` and `MANAGER_SHA256`), downloaded from its GitHub release and checked before it
   is ever run.

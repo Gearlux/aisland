@@ -661,6 +661,23 @@ def test_a_selection_called_name_is_refused_since_the_workspaces_name_has_that_k
     )
 
 
+@pytest.mark.parametrize("reserved", ["format", "track", "test-stats", "extras", "active", "mirror", "source"])
+def test_a_selection_named_like_a_workspace_key_or_a_builtin_plugin_is_refused(tmp_path: Path, reserved: str) -> None:
+    """Its committed choice would land on a key ``[workspace]`` already holds (``format`` twice makes the file
+    unreadable), or its command on a built-in one."""
+    _project(tmp_path, "trainer", ["torch"], {reserved: ["torch"]}, {reserved: "Which one?"})
+    with pytest.raises(DeclarationError, match=f"a selection cannot be called '{reserved}'"):
+        s.axes(tmp_path)
+
+
+def test_every_workspace_key_and_builtin_plugin_is_a_reserved_selection_name() -> None:
+    from aisland.workspace import check
+    from aisland.workspace.discovery import RESERVED_SELECTION_NAMES
+
+    builtin = {*check.WORKSPACE_KEYS, *configure.PLUGINS, s.EXTRAS.name}
+    assert set(RESERVED_SELECTION_NAMES) == builtin
+
+
 # --- TAB in `aisland workspace configure` ---------------------------------------------------------------------------
 
 

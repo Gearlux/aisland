@@ -14,12 +14,12 @@ import os
 import subprocess
 import textwrap
 from pathlib import Path
-from typing import List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 
 import pytest
 from click.testing import CliRunner
 
-from aisland import cli, console, locations
+from aisland import cli, console, gitcmd, locations
 from aisland.setup import manager
 from aisland.workspace import activation
 from aisland.workspace import file as workspace_file
@@ -324,6 +324,26 @@ def test_setup_clones_a_project_written_into_the_file_by_hand(
     assert (ws / "lib" / "pyproject.toml").is_file()
     assert _git(ws, "config", "-f", ".gitmodules", "submodule.lib.branch") == "main"
     assert workspace_file.refresh(ws) == []  # listed and present: nothing more to say
+
+
+def test_setup_clones_with_no_prompt_and_no_time_limit(ws: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """A clone runs with git's prompts off — a credential prompt with the output captured would wait unseen — and
+    without the network time limit, since a download may be long."""
+    real = gitcmd.git
+    clones: List[Tuple[str, Dict[str, object]]] = []
+
+    def spy(repo: Path, *args: str, **options: Any) -> "subprocess.CompletedProcess[str]":  # Any: git's options
+        if args[:1] == ("submodule",) and args[1] in ("add", "update"):
+            clones.append((args[1], options))
+        return real(repo, *args, **options)
+
+    monkeypatch.setattr(gitcmd, "git", spy)
+    activation.reconcile(ws)  # adds `extra` from its url; `tools`, off by default, is emptied
+    activation.set_machine_choice(ws, "tools", True)
+    activation.reconcile(ws)  # checks `tools` out again
+    assert sorted(kind for kind, _options in clones) == ["add", "update"]
+    for _kind, options in clones:
+        assert options == {"network": True, "timeout": gitcmd.NO_LIMIT}
 
 
 @pytest.mark.parametrize("flag", ["--activate", "--deactivate"])
