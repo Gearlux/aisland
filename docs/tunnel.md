@@ -31,12 +31,14 @@ Copy the `dist` folder over and run `pip install --no-index --find-links dist ai
 aisland tunnel start                              # name: $WORKSPACE, else this machine's hostname
 aisland tunnel start --cli ~/vscode_cli.tar.gz    # a box that cannot reach the download host
 aisland tunnel status                             # running? under which name and account?
-aisland tunnel logs -n 50
+aisland tunnel logs -n 50                         # its last 50 lines (--lines; default 80)
 aisland tunnel stop
 ```
 
-The first start downloads the VS Code CLI once for this machine and installs it only when its SHA-256 is the one
-the VS Code update service lists for that build; an archive given with `--cli` is yours to have checked.
+The first start downloads the VS Code CLI once for this machine — the build for its system, Linux's or macOS's — and
+installs it only when its SHA-256 is the one the VS Code update service lists for that build; an archive given with
+`--cli` (Linux's `.tar.gz` or macOS's `.zip`) is yours to have checked. A CLI left from another machine's build that
+the system will not run is refused naming the file: remove it and start again.
 
 The first start signs in — a code to enter in a browser — and keeps the account, so later starts need
 no interaction; `aisland tunnel login --provider microsoft` picks the other account. The sign-in
@@ -63,6 +65,7 @@ Paste the workspace's address once — after that it completes:
 aisland tunnel open 'https://<host>/<workspace>/?folder=/mnt/workspace'
 aisland tunnel open 'https://<host>/<workspace>/?workspace=/mnt/workspace/repo/dev.code-workspace'
 aisland tunnel open <workspace><TAB>   # the workspaces you have opened, newest first
+aisland tunnel open <workspace> --path /mnt/workspace/other   # another folder or .code-workspace file (--folder too)
 aisland tunnel list
 aisland tunnel clear <name>      # forget one — a name or the address
 aisland tunnel clear --all       # forget all of them
@@ -115,8 +118,10 @@ sent with the request, which opens the terminal and starts the shell.
 machine, exactly as the remote machine runs it.
 
 Each session forwards the tunnel's control port, 31545, to your machine and closes the forward when
-the shell ends, so one session runs at a time. A `devtunnel connect` you started by hand holds that
-port and is named in the error until you stop it:
+the shell ends, so one session runs at a time. While it runs, that port listens on `127.0.0.1:31545` with no
+login of its own: every process and every user account on your machine can reach the remote machine through it, as
+you. Run `connect` on a machine only you use, and end the session when you are done. A `devtunnel connect` you
+started by hand holds that port and is named in the error until you stop it:
 
 ```
 Error: Port 31545 on this machine is already taken by pid 45052 (osx-arm64-devtunnel) — a `devtunnel connect` started by hand forwards that same port, to a machine aisland cannot tell. Stop it and run this again.

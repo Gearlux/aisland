@@ -206,7 +206,7 @@ def _add_service_commands(group: click.Group, entry: "service_registry.Entry") -
 
     # A class whose reset wipes no data says what it removes, in the question AND the help.
     @group.command(name="reset", help=entry.reset_question or "Stop it and wipe its data.")
-    @click.confirmation_option(prompt=entry.reset_question or f"Stop {entry.name} and wipe its data?")
+    @click.confirmation_option("--yes", "-y", prompt=entry.reset_question or f"Stop {entry.name} and wipe its data?")
     def reset() -> None:
         entry.make().reset()
 

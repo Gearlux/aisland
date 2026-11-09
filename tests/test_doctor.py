@@ -8,6 +8,8 @@ a future refactor cannot silently turn a check into a no-op.
 
 import json
 import os
+import threading
+import time
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
@@ -495,8 +497,49 @@ class TestReporting:
     def test_every_registered_check_returns_a_result(self) -> None:
         results: List[doctor.CheckResult] = doctor.run_checks()
         assert len(results) == len(doctor.CHECKS)
+        # Each reports under the one name it is registered with, which the doctor's own lines about it use too.
+        assert [r.name for r in results] == [doctor._check_name(check) for check in doctor.CHECKS]
+        assert "colima-tls" in [r.name for r in results] and "torch-ext-lock" in [r.name for r in results]
         assert all(isinstance(r, doctor.CheckResult) and r.detail for r in results)
         assert all(r.ok or r.remedy for r in results), "a failing check must carry a remedy"
+
+    def test_the_checks_run_side_by_side(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """Each check waits on the other: run one after the other, neither would ever pass the barrier."""
+        barrier = threading.Barrier(2, timeout=10)
+
+        def check_left() -> doctor.CheckResult:
+            barrier.wait()
+            return doctor.CheckResult("left", True, "met")
+
+        def check_right() -> doctor.CheckResult:
+            barrier.wait()
+            return doctor.CheckResult("right", True, "met")
+
+        monkeypatch.setattr(doctor, "CHECKS", (check_left, check_right))
+        assert [(r.name, r.ok) for r in doctor.run_checks()] == [("left", True), ("right", True)]
+
+    def test_a_check_past_the_budget_is_reported_unchecked_and_the_report_still_comes(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """The MCP tool `doctor` must answer: a check still running when the budget is spent is a line of the report,
+        never a report that does not come."""
+        released = threading.Event()
+
+        @doctor._reports(doctor.COLIMA_TLS)
+        def check_stuck_vm() -> doctor.CheckResult:
+            released.wait(timeout=30)
+            return doctor.CheckResult(doctor.COLIMA_TLS, True, "late")
+
+        monkeypatch.setattr(doctor, "CHECKS", (lambda: doctor.CheckResult("x", True, "fine"), check_stuck_vm))
+        started = time.monotonic()
+        try:
+            results = doctor.run_checks(budget=0.5)
+        finally:
+            released.set()
+        assert time.monotonic() - started < 10
+        assert [r.name for r in results] == ["x", "colima-tls"]  # the name the check reports, as the docs give it
+        assert results[0].ok and not results[1].ok
+        assert results[1].detail.startswith("not checked: time budget spent") and results[1].remedy
 
     def test_cli_command_exits_nonzero_when_a_check_fails(self, monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.setattr(doctor, "CHECKS", (lambda: doctor.CheckResult("x", False, "bad", "fix it"),))

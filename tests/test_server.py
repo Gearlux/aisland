@@ -10,9 +10,11 @@ from __future__ import annotations
 
 import asyncio
 import json
+import os
 import re
 import subprocess
 import sys
+import time
 from pathlib import Path
 from typing import Any, Dict, List, Optional, cast
 
@@ -25,6 +27,7 @@ from mcp.server.mcpserver.exceptions import ToolError
 
 from aisland import cli, console, doctor, editor, failures, locations, server
 from aisland.ci import stats_report
+from aisland.errors import AislandError
 from aisland.services import docker, registry, supervisor, swiftbar
 from aisland.services.base import ServiceState, service_state
 from aisland.setup import editor_files, mcp_config
@@ -147,6 +150,19 @@ def test_the_server_advertises_tools_only() -> None:
     assert capabilities.resources is None and capabilities.prompts is None
 
 
+def test_an_sdk_that_moved_its_request_handlers_is_refused_saying_so(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The server drops the resources and prompts handlers through the SDK's private table: a release that renames
+    it is refused naming the table and the releases aisland runs on, never an AttributeError."""
+
+    class Renamed:
+        def __init__(self, name: str, instructions: str) -> None:
+            self._low_level = object()
+
+    monkeypatch.setattr(server, "MCPServer", Renamed)
+    with pytest.raises(AislandError, match=r"no `MCPServer._lowlevel_server._request_handlers` table"):
+        server._build_server()
+
+
 # --- the read-only tools ------------------------------------------------------------------
 
 
@@ -180,7 +196,7 @@ def test_tests_report_is_what_the_command_prints_with_json(tmp_path: Path, monke
     monkeypatch.setattr(locations, "workspace_root", lambda: tmp_path)
     asked: List[Any] = []
 
-    def build_report(project: str, days: int) -> _Report:
+    def build_report(project: str, days: int, project_dir: Optional[Path] = None) -> _Report:
         asked.append((project, days))
         return _Report()
 
@@ -399,15 +415,20 @@ def test_editor_unset_forgets_what_it_names(
 
 # --- the services --------------------------------------------------------------------------------------------
 
+#: The time limit each command the `ran` fixture records was given.
+limits: List[float] = []
+
 
 @pytest.fixture
 def ran(monkeypatch: pytest.MonkeyPatch, repo: Path) -> List[List[str]]:
     """Every `aisland` command line the service tools run, each answering exit 0 with one line; the workspace's
     services are aisland's own and `notes`, one a project brings."""
     calls: List[List[str]] = []
+    limits.clear()
 
-    def run(args: List[str]) -> subprocess.CompletedProcess[str]:
+    def run(args: List[str], timeout: float = server.SERVICE_TIMEOUT) -> subprocess.CompletedProcess[str]:
         calls.append(args)
+        limits.append(timeout)
         return subprocess.CompletedProcess(args, 0, stdout=f"{args[-1].capitalize()} started.\n", stderr="")
 
     notes = registry.Entry("notes", cast(Any, _Notes), by_default=False, takes_background=True, project="app")
@@ -453,6 +474,63 @@ def test_a_service_that_detaches_by_itself_gets_no_background_flag(
     assert ran == [args]
 
 
+@pytest.mark.parametrize(("tool", "factor"), [("service_start", 1), ("service_restart", 2)])
+def test_a_service_tool_waits_as_long_as_the_service_may_take_to_start(
+    ran: List[List[str]], tool: str, factor: int
+) -> None:
+    """A first Colima start boots its VM, up to `COLIMA_START_SECONDS`: a tool that gave up sooner left it starting,
+    unseen."""
+    _call(tool, {"name": "docker"})
+    assert limits == [factor * max(server.SERVICE_TIMEOUT, docker.COLIMA_START_SECONDS)]
+
+
+def test_a_command_past_its_limit_is_stopped_with_everything_it_started(tmp_path: Path) -> None:
+    """The time limit ends the whole process group — the command and what it started — never only the command."""
+    pidfile = tmp_path / "child.pid"
+    script = f"sleep 60 & echo $! > {pidfile}; wait"
+    with pytest.raises(subprocess.TimeoutExpired):
+        server._run_as_a_group(["/bin/sh", "-c", script], tmp_path, timeout=1)
+    child = int(pidfile.read_text())
+    deadline = time.monotonic() + 10
+    while _alive(child) and time.monotonic() < deadline:
+        time.sleep(0.05)
+    assert not _alive(child)
+
+
+def test_a_descendant_in_a_session_of_its_own_holding_the_pipes_never_holds_up_the_refusal(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A descendant that left the group keeps the output pipes open and outlives the signals: the limit still ends in
+    the refusal at once — never an error from signalling a group that holds only the exited command, never a wait
+    on pipes that stay open."""
+    monkeypatch.setattr(server, "STOP_GRACE_SECONDS", 0.5)
+    pidfile = tmp_path / "away.pid"
+    script = (
+        "import subprocess, sys, time\n"
+        "away = subprocess.Popen(['sleep', '15'], start_new_session=True)\n"
+        f"open({str(pidfile)!r}, 'w').write(str(away.pid))\n"
+        "time.sleep(30)\n"
+    )
+    started = time.monotonic()
+    try:
+        with pytest.raises(subprocess.TimeoutExpired):
+            server._run_as_a_group([sys.executable, "-c", script], tmp_path, timeout=1)
+        assert time.monotonic() - started < 8
+    finally:
+        if pidfile.exists():
+            os.kill(int(pidfile.read_text()), 9)
+
+
+def _alive(pid: int) -> bool:
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return False
+    return (
+        subprocess.run(["ps", "-o", "stat=", "-p", str(pid)], capture_output=True, text=True).stdout.strip()[:1] != "Z"
+    )
+
+
 def test_a_service_named_like_an_aisland_command_is_still_the_service(
     ran: List[List[str]], monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -482,7 +560,9 @@ def test_a_command_that_fails_is_an_error_carrying_its_output(monkeypatch: pytes
     monkeypatch.setattr(
         server,
         "_run_aisland",
-        lambda args: subprocess.CompletedProcess(args, 1, stdout="", stderr="Error: port 9080 is in use by PID 12\n"),
+        lambda args, timeout=0: subprocess.CompletedProcess(
+            args, 1, stdout="", stderr="Error: port 9080 is in use by PID 12\n"
+        ),
     )
     assert "Error: port 9080 is in use by PID 12" in _error("service_start", {"name": "jenkins"})
 
@@ -491,12 +571,13 @@ def test_the_aisland_command_never_reads_the_servers_stdin(repo: Path, monkeypat
     """The server's stdin is the client's JSON-RPC stream: a command that asks (`click.confirm`) or a git credential
     prompt must find it empty, never eat the protocol's bytes."""
     given: Dict[str, Any] = {}
+    real_popen = subprocess.Popen
 
-    def run(args: List[str], **kwargs: Any) -> subprocess.CompletedProcess[str]:
+    def popen(args: List[str], **kwargs: Any) -> "subprocess.Popen[str]":
         given.update(kwargs)
-        return subprocess.CompletedProcess(args, 0, stdout="", stderr="")
+        return real_popen([sys.executable, "-c", "pass"], **kwargs)
 
-    monkeypatch.setattr(server.subprocess, "run", run)
+    monkeypatch.setattr(server.subprocess, "Popen", popen)
     server._run_aisland(["jenkins", "status"])
     assert given["stdin"] is subprocess.DEVNULL
 

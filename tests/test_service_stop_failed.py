@@ -42,6 +42,7 @@ def stuck(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Iterator[_Stuck]:
 
 
 def test_a_reset_wipes_nothing_while_the_service_still_runs(stuck: _Stuck, capsys: pytest.CaptureFixture[str]) -> None:
+    stuck.service_data_dir.mkdir(parents=True)
     (stuck.service_data_dir / "config.xml").write_text("<hudson/>")
     stuck.log_file.write_text("still logging\n")
 

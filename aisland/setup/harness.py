@@ -336,7 +336,7 @@ def _clone(url: str, ref: str, name: str, where: Where) -> Path:
     for candidate in (ref, f"origin/{ref}"):
         if gitcmd.git(folder, "rev-parse", "--verify", "--quiet", f"{candidate}^{{commit}}").returncode == 0:
             gitcmd.git(folder, "checkout", "--quiet", "--detach", candidate, check=True)
-            stamp.write_text(wanted + "\n", encoding="utf-8")
+            atomic.write_text(stamp, wanted + "\n")
             return folder
     shutil.rmtree(folder)
     raise HarnessError(f"{where}: {url} has no tag, branch or commit {ref!r}")
@@ -540,7 +540,7 @@ def _write_index(root: Path, found: List[HarnessSet]) -> None:
     text = _INDEX_HEADER + "".join(f"@{place}\n" for place in places)
     index.parent.mkdir(parents=True, exist_ok=True)
     if not index.is_file() or index.read_text(encoding="utf-8") != text:
-        index.write_text(text, encoding="utf-8")
+        atomic.write_text(index, text)
 
 
 def _workspace_agents_md(root: Path) -> Optional[str]:
@@ -552,7 +552,7 @@ def _workspace_agents_md(root: Path) -> Optional[str]:
         if IMPORT_LINE in (line.strip() for line in lines):
             return None
         return f'AGENTS.md does not import the harness\'s rules — add "{IMPORT_LINE}" as its first line'
-    agents.write_text(_STARTER_AGENTS)
+    atomic.write_text(agents, _STARTER_AGENTS)
     for name in ("CLAUDE.md", "GEMINI.md"):
         if not os.path.lexists(root / name):
             os.symlink("AGENTS.md", root / name)
@@ -572,7 +572,7 @@ def _ignore(root: Path, names: List[str]) -> None:
     )
     block = ([header] if header not in present else []) + missing
     sep = "" if (not content or content.endswith("\n")) else "\n"
-    gitignore.write_text(content + sep + "\n".join(block) + "\n")
+    atomic.write_text(gitignore, content + sep + "\n".join(block) + "\n")
 
 
 def install_harness(root: Path, link: Optional[bool] = None) -> List[str]:

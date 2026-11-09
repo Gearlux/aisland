@@ -276,6 +276,28 @@ def test_force_replaces_a_directory_too(workspace: Path) -> None:
     assert (workspace / "proj" / "build" / "nested" / "b.txt").read_text() == "bb\n"
 
 
+def test_a_forced_restore_that_fails_keeps_the_projects_own_copy(
+    workspace: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The project's copy is moved aside, never deleted, until the backup's is in place: a move that fails puts it
+    back, so `--force` never leaves the project with neither."""
+    run_clean(workspace)
+    (workspace / "proj" / "run.log").write_text("rebuilt\n")
+    real_move = shutil.move
+
+    def _selective(src: str, dst: str) -> object:
+        if src.endswith("run.log"):
+            raise OSError("device or resource busy")
+        return real_move(src, dst)
+
+    monkeypatch.setattr(backups.shutil, "move", _selective)
+
+    assert _restore(workspace, force=True) == 1
+    assert (workspace / "proj" / "run.log").read_text() == "rebuilt\n"
+    assert not list((workspace / "proj").glob(".aisland-restore-*"))
+    assert "run.log" in backups.select_backup(tmp_store(workspace), "proj").entries
+
+
 def test_declining_the_force_confirmation_restores_nothing(workspace: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     run_clean(workspace)
     (workspace / "proj" / "run.log").write_text("rebuilt\n")

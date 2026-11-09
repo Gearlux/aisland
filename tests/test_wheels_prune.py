@@ -24,6 +24,7 @@ from aisland import locations
 from aisland.cli import main
 from aisland.wheels import filter_repo
 from aisland.wheels import prune as wp
+from aisland.workspace import mirrors
 
 WHEEL = "wheels/models-0.1.0-py3-none-any.whl"
 
@@ -267,6 +268,20 @@ def _commit_index(root: Path, message: str) -> None:
     _git(root, "commit", "-q", "-m", message)
 
 
+def test_a_gitlink_the_user_staged_for_the_project_stays_staged(setup: Setup) -> None:
+    """`update-index --cacheinfo` on the root's own index wrote over what the user had staged for the path."""
+    recorded = _git(setup.repo, "rev-parse", "HEAD~1")
+    _git(setup.root, "update-index", "--add", "--cacheinfo", f"160000,{recorded},models")
+    _commit_index(setup.root, "record models")
+    staged = _git(setup.repo, "rev-parse", "HEAD~5")  # the user stages another commit of models
+    _git(setup.root, "update-index", "--cacheinfo", f"160000,{staged},models")
+
+    report = wp.prune(setup.root, "models", apply=True)
+
+    assert report.root_pointer == (recorded, _git(setup.repo, "rev-parse", "main~1"))
+    assert _git(setup.root, "ls-files", "--stage", "--", "models").split()[1] == staged
+
+
 def test_a_root_recording_an_untouched_commit_is_left(setup: Setup) -> None:
     recorded = _git(setup.repo, "rev-parse", "HEAD~5")  # "the project": before any wheel
     _git(setup.root, "update-index", "--add", "--cacheinfo", f"160000,{recorded},models")
@@ -370,6 +385,83 @@ def test_a_push_made_meanwhile_refuses_the_whole_push_and_the_backup_restores(
     restore = str(refused.value.message).rsplit("put it back with: ", 1)[1]
     subprocess.run(restore, shell=True, check=True, capture_output=True)
     assert {k: v for k, v in _refs(setup.repo).items() if k in before} == before
+
+
+def _mirrored(tmp_path: Path, setup: Setup) -> Path:
+    """A bare mirror of models, set in the workspace's file and filled by a first `aisland workspace mirror sync`."""
+    mirror = tmp_path / "mirror" / "models.git"
+    mirror.parent.mkdir()
+    _git(mirror.parent, "init", "-q", "--bare", "-b", "main", str(mirror))
+    (setup.root / "workspace.toml").write_text(
+        f'[project."models"]\nurl = "../origin/models.git"\nmirror = "{mirror}"\n'
+    )
+    assert mirrors.sync_project(setup.root, "models").state == "synced"
+    assert _refs(setup.repo)["refs/remotes/mirror/main"] == _git(setup.origin, "rev-parse", "main")
+    return mirror
+
+
+def test_a_mirrors_refs_reaching_a_stripped_version_refuse_the_prune_naming_the_command(
+    tmp_path: Path, setup: Setup
+) -> None:
+    """refs/remotes/mirror/* are another host's: the rewrite leaves them, so they would keep the old history alive here
+    (no gc shrinks the clone) — the prune says how to drop them, and the next sync's fetch brings them back."""
+    _mirrored(tmp_path, setup)
+    before = _refs(setup.repo)
+    with pytest.raises(wp.PruneError, match="the refs of remote 'mirror' reach wheel versions") as refused:
+        wp.prune(setup.root, "models", apply=True)
+    assert _refs(setup.repo) == before
+    command = str(refused.value.message).split("brings them back): ", 1)[1].splitlines()[0]
+    subprocess.run(command, shell=True, check=True, capture_output=True)
+    assert not [ref for ref in _refs(setup.repo) if ref.startswith("refs/remotes/mirror/")]
+    assert wp.prune(setup.root, "models", apply=True).applied
+    assert _gone(setup.repo, setup.v1)
+
+
+def test_after_a_prune_the_mirror_sync_sends_the_rewritten_history_leased_never_the_old_back(
+    tmp_path: Path, setup: Setup
+) -> None:
+    """The mirror's branches were the primary's old history: the sync saw them "ahead" and its remedy merged the
+    stripped wheels back. Now it pushes the rewritten commits, each leased on what the mirror has."""
+    mirror = _mirrored(tmp_path, setup)
+    _git(setup.repo, "update-ref", "-d", "refs/remotes/mirror/main")
+    wp.prune(setup.root, "models", apply=True)
+
+    planned = mirrors.sync_project(setup.root, "models", push=False)
+    assert [(ref.ref, ref.outcome) for ref in planned.refs] == [
+        ("dev/main", "absent"),
+        ("main", "to push"),
+        ("tags", "to push"),
+        ("prune record", "to push"),
+    ]
+    result = mirrors.sync_project(setup.root, "models")
+    assert result.state == "synced", result
+    for ref in ("main", "v-two", wp.PRUNE_REF):
+        assert _git(mirror, "rev-parse", ref) == _git(setup.origin, "rev-parse", ref)
+    assert _gone(setup.repo, setup.v1)  # the old history was never fetched back
+    _git(setup.origin, "update-ref", "refs/pull/1/head", _git(setup.origin, "rev-parse", "main"))
+    assert [ref.ref for ref in mirrors.sync_project(setup.root, "models", push=False).refs] == [
+        "dev/main",
+        "main",
+        "tags",
+    ]  # a host's other namespaces (a pull request's refs/pull/*) are never read as branches or tags
+    assert mirrors.sync_project(setup.root, "models").refs[1].outcome == "in sync"
+
+
+def test_a_mirror_someone_pushed_to_after_the_prune_is_still_refused(tmp_path: Path, setup: Setup) -> None:
+    mirror = _mirrored(tmp_path, setup)
+    _git(setup.repo, "update-ref", "-d", "refs/remotes/mirror/main")
+    wp.prune(setup.root, "models", apply=True)
+    theirs = tmp_path / "theirs"
+    _git(tmp_path, "clone", "-q", str(mirror), str(theirs))
+    (theirs / "code.py").write_text("pushed to the mirror\n")
+    _commit(theirs, "on the mirror")
+    _git(theirs, "push", "-q", "origin", "main")
+    result = mirrors.sync_project(setup.root, "models")
+    assert result.state == "refused"
+    assert _git(mirror, "rev-parse", "main") == _git(theirs, "rev-parse", "HEAD")
+    main = result.refs[1]
+    assert main.detail.splitlines()[0] == "the mirror has 1 commit on top of the history before a wheels prune"
+    assert "cherry-pick" in main.detail and "merge" not in main.detail
 
 
 # --- reset --------------------------------------------------------------------------------------------

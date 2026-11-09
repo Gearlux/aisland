@@ -221,6 +221,33 @@ def test_jenkins_asks_before_it_downloads_its_war(
     assert installs["download"] == [jenkins.JenkinsService.URL]
 
 
+def test_jenkins_stops_when_its_war_did_not_download(
+    installs: Dict[str, List[object]],
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """A WAR download that fails is reported, and `jenkins start` stops there: it never goes on to ask for Java or
+    hand the supervisor a command naming a WAR that is not there."""
+    from aisland.services import jenkins
+
+    monkeypatch.setattr(paths, "data_dir", lambda: tmp_path)
+    service = jenkins.JenkinsService()
+    service.war_file = tmp_path / "bin" / "jenkins.war"
+
+    def unreachable(url: str, path: Path) -> None:
+        raise OSError("no route to host")
+
+    monkeypatch.setattr(jenkins, "download", unreachable)
+    monkeypatch.setattr(jenkins.JenkinsService, "java_asking", lambda self: pytest.fail("asked for Java"))
+    monkeypatch.setattr(jenkins.JenkinsService, "start", lambda self, *a, **k: pytest.fail("started"))
+    _terminal(monkeypatch, True)
+    service.launch()
+    said = capsys.readouterr()
+    assert "Jenkins was not started: the download above failed." in said.out
+    assert said.err.count("Error") == 1, said.err  # the download's own line, once
+
+
 def test_jenkins_asks_before_it_installs_java(
     macos: None, installs: Dict[str, List[object]], monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:

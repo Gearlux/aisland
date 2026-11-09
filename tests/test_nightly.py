@@ -397,3 +397,22 @@ def test_the_line_the_pipeline_writes_is_the_line_the_report_reads() -> None:
     match = nightly._TIMED_OUT.match("ERROR: " + _timed_out_line("Unit Tests", 15))
     assert match is not None and match.group("stage") == "Unit Tests" and match.group("minutes") == "15"
     assert nightly._TIMED_OUT.match("ERROR: script returned exit code 143") is None
+
+
+def test_an_answer_that_is_no_json_reads_as_jenkins_not_answering(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A Jenkins still starting (or a proxy) answers with an HTML page: the report says Jenkins did not answer, never
+    a traceback."""
+
+    class _Page:
+        def __enter__(self) -> "_Page":
+            return self
+
+        def __exit__(self, *exc: object) -> None:
+            return None
+
+        def read(self) -> bytes:
+            return b"<html>Please wait while Jenkins is getting ready</html>"
+
+    monkeypatch.setattr(nightly.urllib.request, "urlopen", lambda url, timeout: _Page())
+    with pytest.raises(nightly.JenkinsUnreachable, match="no JSON in the answer"):
+        nightly.JenkinsApi("http://jenkins.test").json("api/json")

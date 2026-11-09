@@ -10,6 +10,7 @@ import textwrap
 from pathlib import Path
 
 import pytest
+import yaml
 from click.testing import CliRunner
 
 from aisland import cli, locations
@@ -93,6 +94,22 @@ def test_without_a_choice_aisland_writes_its_three_files_each_naming_its_templat
         lines = (ws / "models" / relative).read_text().splitlines()
         assert lines[3].endswith(f"Source template: {template} of the 'aisland' template set"), lines[3]
         assert lines[4].endswith("To regenerate:  aisland jenkins scaffold models --force")
+
+
+def test_a_project_claiming_several_pythons_runs_its_unit_tests_on_each(ws: Path) -> None:
+    """aisland's set: `python_versions` makes the unit tests a matrix, one job per version with its own test report,
+    and every other job runs on the first version."""
+    _workspace_file(ws, '[project."models"]\nurl = "u"\nci = { python_versions = "3.12 3.13" }\n')
+    _scaffold()
+    jobs = yaml.safe_load((ws / "models" / ".github" / "workflows" / "ci.yml").read_text())["jobs"]
+    unit = jobs["unit-tests"]
+    assert unit["strategy"]["matrix"]["python"] == ["3.12", "3.13"]
+    setup = [step for step in unit["steps"] if step.get("name", "").startswith("Set up Python")]
+    assert [step["with"]["python-version"] for step in setup] == ["${{ matrix.python }}"]
+    upload = [step for step in unit["steps"] if step.get("name") == "Upload Test Results"]
+    assert upload[0]["with"]["name"] == "test-results-${{ matrix.python }}"
+    others = [step for name, job in jobs.items() if name != "unit-tests" for step in job["steps"] if "with" in step]
+    assert {step["with"]["python-version"] for step in others if "python-version" in step["with"]} == {"3.12"}
 
 
 def test_the_groovy_list_of_maps_in_aislands_jenkinsfile_passes_through_the_template(ws: Path) -> None:

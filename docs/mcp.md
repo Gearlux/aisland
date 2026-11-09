@@ -68,7 +68,7 @@ the entry's environment:
 | `editor_themes`, `editor_colors(part)` | the VS Code themes here, the CSS colour names, this window's choice |
 | `editor_set_theme(name)`, `editor_set_color(role, color, area)`, `editor_unset(what)` | `aisland workspace theme\|color set\|unset` |
 | `service_start(name)`, `service_stop(name)`, `service_restart(name)` | `aisland services start\|stop\|restart <name>` for any service of the workspace — aisland's own or one a project brings — in the background where it runs under the supervisor |
-| `tunnel_start(name, provider)`, `tunnel_stop()` | `aisland tunnel start\|stop --json`; a sign-in still pending is answered at once with the code to hand over. A VS Code CLI archive of your own (`--cli`) is installed unchecked, so it is no tool argument: start the tunnel yourself for that |
+| `tunnel_start(name, provider)`, `tunnel_stop()` | `aisland tunnel start\|stop --json`; a machine with no account yet starts nothing and answers `signin_required` with the `aisland tunnel login` command to run in a terminal, and a sign-in the started tunnel asks for is answered at once with the code to hand over. A VS Code CLI archive of your own (`--cli`) is installed unchecked, so it is no tool argument: start the tunnel yourself for that |
 
 Every tool answers with one JSON object, and a refusal is the tool's error in the command's own
 words (`no installed VS Code theme is named 'Solarzed Dark' (did you mean 'Solarized Dark'?)`).

@@ -19,7 +19,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Dict, List, Literal, Optional, Tuple, get_args
 
-from aisland import console, locations
+from aisland import atomic, console, locations
 from aisland.errors import AislandError
 from aisland.workspace.model import Workspace
 
@@ -247,7 +247,7 @@ def write(root: Path) -> Dict[Kind, Written]:
         target = root / FILE_NAMES[kind]
         changed = not target.is_file() or target.read_text() != text
         if changed:
-            target.write_text(text)
+            atomic.write_text(target, text)
         variables = len({e.name for env in collected[kind].projects for e in env.entries})
         out[kind] = Written(target, changed, variables, len(collected[kind].projects), collected[kind].without)
     return out
@@ -301,5 +301,5 @@ def write_test(root: Path, project: str, folder: str) -> Tuple[Path, bool]:
     changed = not target.is_file() or target.read_text() != text
     if changed:
         target.parent.mkdir(parents=True, exist_ok=True)
-        target.write_text(text)
+        atomic.write_text(target, text)
     return target.relative_to(root), changed

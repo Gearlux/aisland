@@ -7,14 +7,17 @@ aisland's own CI surface).
 
 from __future__ import annotations
 
+import http.server
 import json
 import os
 import re
 import subprocess
 import sys
+import threading
 from pathlib import Path
-from typing import Any, List
+from typing import Any, Iterator, List, Optional
 
+import click
 import pytest
 
 from aisland import locations
@@ -841,3 +844,203 @@ class TestWhichFoldersHoldNodeTests:
         from aisland.ci.ci_scaffold import node_test_folders
 
         assert node_test_folders(tmp_path) == []
+
+
+class _Jenkins(http.server.BaseHTTPRequestHandler):
+    """A Jenkins whose crumb is tied to the session it opens (a cookie), as Jenkins' own is; ``status`` answers every
+    request instead when set."""
+
+    status: Optional[int] = None
+    body: bytes = b"Jenkinsfile successfully validated.\n"
+    seen_cookies: List[str] = []
+
+    def log_message(self, *args: Any) -> None:
+        pass
+
+    def _refuse(self) -> bool:
+        if self.status is None:
+            return False
+        self.send_response(self.status)
+        self.end_headers()
+        return True
+
+    def do_GET(self) -> None:
+        if self._refuse():
+            return
+        body = json.dumps({"crumbRequestField": "Jenkins-Crumb", "crumb": "c1"}).encode()
+        self.send_response(200)
+        self.send_header("Set-Cookie", "JSESSIONID=s1; Path=/")
+        self.end_headers()
+        self.wfile.write(body)
+
+    def do_POST(self) -> None:
+        if self._refuse():
+            return
+        self.rfile.read(int(self.headers["Content-Length"]))
+        type(self).seen_cookies.append(self.headers.get("Cookie", ""))
+        ok = self.headers.get("Cookie") == "JSESSIONID=s1" and self.headers.get("Jenkins-Crumb") == "c1"
+        self.send_response(200 if ok else 403)
+        self.end_headers()
+        self.wfile.write(type(self).body if ok else b"")
+
+
+@pytest.fixture
+def jenkins() -> Iterator[str]:
+    _Jenkins.status, _Jenkins.seen_cookies = None, []
+    _Jenkins.body = b"Jenkinsfile successfully validated.\n"
+    server = http.server.ThreadingHTTPServer(("127.0.0.1", 0), _Jenkins)
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    try:
+        yield f"http://127.0.0.1:{server.server_address[1]}"
+    finally:
+        server.shutdown()
+        server.server_close()
+
+
+def test_the_linter_call_carries_the_session_its_crumb_belongs_to(jenkins: str) -> None:
+    """Jenkins ties a crumb to the session it opened: the POST without the cookie was refused, and taken for valid."""
+    assert ci_scaffold._validates("pipeline {}", "Jenkinsfile", jenkins)
+    assert _Jenkins.seen_cookies == ["JSESSIONID=s1"]
+
+
+@pytest.mark.parametrize("status", [500, 502])
+def test_a_jenkins_answering_with_a_server_error_writes_nothing_as_validated(
+    jenkins: str, tmp_path: Path, status: int
+) -> None:
+    """A 500 returned True: the file was written as validated."""
+    _Jenkins.status = status
+    target = tmp_path / "Jenkinsfile"
+    with pytest.raises(
+        click.ClickException, match=f"Jenkinsfile not validated: Jenkins answered .* with HTTP {status}"
+    ):
+        ci_scaffold._write(target, "pipeline {}", "Jenkinsfile", force=True, jenkins_url=jenkins)
+    assert not target.exists()
+
+
+@pytest.mark.parametrize("status", [401, 403])
+def test_a_jenkins_that_wants_a_login_writes_the_file_saying_it_was_not_validated(
+    jenkins: str, tmp_path: Path, status: int, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """A Jenkins set up with a login refused every scaffold: the file is written, and the run says it is unchecked."""
+    _Jenkins.status = status
+    target = tmp_path / "Jenkinsfile"
+    ci_scaffold._write(target, "pipeline {}", "Jenkinsfile", force=True, jenkins_url=jenkins)
+    assert target.read_text() == "pipeline {}"
+    err = capsys.readouterr().err
+    assert f"Jenkinsfile is written NOT validated: Jenkins at {jenkins} wants a login (HTTP {status})" in err
+    assert "aisland jenkins init --local" in err
+
+
+def test_a_jenkinsfile_jenkins_rejects_is_refused(jenkins: str, tmp_path: Path) -> None:
+    _Jenkins.body = b"Errors encountered validating Jenkinsfile:\nWorkflowScript: 1: no stages\n"
+    target = tmp_path / "Jenkinsfile"
+    with pytest.raises(click.ClickException, match="Template produced invalid Jenkinsfile"):
+        ci_scaffold._write(target, "pipeline {}", "Jenkinsfile", force=True, jenkins_url=jenkins)
+    assert not target.exists()
+
+
+def test_no_jenkins_at_all_writes_the_file_saying_it_was_not_validated(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    target = tmp_path / "Jenkinsfile"
+    ci_scaffold._write(target, "pipeline {}", "Jenkinsfile", force=True, jenkins_url=NO_JENKINS)
+    assert target.read_text() == "pipeline {}"
+    assert "Jenkins not reachable" in capsys.readouterr().out
+
+
+# --- which folder, which order, what is measured ---------------------------------------------------------------
+
+
+def test_scaffolding_every_project_passes_over_a_link_to_one(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    """A link to a folder of the workspace is a short name: `iterdir` scaffolded the project twice."""
+    _make_pyproject(tmp_path / "models", "models")
+    (tmp_path / "m").symlink_to(tmp_path / "models")
+    monkeypatch.setattr(locations, "workspace_root", lambda: tmp_path)
+    ci_scaffold.scaffold(None, force=True, jenkins_url=NO_JENKINS)
+    assert (tmp_path / "models" / "Jenkinsfile").is_file()
+    assert sorted(path.name for path in tmp_path.iterdir()) == ["m", "models"]
+
+
+@pytest.mark.parametrize("typed", ["models", "m"])
+def test_a_project_is_found_by_its_workspace_toml_name_or_its_link(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, typed: str
+) -> None:
+    """`workspace_root / project_name` missed a row whose path is another folder, and took a link for a project."""
+    _make_pyproject(tmp_path / "models-src", "models")
+    (tmp_path / "workspace.toml").write_text('[project."models"]\npath = "models-src"\n')
+    (tmp_path / "m").symlink_to(tmp_path / "models-src")
+    monkeypatch.setattr(locations, "workspace_root", lambda: tmp_path)
+    ci_scaffold.scaffold(typed, force=True, jenkins_url=NO_JENKINS)
+    assert (tmp_path / "models-src" / "Jenkinsfile").is_file()
+    assert (tmp_path / "m").is_symlink()
+
+
+def test_the_package_folder_scan_is_the_same_on_every_file_system(tmp_path: Path) -> None:
+    """The fallback scan took the first folder `iterdir` gave, an order that differs between file systems."""
+    for name in ("zeta", "alpha", "tests"):
+        (tmp_path / name).mkdir()
+        (tmp_path / name / "__init__.py").touch()
+    assert ci_scaffold.package_folder(tmp_path, "the-dist") == "alpha"
+
+
+def test_the_preinstalls_are_in_the_same_order_whether_a_dependency_is_checked_out_or_not(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """The order came from the checkouts' own requirements: an emptied (detached) one contributed no edges, so the same
+    workspace committed different CI files on two machines."""
+    projects = {
+        "app": '[project]\nname = "app"\nversion = "0.0.0"\ndependencies = ["zlib", "alib"]\n',
+        "zlib": '[project]\nname = "zlib"\nversion = "0.0.0"\n',
+        "alib": '[project]\nname = "alib"\nversion = "0.0.0"\ndependencies = ["zlib"]\n',
+    }
+    (tmp_path / "here").mkdir()
+    present = _scaffold_app(monkeypatch, tmp_path / "here", projects)
+    detached = tmp_path / "there"
+    detached.mkdir()
+    _make_gearlux_workspace(detached, projects)
+    (detached / "alib" / "pyproject.toml").unlink()  # a `github` source empties its folder
+    (detached / "workspace.toml").write_text('[project."alib"]\nsource = "github"\n')
+    monkeypatch.setattr(locations, "workspace_root", lambda: detached)
+    ci_scaffold.scaffold("app", force=True, jenkins_url=NO_JENKINS)
+    there = (detached / "app" / ".github" / "workflows" / "ci.yml").read_text(encoding="utf-8")
+    assert present["ci.yml"].index("Gearlux/alib.git") < present["ci.yml"].index("Gearlux/zlib.git")
+    assert there == present["ci.yml"].replace(str(tmp_path / "here"), str(detached))
+
+
+def test_a_project_shipped_inside_another_package_measures_its_own_subpackage(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """`--cov=vision` measured the parent's name: the report listed the shim at 0 %, never the parent's code."""
+    project = tmp_path / "vision-extra"
+    (project / "vision" / "extra").mkdir(parents=True)
+    (project / "vision" / "__init__.py").write_text(
+        '__path__ = __import__("pkgutil").extend_path(__path__, __name__)\n'
+    )
+    (project / "vision" / "extra" / "__init__.py").write_text("")
+    (project / "pyproject.toml").write_text(
+        '[project]\nname = "vision-extra"\nversion = "0.0.0"\n\n'
+        '[tool.setuptools.packages.find]\ninclude = ["vision", "vision.extra*"]\n'
+    )
+    monkeypatch.setattr(locations, "workspace_root", lambda: tmp_path)
+    ci_scaffold.scaffold("vision-extra", force=True, jenkins_url=NO_JENKINS)
+    for relative in ("Jenkinsfile", "Jenkinsfile.local", ".github/workflows/ci.yml"):
+        content = (project / relative).read_text()
+        assert "--cov=vision.extra " in content and "--cov=vision " not in content, relative
+
+
+def test_a_project_whose_parent_package_is_its_own_measures_the_package(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """`include = ["models", "models.ops"]` with real code in `models/__init__.py` is no child project."""
+    project = tmp_path / "models"
+    (project / "models" / "ops").mkdir(parents=True)
+    (project / "models" / "__init__.py").write_text("VERSION = 1\n")
+    (project / "models" / "ops" / "__init__.py").write_text("")
+    (project / "pyproject.toml").write_text(
+        '[project]\nname = "models"\nversion = "0.0.0"\n\n'
+        '[tool.setuptools.packages.find]\ninclude = ["models", "models.ops"]\n'
+    )
+    monkeypatch.setattr(locations, "workspace_root", lambda: tmp_path)
+    ci_scaffold.scaffold("models", force=True, jenkins_url=NO_JENKINS)
+    assert "--cov=models " in (project / "Jenkinsfile").read_text()

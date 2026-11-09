@@ -725,3 +725,24 @@ def test_tab_offers_the_workspace_projects_to_every_set_and_unset_of_a_project_p
     for plugin, verb in (("source", "set"), ("source", "unset"), ("mirror", "unset"), ("active", "set")):
         offered = _tab(monkeypatch, workspace, f"aisland workspace configure {plugin} {verb} mo")
         assert offered == ["models"], (plugin, verb)
+
+
+def test_two_projects_requiring_each_other_are_installed_together(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, installs: List[List[str]]
+) -> None:
+    """`set` installed one project at a time: uv resolved the other half of a cycle from the index and failed."""
+    subprocess.run(["git", "init", "-q"], cwd=tmp_path, check=True)
+    trainer = _project(tmp_path, "trainer", ["torch"], {"framework": ["torch"]}, {"framework": QUESTION})
+    models = _project(tmp_path, "models", ["torch"], {"framework": ["torch"]})
+    for project, needs in ((trainer, "models"), (models, "trainer")):
+        text = (project / "pyproject.toml").read_text()
+        (project / "pyproject.toml").write_text(
+            text.replace('version = "0.1.0"', f'version = "0.1.0"\ndependencies = ["{needs}"]')
+        )
+    monkeypatch.setattr(locations, "workspace_root", lambda: tmp_path)
+
+    assert _run("framework", "set", "torch").exit_code == 0
+
+    assert installs == [
+        ["uv", "pip", "install", "-e", f"{models}[torch]", "-e", f"{trainer}[torch]"],
+    ]

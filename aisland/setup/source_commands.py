@@ -12,7 +12,7 @@ import subprocess
 from pathlib import Path
 from typing import Dict, Optional, Tuple, cast
 
-from aisland import console, failures, gitcmd
+from aisland import atomic, console, failures, gitcmd
 from aisland.errors import AislandError
 from aisland.pypi import PypiInfo, PypiProject, points_at_owner, pypi_json
 from aisland.setup.editor_files import write_code_workspace
@@ -202,7 +202,7 @@ def set_project_source(
             if before is None:
                 file.unlink(missing_ok=True)
             else:
-                file.write_text(before)
+                atomic.write_text(file, before)
 
     try:
         committed = _record_source(root, project, source, original, machine_only)

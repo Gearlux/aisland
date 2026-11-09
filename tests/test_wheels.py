@@ -16,6 +16,7 @@ import json
 import os
 import subprocess
 import sys
+import time
 import zipfile
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Sequence, Tuple
@@ -140,7 +141,16 @@ def _published(version: str, wheel: Optional[Path] = None) -> Tuple[str, Dict[st
     """PyPI's JSON answer for a Gearlux project whose latest version is `version`."""
     urls = []
     if wheel is not None:
-        urls = [{"packagetype": "bdist_wheel", "filename": wheel.name, "url": wheel.as_uri(), "yanked": False}]
+        digest = hashlib.sha256(wheel.read_bytes()).hexdigest()
+        urls = [
+            {
+                "packagetype": "bdist_wheel",
+                "filename": wheel.name,
+                "url": wheel.as_uri(),
+                "yanked": False,
+                "digests": {"sha256": digest},
+            }
+        ]
     files = [{"filename": "x.whl", "yanked": False}]
     return "ok", {"info": {"version": version, **_GEARLUX}, "releases": {version: files}, "urls": urls}
 
@@ -240,6 +250,33 @@ class TestDependencyClosure:
         projects = wheels_projects.workspace_projects(root)
         with pytest.raises(click.ClickException, match=r"app/pyproject.toml: cannot read the requirement 'lib >>> 1'"):
             wheels_projects.dependency_closure(projects, projects["app"])
+
+    def test_a_broken_pyproject_of_a_project_the_target_does_not_need_stops_nothing(self, tmp_path: Path) -> None:
+        """`aisland wheels build|prune|reset X` loaded every project's pyproject and died on an unrelated one's
+        TOMLDecodeError; one the target needs, or the target itself, is refused naming the file and the line."""
+        root = _workspace(tmp_path, "app", "lib", "broken")
+        _project(root, "app", deps=["lib"])
+        _project(root, "lib")
+        (root / "broken" / "pyproject.toml").write_text('[project]\nname = "broken\n')
+
+        projects = wheels_projects.workspace_projects(root)
+
+        assert [p.name for p in wheels_projects.dependency_closure(projects, projects["app"])] == ["lib"]
+        with pytest.raises(click.ClickException, match=rf"^{root / 'broken' / 'pyproject.toml'}: .*line 2"):
+            wheels_projects.find_target(projects, root, "broken")
+        _project(root, "app", deps=["lib", "broken"])
+        projects = wheels_projects.workspace_projects(root)
+        with pytest.raises(click.ClickException, match=r"broken/pyproject.toml: .*line 2"):
+            wheels_projects.dependency_closure(projects, projects["app"])
+
+    def test_two_projects_of_one_distribution_are_refused_naming_both(self, tmp_path: Path) -> None:
+        """The second silently replaced the first, so a requirement on the name built whichever came last."""
+        root = _workspace(tmp_path, "app", "tools")
+        _project(root, "app")
+        _project(root, "tools", name="App")
+
+        with pytest.raises(click.ClickException, match=r"^app/pyproject.toml and tools/pyproject.toml are both"):
+            wheels_projects.workspace_projects(root)
 
 
 class TestPypiState:
@@ -1655,6 +1692,57 @@ class TestInstallAndImport:
         error, _, _ = wheels_check.install_and_import(str(uv), target, folder, ["app"], tmp_path)
         assert error is not None and error.endswith("× No solution found when resolving dependencies")
 
+    def test_an_import_run_that_hangs_is_stopped_naming_the_module_it_was_importing(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """The import run had no limit: a module waiting at import (a prompt, a lock) held the run forever."""
+        target, folder = _target_with_wheels(tmp_path)
+        uv = _fake_uv(tmp_path, imports='printf "app\\napp.slow\\n" > "$3.progress"; exec sleep 60')
+        monkeypatch.setattr(wheels_check, "IMPORT_SECONDS", 1.0)
+        started = time.monotonic()
+        error, failures, imported = wheels_check.install_and_import(str(uv), target, folder, ["app"], tmp_path)
+        assert error == "importing app.slow did not finish within 1 s; the run was stopped"
+        assert (failures, imported) == ({}, [])
+        assert time.monotonic() - started < 30
+
+    def test_an_interrupted_import_run_is_stopped_before_the_interruption_goes_on(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """In a session of its own the run no longer got the terminal's Ctrl-C, and Popen's exit left it running."""
+        target, folder = _target_with_wheels(tmp_path)
+        pid_file = tmp_path / "import.pid"
+        uv = _fake_uv(tmp_path, imports=f"echo $$ > {pid_file}; exec sleep 60")
+
+        class Interrupted(subprocess.Popen):  # the run's own Popen, interrupted while it waits
+            def communicate(self, *args: Any, **kwargs: Any) -> Any:
+                if "-c" in self.args and not hasattr(self, "interrupted"):
+                    self.interrupted = True
+                    while not pid_file.is_file() or not pid_file.read_text().strip():
+                        time.sleep(0.05)
+                    raise KeyboardInterrupt
+                return super().communicate(*args, **kwargs)
+
+        monkeypatch.setattr(wheels_check.subprocess, "Popen", Interrupted)
+        with pytest.raises(KeyboardInterrupt):
+            wheels_check.install_and_import(str(uv), target, folder, ["app"], tmp_path)
+        with pytest.raises(ProcessLookupError):
+            os.kill(int(pid_file.read_text()), 0)
+
+    def test_a_group_the_kill_may_not_signal_still_stops_the_run(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """macOS answers EPERM for a group whose only member is a zombie leader: the kill fell through unguarded."""
+        target, folder = _target_with_wheels(tmp_path)
+        uv = _fake_uv(tmp_path, imports="exec sleep 60")
+        monkeypatch.setattr(wheels_check, "IMPORT_SECONDS", 0.5)
+
+        def refused(pid: int, sig: int) -> None:
+            raise PermissionError(1, "Operation not permitted")
+
+        monkeypatch.setattr(wheels_check.os, "killpg", refused)
+        error, _, _ = wheels_check.install_and_import(str(uv), target, folder, ["app"], tmp_path)
+        assert error is not None and error.endswith("did not finish within 0 s; the run was stopped")
+
     def test_an_import_run_that_dies_without_a_result_says_so(self, tmp_path: Path) -> None:
         target, folder = _target_with_wheels(tmp_path)
         uv = _fake_uv(tmp_path)
@@ -1769,24 +1857,23 @@ class TestEndToEnd:
     ) -> None:
         ws = _end_to_end_workspace(tmp_path, offline_uv, monkeypatch, released_new=False)
 
+        folder = ws / "app" / "wheels"
+        before = {p.name: p.read_bytes() for p in folder.iterdir()}
+        pyproject = (ws / "app" / "pyproject.toml").read_text()
+
         report = w.vendor_wheels(ws, "app")
 
-        folder = ws / "app" / "wheels"
-        assert sorted(p.name for p in folder.iterdir()) == [
-            ".gitignore",
-            "README.md",
-            "install.py",
-            "libx-0.1.0-py3-none-any.whl",
-            "notes.txt",
-            "wheels.yaml",
-        ]
-        with zipfile.ZipFile(folder / "libx-0.1.0-py3-none-any.whl") as archive:
-            assert not [n for n in archive.namelist() if "deleted_long_ago" in n]
+        # The check failed: the folder and the pyproject are what they were (the folder was left written).
+        assert {p.name: p.read_bytes() for p in folder.iterdir()} == before
+        assert (ws / "app" / "pyproject.toml").read_text() == pyproject
+        assert report.put_back
+        assert "app/wheels and app/pyproject.toml are as they were before this run" in wheels_report.render_report(
+            report
+        )
         commit = _git(ws / "libx", "rev-parse", "--short", "HEAD").strip()
         assert [(b.project, b.version, b.branch, b.commit) for b in report.built] == [
             ("libx", "0.1.0", "dev/main", commit)
         ]
-        assert f"| libx-0.1.0-py3-none-any.whl | libx | dev/main | {commit} |" in (folder / "README.md").read_text()
         assert [(p.project, p.pypi_version, p.differing_files) for p in report.published] == [
             ("pubdep", "1.0", ["pubdep/newer.py"])
         ]
@@ -1806,7 +1893,20 @@ class TestEndToEnd:
     ) -> None:
         ws = _end_to_end_workspace(tmp_path, offline_uv, monkeypatch, released_new=True)
         first = w.vendor_wheels(ws, "app")
-        digest = hashlib.sha256((ws / "app" / "wheels" / "libx-0.1.0-py3-none-any.whl").read_bytes()).hexdigest()
+        folder = ws / "app" / "wheels"
+        digest = hashlib.sha256((folder / "libx-0.1.0-py3-none-any.whl").read_bytes()).hexdigest()
+        assert sorted(p.name for p in folder.iterdir()) == [
+            ".gitignore",
+            "README.md",
+            "install.py",
+            "libx-0.1.0-py3-none-any.whl",
+            "notes.txt",
+            "wheels.yaml",
+        ]
+        with zipfile.ZipFile(folder / "libx-0.1.0-py3-none-any.whl") as archive:
+            assert not [n for n in archive.namelist() if "deleted_long_ago" in n]
+        commit = _git(ws / "libx", "rev-parse", "--short", "HEAD").strip()
+        assert f"| libx-0.1.0-py3-none-any.whl | libx | dev/main | {commit} |" in (folder / "README.md").read_text()
 
         second = w.vendor_wheels(ws, "app")
 

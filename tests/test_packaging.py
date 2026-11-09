@@ -214,7 +214,7 @@ def test_the_release_names_its_author_and_where_it_lives(release_metadata: Messa
         "Homepage": "https://github.com/Gearlux/aisland",
         "Repository": "https://github.com/Gearlux/aisland.git",
         "Issues": "https://github.com/Gearlux/aisland/issues",
-        "Changelog": "https://github.com/Gearlux/aisland/blob/main/CHANGELOG.md",
+        "Changelog": f"https://github.com/Gearlux/aisland/blob/v{release_metadata['Version']}/CHANGELOG.md",
     }
 
 
@@ -532,6 +532,37 @@ def test_the_changelog_guard_refuses_a_version_the_changelog_does_not_date_as_it
         text=True,
     )
     assert (result.returncode == 0) is accepted, result.stdout + result.stderr
+
+
+@pytest.mark.parametrize("tagged, accepted", [("main", True), ("dev/main", False)])
+def test_the_main_guard_refuses_a_tag_on_a_commit_main_does_not_hold(
+    release_workflow: Workflow, tmp_path: Path, tagged: str, accepted: bool
+) -> None:
+    """A release is made from `main`: the guard's own script, run in a clone whose origin's `main` lags `dev/main`
+    by one commit, passes on main's commit and refuses the one only `dev/main` holds."""
+    git = ["git", "-c", "user.name=t", "-c", "user.email=t@example.com", "-c", "commit.gpgsign=false"]
+    origin, clone = tmp_path / "origin", tmp_path / "clone"
+    subprocess.run(["git", "init", "-q", "-b", "main", str(origin)], check=True)
+    subprocess.run([*git, "commit", "-q", "--allow-empty", "-m", "released"], cwd=origin, check=True)
+    subprocess.run(["git", "switch", "-q", "-c", "dev/main"], cwd=origin, check=True)
+    subprocess.run([*git, "commit", "-q", "--allow-empty", "-m", "not merged"], cwd=origin, check=True)
+    subprocess.run(["git", "clone", "-q", "-b", tagged, str(origin), str(clone)], check=True)
+    script = _step(release_workflow, "build", "Guard - the tagged commit is on main")["run"]
+    result = subprocess.run(
+        ["bash", "-e", "-c", script],
+        cwd=clone,
+        env={**os.environ, "GITHUB_REF_NAME": "v0.1.0"},
+        capture_output=True,
+        text=True,
+    )
+    assert (result.returncode == 0) is accepted, result.stdout + result.stderr
+
+
+def test_the_release_tests_every_python_the_classifiers_claim(release_workflow: Workflow) -> None:
+    project = tomllib.loads((PROJECT / "pyproject.toml").read_text(encoding="utf-8"))["project"]
+    version = re.compile(r"Programming Language :: Python :: (3\.\d+)")
+    claimed = [found[1] for found in map(version.fullmatch, project["classifiers"]) if found]
+    assert release_workflow["jobs"]["tests"]["strategy"]["matrix"]["python"] == claimed
 
 
 def test_the_release_is_built_only_after_the_gates_and_every_test_pass(release_workflow: Workflow) -> None:

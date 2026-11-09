@@ -80,7 +80,7 @@ Outside a workspace, and for a single run, pytest's own switches work as well:
 
 To keep the records but out of git, add `.aisland/` to the repository's `.gitignore`.
 
-## Test-run statistics (`aisland tests report`)
+## The report (`aisland tests report`)
 
 Every project has two test runs: plain `pytest` is the **fast run** (within 5 minutes — what
 you run before and after a change), `pytest -m slow` the **slow run** (CI's), `pytest -m ''`

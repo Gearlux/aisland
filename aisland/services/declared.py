@@ -20,20 +20,21 @@ from aisland.workspace.discovery import Service
 
 
 class DeclaredService(BaseService):
-    """The service ``declared`` describes: its command under the supervisor, probed when it has a port and a path."""
+    """The service ``declared`` describes: its command under the supervisor, its port checked free before it starts and
+    probed when it has a ready path too."""
 
     def __init__(self, declared: Service) -> None:
         super().__init__(declared.name)
         self.declared = declared
 
     def launch(self, background: bool = False, **kwargs: object) -> None:
-        """Run the declared command; with a port and a ready path, wait until ``http://localhost:<port><ready>``
-        answers (and refuse a port another process holds)."""
+        """Run the declared command, refusing a port another process holds; with a ready path too, wait until
+        ``http://localhost:<port><ready>`` answers."""
         port, ready = self.declared.port, self.declared.ready
         readiness: Optional[supervisor.Readiness] = (
             {"port": port, "path": ready} if port is not None and ready is not None else None
         )
-        self.start(list(self.declared.command), background=background, readiness=readiness)
+        self.start(list(self.declared.command), background=background, readiness=readiness, port=port)
 
     def info(self) -> None:
         """What runs, where it is declared, and its address."""

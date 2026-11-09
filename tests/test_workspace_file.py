@@ -10,6 +10,8 @@ the file and the line.
 
 from __future__ import annotations
 
+import dataclasses
+import datetime
 import os
 import subprocess
 import textwrap
@@ -277,6 +279,82 @@ def test_a_url_changed_in_gitmodules_is_followed_and_said(tmp_path: Path) -> Non
     assert (project.url, project.others) == (str(models), {"active": False})  # its other settings stay
 
 
+def test_setups_upkeep_edits_the_file_and_keeps_every_comment_order_and_date_a_person_wrote(tmp_path: Path) -> None:
+    """The how-to says "the rest is yours to edit": `refresh` and `set_settings` rewrote the file from its parsed data,
+    so every comment went and a date came back as text."""
+    models = _remote(tmp_path, "models")
+    root = _superproject(tmp_path, ("models", models, None))
+    path = _file(
+        root,
+        """\
+        # Our workspace: ask Ann before adding a project.
+        [workspace]
+        format = 1
+        since = 2026-01-02  # the day we split the repository
+        framework = ["torch"]
+
+        [project."models"]
+        # The models, on the old server until spring.
+        url = "https://old.example.com/models.git"  # moving
+        active = false
+        """,
+    )
+    assert workspace_file.refresh(root) == [f"workspace.toml: models url {models}"]
+    workspace_file.set_settings(root, ("source",), {"models": {"source": "pypi"}})
+    text = path.read_text()
+    assert "# Our workspace: ask Ann before adding a project.\n" in text
+    assert "since = 2026-01-02  # the day we split the repository\n" in text
+    assert "# The models, on the old server until spring.\n" in text
+    assert text.index("since") < text.index("framework")
+    assert f'url = "{models}"' in text and 'active = false\nsource = "pypi"\n' in text
+    read = workspace_file.load(root)
+    assert read.settings["since"] == datetime.date(2026, 1, 2)
+    assert read.projects["models"].others == {"active": False, "source": "pypi"}
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        '[project]\nmodels = { url = "u", branch = "dev" }\n',
+        'ci = { templates = "acme" }\nharness = { sets = ["aisland"] }\n\n[project."models"]\nurl = "u"\nbranch = "dev"\n',
+        'project = { models = { url = "u", branch = "dev" } }\n',
+    ],
+    ids=["inline-project", "inline-sections", "inline-projects"],
+)
+def test_a_table_written_inline_is_edited_as_a_table_of_its_own(tmp_path: Path, text: str) -> None:
+    """Valid TOML: every refresh and set_settings stopped on a bare AssertionError."""
+    path = _file(tmp_path, text)
+    before = workspace_file.read(path)
+    workspace_file.set_settings(tmp_path, ("source",), {"models": {"source": "pypi"}})
+    after = workspace_file.read(path)
+    assert after.projects["models"].others == {"source": "pypi"}
+    assert (after.projects["models"].url, after.projects["models"].branch) == ("u", "dev")
+    assert (after.ci, after.harness) == (before.ci, before.harness)
+
+
+def test_a_changed_ci_variable_is_edited_in_its_table_and_its_comments_stay(tmp_path: Path) -> None:
+    path = _file(
+        tmp_path, '[ci]\ntemplates = "acme"\n\n[ci.variables]\n# ours\npython = "3.12"  # the runners\nother = 1\n'
+    )
+    current = workspace_file.read(path)
+    workspace_file.write(
+        tmp_path, dataclasses.replace(current, ci={"templates": "acme", "variables": {"python": "3.12", "other": 2}})
+    )
+    text = path.read_text()
+    assert '[ci.variables]\n# ours\npython = "3.12"  # the runners\nother = 2\n' in text
+
+
+def test_a_workspace_table_written_in_parts_gets_its_format_first(tmp_path: Path) -> None:
+    path = _file(
+        tmp_path, '[workspace.extra]\non = true\n\n[project."models"]\nurl = "u"\n\n[workspace]\nname = "studio"\n'
+    )
+    written = workspace_file.write(tmp_path, workspace_file.read(path))
+    assert written is not None
+    lines = written.read_text().splitlines()
+    assert lines[lines.index("[workspace]") + 1] == "format = 1"
+    assert workspace_file.read(written).settings == {"extra": {"on": True}, "name": "studio"}
+
+
 def test_a_project_no_longer_in_the_workspace_is_dropped_and_said(tmp_path: Path) -> None:
     """Only when nothing could bring it back: with a url, setup adds it instead (`tests/test_activation.py`)."""
     root = _superproject(tmp_path, ("models", _remote(tmp_path, "models"), None))
@@ -401,18 +479,21 @@ def test_what_is_no_project_of_the_file_is_left_out(tmp_path: Path) -> None:
 # --- nothing written twice ---------------------------------------------------------------------------------------
 
 
-def test_a_path_equal_to_the_name_is_not_written(tmp_path: Path) -> None:
-    path = _file(
-        tmp_path, '[project."models"]\npath = "models"\nurl = "u"\n\n[project."tools"]\npath = "t"\nurl = "v"\n'
+def test_a_path_equal_to_the_name_is_written_only_by_the_user(tmp_path: Path) -> None:
+    """A new project gets no `path` equal to its name; one the user wrote stays where it is."""
+    path = _file(tmp_path, '[project."models"]\npath = "models"\nurl = "u"\n')
+    current = workspace_file.read(path)
+    tools = workspace_file.Project("tools", "tools", "v")
+    written = workspace_file.write(
+        tmp_path, workspace_file.WorkspaceFile(projects={**current.projects, "tools": tools})
     )
-    written = workspace_file.write(tmp_path, workspace_file.read(path))
     assert written is not None
     body = written.read_text().split("# =========================================================================\n")[
         -1
     ]
     assert (
         body
-        == '\n[workspace]\nformat = 1\n\n[project."models"]\nurl = "u"\n\n[project."tools"]\npath = "t"\nurl = "v"\n'
+        == '\n[workspace]\nformat = 1\n\n[project."models"]\npath = "models"\nurl = "u"\n\n[project."tools"]\nurl = "v"\n'
     )
 
 

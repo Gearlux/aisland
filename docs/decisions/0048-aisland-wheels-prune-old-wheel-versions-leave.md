@@ -75,6 +75,15 @@ root at `de9223d`, the aliases untouched.
 aisland wheels reset app              # any clone, any state: rewritten, edits put back, root re-recorded
 ```
 
+## Another remote's refs (2026-11-08)
+
+The rewrite moved this clone's branches, tags, `refs/remotes/origin/*` and the stash, and left another remote's
+(`refs/remotes/mirror/*`) on the old history: gc could not shrink the clone and the mirror sync took the mirror for
+ahead. `--apply` now refuses while another remote's refs reach a version that goes, naming the command that drops
+them, and the mirror sync sends the rewritten history
+([0079](0079-toml-is-written-by-tomlkit-and-the-release-reviews-setup-fixes.md)). A gitlink the user staged for the
+project in the root stays staged when the root's pointer moves.
+
 ## Example
 
 ```bash

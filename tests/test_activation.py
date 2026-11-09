@@ -19,7 +19,7 @@ from typing import Any, Dict, List, Optional, Tuple
 import pytest
 from click.testing import CliRunner
 
-from aisland import cli, console, gitcmd, locations
+from aisland import cli, console, failures, gitcmd, locations
 from aisland.setup import manager
 from aisland.workspace import activation
 from aisland.workspace import file as workspace_file
@@ -383,6 +383,38 @@ def test_setup_asks_then_reconciles(tmp_path: Path, monkeypatch: pytest.MonkeyPa
     with pytest.raises(_Stop):
         manager.setup_workspace(non_interactive=True)
     assert calls == ["resolve True", "reconcile"]
+
+
+def test_a_project_whose_folder_could_not_follow_fails_setup_which_goes_on(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """`reconcile` returns what it could not bring in line; setup dropped the list, so it exited 0."""
+    (tmp_path / ".venv" / "bin").mkdir(parents=True)
+
+    class _Stop(Exception):
+        pass
+
+    monkeypatch.setattr(locations, "workspace_root", lambda: tmp_path)
+    monkeypatch.setattr(manager, "ensure_uv_in_venv", lambda venv_bin: "uv")
+    monkeypatch.setattr(manager, "link_project_bashrc", lambda root: None)
+    monkeypatch.setattr(manager, "install_harness", lambda root: [])
+    monkeypatch.setattr("aisland.setup.provision.install", lambda root, aislands_own=True: None)
+    monkeypatch.setattr(activation, "resolve", lambda root, non_interactive: None)
+    monkeypatch.setattr(activation, "reconcile", lambda root: ["nourl", "bad"])
+    went_on: List[str] = []
+
+    def apply_all(*args: object, **kwargs: object) -> None:
+        went_on.append("sources")
+        raise _Stop
+
+    monkeypatch.setattr("aisland.setup.manager.apply_all", apply_all)
+    failures.reset()
+    with pytest.raises(_Stop):
+        manager.setup_workspace(non_interactive=True)
+    assert went_on == ["sources"] and failures.reported() == 2
+    err = capsys.readouterr().err
+    assert "Error: nourl's folder could not follow its activation" in err
+    assert "Error: bad's folder could not follow its activation" in err
 
 
 # --- the smaller cases -----------------------------------------------------------------------------------------

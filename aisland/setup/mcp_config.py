@@ -6,7 +6,7 @@ import shutil
 from pathlib import Path
 from typing import Dict, List, Required, TypedDict
 
-from aisland import console, failures
+from aisland import atomic, console, failures
 from aisland import pyproject as pyproject_toml
 from aisland.venv import require_venv_bin
 from aisland.workspace.projects import discover_projects, get_workspace_root
@@ -102,6 +102,33 @@ def _with_workspace_env(workspace_root: Path, servers: Dict[str, McpServer]) -> 
     }
 
 
+#: The key of a client file aisland writes; every other key is the client's or the person's.
+_SERVERS_KEY = "mcpServers"
+
+
+def _write_servers(out: Path, servers: Dict[str, McpServer]) -> None:
+    """Put ``servers`` under the file's ``mcpServers`` and keep every other setting it holds (Gemini CLI keeps a
+    person's whole settings in ``.gemini/settings.json``). A file that is no JSON object is reported and left as it is,
+    never written over: setup goes on and exits 1."""
+    settings: Dict[str, object] = {}
+    if out.is_file():
+        try:
+            read = json.loads(out.read_text(encoding="utf-8"))
+        except (OSError, UnicodeDecodeError, json.JSONDecodeError) as error:
+            failures.report(
+                f"Error: {out} is no JSON aisland can read ({error}); fix or remove it, then run setup again"
+            )
+            return
+        if not isinstance(read, dict):
+            failures.report(f"Error: {out} holds no JSON object; fix or remove it, then run setup again")
+            return
+        settings = read
+    settings[_SERVERS_KEY] = servers
+    atomic.write_text(out, json.dumps(settings, indent=2) + "\n")
+    listed = ", ".join(sorted(servers)) or "none"
+    console.echo(f"==> Wrote {out} ({len(servers)} MCP server(s): {listed})")
+
+
 def write_gemini_settings(workspace_root: Path, venv_bin: Path) -> None:
     """Generate ``<workspace>/.gemini/settings.json`` registering workspace MCP servers.
 
@@ -115,10 +142,7 @@ def write_gemini_settings(workspace_root: Path, venv_bin: Path) -> None:
     _warn_missing_commands(servers)
     gemini_dir = workspace_root / ".gemini"
     gemini_dir.mkdir(exist_ok=True)
-    out = gemini_dir / "settings.json"
-    out.write_text(json.dumps({"mcpServers": _with_workspace_env(workspace_root, servers)}, indent=2) + "\n")
-    listed = ", ".join(sorted(servers)) or "none"
-    console.echo(f"==> Wrote {out} ({len(servers)} MCP server(s): {listed})")
+    _write_servers(gemini_dir / "settings.json", _with_workspace_env(workspace_root, servers))
 
 
 def write_mcp_json(workspace_root: Path, venv_bin: Path) -> None:
@@ -132,10 +156,7 @@ def write_mcp_json(workspace_root: Path, venv_bin: Path) -> None:
     """
     servers = discover_mcp_servers(workspace_root, venv_bin)
     _warn_missing_commands(servers)
-    out = workspace_root / ".mcp.json"
-    out.write_text(json.dumps({"mcpServers": _with_workspace_env(workspace_root, servers)}, indent=2) + "\n")
-    listed = ", ".join(sorted(servers)) or "none"
-    console.echo(f"==> Wrote {out} ({len(servers)} MCP server(s): {listed})")
+    _write_servers(workspace_root / ".mcp.json", _with_workspace_env(workspace_root, servers))
 
 
 def generate_gemini_settings() -> None:

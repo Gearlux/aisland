@@ -23,8 +23,6 @@ Three decisions worth knowing, because they are what makes this work on a bare r
 
 from __future__ import annotations
 
-import contextlib
-import fcntl
 import os
 import re
 import shutil
@@ -35,7 +33,7 @@ import time
 import urllib.error
 import urllib.request
 from pathlib import Path
-from typing import Any, Dict, Iterator, Optional, Tuple
+from typing import Any, Dict, Optional, Tuple
 
 from aisland import atomic
 from aisland.errors import AislandError
@@ -102,16 +100,13 @@ def read_pid() -> Optional[int]:
         return None
 
 
-def _is_tunnel(pid: int) -> bool:
-    """Whether ``pid`` is a live process of this machine's VS Code CLI (:func:`aisland.tunnel.binary.cli_path`).
-
-    After a reboot the pidfile's number may belong to any other process of this user; only its command line tells
-    them apart, and a process that is not the tunnel is never signalled. Where ``ps`` cannot answer, a live pid
-    counts."""
+def _command_line(pid: int) -> Optional[str]:
+    """``pid``'s command line, or None when it cannot be read: ``/proc/<pid>/cmdline`` where there is one (Linux; a
+    bare container may have no ``ps``), else ``ps -ww``."""
     try:
-        os.kill(pid, 0)
+        return Path(f"/proc/{pid}/cmdline").read_bytes().replace(b"\0", b" ").decode(errors="replace")
     except OSError:
-        return False
+        pass
     try:
         listed = subprocess.run(
             # -ww: BSD ps cuts a line at the terminal's width, which could cut off the CLI's path
@@ -122,8 +117,22 @@ def _is_tunnel(pid: int) -> bool:
             check=False,
         )
     except (OSError, subprocess.TimeoutExpired):
-        return True
-    return str(binary.cli_path()) in listed.stdout
+        return None
+    return listed.stdout if listed.returncode == 0 else None
+
+
+def _is_tunnel(pid: int) -> bool:
+    """Whether ``pid`` is a live process of this machine's VS Code CLI (:func:`aisland.tunnel.binary.cli_path`).
+
+    After a reboot the pidfile's number may belong to any other process of this user; only its command line tells
+    them apart, and a process that is not the tunnel is never signalled. A process whose command line cannot be read
+    is not taken for the tunnel: an unidentified pid is never signalled either."""
+    try:
+        os.kill(pid, 0)
+    except OSError:
+        return False
+    command = _command_line(pid)
+    return command is not None and str(binary.cli_path()) in command
 
 
 def running() -> bool:
@@ -190,24 +199,12 @@ def signed_in() -> Optional[str]:
         raise AislandError(
             f"`code tunnel user show` did not answer within {ANSWER_SECONDS} s ({program}); run it yourself to see why"
         ) from late
+    except OSError as refused:
+        raise binary.cannot_run(program, refused) from refused
     text = (completed.stdout or "").strip()
     if completed.returncode != 0 or not text or "not logged in" in text.lower():
         return None
     return text.splitlines()[0].strip()
-
-
-@contextlib.contextmanager
-def _one_start_at_a_time() -> Iterator[None]:
-    """Hold this machine's tunnel start lock (``flock`` on a file in the state folder), so the check that no tunnel
-    runs, the spawn and the pidfile are one step: two starts at once otherwise both spawn, and the pidfile keeps the
-    last. The lock goes with the process, so a start killed half way holds nothing."""
-    state_dir().mkdir(parents=True, exist_ok=True)
-    with open(state_dir() / "start.lock", "a") as lock:
-        fcntl.flock(lock, fcntl.LOCK_EX)
-        try:
-            yield
-        finally:
-            fcntl.flock(lock, fcntl.LOCK_UN)
 
 
 def start(
@@ -261,15 +258,20 @@ def start(
 
     command = [str(program), "tunnel", "--accept-server-license-terms", "--name", tunnel_name]
 
-    with _one_start_at_a_time():
+    # This machine's start lock (`start.lock` in the state folder) makes the check that no tunnel runs, the spawn and
+    # the pidfile one step: two starts at once otherwise both spawn, and the pidfile keeps the last.
+    with atomic.locked(state_dir() / "start"):
         # Asked again under the lock: another start (a terminal's, an MCP tool's) may have spawned one meanwhile.
         if running():
             return {**status(), "already_running": True}
         log_path().write_text("")
         with open(log_path(), "ab") as log:
-            process = subprocess.Popen(
-                command, stdout=log, stderr=log, stdin=subprocess.DEVNULL, start_new_session=True
-            )
+            try:
+                process = subprocess.Popen(
+                    command, stdout=log, stderr=log, stdin=subprocess.DEVNULL, start_new_session=True
+                )
+            except OSError as refused:
+                raise binary.cannot_run(program, refused) from refused
         atomic.write_text(pid_path(), f"{process.pid}\n")
 
     found = _watch_log(timeout)
@@ -373,7 +375,10 @@ def login(provider: Optional[str] = None) -> int:
     chosen = provider or read_provider()
     if chosen:
         command += ["--provider", chosen]
-    completed = subprocess.run(command)
+    try:
+        completed = subprocess.run(command)
+    except OSError as refused:
+        raise binary.cannot_run(program, refused) from refused
     if completed.returncode == 0 and chosen:
         state_dir().mkdir(parents=True, exist_ok=True)
         atomic.write_text(provider_path(), f"{chosen}\n")
@@ -420,6 +425,8 @@ def open_editor(
     """
     workspace = store.resolve_target(target, name=name, ask=ask)
     chosen_folder = folder or workspace.folder
+    if chosen_folder:
+        store.checked_remote_path(chosen_folder, "--path" if folder else f"The remembered workspace {workspace.name}")
     editor = shutil.which("code")
     if editor is None:
         raise AislandError(

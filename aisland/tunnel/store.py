@@ -179,6 +179,17 @@ def forget_all() -> int:
     return count
 
 
+def checked_remote_path(path: str, where: str) -> str:
+    """``path`` — what to open on the remote machine — when it is an absolute path; else a refusal naming ``where`` it
+    came from. It goes onto `code`'s command line, so a value of a pasted address or the store must never read as an
+    option (``--install-extension …``)."""
+    if not path.startswith("/"):
+        raise AislandError(
+            f"{where} names {path!r} to open, which is no absolute path on the remote machine (it must start with /)."
+        )
+    return path
+
+
 def parse_workspace_url(text: str) -> Workspace:
     """A pasted browser-IDE address as a workspace: what to open, and the name to tunnel to.
 
@@ -196,6 +207,8 @@ def parse_workspace_url(text: str) -> Workspace:
         raise AislandError(f"{text} names no workspace: its path is empty, so there is nothing to tunnel to.")
     query = parse_qs(parsed.query)
     folder = (query.get("workspace") or query.get("folder") or [""])[0]
+    if folder:
+        checked_remote_path(folder, f"The address {text}")
     return Workspace(name=sanitize_name(segments[-1]), url=text, folder=folder)
 
 

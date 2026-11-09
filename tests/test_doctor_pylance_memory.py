@@ -134,7 +134,7 @@ def test_the_newest_window_of_the_workspace_is_the_one_judged(workspace: Path, l
     assert str(newest) in result.detail
 
 
-@pytest.mark.skipif(sys.platform == "win32" or os.geteuid() == 0, reason="needs a file the user cannot read")
+@pytest.mark.skipif(os.geteuid() == 0, reason="needs a file the user cannot read")
 def test_a_log_that_cannot_be_read_is_passed_over(workspace: Path, logs: Path) -> None:
     unreadable = _log(logs, "20261030T090000", "window2", [_START.format(root=workspace)], 2.0)
     unreadable.chmod(0)
@@ -156,11 +156,6 @@ def test_vs_codes_logs_folder_on_each_platform(monkeypatch: pytest.MonkeyPatch, 
     assert doctor._vscode_logs_root() == tmp_path / ".config" / "Code" / "logs"
     monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "xdg"))
     assert doctor._vscode_logs_root() == tmp_path / "xdg" / "Code" / "logs"
-    monkeypatch.setattr(sys, "platform", "win32")
-    monkeypatch.setenv("APPDATA", str(tmp_path / "Roaming"))
-    assert doctor._vscode_logs_root() == tmp_path / "Roaming" / "Code" / "logs"
-    monkeypatch.delenv("APPDATA")
-    assert doctor._vscode_logs_root() == tmp_path / "AppData" / "Roaming" / "Code" / "logs"
 
 
 def test_the_check_is_registered() -> None:

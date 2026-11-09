@@ -13,7 +13,9 @@ writes.
 from __future__ import annotations
 
 import dataclasses
+import os
 import re
+import tomllib
 from pathlib import Path
 from typing import Dict, Iterator, List, Set, Tuple
 
@@ -23,14 +25,21 @@ import pytest
 from aisland.ci import ci_templates
 from aisland.cli import main
 from aisland.services import registry
+from aisland.wheels import install as wheels_install
 from aisland.wheels import unzip as wheels_unzip
+from tests import command_reference
 from tests.private_names import PRIVATE, words_named
 
 PROJECT = Path(__file__).resolve().parents[1]
 README = PROJECT / "README.md"
 DOCS = PROJECT / "docs"
 EXAMPLES = PROJECT / "examples"
-REPOSITORY = "https://github.com/Gearlux/aisland/blob/main/"
+COMMANDS_PAGE = DOCS / "commands.md"
+VERSION = tomllib.loads((PROJECT / "pyproject.toml").read_text(encoding="utf-8"))["project"]["version"]
+#: Where the README's links point: the release's own tag, so the page PyPI shows for a release links to that
+#: release's docs (GitHub's default branch may be ahead of it, and `main` may lack a page it names).
+REPOSITORY = f"https://github.com/Gearlux/aisland/blob/v{VERSION}/"
+_REPOSITORY_LINK = re.compile(r"https://github\.com/Gearlux/aisland/(?:blob|tree)/([^/)\s]+)/")
 
 #: The projects of the workspace aisland is developed in, which a published page never names; the private names and
 #: the company's are checked too, as digests (:data:`tests.private_names.PRIVATE`). liquifai and loggair are not
@@ -96,10 +105,17 @@ def _anchors(page: Path) -> Set[str]:
     return anchors
 
 
+def _links_in(text: str) -> Iterator[Tuple[int, str]]:
+    """Each link's target with the number of the line it is on, a link whose text runs over a line break included
+    (the text outside code read whole, a fenced block's lines left blank)."""
+    lines = dict(_outside_code(text))
+    whole = "\n".join(lines.get(number, "") for number in range(1, max(lines, default=0) + 1))
+    for found in _LINK.finditer(whole):
+        yield whole.count("\n", 0, found.start(1)) + 1, found.group(1)
+
+
 def _links(page: Path) -> Iterator[Tuple[int, str]]:
-    for number, line in _outside_code(page.read_text(encoding="utf-8")):
-        for target in _LINK.findall(line):
-            yield number, target
+    return _links_in(page.read_text(encoding="utf-8"))
 
 
 def test_the_readme_is_a_short_quickstart() -> None:
@@ -118,6 +134,21 @@ def test_every_link_in_the_readme_is_absolute_or_an_anchor_of_its_own() -> None:
         elif not target.startswith(("https://", "http://", "mailto:")):
             wrong.append(f"README.md:{number}: {target} is relative")
     assert wrong == []
+
+
+@pytest.mark.parametrize("page", ["README.md", "CHANGELOG.md"])
+def test_the_repository_links_name_the_tag_of_the_version(page: str) -> None:
+    """PyPI shows the README and links the CHANGELOG of a release: their links to the repository name its tag,
+    `v<pyproject's version>`, so a version bump moves them."""
+    text = (PROJECT / page).read_text(encoding="utf-8")
+    refs = _REPOSITORY_LINK.findall(text)
+    assert refs and set(refs) == {f"v{VERSION}"}, sorted(set(refs))
+
+
+def test_a_link_whose_text_runs_over_a_line_break_is_read() -> None:
+    """A decision record's anchor link wrapped over two lines once pointed at no heading, unseen."""
+    page = "Some text [a link that\n  runs on](#a-heading) and [one](other.md).\n```\n[not](code.md)\n```\n"
+    assert list(_links_in(page)) == [(2, "#a-heading"), (2, "other.md")]
 
 
 def test_every_repository_link_in_the_readme_names_a_file_that_exists() -> None:
@@ -285,6 +316,15 @@ def test_the_wheel_zips_usage_names_no_project_of_the_workspace() -> None:
     assert hits == []
 
 
+def test_the_install_scripts_usage_names_no_project_and_carries_no_dated_measurement() -> None:
+    """``wheels/install.py`` is copied into every project's wheels folder: its usage said `--only` with two of this
+    workspace's projects and a measurement dated with the day it was made."""
+    text = wheels_install.__doc__ or ""
+    hits = [line.strip() for line in text.splitlines() if _names_a_project(line)]
+    assert hits == []
+    assert re.findall(r"\b\d{4}-\d{2}-\d{2}\b", text) == []
+
+
 def test_every_example_is_shown_on_a_page() -> None:
     """An example is a page's runnable twin: the page names it."""
     pages = "\n".join(page.read_text(encoding="utf-8") for page in _user_pages())
@@ -297,7 +337,8 @@ def test_every_command_is_shown_on_a_page() -> None:
     command groups a project brings are its own docs' (they are not aisland's `main.commands`)."""
     from aisland.cli import main
 
-    text = README.read_text(encoding="utf-8") + "".join(page.read_text(encoding="utf-8") for page in _user_pages())
+    pages = [page for page in _user_pages() if page != COMMANDS_PAGE]  # the reference lists them all; a page explains
+    text = README.read_text(encoding="utf-8") + "".join(page.read_text(encoding="utf-8") for page in pages)
     missing = [
         words
         for words, command in _commands(main)
@@ -311,3 +352,25 @@ def test_every_variable_aisland_reads_is_in_the_readme() -> None:
     listed = re.findall(r"^# ([A-Z][A-Z0-9_]+)=", (PROJECT / "env.complete").read_text(encoding="utf-8"), re.M)
     readme = README.read_text(encoding="utf-8")
     assert listed and not [name for name in listed if f"`{name}`" not in readme]
+
+
+@pytest.mark.usefixtures("empty_workspace")
+def test_the_command_reference_is_current(monkeypatch: pytest.MonkeyPatch) -> None:
+    """`docs/commands.md` is what the click tree renders, in a workspace without projects (no service or selection a
+    project brings); `AISLAND_WRITE_COMMANDS=1` writes it instead (`tests/command_reference.py`)."""
+    monkeypatch.setattr(registry, "declared", lambda root, reserved=(): [])
+    rendered = command_reference.render(main)
+    if os.environ.get("AISLAND_WRITE_COMMANDS") == "1":
+        COMMANDS_PAGE.write_text(rendered, encoding="utf-8")
+    assert COMMANDS_PAGE.read_text(encoding="utf-8") == rendered, (
+        "docs/commands.md is not what the commands' --help says: "
+        "AISLAND_WRITE_COMMANDS=1 .venv/bin/pytest -n 0 tests/test_docs.py -k command_reference"
+    )
+
+
+@pytest.mark.usefixtures("empty_workspace")
+def test_the_command_reference_lists_every_command(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(registry, "declared", lambda root, reserved=(): [])
+    page = command_reference.render(main)
+    missing = [words for words, command in _commands(main) if not command.hidden and f"`{words}`" not in page]
+    assert missing == []

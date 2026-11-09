@@ -10,12 +10,13 @@ from __future__ import annotations
 
 import os
 import subprocess
+import threading
 from pathlib import Path
-from typing import Dict
+from typing import Dict, List, Optional
 
 import pytest
 
-from aisland import envfile, locations
+from aisland import atomic, envfile, locations
 
 ENVIRONMENT = {"HOME": "/home/you", "PATH": os.environ.get("PATH", "/usr/bin:/bin")}
 
@@ -107,3 +108,34 @@ def test_jenkins_reads_the_workspace_env_with_the_one_reader() -> None:
     from aisland.services import jenkins
 
     assert not hasattr(jenkins, "_parse_dotenv")
+
+
+def test_a_key_set_twice_has_the_line_the_shell_keeps_replaced(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """`read` keeps the LAST assignment, as bash does; `write` replaced the FIRST, so the new value never showed."""
+    monkeypatch.setattr(locations, "workspace_root", lambda: tmp_path)
+    (tmp_path / ".env").write_text("PORT=1\nOTHER=$PORT\nexport PORT=2\n")
+    envfile.write({"PORT": "3"})
+    assert (tmp_path / ".env").read_text() == "PORT=1\nOTHER=$PORT\nexport PORT=3\n"
+    assert envfile.read(tmp_path) == {"PORT": "3", "OTHER": "1"}
+    assert _bash(tmp_path / ".env", {"PORT": "3", "OTHER": "1"}) == {"PORT": "3", "OTHER": "1"}
+
+
+def test_two_writes_at_once_each_keep_their_key(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Two MCP service starts publish at once: without the lock, the second read the file before the first wrote and
+    wrote its own key over the first's."""
+    monkeypatch.setattr(locations, "workspace_root", lambda: tmp_path)
+    (tmp_path / ".env").write_text("# mine\n")
+    real_write = atomic.write_text
+    second: List[threading.Thread] = []
+
+    def write_while_another_starts(path: Path, text: str, new_mode: Optional[int] = None) -> None:
+        if not second:
+            second.append(threading.Thread(target=envfile.write, args=({"SECOND": "2"},)))
+            second[0].start()
+            second[0].join(timeout=0.5)  # without the lock it writes its whole file meanwhile
+        real_write(path, text, new_mode=new_mode)
+
+    monkeypatch.setattr(atomic, "write_text", write_while_another_starts)
+    envfile.write({"FIRST": "1"})
+    second[0].join()
+    assert envfile.read(tmp_path) == {"FIRST": "1", "SECOND": "2"}

@@ -4,7 +4,8 @@ The step runs BEFORE any venv exists, so it cannot be Python — it is bash, and
 part of the bootstrap that must work on a machine with nothing installed. It used to fall
 back to ``brew install python@X``, which is macOS-only: on Ubuntu 24.04 (WSL2, 2026-08-17)
 it died with ``Homebrew is not installed`` and no path forward. It now provisions the pinned
-interpreter through ``uv`` on every platform, installing ``uv`` itself first when missing.
+interpreter through ``uv`` on every platform, installing ``uv`` itself first when missing: its pinned release
+archive, checked against the SHA-256 the release lists.
 
 The block is delimited by ``# --- python-provisioning ---`` markers so these tests can run
 it in a real ``bash`` against a scratch ``PATH`` holding stub ``uv`` / ``curl`` / ``pythonX``
@@ -13,10 +14,13 @@ executables that record their argv, instead of asserting on the shell text.
 
 from __future__ import annotations
 
+import hashlib
 import shutil
 import stat
 import subprocess
+import tarfile
 from pathlib import Path
+from typing import Optional
 
 import pytest
 
@@ -116,32 +120,65 @@ def test_a_missing_interpreter_is_provisioned_by_an_existing_uv(sandbox: tuple[P
     assert f"PYTHON_BIN={store}" in result.stdout
 
 
-def test_a_missing_uv_is_installed_first(sandbox: tuple[Path, Path], tmp_path: Path) -> None:
-    """Neither python3.13 nor uv on PATH (the WSL2 case): the installer runs, and the uv it
-    puts in ~/.local/bin is what provisions the interpreter — without a new shell."""
-    bindir, log = sandbox
-    local_bin = tmp_path / ".local" / "bin"
-    local_bin.mkdir(parents=True)
-    # The stub "installer" is what `curl … | sh` pipes into `sh`: it drops a uv into ~/.local/bin,
-    # exactly where the real astral installer puts it.
-    uv_body = (
+def _uv_release(tmp_path: Path, digest: Optional[str] = None) -> Path:
+    """A folder standing for uv's release page: the Linux x86-64 archive holding a stub ``uv`` (which records its
+    argv and names an interpreter) and the ``.sha256`` file the release lists beside it — the archive's own digest,
+    or ``digest``."""
+    release = tmp_path / "release"
+    folder = release / "uv-x86_64-unknown-linux-gnu"
+    folder.mkdir(parents=True)
+    (folder / "uv").write_text(
         "#!/bin/bash\n"
         'echo "uv $*" >> "$CALLS"\n'
         '[ "$1 $2 $3" = "python find --system" ] && echo /store/python3.13\n'
         "exit 0\n"
     )
-    installer = tmp_path / "installer.sh"
-    installer.write_text(f"cat > '{local_bin}/uv' <<'UVEOF'\n{uv_body}UVEOF\nchmod +x '{local_bin}/uv'\n")
-    _stub(bindir, "curl", f'echo "curl $*" >> "$CALLS"\ncat "{installer}"')
+    (folder / "uvx").write_text("#!/bin/bash\n")
+    for tool in ("uv", "uvx"):
+        (folder / tool).chmod(0o755)
+    archive = release / "uv-x86_64-unknown-linux-gnu.tar.gz"
+    with tarfile.open(archive, "w:gz") as tar:
+        tar.add(folder, arcname=folder.name)
+    actual = hashlib.sha256(archive.read_bytes()).hexdigest()
+    (release / f"{archive.name}.sha256").write_text(f"{digest or actual}  {archive.name}\n")
+    return release
+
+
+def _stub_download(bindir: Path, release: Path) -> None:
+    """``curl -fLsS -o <file> <url>``: records its argv and writes the release's file the url names; ``uname`` says
+    Linux x86-64, the archive :func:`_uv_release` holds."""
+    _stub(bindir, "curl", f'echo "curl $*" >> "$CALLS"\ncp "{release}/${{4##*/}}" "$3"')
+    _stub(bindir, "uname", '[ "$1" = "-s" ] && echo Linux || echo x86_64')
+
+
+def test_a_missing_uv_is_installed_first(sandbox: tuple[Path, Path], tmp_path: Path) -> None:
+    """Neither python3.13 nor uv on PATH (a fresh Linux machine): uv's pinned release archive is downloaded, checked
+    against the SHA-256 its release lists, and the uv it puts in ~/.local/bin provisions the interpreter — without a
+    new shell, and without piping a script from the network into a shell."""
+    bindir, log = sandbox
+    _stub_download(bindir, _uv_release(tmp_path))
 
     result = _run(bindir, log, home=tmp_path)
 
     assert result.returncode == 0, result.stderr + result.stdout
     calls = _calls(log)
-    assert calls[0].startswith("curl "), calls
-    assert "astral.sh/uv/install.sh" in calls[0]
-    assert calls[1:] == ["uv python install 3.13", "uv python find --system 3.13"]
+    base = "https://github.com/astral-sh/uv/releases/download/0.12.0/uv-x86_64-unknown-linux-gnu.tar.gz"
+    assert [call.split()[-1] for call in calls[:2]] == [base, f"{base}.sha256"], calls
+    assert calls[2:] == ["uv python install 3.13", "uv python find --system 3.13"]
+    assert (tmp_path / ".local" / "bin" / "uvx").is_file()
     assert "PYTHON_BIN=/store/python3.13" in result.stdout
+
+
+def test_a_uv_archive_whose_digest_differs_is_never_installed(sandbox: tuple[Path, Path], tmp_path: Path) -> None:
+    bindir, log = sandbox
+    _stub_download(bindir, _uv_release(tmp_path, digest="0" * 64))
+
+    result = _run(bindir, log, home=tmp_path)
+
+    assert result.returncode != 0
+    assert "does not match the SHA-256 its release lists" in result.stderr
+    assert not (tmp_path / ".local" / "bin" / "uv").exists()
+    assert not any(call.startswith("uv ") for call in _calls(log))
 
 
 def test_a_uv_already_in_local_bin_is_found_without_refetching_the_installer(

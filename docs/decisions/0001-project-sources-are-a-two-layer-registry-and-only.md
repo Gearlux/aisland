@@ -88,7 +88,7 @@ introducing the mechanism changed no behaviour anywhere until a source was actua
 - **`Jenkinsfile.local` needs no source configuration at all**, because it installs nothing: the
   effective source of every dep was applied to the `.venv` by `aisland setup`, and the local
   pipeline tests that venv as it is (see [the local pipeline tests the venv, it does not
-  install](#the-local-pipeline-tests-the-venv-it-does-not-install)). A per-machine override is
+  install](0012-the-local-pipeline-tests-the-venv-it-does-not-install.md)). A per-machine override is
   therefore honoured there for free, and no source change of any kind can rewrite the file.
 - **Order of operations in a `pypi` switch is fixed by information loss.** The distribution name
   (`acme` → `acme-tools`) can only be read from `pyproject.toml`, which the deinit

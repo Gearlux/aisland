@@ -15,17 +15,18 @@ aisland jenkins start --background
   (`127.0.0.1`): another machine on the network cannot reach it. From a remote machine, forward the port (the
   [tunnel](tunnel.md) does).
 - **Home Directory:** `.aisland/data/jenkins/` in the workspace (`aisland/data/jenkins/` when aisland runs from its own checkout)
-- **Which Jenkins:** one long-term-support release, pinned by version and sha256 (`JenkinsService.WAR_VERSION` and
-  `WAR_SHA256`), downloaded from `get.jenkins.io` once and kept. A download that does not match the digest is refused
-  and nothing is installed. The WAR is kept as `.aisland/bin/jenkins-<version>.war` (`aisland/bin/` from a checkout), so
-  a newer aisland pinning a newer release downloads that one and removes the older WARs once it is there.
-- **Its plugin manager:** the plugin installation manager `aisland jenkins init` runs is pinned the same way
-  (`JenkinsService.MANAGER_VERSION` and `MANAGER_SHA256`), downloaded from its GitHub release and checked before it
-  is ever run.
+- **Which Jenkins:** one long-term-support release, Jenkins 2.555.2 in this aisland, pinned by its version and its
+  SHA-256 and downloaded from `get.jenkins.io` once. A download that does not match the digest is refused and nothing
+  is installed. The WAR is kept as `.aisland/bin/jenkins-<version>.war` (`aisland/bin/` from a checkout), so a newer
+  aisland pinning a newer release downloads that one and removes the older WARs once it is there.
+- **Its plugin manager:** the plugin installation manager `aisland jenkins init` runs is pinned the same way, by
+  version and SHA-256, downloaded from its GitHub release and checked before it is ever run. The plugins it installs
+  are their current releases from the Jenkins update center; aisland pins neither their versions nor their digests.
+  When either download fails, `start` and `init` say so and stop there: Jenkins is not started without them.
 
 *Note: `start` does not install plugins. It brings the server up and checks whether you have configured credentials.*
 
-### 2. Initial Setup & Unlock
+### 2. Initial setup and unlock
 If this is a clean installation, `aisland jenkins start` will detect that no credentials exist and print instructions to the console. 
 The first start keeps Jenkins' setup wizard, so security is on from the start. Unlock it with the initial admin
 password. aisland never prints the password itself; `aisland jenkins start`, `status` and `info` name the file that
@@ -37,9 +38,9 @@ Paste it into the Jenkins web interface to unlock it, then create your admin use
 
 ---
 
-## Credentials, Plugins and Pipelines
+## Credentials, plugins and pipelines
 
-### 1. Add Git Credentials (Manual Step)
+### 1. Add the git credentials (a manual step)
 If your projects use private GitHub repositories, add your credentials to Jenkins *before* initializing pipelines:
 1.  Navigate to **Manage Jenkins** -> **Credentials** -> **System** -> **Global credentials (unrestricted)**.
 2.  Click **Add Credentials**.
@@ -48,10 +49,10 @@ If your projects use private GitHub repositories, add your credentials to Jenkin
 5.  **Username:** Your GitHub username.
 6.  **Password/Key:** Your GitHub Personal Access Token or Private SSH Key.
 
-### 2. Install Plugins & Initialize Pipelines
+### 2. Install the plugins and initialize the pipelines
 Once credentials are in place, use the `init` command. This single command handles plugin management and job seeding:
 
-#### Initialize All Projects:
+#### Initialize every project
 ```bash
 aisland jenkins init
 ```
@@ -78,14 +79,14 @@ Allow anonymous read access? (the nightly report, the SwiftBar menu and the scaf
 A yes lets a visitor who has not logged in read jobs and builds. The login and CSRF protection always stay on: Jenkins
 listens on this machine only, but a page open in your browser can still send it requests.
 
-#### Initialize a Single Project:
+#### Initialize a single project
 ```bash
 aisland jenkins init models
 ```
 
 ---
 
-## Command Reference
+## Command reference
 
 | Command | Description |
 | :--- | :--- |
@@ -98,9 +99,9 @@ aisland jenkins init models
 | `aisland jenkins init --local [PROJECT]` | Creates `<project>.local` jobs that run `Jenkinsfile.local` on this machine's checkout. |
 | `aisland jenkins scaffold [PROJECT]` | Writes a project's `Jenkinsfile`, `Jenkinsfile.local` and GitHub Actions `ci.yml` ([ci](ci.md)). |
 | `aisland jenkins templates` | Shows the template set `scaffold` writes from, and copies aisland's to start your own ([ci](ci.md)). |
-| `aisland jenkins remove [PROJECT]` | Removes a specific project pipeline or all pipelines from Jenkins. |
+| `aisland jenkins remove [PROJECT]` | Removes a specific project pipeline or all pipelines from Jenkins (asks first; `-y` does not). PROJECT is the job's folder name; a name with a `/` or `..` is refused. |
 | `aisland jenkins reset` | Stops Jenkins and wipes ALL data, including jobs, logs, and configurations. |
-| `aisland jenkins reset --project PROJECT` | Removes the pipeline and build data for a specific project. |
+| `aisland jenkins reset --project PROJECT` | Removes the pipeline and build data for a specific project (its job's folder name, as for `remove`). |
 
 ---
 

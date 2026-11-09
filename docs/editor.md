@@ -2,6 +2,8 @@
 
 The files `aisland setup` writes for the editor — Pyright configuration and the VS Code workspace file — the workspace window's own theme and colours, and the `mypy.ini` at the workspace root.
 
+## Pyright's files
+
 `aisland setup` also writes **`pyrightconfig.json`** files so Pyright /
 Pylance resolve cross-project imports against the same project set
 installed editable into the `.venv` — one at the workspace root
@@ -19,6 +21,8 @@ so a project's `git status` stays as it was. Don't hand-edit them; add a
 project's `pyproject.toml` and re-run `aisland setup`. Don't commit
 editor `extraPaths` in `.vscode/settings.json` either — pyright ignores
 those whenever a `pyrightconfig.json` is present.
+
+## The VS Code workspace file
 
 `aisland setup` also writes the **VS Code workspace file**,
 `acme.code-workspace` (named after the workspace), from scratch on every

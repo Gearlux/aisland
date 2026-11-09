@@ -18,7 +18,7 @@ from packaging.utils import canonicalize_name
 
 from aisland import pyproject as pyproject_toml
 from aisland.errors import AislandError
-from aisland.workspace.projects import workspace_folders
+from aisland.workspace.model import Workspace
 from aisland.workspace.sources import read_committed_sources
 
 
@@ -32,13 +32,16 @@ class WorkspaceProject:
         path: Its folder on this machine.
         pyproject: Its parsed ``pyproject.toml``; ``None`` when the folder is empty (a detached
             source or an inactive submodule) — then ``distribution`` comes from ``workspace.toml``,
-            or is the folder name.
+            or is the folder name — or when the file cannot be read.
+        problem: Why its ``pyproject.toml`` cannot be read (the file and the line), else ``None``: the run stops on it
+            only when it needs the project — the target, or a project of its closure.
     """
 
     name: str
     distribution: str
     path: Path
     pyproject: Optional[pyproject_toml.Table]
+    problem: Optional[str] = None
 
     @property
     def checked_out(self) -> bool:
@@ -48,26 +51,40 @@ class WorkspaceProject:
 
 def workspace_projects(workspace_root: Path) -> Dict[str, WorkspaceProject]:
     """Every submodule that is a Python project (without ``.gitmodules``: every project folder), keyed by canonical
-    distribution name.
+    distribution name — :attr:`aisland.workspace.model.Workspace.folders`, each with its ``pyproject.toml`` read.
 
     An empty folder is kept (``pyproject=None``): a requirement on it must be told apart from a
-    requirement on something outside the workspace.
+    requirement on something outside the workspace. A ``pyproject.toml`` that is no TOML is kept under its folder's
+    name with its :attr:`~WorkspaceProject.problem`, raised only by a run that needs it. Two projects of one
+    distribution name are refused, naming both folders: a requirement could mean either.
     """
     registry = read_committed_sources(workspace_root)
     projects: Dict[str, WorkspaceProject] = {}
-    for _name, relative, _active in workspace_folders(workspace_root):
+    for _name, relative, _active in Workspace(workspace_root).folders:
         path = workspace_root / relative
         pyproject_file = path / "pyproject.toml"
         if pyproject_file.is_file():
-            data = pyproject_toml.load(pyproject_file)
-            distribution = (data.get("project") or {}).get("name")
-            if not distribution:
-                continue
-            projects[canonicalize_name(distribution)] = WorkspaceProject(relative, distribution, path, data)
+            try:
+                data = pyproject_toml.parse(pyproject_file.read_text(encoding="utf-8"), pyproject_file)
+            except (OSError, UnicodeDecodeError, pyproject_toml.PyprojectError) as error:
+                problem = str(error) if isinstance(error, AislandError) else f"{pyproject_file}: {error}"
+                found = WorkspaceProject(relative, relative, path, None, problem)
+            else:
+                distribution = (data.get("project") or {}).get("name")
+                if not distribution:
+                    continue
+                found = WorkspaceProject(relative, distribution, path, data)
         else:
             source = registry.get(relative)
             distribution = source.distribution if source and source.distribution else relative
-            projects[canonicalize_name(distribution)] = WorkspaceProject(relative, distribution, path, None)
+            found = WorkspaceProject(relative, distribution, path, None)
+        key = canonicalize_name(found.distribution)
+        if key in projects:
+            raise AislandError(
+                f"{projects[key].name}/pyproject.toml and {found.name}/pyproject.toml are both the distribution "
+                f"{found.distribution!r}; rename one of them — a requirement on it could mean either"
+            )
+        projects[key] = found
     return projects
 
 
@@ -81,6 +98,8 @@ def find_target(projects: Dict[str, WorkspaceProject], workspace_root: Path, nam
         if found is None:
             raise AislandError(f"no project {name!r} in the workspace {workspace_root}")
         project = found
+    if project.problem is not None:
+        raise AislandError(project.problem)
     if not project.checked_out:
         raise AislandError(
             f"{project.name} is not checked out on this machine (its folder is empty). "
@@ -90,7 +109,10 @@ def find_target(projects: Dict[str, WorkspaceProject], workspace_root: Path, nam
 
 
 def requirements(project: WorkspaceProject, extra: Optional[str]) -> List[Requirement]:
-    """``project``'s base dependencies (``extra=None``) or one extra's, parsed."""
+    """``project``'s base dependencies (``extra=None``) or one extra's, parsed; a project whose ``pyproject.toml``
+    cannot be read is refused, naming the file and the line."""
+    if project.problem is not None:
+        raise AislandError(project.problem)
     table = (project.pyproject or {}).get("project") or {}
     if extra is None:
         raw = table.get("dependencies")

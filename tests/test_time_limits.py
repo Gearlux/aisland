@@ -114,7 +114,17 @@ def test_a_supervisor_that_gives_no_answer_is_refused_in_words(monkeypatch: pyte
 
 
 def test_an_aisland_command_still_running_at_the_mcp_limit_is_a_refusal(monkeypatch: pytest.MonkeyPatch) -> None:
+    calls: List[Dict[str, Any]] = []
+
+    def times_out(command: List[str], cwd: Path, timeout: float) -> Any:
+        calls.append({"argv": command, "timeout": timeout})
+        raise subprocess.TimeoutExpired(command, timeout)
+
     monkeypatch.setattr(server, "get_workspace_root", lambda: Path("/"))
-    monkeypatch.setattr(server.subprocess, "run", _times_out([]))
-    with pytest.raises(server.ToolRefusal, match="aisland services start docker was still running after 300 s"):
+    monkeypatch.setattr(server, "_run_as_a_group", times_out)
+    with pytest.raises(
+        server.ToolRefusal,
+        match="aisland services start docker was still running after 300 s, so it was stopped, with every process",
+    ):
         server._run_aisland(["services", "start", "docker"])
+    assert calls[0]["timeout"] == server.SERVICE_TIMEOUT

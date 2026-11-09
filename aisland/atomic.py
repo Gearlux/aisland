@@ -8,8 +8,8 @@ takes it: an MCP client's tools run side by side, and two edits read at once wou
 Standard library only.
 """
 
+import fcntl
 import os
-import sys
 import tempfile
 from contextlib import contextmanager
 from pathlib import Path
@@ -35,11 +35,29 @@ def write_text(path: Path, text: str, new_mode: Optional[int] = None) -> None:
     try:
         with os.fdopen(descriptor, "w", encoding="utf-8") as out:
             out.write(text)
+            # On the disk before the move: a power cut after os.replace must not leave the new name on empty blocks.
+            out.flush()
+            os.fsync(out.fileno())
         os.chmod(scratch, mode if mode is not None else 0o666 & ~_umask())
         os.replace(scratch, target)
     except BaseException:
         Path(scratch).unlink(missing_ok=True)
         raise
+    _sync_folder(target.parent)
+
+
+def _sync_folder(folder: Path) -> None:
+    """Put the folder's entry for the moved file on the disk too (POSIX; a folder that cannot be opened is passed)."""
+    try:
+        handle = os.open(folder, os.O_RDONLY)
+    except OSError:
+        return
+    try:
+        os.fsync(handle)
+    except OSError:
+        pass
+    finally:
+        os.close(handle)
 
 
 def _umask() -> int:
@@ -55,21 +73,8 @@ def locked(path: Path) -> Iterator[None]:
     the block ends. Another process waits for it; the lock goes with the process that held it, however that ends."""
     path.parent.mkdir(parents=True, exist_ok=True)
     with open(path.with_name(path.name + ".lock"), "a+b") as handle:
-        if sys.platform == "win32":
-            import msvcrt
-
-            handle.seek(0)
-            msvcrt.locking(handle.fileno(), msvcrt.LK_LOCK, 1)
-            try:
-                yield
-            finally:
-                handle.seek(0)
-                msvcrt.locking(handle.fileno(), msvcrt.LK_UNLCK, 1)
-        else:
-            import fcntl
-
-            fcntl.flock(handle.fileno(), fcntl.LOCK_EX)
-            try:
-                yield
-            finally:
-                fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
+        fcntl.flock(handle.fileno(), fcntl.LOCK_EX)
+        try:
+            yield
+        finally:
+            fcntl.flock(handle.fileno(), fcntl.LOCK_UN)

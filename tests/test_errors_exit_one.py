@@ -11,6 +11,7 @@ from __future__ import annotations
 import ast
 import hashlib
 import subprocess
+import threading
 from pathlib import Path
 from typing import Callable, Iterator, List
 
@@ -59,6 +60,24 @@ def test_a_reported_failure_lets_the_command_finish_and_then_exits_1(monkeypatch
     assert result.exit_code == 1
     assert "  - Error: one part failed" in result.stderr
     assert "the rest still ran" in result.stdout
+
+
+def test_a_failure_reported_in_one_thread_is_not_another_threads(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The MCP server serves tool calls side by side: one call's reported failure must not mark another's run failed,
+    nor one call's reset forget another's."""
+    failures.reset()
+    reported_there: List[int] = []
+
+    def there() -> None:
+        failures.reset()
+        failures.report("Error: over there")
+        reported_there.append(failures.reported())
+
+    thread = threading.Thread(target=there)
+    thread.start()
+    thread.join(timeout=10)
+    assert reported_there == [1]
+    assert failures.reported() == 0
 
 
 def test_a_command_that_reports_and_then_exits_0_still_exits_1(monkeypatch: pytest.MonkeyPatch) -> None:

@@ -95,8 +95,16 @@ def covers(configured: Sequence[Mount], wanted: Mount) -> bool:
 STANDARD_SOCKET = Path("/var/run/docker.sock")
 
 
+def colima_socket_path() -> Path:
+    """Colima's Docker socket: its default profile's, else the one older colima versions put in ``~/.colima``."""
+    default = Path.home() / COLIMA_PROFILE_DIR / "docker.sock"
+    return default if default.exists() else Path.home() / ".colima" / "docker.sock"
+
+
 class DockerService(BaseService):
     """Docker Container Engine (via Colima)."""
+
+    START_SECONDS = COLIMA_START_SECONDS
 
     def __init__(self) -> None:
         super().__init__("docker")
@@ -236,9 +244,7 @@ class DockerService(BaseService):
             + ", ".join(mount.spec for mount in self.configured_mounts())
             + "  (a container bind mount sees only these; add one with `aisland docker start --mount DIR[:w]`)"
         )
-        colima_socket_default = Path.home() / COLIMA_PROFILE_DIR / "docker.sock"
-        colima_socket_legacy = Path.home() / ".colima" / "docker.sock"
-        colima_socket = colima_socket_default if colima_socket_default.exists() else colima_socket_legacy
+        colima_socket = colima_socket_path()
         standard_socket = STANDARD_SOCKET
         console.echo(f"  Colima socket : {colima_socket} " + ("(present)" if colima_socket.exists() else "(missing)"))
         link_info = ""
@@ -254,13 +260,8 @@ class DockerService(BaseService):
 
     def configure_socket(self) -> None:
         """Ensure the Docker client is pointing to the standard /var/run/docker.sock."""
-        # Colima socket path
-        colima_socket = Path.home() / COLIMA_PROFILE_DIR / "docker.sock"
+        colima_socket = colima_socket_path()
         standard_socket = STANDARD_SOCKET
-
-        if not colima_socket.exists():
-            # Fallback for older colima versions/custom profiles
-            colima_socket = Path.home() / ".colima" / "docker.sock"
 
         if not colima_socket.exists():
             failures.warn(f"  - Warning: Colima socket not found at {colima_socket}")
@@ -308,17 +309,20 @@ class DockerService(BaseService):
                 "    (You may need to manually run: sudo ln -s " + str(colima_socket) + " /var/run/docker.sock)"
             )
 
+    def wipes(self) -> str:
+        return "the Colima VM, with every container, image and volume in it"
+
     def reset(self) -> None:
-        """Factory reset Colima (wipes all containers/images)."""
-        if console.confirm("Are you sure you want to delete ALL Docker data (containers, images, volumes)?"):
-            if self.is_running():
-                self.stop()
-            console.echo("Deleting Colima instance...")
-            try:
-                subprocess.check_call(["colima", "delete"], timeout=COLIMA_STOP_SECONDS)
-                console.echo("Docker (Colima) reset complete.")
-            except (subprocess.CalledProcessError, subprocess.TimeoutExpired) as e:
-                failures.report(f"Error resetting Docker (Colima): {e}")
+        """Factory reset Colima (wipes all containers/images). The command asked already, naming what goes
+        (:meth:`wipes`, in `aisland docker reset` and `aisland services reset`), so this asks nothing more."""
+        if self.is_running():
+            self.stop()
+        console.echo("Deleting Colima instance...")
+        try:
+            subprocess.check_call(["colima", "delete"], timeout=COLIMA_STOP_SECONDS)
+            console.echo("Docker (Colima) reset complete.")
+        except (subprocess.CalledProcessError, subprocess.TimeoutExpired) as e:
+            failures.report(f"Error resetting Docker (Colima): {e}")
 
 
 #: Where a Linux machine's Docker Engine comes from: the distribution's packages, installed by root, never by aisland.
@@ -338,11 +342,7 @@ class LinuxDockerService(BaseService):
 
     def is_running(self) -> bool:
         """Whether the engine answers — ``docker info``'s exit code (a client without a running daemon fails)."""
-        try:
-            result = subprocess.run(["docker", "info"], capture_output=True, text=True, timeout=30)
-        except (OSError, subprocess.TimeoutExpired):
-            return False
-        return result.returncode == 0
+        return probe.succeeds(["docker", "info"])
 
     def launch(self, background: bool = True, mounts: Sequence[str] = (), **kwargs: object) -> None:
         """Check that the engine runs; refuse, naming how to fix it, when it is missing or stopped."""
@@ -386,6 +386,9 @@ class LinuxDockerService(BaseService):
         )
         if not running:
             console.echo("  Start with    : sudo systemctl start docker")
+
+    def wipes(self) -> str:
+        return "nothing: aisland refuses to wipe the system's Docker engine"
 
     def reset(self) -> None:
         raise AislandError(

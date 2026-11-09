@@ -1,6 +1,6 @@
 """Everything that talks to Jenkins reaches it on the port it runs on.
 
-Jenkins starts on 9080 unless `--port` says otherwise (`aisland jenkins start --port 9081`). The safe restart, the
+Jenkins starts on 9080 unless `--port` says otherwise (`aisland jenkins start --port 9081`). The
 Jenkinsfile validation of `aisland jenkins scaffold`, the nightly report and the SwiftBar menu's links all asked
 `localhost:9080` whatever port Jenkins ran on. They now ask `JenkinsService.url()`: the running Jenkins' port, else
 `JenkinsService.DEFAULT_PORT`, the one place the number is written.
@@ -8,7 +8,6 @@ Jenkinsfile validation of `aisland jenkins scaffold`, the nightly report and the
 
 from __future__ import annotations
 
-import urllib.request
 from pathlib import Path
 from typing import Any, List, Optional
 
@@ -25,19 +24,6 @@ def on_9081(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     monkeypatch.setattr(JenkinsService, "get_ports", lambda self: [9081])
 
 
-@pytest.fixture
-def requested(monkeypatch: pytest.MonkeyPatch) -> List[str]:
-    """Every URL opened, refused as if nothing answered."""
-    urls: List[str] = []
-
-    def urlopen(request: Any, timeout: float = 0) -> Any:
-        urls.append(request.full_url if isinstance(request, urllib.request.Request) else str(request))
-        raise OSError("nothing answers")
-
-    monkeypatch.setattr(urllib.request, "urlopen", urlopen)
-    return urls
-
-
 def test_the_url_is_the_running_port_else_the_default(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     monkeypatch.setattr(paths, "data_dir", lambda: tmp_path)
     monkeypatch.setattr(JenkinsService, "get_ports", lambda self: [])
@@ -50,28 +36,6 @@ def test_the_url_is_the_running_port_else_the_default(monkeypatch: pytest.Monkey
 def test_info_names_the_running_port(on_9081: None, capsys: pytest.CaptureFixture[str]) -> None:
     JenkinsService().info()
     assert "  URL           : http://localhost:9081" in capsys.readouterr().out
-
-
-@pytest.mark.usefixtures("empty_workspace")
-def test_the_safe_restart_asks_the_running_jenkins(
-    on_9081: None, requested: List[str], monkeypatch: pytest.MonkeyPatch
-) -> None:
-    """Nothing answers, so the restart falls back to stopping and launching Jenkins: recorded, never run — a launch
-    needs Jenkins' WAR, which a clone of aisland alone (GitHub CI's) has not downloaded, and this machine's Jenkins
-    is no test's to restart."""
-    monkeypatch.setattr(JenkinsService, "is_running", lambda self: True)
-    fallback: List[str] = []
-    monkeypatch.setattr(JenkinsService, "stop", lambda self: fallback.append("stop"))
-    monkeypatch.setattr(
-        JenkinsService, "launch", lambda self, background=False: fallback.append(f"launch {background}")
-    )
-    service = JenkinsService()
-    (service.service_data_dir / "secrets").mkdir(parents=True)
-    (service.service_data_dir / "secrets" / "initialAdminPassword").write_text("pw\n")
-    service.safe_restart()
-    local = [url for url in requested if "localhost" in url]
-    assert local and all(url.startswith("http://localhost:9081/") for url in local)
-    assert fallback == ["stop", "launch True"]
 
 
 def test_the_nightly_report_links_the_running_jenkins(on_9081: None, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -101,8 +65,8 @@ def test_a_launch_with_no_port_takes_the_one_jenkins_last_ran_on(
     monkeypatch.setattr(paths, "data_dir", lambda: tmp_path)
     monkeypatch.setattr(JenkinsService, "get_ports", lambda self: [])
     monkeypatch.setattr(jenkins.supervisor, "get_registered_port", lambda name: registered)
-    for name in ("setup", "check_credentials_and_print_instructions"):
-        monkeypatch.setattr(JenkinsService, name, lambda self, *args: None)
+    monkeypatch.setattr(JenkinsService, "setup", lambda self: True)
+    monkeypatch.setattr(JenkinsService, "check_credentials_and_print_instructions", lambda self, *args: None)
     monkeypatch.setattr(JenkinsService, "java_asking", lambda self: Path("/usr/bin/java"))
     monkeypatch.setattr(jenkins, "get_workspace_root", lambda: tmp_path)
     started: List[Any] = []

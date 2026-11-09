@@ -13,6 +13,7 @@ from __future__ import annotations
 import asyncio
 import json
 import subprocess
+from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 import pytest
@@ -20,6 +21,7 @@ from mcp.client import Client
 
 from aisland import server
 from aisland.tunnel import host as tunnel_mod
+from aisland.tunnel import state as tunnel_state
 
 
 def _result(name: str, args: Optional[Dict[str, Any]] = None) -> Any:
@@ -91,9 +93,31 @@ def test_a_start_runs_the_start_command_and_answers_what_it_printed(
     assert commands.calls == [line]
 
 
-def test_a_start_waiting_for_a_sign_in_answers_the_code_to_hand_over(commands: _Commands) -> None:
-    commands.stdout = json.dumps({"pending_signin": {"url": "https://github.com/login/device", "code": "AB12-CD34"}})
-    assert _call("tunnel_start")["pending_signin"]["code"] == "AB12-CD34"
+def test_a_start_on_a_machine_with_no_account_answers_the_sign_in_command(
+    commands: _Commands, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """What `aisland tunnel start --json` prints on a machine holding no account — the real start's payload, never a
+    shape the command does not print: nothing started, and the command the person runs to sign in."""
+    monkeypatch.setenv(tunnel_state.TUNNEL_HOME_ENV, str(tmp_path / "tunnel"))
+    monkeypatch.setattr(tunnel_mod.binary, "install_cli", lambda tarball=None: tmp_path / "code")
+    monkeypatch.setattr(tunnel_mod, "signed_in", lambda: None)
+    monkeypatch.setattr(tunnel_mod.subprocess, "Popen", lambda *a, **k: pytest.fail("a tunnel was spawned"))
+    printed = tunnel_mod.start(provider="github", sign_in=False)  # what `--json` makes of it
+    commands.stdout = json.dumps(printed)
+    answer = _call("tunnel_start", {"provider": "github"})
+    assert answer["signin_required"] is True
+    assert answer["command"] == "aisland tunnel login --provider github"
+    assert answer["running"] is False
+
+
+def test_a_start_whose_tunnel_asks_for_a_sign_in_answers_the_code_to_hand_over(
+    commands: _Commands, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """The started tunnel's own log asks for a device sign-in: the payload `start` reads from it reaches the client."""
+    log = "To grant access to the server, please log into https://github.com/login/device and use code AB12-CD34\n"
+    printed = {"running": True, **tunnel_mod._scan_log(log)}
+    commands.stdout = json.dumps(printed)
+    assert _call("tunnel_start")["pending_signin"] == {"url": "https://github.com/login/device", "code": "AB12-CD34"}
 
 
 def test_a_stop_runs_the_stop_command(commands: _Commands) -> None:

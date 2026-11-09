@@ -56,6 +56,9 @@ class _Fake:
     def reset(self) -> None:
         self.calls.append(("reset", self.name))
 
+    def wipes(self) -> str:
+        return f"{self.name}'s data"
+
 
 @pytest.fixture
 def calls(monkeypatch: pytest.MonkeyPatch) -> List[Tuple[str, ...]]:
@@ -111,6 +114,21 @@ def test_reset_asks_first_and_wipes_nothing_on_no(calls: List[Tuple[str, ...]]) 
     assert calls == [("reset", "server"), ("reset", "engine")]
 
 
+def test_the_one_reset_question_names_each_service_and_what_it_deletes(calls: List[Tuple[str, ...]]) -> None:
+    """One yes resets several services, the container engine among them: the question says which, and what goes."""
+    result = _run("reset", input="n\n")
+    assert "Stop these services and delete:\n  server: server's data\n  engine: engine's data\nGo on?" in result.output
+    assert calls == []
+    assert _run("reset", "-y").exit_code == 0
+    assert calls == [("reset", "server"), ("reset", "engine")]
+
+
+def test_resetting_the_container_engine_says_it_deletes_every_container(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr("aisland.services.docker.platform.system", lambda: "Darwin")
+    question = registry.reset_question(registry.ENTRIES, ["docker"])
+    assert "  docker: the Colima VM, with every container, image and volume in it" in question
+
+
 # --- with names ---------------------------------------------------------------------------------------------------
 
 
@@ -151,6 +169,23 @@ def test_a_service_that_fails_among_several_is_reported_and_the_others_still_sta
     assert result.exit_code == 1
     assert "Error: engine: the Docker engine is not running" in result.output
     assert calls == [("start", "server")]
+
+
+def test_a_reset_that_fails_among_several_is_reported_and_the_others_are_still_reset(
+    calls: List[Tuple[str, ...]], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """On Linux the system's Docker engine refuses a reset: the services before it in the run are still reset."""
+
+    def refuse(self: _Fake) -> None:
+        if self.name == "server":
+            raise click.ClickException("aisland does not wipe the system's Docker engine")
+        calls.append(("reset", self.name))
+
+    monkeypatch.setattr(_Fake, "reset", refuse)
+    result = _run("reset", "-y")
+    assert result.exit_code == 1
+    assert "Error: server: aisland does not wipe the system's Docker engine" in result.output
+    assert calls == [("reset", "engine")]
 
 
 def test_a_service_named_alone_fails_as_itself(calls: List[Tuple[str, ...]], monkeypatch: pytest.MonkeyPatch) -> None:

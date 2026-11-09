@@ -15,6 +15,7 @@ import pytest
 
 from aisland import paths
 from aisland.ci import jenkins_job_config as job_config
+from aisland.errors import AislandError
 from aisland.services import base, jenkins_jobs, jenkins_settings
 from aisland.services.jenkins import JenkinsService
 
@@ -100,3 +101,40 @@ def test_a_remote_url_reaches_the_job_xml_escaped_and_is_printed_without_its_tok
     assert ET.fromstring(xml).find(".//remote").text == url  # type: ignore[union-attr]
     assert jenkins_jobs._without_userinfo(url) == "https://example.com/acme/models.git?a=1&b=<2>"
     assert jenkins_jobs._without_userinfo("git@github.com:acme/models.git") == "git@github.com:acme/models.git"
+
+
+@pytest.mark.parametrize("name", ["../outside", "/tmp/elsewhere", "models/../..", "..", ".", ""])
+def test_removing_a_pipeline_refuses_a_name_that_is_no_job_folder(tmp_path: Path, name: str) -> None:
+    """`aisland jenkins remove <project>` and `jenkins reset --project` remove the job's folder whole: a name with a
+    `/`, a `..` or an absolute path would reach a folder outside the Jenkins home, so only a plain folder name is
+    taken."""
+    home = tmp_path / "home"
+    (home / "jobs" / "models").mkdir(parents=True)
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    (outside / "keep.txt").write_text("mine")
+    with pytest.raises(AislandError, match="is no Jenkins job name"):
+        jenkins_jobs.remove_pipelines(home, name)
+    assert (outside / "keep.txt").read_text() == "mine"
+    assert (home / "jobs" / "models").is_dir()
+
+
+def test_removing_a_pipeline_never_follows_a_job_folder_that_links_out(tmp_path: Path) -> None:
+    home = tmp_path / "home"
+    (home / "jobs").mkdir(parents=True)
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    (outside / "config.xml").write_text("<project/>")
+    (home / "jobs" / "models").symlink_to(outside)
+    with pytest.raises(AislandError, match="is a link out of"):
+        jenkins_jobs.remove_pipelines(home, "models")
+    assert (outside / "config.xml").exists()
+
+
+def test_removing_one_pipeline_removes_its_folder_only(tmp_path: Path) -> None:
+    home = tmp_path / "home"
+    for job in ("models", "tools"):
+        (home / "jobs" / job).mkdir(parents=True)
+        (home / "jobs" / job / "config.xml").write_text("<project/>")
+    jenkins_jobs.remove_pipelines(home, "models")
+    assert sorted(path.name for path in (home / "jobs").iterdir()) == ["tools"]

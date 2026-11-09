@@ -32,14 +32,17 @@ argument schema.
 
 import functools
 import json
+import os
+import signal
 import subprocess
 import sys
 from dataclasses import asdict
+from pathlib import Path
 from typing import Callable, Dict, List, Literal, Optional, ParamSpec, TypeVar, cast
 
 import click
 
-from aisland import console, doctor, editor, locations
+from aisland import console, doctor, editor
 from aisland.ci import stats_report
 from aisland.errors import AislandError
 from aisland.services import registry as service_registry
@@ -59,13 +62,21 @@ except ImportError:  # the [mcp] extra is not installed: main() says so
     MCPServer = None  # type: ignore[assignment,misc]
 
 MISSING_EXTRA = "Error: aisland-mcp needs the mcp extra: pip install 'aisland[mcp]'"
+#: The refusal when the SDK keeps its request handlers elsewhere: the one private attribute aisland reaches into.
+UNSUPPORTED_SDK = (
+    "aisland-mcp cannot drop the MCP SDK's resources and prompts handlers: this mcp release has no "
+    "`MCPServer._lowlevel_server._request_handlers` table. Install a release aisland supports: pip install 'mcp>=2.0,<3'"
+)
 
 #: What ``editor_unset`` forgets: the theme, one colour, or both colours and the area.
 EditorPart = Literal["theme", "background", "foreground", "colors"]
 #: The accounts ``aisland tunnel start`` signs in with (its ``--provider`` choices).
 TunnelProvider = Literal["github", "microsoft"]
-#: How long a service command may take: Jenkins' start waits for its readiness probe.
+#: How long a command a tool runs may take at least; a service whose start may take longer (a first Colima start
+#: boots its VM) is given its own limit, ``START_SECONDS`` (twice that for a restart: a stop, then a start).
 SERVICE_TIMEOUT = 300
+#: How long a command past its limit has to end after SIGTERM before its whole process group is killed.
+STOP_GRACE_SECONDS = 10
 
 INSTRUCTIONS = """\
 aisland manages this machine's development workspace: its environment checks, test statistics, project sources,
@@ -77,7 +88,9 @@ Read first: `doctor` (what is broken and the command that fixes it), `services_s
 `editor_colors` list the choices, `editor_set_theme` / `editor_set_color` / `editor_unset` apply them.
 `service_start` / `service_stop` / `service_restart` take any service of the workspace by name. `tunnel_status` and
 `tunnel_list` read the tunnel and the workspaces opened through it; `tunnel_start` / `tunnel_stop` bring it up or down
-(a sign-in still pending is answered with the code to hand the user). `track_status` says which projects the root
+(a machine holding no account yet answers `signin_required` with the `aisland tunnel login` command the person runs
+in a terminal; a sign-in the started tunnel asks for answers `pending_signin` with the code to hand the user).
+`track_status` says which projects the root
 repository records the commits of; `aisland workspace track set|unset` change it, as commands the person runs.
 Setup, cleaning and resets are commands the person runs themselves (`aisland setup`, `aisland clean <project>`).
 """
@@ -119,29 +132,61 @@ def _choice(choice: editor.EditorChoice) -> Dict[str, object]:
     return asdict(choice)
 
 
-def _run_aisland(args: List[str]) -> "subprocess.CompletedProcess[str]":
+def _run_as_a_group(command: List[str], cwd: Path, timeout: float) -> "subprocess.CompletedProcess[str]":
+    """Run ``command`` in a session of its own, its output captured and its stdin empty; past ``timeout`` seconds its
+    whole process group is ended — SIGTERM, then SIGKILL after :data:`STOP_GRACE_SECONDS` — so nothing it started
+    (`colima start`'s VM helpers, a download) runs on unseen, and :class:`subprocess.TimeoutExpired` is raised."""
+    process = subprocess.Popen(
+        command,
+        cwd=cwd,
+        stdin=subprocess.DEVNULL,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+        start_new_session=True,
+    )
+    try:
+        stdout, stderr = process.communicate(timeout=timeout)
+    except subprocess.TimeoutExpired:
+        _end_group(process)
+        raise
+    return subprocess.CompletedProcess(command, process.returncode, stdout, stderr)
+
+
+def _end_group(process: "subprocess.Popen[str]") -> None:
+    """End ``process``'s group — SIGTERM, then SIGKILL after :data:`STOP_GRACE_SECONDS` — and reap it, never waiting
+    on its pipes: a descendant in a session of its own may hold them open (and stay), and a group left with only the
+    reaped-to-be leader may refuse the signal (EPERM on macOS)."""
+    for signum in (signal.SIGTERM, signal.SIGKILL):  # the second for whatever of the group outlived the first
+        try:
+            os.killpg(process.pid, signum)
+        except OSError:  # the group has gone, or holds only the exited leader
+            pass
+        try:
+            process.wait(timeout=STOP_GRACE_SECONDS)
+        except subprocess.TimeoutExpired:
+            pass
+    for pipe in (process.stdout, process.stderr):
+        if pipe is not None:
+            pipe.close()
+
+
+def _run_aisland(args: List[str], timeout: float = SERVICE_TIMEOUT) -> "subprocess.CompletedProcess[str]":
     """Run ``aisland ARGS`` with this interpreter, at the workspace root, its output captured.
 
     ``-P`` keeps the root's ``aisland/`` checkout off ``sys.path`` (it would shadow the package); the root is the
     working folder because aisland installed from a wheel finds its workspace from there. Its stdin is empty, never
     the server's: that is the client's JSON-RPC stream, and a question the command asked (or a git credential
     prompt) would eat the protocol's bytes. A command that needs an answer gets none and refuses; one still running
-    after :data:`SERVICE_TIMEOUT` seconds is a :class:`ToolRefusal` saying so.
+    after ``timeout`` seconds is stopped with every process it started (:func:`_run_as_a_group`), and the tool
+    refuses saying so.
     """
     try:
-        return subprocess.run(
-            [sys.executable, "-P", "-m", "aisland.cli", *args],
-            cwd=get_workspace_root(),
-            stdin=subprocess.DEVNULL,
-            capture_output=True,
-            text=True,
-            timeout=SERVICE_TIMEOUT,
-            check=False,
-        )
+        return _run_as_a_group([sys.executable, "-P", "-m", "aisland.cli", *args], get_workspace_root(), timeout)
     except subprocess.TimeoutExpired as exc:
         raise ToolRefusal(
-            f"aisland {' '.join(args)} was still running after {SERVICE_TIMEOUT} s and was stopped; run it in a "
-            "terminal to see where it waits"
+            f"aisland {' '.join(args)} was still running after {timeout:g} s, so it was stopped, with every process "
+            "it had started; run it in a terminal to see where it waits"
         ) from exc
 
 
@@ -157,7 +202,9 @@ def _service_command(name: str, action: str) -> Dict[str, object]:
     ``aisland NAME`` shortcut: a project's service named like an aisland command has none, and the command would run."""
     entry = _service_entry(name)
     args = ["services", action, *(["--background"] if action != "stop" and entry.takes_background else []), name]
-    result = _run_aisland(args)
+    # A service's own start limit, when it has one longer than the default (a project's class may have none).
+    limit = max(SERVICE_TIMEOUT, float(getattr(entry.make(), "START_SECONDS", SERVICE_TIMEOUT)))
+    result = _run_aisland(args, timeout=2 * limit if action == "restart" else limit)
     output = "\n".join(part.strip() for part in (result.stdout, result.stderr) if part.strip())
     if result.returncode != 0:
         raise ToolRefusal(output or f"aisland {' '.join(args)} exited with {result.returncode}")
@@ -177,9 +224,8 @@ def tool_doctor() -> Dict[str, object]:
 def tool_tests_report(project: str, days: int = stats_report.DEFAULT_WINDOW_DAYS) -> Dict[str, object]:
     """A project's test runs over the last `days` days (`aisland tests report PROJECT --json`): its fast run
     against the 5-minute budget, the slowest tests, the tests that failed, and what to move between the runs."""
-    if not (locations.workspace_root() / project / "pyproject.toml").is_file():
-        raise ToolRefusal(f"no project {project!r} in the workspace {locations.workspace_root()}")
-    report: Dict[str, object] = stats_report.build_report(project, days=days).to_dict()
+    folder = stats_report.project_folder(project)
+    report: Dict[str, object] = stats_report.build_report(project, days=days, project_dir=folder).to_dict()
     return report
 
 
@@ -291,10 +337,12 @@ def _tunnel_command(args: List[str]) -> Dict[str, object]:
 
 def tool_tunnel_start(name: Optional[str] = None, provider: Optional[TunnelProvider] = None) -> Dict[str, object]:
     """Bring up a remote-editing tunnel to THIS machine (`aisland tunnel start --json`): its status, with `url` once
-    it is up. When the account still needs a sign-in it answers `pending_signin` (`url`, `code`) at once instead of
-    waiting — hand the code to the user, then ask `tunnel_status`. A tunnel already running is reported, never a
-    second started. `name` defaults to $WORKSPACE, else the hostname; `provider` is the account to sign in with,
-    remembered afterwards. (A VS Code CLI archive of one's own, `aisland tunnel start --cli`, is installed and run
+    it is up. A machine holding no account yet starts nothing and answers `signin_required: true` with `command`
+    (`aisland tunnel login [--provider …]`): the sign-in shows a device code in a terminal, so hand the person that
+    command, then call this again. When the started tunnel's own log asks for a sign-in, it answers `pending_signin`
+    (`url`, `code`) at once instead of waiting — hand the code to the user, then ask `tunnel_status`. A tunnel already
+    running is reported, never a second started. `name` defaults to $WORKSPACE, else the hostname; `provider` is the
+    account to sign in with, remembered afterwards. (A VS Code CLI archive of one's own, `aisland tunnel start --cli`, is installed and run
     unchecked, so it is a person's choice at the command line, never a tool's argument.)"""
     args = ["start"]
     for flag, value in (("--name", name), ("--provider", provider)):
@@ -367,6 +415,11 @@ def _build_server() -> "Optional[MCPServer]":
     if MCPServer is None:
         return None
     built = MCPServer("aisland", instructions=INSTRUCTIONS)
+    # The SDK offers no way to leave a capability out, so its private table is edited — checked first, so a release
+    # that renames it fails saying so, never with an AttributeError.
+    handlers = getattr(getattr(built, "_lowlevel_server", None), "_request_handlers", None)
+    if not isinstance(handlers, dict):
+        raise AislandError(UNSUPPORTED_SDK)
     for request_type in (
         mcp_types.ListResourcesRequest,
         mcp_types.ListResourceTemplatesRequest,
@@ -376,7 +429,7 @@ def _build_server() -> "Optional[MCPServer]":
         mcp_types.ListPromptsRequest,
         mcp_types.GetPromptRequest,
     ):
-        built._lowlevel_server._request_handlers.pop(request_type.model_fields["method"].default, None)
+        handlers.pop(request_type.model_fields["method"].default, None)
     reading = ToolAnnotations(read_only_hint=True)
     changing = ToolAnnotations(read_only_hint=False, destructive_hint=False)
     stopping = ToolAnnotations(read_only_hint=False, destructive_hint=True)

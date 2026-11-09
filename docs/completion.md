@@ -6,7 +6,7 @@ How a workspace shell gets tab-completion for `aisland` and the other command-li
 into a temporary file and checks that a non-interactive shell sourcing it runs no program. The command works on a
 workspace: it writes completion for the tools of the workspace's virtual environment.
 
-## Shell completion
+## Turning it on
 
 Enable it by starting a shell that sources `project.bashrc`:
 
@@ -28,7 +28,7 @@ not typed yet); a command group offers its commands.
 
 After adding, renaming, or removing a CLI, refresh it with **`aisland completion
 install`** — a one-second command, not a re-provision. See
-[Shell Completion](#shell-completion-aisland-completion) below for the three CLI
+[Keeping it current](#keeping-it-current-aisland-completion-install) below for the three CLI
 families it covers, the `--target-rc` option, and how stale blocks are pruned.
 
 Click refuses to emit a bash script for **bash < 4.4**, and macOS ships bash
@@ -36,7 +36,7 @@ Click refuses to emit a bash script for **bash < 4.4**, and macOS ships bash
 stock-bash machine `aisland` completion is skipped rather than erroring. Install
 a modern bash (`brew install bash`) to get it.
 
-## Shell Completion (`aisland completion`)
+## Keeping it current (`aisland completion install`)
 
 Installs tab-completion for **every** CLI in the workspace in one command:
 

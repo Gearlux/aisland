@@ -17,6 +17,7 @@ import zipfile
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple
 
+from aisland import atomic
 from aisland.errors import AislandError
 from aisland.venv import venv_dir
 from aisland.wheels import bundle as wheels_bundle
@@ -77,7 +78,7 @@ def write_wheels(folder: Path, staged: List[Path], files: Dict[str, str]) -> Non
     for wheel in staged:
         shutil.copy2(wheel, folder / wheel.name)
     for name, text in files.items():
-        (folder / name).write_text(text, encoding="utf-8")
+        atomic.write_text(folder / name, text)
 
 
 def read_install_choices(path: Path) -> Dict[str, bool]:

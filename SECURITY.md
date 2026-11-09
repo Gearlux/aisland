@@ -3,20 +3,24 @@
 ## Reporting a vulnerability
 
 Report it privately through GitHub: open the repository's **Security** tab and choose **Report a vulnerability**.
-Please don't open a public issue for it. A report is answered within a week, and a fix is released as soon as it is
+That is the one channel for a report; please don't open a public issue for it. A report is answered within a week, and a fix is released as soon as it is
 ready, credited to you unless you would rather not be named.
 
 ## Supported versions
 
-Only the latest release gets security fixes. aisland follows [Semantic Versioning](https://semver.org/), so moving
-to the latest release within a major version breaks nothing listed in [docs/stability.md](docs/stability.md).
+Only the latest release gets security fixes. aisland follows [Semantic Versioning](https://semver.org/) and is
+before 1.0: a patch release (0.1.0 → 0.1.1) changes nothing [docs/stability.md](docs/stability.md) lists as kept, but
+a minor release (0.1 → 0.2) may, and its CHANGELOG entry then says what changed and what to do about it. A fix is
+released as a patch of the latest minor release.
 
 ## What aisland guards
 
 These are the promises a report can hold aisland to:
 
 - **Downloads are checked.** Every program aisland downloads (the Jenkins WAR and its plugin manager, the VS Code CLI,
-  process-compose on Linux) is installed only when its SHA-256 matches a pinned value or the one its publisher lists.
+  and on Linux process-compose and Node.js) is installed only when its SHA-256 matches a pinned value or the one its
+  publisher lists. The one exception is Jenkins' plugins: the plugin manager fetches their current versions from the
+  Jenkins update center, and aisland pins neither their versions nor their digests.
 - **Nothing is installed with `sudo` unasked.** A system tool is installed only after you agree to it.
 - **Services stay on this machine.** Jenkins listens on `127.0.0.1` only and keeps its login and CSRF protection.
   aisland names the file that holds the initial admin password, and never prints the password itself.

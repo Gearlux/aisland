@@ -49,6 +49,7 @@ def recorded_init(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytes
     """`init_pipelines` over a workspace of one project (`app`, with both Jenkinsfiles), Jenkins recorded."""
     workspace = tmp_path / "ws"
     (workspace / "app").mkdir(parents=True)
+    (workspace / "app" / "pyproject.toml").write_text('[project]\nname = "app"\n')
     (workspace / "app" / "Jenkinsfile").write_text("pipeline {}\n")
     (workspace / "app" / "Jenkinsfile.local").write_text("pipeline {}\n")
     monkeypatch.setattr(jenkins_jobs, "get_workspace_root", lambda: workspace)
@@ -66,7 +67,7 @@ def recorded_init(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytes
         def _state() -> str:
             return "config.xml present" if config.exists() else "config.xml absent"
 
-        monkeypatch.setattr(svc, "setup", lambda: None)
+        monkeypatch.setattr(svc, "setup", lambda: True)
         monkeypatch.setattr(svc, "setup_plugins", lambda: False)
         monkeypatch.setattr(svc, "is_running", lambda: running)
         monkeypatch.setattr(svc, "launch", lambda port=9080, background=False: calls.append(f"launch ({_state()})"))

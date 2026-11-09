@@ -10,12 +10,12 @@
 is listed last: while its ``install:`` is true, it is installed in place of the project's folder, which then
 need not be there. The command run names each chosen wheel by its FILE: pip takes a wheel named
 by its file over PyPI's wheel of the same version, while a wheel it only finds through ``--find-links``
-loses to PyPI's (measured 2026-10-09 on recordstream 0.1.0a2, built from a checkout ahead of its release).
+loses to PyPI's (a pre-release built from a checkout ahead of what PyPI has would lose to PyPI's own).
 
     python wheels/install.py                 # the wheels marked install: true, then the project
     python wheels/install.py --all           # every wheel listed
     python wheels/install.py --needed        # the wheels the project needs
-    python wheels/install.py --only confluid,recordstream
+    python wheels/install.py --only models,tools
     python wheels/install.py --no-project    # the chosen wheels only (neither the folder nor the project's wheel)
     python wheels/install.py --reinstall     # reinstall the chosen wheels first (a rebuild keeps their version)
     python wheels/install.py --dry-run       # print the commands, run nothing

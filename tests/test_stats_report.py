@@ -406,3 +406,17 @@ def test_an_unknown_project_is_refused_by_name(cli_workspace: Path) -> None:
     result = CliRunner().invoke(main, ["tests", "report", "nosuch"])
     assert result.exit_code == 2
     assert f"no project 'nosuch' in the workspace {cli_workspace}" in result.output
+
+
+def test_a_submodule_is_found_at_its_path_not_its_name(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """`aisland tests report models` and the MCP tool read the project the workspace calls `models`, wherever its
+    folder is — never `<workspace>/models` joined from the name."""
+    (tmp_path / ".gitmodules").write_text(
+        '[submodule "models"]\n\tpath = libs/models\n\turl = https://example.com/acme/models.git\n'
+    )
+    (tmp_path / "libs" / "models").mkdir(parents=True)
+    (tmp_path / "libs" / "models" / "pyproject.toml").write_text(_PYPROJECT)
+    monkeypatch.setattr(locations, "workspace_root", lambda: tmp_path)
+    assert stats_report.project_folder("models") == tmp_path / "libs" / "models"
+    with pytest.raises(stats_report.UnknownProject, match=f"no project 'libs' in the workspace {tmp_path}"):
+        stats_report.project_folder("libs")

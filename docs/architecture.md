@@ -57,7 +57,7 @@ The subpackages are layers, and import-linter holds them (`[tool.importlinter]` 
   `pytest_stats`, `venv`, …) import no layer.
 - **`acyclic-inside`** — inside each subpackage the modules import one another without a cycle.
 - **`stdlib-only`** — `atomic`, `locations`, `plugins`, `pytest_stats`, `tunnel.shell`, `wheels.install` and
-  `wheels.unzip` import no third-party package: they run in every pytest start, or on a machine that has only Python.
+  `wheels.unzip` import no third-party package (tomlkit included): they run in every pytest start, or on a machine that has only Python.
 - **`runs-without-aisland`** — `tunnel.shell`, `wheels.install` and `wheels.unzip` import nothing of aisland: they
   are copied to and run where aisland is not installed (the remote end of a tunnel, a wheels zip).
 
@@ -223,3 +223,5 @@ mechanism that is replaced gets a new record, and the old one says which superse
 - [0071 — A diagnostic is a debug record `--debug` shows, never output (2026-10-30)](decisions/0071-a-diagnostic-is-a-debug-record-debug-shows-never-output.md)
 - [0077 — The CLI, the CI scaffold and the wheels run are split by what they do](decisions/0077-the-cli-the-ci-scaffold-and-the-wheels-run-are-split.md)
 - [0078 — Imports at the top, containers typed, one completion guard](decisions/0078-imports-at-the-top-containers-typed-one-completion-guard.md)
+- [0079 — TOML is written by tomlkit, and the release review's setup, wheels and CI fixes](decisions/0079-toml-is-written-by-tomlkit-and-the-release-reviews-setup-fixes.md)
+- [0080 — The release review's service, tunnel and MCP fixes](decisions/0080-the-release-reviews-service-tunnel-and-mcp-fixes.md)

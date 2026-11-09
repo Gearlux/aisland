@@ -54,6 +54,13 @@ aisland workspace mirror sync
     tags      pushed v0.4.0
 ```
 
+## After a wheels prune (2026-11-08)
+
+A prune rewrites the primary's history; a mirror's branch then sat on the old commits and the sync refused it with a
+merge that brought the stripped wheels back. A mirror's branch or tag on a commit the primary's prune record lists now
+receives the primary's commit, leased on the mirror's, and the record is copied too
+([0079](0079-toml-is-written-by-tomlkit-and-the-release-reviews-setup-fixes.md)); every other move stays refused.
+
 ## What you may change
 
 - `MIRRORED_BRANCHES` (the always-copied ones) and `_branches` in `aisland/workspace/mirrors.py`, with `docs/sources.md` and

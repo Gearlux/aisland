@@ -6,6 +6,10 @@ the decision records under [docs/decisions/](docs/decisions/), which it indexes.
 
 ## A checkout that runs the tests
 
+There are two ways to work on aisland, and they differ only in where the checkout sits.
+
+**A clone of its own** is enough to change aisland and run its tests:
+
 ```bash
 git clone https://github.com/Gearlux/aisland.git && cd aisland
 uv venv --seed .venv && uv pip install --python .venv/bin/python -e '.[dev]'
@@ -15,6 +19,15 @@ uv venv --seed .venv && uv pip install --python .venv/bin/python -e '.[dev]'
 
 A clone that no workspace lists works like an installed wheel: it finds no workspace of its own, and the tests run
 against folders they make themselves. The `dev` extra holds everything the gates and both test runs need.
+
+**A checkout inside a workspace** — the workspace lists it as a project in `.gitmodules` or `workspace.toml` — is
+the workspace's aisland: every `aisland` command works on that workspace, wherever you run it, and its state lives
+in the checkout. `setup.sh` bootstraps such a workspace from its root:
+
+```bash
+bash aisland/setup.sh      # the interpreter, the .venv, aisland editable, then `aisland setup -y`
+source project.bashrc      # activates .venv and exports .env
+```
 
 The gates CI runs, each from the checkout:
 
@@ -74,11 +87,18 @@ Never import inside a function to get round the order. A new top-level module go
 
 ## A release
 
-1. Changes go under `## [Unreleased]` in the [CHANGELOG](CHANGELOG.md) as they land.
-2. At release time, that section becomes `## [<version>] - <date>`, dated the day of the commit you tag, and
-   `pyproject.toml`'s `version` matches it. Until then the next version's heading reads `- Unreleased`.
-3. Pushing the tag `v<version>` runs `.github/workflows/release.yml`. It runs the gates and both test runs, checks
-   the tag against the version and the CHANGELOG's date against the tagged commit's, builds the package, checks it with `twine check --strict`,
-   tests the wheel in a clean venv, and publishes it to PyPI.
+Between releases the CHANGELOG's newest entry is the next release, `## [<version>] - Unreleased`, and
+`pyproject.toml`'s `version` is that version. Changes are listed under it as they land. Then:
+
+1. Merge `dev/main` into `main`. The release workflow refuses a tag whose commit is not on `main`.
+2. On `main`, date the entry: `## [<version>] - YYYY-MM-DD`, the day of the commit you will tag. The workflow
+   compares it with that commit's date, so a heading dated ahead of time, or left `- Unreleased`, is refused.
+3. Tag that commit and push the tag: `git tag v<version> && git push origin v<version>`. This runs
+   `.github/workflows/release.yml`: it runs the gates and both test runs, checks the tag against the version, the
+   CHANGELOG's date and `main`, builds the package, checks it with `twine check --strict`, tests the wheel in a clean
+   venv, and publishes it to PyPI.
+4. Open the next entry, `## [<next version>] - Unreleased`, and set `pyproject.toml`'s `version` to it. The README's
+   links name the release's tag (`blob/v<version>/…`), so they move with the version; `tests/test_docs.py` checks
+   they match.
 
 What a release must keep working for its users is listed in [docs/stability.md](docs/stability.md).

@@ -20,9 +20,12 @@ from typing import Any, Dict, List, Optional
 import pytest
 from click.testing import CliRunner, Result
 
-from aisland import cli, locations
-from aisland.services import base, registry
+from aisland import cli, failures, locations, paths
+from aisland.services import base, registry, supervisor
+from aisland.services.declared import DeclaredService
+from aisland.toml_places import Where
 from aisland.workspace import selection
+from aisland.workspace.discovery import Service
 
 NOTES = """\
     [project]
@@ -56,6 +59,7 @@ def supervised(monkeypatch: pytest.MonkeyPatch) -> List[Dict[str, Any]]:
         env: Optional[dict] = None,
         background: bool = False,
         readiness: Optional[Dict[str, Any]] = None,
+        port: Optional[int] = None,
     ) -> None:
         calls.append({"start": self.name, "cmd": cmd, "background": background, "readiness": readiness})
 
@@ -194,3 +198,19 @@ def test_a_service_named_like_an_aisland_command_is_reached_through_aisland_serv
     shown = _run("workspace", "show")
     assert shown.exit_code == 0
     assert "Warning: service 'setup' shares its name with the command `aisland setup`" in shown.stderr
+
+
+def test_a_declared_port_without_a_ready_path_is_still_checked_free_first(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """`port = 8123` alone: a port another process holds is refused before anything is registered — the service would
+    otherwise crash-loop through its restarts with only a log line."""
+    monkeypatch.setattr(paths, "data_dir", lambda: tmp_path)
+    monkeypatch.setattr(supervisor, "get_process", lambda name: None)
+    monkeypatch.setattr(supervisor, "port_in_use", lambda port: 4242 if port == 8123 else None)
+    monkeypatch.setattr(supervisor, "register_process", lambda *a, **k: pytest.fail("registered"))
+    where = Where(tmp_path / "pyproject.toml", 1)
+    service = DeclaredService(Service("notes", "tools", where, ("notes-server",), port=8123))
+    service.launch(background=True)
+    assert "Error: port 8123 is already in use by PID 4242" in capsys.readouterr().err
+    assert failures.reported() >= 1

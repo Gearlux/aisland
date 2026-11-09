@@ -13,6 +13,7 @@ import hashlib
 import json
 import os
 import re
+import signal
 import subprocess
 import sys
 import zipfile
@@ -39,11 +40,15 @@ _ENTRY_POINTS = "(its entry points)"
 #: writes ``{"failures": {module: {"error", "missing", "frames"}}, "imported": [module, ...]}``.
 #: ``missing`` is the module an ``ImportError`` names (``recordstream.draws``), which says whose release
 #: lacks it; ``frames`` the files of the traceback, outermost first, which say whose code raised it. A package that fails is reported alone; the modules under it cannot be reached.
+#: Each module's name is written to ``<output>.progress`` before it is imported, so a run that hangs names the module.
 _IMPORT_SCRIPT = """\
 import importlib, json, pkgutil, sys, traceback
 failures, imported, seen = {}, [], set()
+progress = open(sys.argv[1] + ".progress", "w")
 def attempt(name):
     seen.add(name)
+    progress.write(name + "\\n")
+    progress.flush()
     try:
         module = importlib.import_module(name)
     except BaseException as error:  # an import may raise anything, SystemExit included
@@ -71,6 +76,12 @@ with open(sys.argv[1], "w") as handle:
 """
 
 
+#: How long the import of every module may take, in seconds: generous — a machine-learning framework's first import
+#: takes tens of seconds and a project has hundreds of modules — but a module that waits forever (a prompt, a lock, a
+#: network call at import) must not hold the run.
+IMPORT_SECONDS = 900.0
+
+
 #: What an empty venv's check returns: the install's error (``None`` when it installed), the modules that failed to
 #: import, the modules that imported.
 CheckResult = Tuple[Optional[str], Dict[str, ModuleFailure], List[str]]
@@ -80,7 +91,7 @@ def _is_metadata(member: str) -> bool:
     return member.split("/", 1)[0].endswith((".dist-info", ".data"))
 
 
-def _is_shim(source: str) -> bool:
+def is_shim(source: str) -> bool:
     """An ``__init__.py`` that only extends its ``__path__`` — the parent package lives elsewhere."""
     try:
         body = ast.parse(source).body
@@ -105,7 +116,7 @@ def wheel_modules(wheel: Path) -> List[str]:
                 continue
             parts = member.split("/")
             if parts[-1] == "__init__.py":
-                if not _is_shim(archive.read(member).decode("utf-8", errors="replace")):
+                if not is_shim(archive.read(member).decode("utf-8", errors="replace")):
                     real.add(".".join(parts[:-1]))
             elif len(parts) == 1 and member.endswith(".py"):
                 modules.add(member[: -len(".py")])
@@ -204,17 +215,59 @@ def _install_and_import(
     if installed.returncode != 0:
         return (installed.stderr.strip() or installed.stdout.strip()), {}, []
     result = scratch / "imports.json"
-    imported = subprocess.run(
+    # A session of its own, so a run past its limit is stopped with every process it started: one still holding the
+    # output pipes would keep the wait going. Being its own session it no longer gets the terminal's Ctrl-C, so an
+    # interrupted run stops it too before the interruption goes on.
+    run = subprocess.Popen(
         [str(python), "-c", _IMPORT_SCRIPT, str(result), *packages],
         cwd=scratch,
         env=env,
-        capture_output=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
         text=True,
+        start_new_session=True,
     )
+    try:
+        _out, err = run.communicate(timeout=IMPORT_SECONDS)
+    except subprocess.TimeoutExpired:
+        _stop(run)
+        progress = Path(f"{result}.progress")
+        started = progress.read_text().split() if progress.is_file() else []
+        hung = f"importing {started[-1]}" if started else "the import run"
+        return f"{hung} did not finish within {IMPORT_SECONDS:.0f} s; the run was stopped", {}, []
+    except BaseException:
+        _stop(run)
+        raise
     if not result.is_file():
-        return f"the import run ended without a result (exit {imported.returncode}):\n{imported.stderr.strip()}", {}, []
+        return f"the import run ended without a result (exit {run.returncode}):\n{err.strip()}", {}, []
     outcome: ImportRun = json.loads(result.read_text())
     return None, outcome["failures"], list(outcome["imported"])
+
+
+#: How long a stopped import run is waited for once killed, in seconds: a kill is never waited on without end.
+_STOP_SECONDS = 10.0
+
+
+def _stop(run: "subprocess.Popen[str]") -> None:
+    """Kill the import run's process group — the run itself when the group is gone or not ours to signal (macOS
+    answers EPERM for a group whose only member is a zombie leader) — and wait a bounded time for it."""
+    try:
+        os.killpg(run.pid, signal.SIGKILL)
+    except (ProcessLookupError, PermissionError):
+        try:
+            run.kill()
+        except ProcessLookupError:
+            pass
+    try:
+        run.communicate(timeout=_STOP_SECONDS)
+    except subprocess.TimeoutExpired:
+        for pipe in (run.stdout, run.stderr):
+            if pipe is not None:
+                pipe.close()
+        try:
+            run.wait(timeout=_STOP_SECONDS)
+        except subprocess.TimeoutExpired:
+            pass
 
 
 def owner_of(module: Optional[str], owners: Dict[str, str]) -> Optional[str]:

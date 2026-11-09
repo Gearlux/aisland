@@ -16,7 +16,7 @@ import xml.etree.ElementTree as ET
 from pathlib import Path
 from typing import TYPE_CHECKING, List, Optional
 
-from aisland import atomic, console, failures, gitcmd
+from aisland import atomic, console, failures, gitcmd, locations
 from aisland.ci import jenkins_job_config as job_config
 from aisland.errors import AislandError
 from aisland.services import jenkins_settings
@@ -34,7 +34,9 @@ def init_pipelines(service: "JenkinsService", project_name: Optional[str] = None
     pipeline job per ``Jenkinsfile.local``, its script embedded — the orchestrator over them, the nightly check
     (``local``), the dashboard and the workspace's properties; Jenkins is stopped while its files change."""
     home = service.service_data_dir
-    service.setup()
+    if not service.setup():
+        console.echo("No Jenkins pipelines were initialized: the download above failed.")
+        return
     # setup_plugins returns True if it actually installed/updated something
     plugins_changed = service.setup_plugins()
 
@@ -83,9 +85,8 @@ def _projects_to_seed(workspace_root: Path, project_name: Optional[str], local: 
         if local and not (project_path / "Jenkinsfile.local").exists():
             raise AislandError(f"Project '{project_name}' does not have a Jenkinsfile.local at its root.")
         return [project_path]
-    if local:
-        return [p for p in workspace_root.iterdir() if p.is_dir() and (p / "Jenkinsfile.local").exists()]
-    return [p for p in workspace_root.iterdir() if p.is_dir() and (p / "Jenkinsfile").exists()]
+    jenkinsfile = "Jenkinsfile.local" if local else "Jenkinsfile"
+    return [p for p in locations.project_folders(workspace_root) if (p / jenkinsfile).exists()]
 
 
 def _seed_project_job(home: Path, jobs_dir: Path, project_path: Path, local: bool) -> None:
@@ -228,6 +229,19 @@ def _create_nightly_check_job(home: Path) -> None:
     console.echo(f"  - Seeded nightly check job: {job_name}")
 
 
+def _job_folder(jobs_dir: Path, job_name: str) -> Path:
+    """``job_name``'s folder in ``jobs_dir``, refused unless the name is one plain folder name: the folder is removed
+    whole, so ``/``, ``..`` or an absolute path must never reach a folder outside the Jenkins home's jobs."""
+    if not job_name or job_name in (".", "..") or Path(job_name).name != job_name:
+        raise AislandError(
+            f"'{job_name}' is no Jenkins job name: give the job's folder name, as `jenkins init` made it."
+        )
+    folder = jobs_dir / job_name
+    if folder.resolve().parent != jobs_dir.resolve():
+        raise AislandError(f"Jenkins job '{job_name}' is a link out of {jobs_dir}: remove it by hand.")
+    return folder
+
+
 def remove_pipelines(home: Path, project_name: Optional[str] = None) -> None:
     """Remove one or all project pipelines from Jenkins."""
     jobs_dir = home / "jobs"
@@ -235,8 +249,8 @@ def remove_pipelines(home: Path, project_name: Optional[str] = None) -> None:
         console.echo("No Jenkins jobs directory found.")
         return
 
-    if project_name:
-        project_job_dir = jobs_dir / project_name
+    if project_name is not None:
+        project_job_dir = _job_folder(jobs_dir, project_name)
         if project_job_dir.exists():
             console.echo(f"Removing Jenkins pipeline for project '{project_name}'...")
             shutil.rmtree(project_job_dir)

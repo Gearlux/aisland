@@ -45,7 +45,7 @@ from aisland.venv import ensure_uv_in_venv, venv_bin
 from aisland.workspace import discovery
 from aisland.workspace import file as workspace_file
 from aisland.workspace.model import Workspace
-from aisland.workspace.projects import discover_projects, get_project_metadata
+from aisland.workspace.projects import discover_projects, get_project_metadata, install_groups
 
 logger = logging.getLogger(__name__)
 
@@ -353,29 +353,33 @@ def rows(root: Path, axis: Axis) -> List[Dict[str, str]]:
 
 def apply_selection(root: Path, axis: Axis, uv_cmd: Optional[str] = None) -> int:
     """Reinstall every project offering something for ``axis``, at every selection's effective choice. Returns how
-    many failed.
+    many installs failed.
 
-    Only the OFFERING projects are touched: reinstalling the workspace to change one extra would take minutes. The
-    order is setup's (:attr:`aisland.workspace.model.Workspace.install_order`): a consumer's extra can name a sibling's
-    (``models[keras]`` requiring ``trainer[keras]``), and installed first it resolves against the sibling's OLD
-    metadata. uv never uninstalls an extra no longer chosen — which packages "belonged" to it is unknowable, and a
-    stale wheel costs disk, not correctness."""
+    Only the OFFERING projects are touched: reinstalling the workspace to change one extra would take minutes. They go
+    in setup's units (:func:`aisland.workspace.projects.install_groups`), dependencies first: a consumer's extra can
+    name a sibling's (``models[keras]`` requiring ``trainer[keras]``), and installed first it resolves against the
+    sibling's OLD metadata; and two projects requiring each other (a dependency cycle) install in ONE ``uv pip
+    install``, or uv resolves the missing half from the index and fails. uv never uninstalls an extra no longer chosen
+    — which packages "belonged" to it is unknowable, and a stale wheel costs disk, not correctness."""
 
     uv = uv_cmd or ensure_uv_in_venv(venv_bin(root))
     workspace_axes = axes(root)
-    failures = 0
-    for project in Workspace(root).install_order:
-        if not declared(project["path"] / "pyproject.toml", axis):
+    failed = 0
+    for group in install_groups(Workspace(root).metadata):
+        if not any(declared(project["path"] / "pyproject.toml", axis) for project in group):
             continue
-        target = editable_target(root, project["path"], workspace_axes)
-        console.echo(f"==> Installing {project['name']} ({target})...")
+        names = ", ".join(project["name"] for project in group)
+        targets = [editable_target(root, project["path"], workspace_axes) for project in group]
+        together = " — a dependency cycle, installed together" if len(group) > 1 else ""
+        console.echo(f"==> Installing {names} ({' '.join(targets)}){together}...")
+        command = [uv, "pip", "install", *[arg for target in targets for arg in ("-e", target)]]
         try:
-            logger.debug("running %s pip install -e %s (in %s)", uv, target, root)
-            subprocess.check_call([uv, "pip", "install", "-e", target], cwd=root)
+            logger.debug("running %s (in %s)", " ".join(command), root)
+            subprocess.check_call(command, cwd=root)
         except subprocess.CalledProcessError as exc:
-            console.echo(f"  - Error: Failed to install {project['name']}: {exc}", err=True)
-            failures += 1
-    return failures
+            failures.report(f"  - Error: Failed to install {names}: {exc}")
+            failed += 1
+    return failed
 
 
 def _command(axis: Axis, *words: str) -> str:

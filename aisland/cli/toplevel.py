@@ -8,7 +8,6 @@ from typing import Optional
 
 import click
 
-from aisland import locations
 from aisland.backups import DEFAULT_KEEP_DAYS, list_store, prune_store, restore_backup
 from aisland.ci import stats_report
 from aisland.ci.quality import run_quality_gates
@@ -227,11 +226,11 @@ def tests_report(project: str, days: int, as_json: bool) -> None:
     aisland tests report models --days 90
     aisland tests report models --json
     """
-    if not (locations.workspace_root() / project / "pyproject.toml").is_file():
-        raise click.BadParameter(
-            f"no project {project!r} in the workspace {locations.workspace_root()}", param_hint="PROJECT"
-        )
-    report = stats_report.build_report(project, days=days)
+    try:
+        folder = stats_report.project_folder(project)
+    except stats_report.UnknownProject as unknown:
+        raise click.BadParameter(str(unknown), param_hint="PROJECT") from unknown
+    report = stats_report.build_report(project, days=days, project_dir=folder)
     click.echo(json.dumps(report.to_dict(), indent=2) if as_json else stats_report.render_report(report))
 
 
@@ -301,13 +300,16 @@ def completion_install(target_rc: Optional[Path], shell: Optional[str], no_prune
 
 
 @click.command(name="check", cls=Command)
-@click.argument("arg1", required=False)
-@click.argument("arg2", required=False)
+# Each word is a tool or a project, in either order (`aisland check models`); the names show the usual order.
+@click.argument("arg1", metavar="[TOOL]", required=False)
+@click.argument("arg2", metavar="[PROJECT]", required=False)
 @click.option(
     "--write", is_flag=True, help="Let isort and black rewrite the files they find; without it they only check."
 )
 def check(arg1: Optional[str], arg2: Optional[str], write: bool) -> None:
-    """Run the quality gates (isort, black, flake8, mypy, pytest, act): every one, or one tool, of every project or one.
+    """Run the quality gates (isort, black, flake8, mypy, pytest, act): every one, or one TOOL, of every PROJECT or one.
+
+    Each of the two words is a gate or a project, in either order; one alone may be either.
 
     isort and black only check, and show the change they would make; --write rewrites the files instead.
 

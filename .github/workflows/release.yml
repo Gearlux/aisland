@@ -16,8 +16,9 @@
 #   Environment:       pypi
 #
 # Pinned by tests/test_packaging.py (the trigger, the gates and tests the build
-# waits on, the tag guard run against a pyproject.toml, the strict check, the
-# smoke test, Trusted Publishing).
+# waits on, the tag guard run against a pyproject.toml, the main guard and the
+# CHANGELOG guard run in a scratch repository, the strict check, the smoke
+# test, Trusted Publishing).
 # =========================================================================
 name: Release to PyPI
 
@@ -28,16 +29,20 @@ on:
 jobs:
   # The tag's commit passes the quality gates and BOTH test runs before anything is built: a tag pushed from a
   # commit CI never checked, or checked red, never reaches PyPI.
+  # Every Python version the package's classifiers claim; the build below runs on one.
   tests:
-    name: Quality gates & every test
+    name: Quality gates & every test (Python ${{ matrix.python }})
     runs-on: ubuntu-latest
     timeout-minutes: 45
+    strategy:
+      matrix:
+        python: ["3.12", "3.13"]
     steps:
     - uses: actions/checkout@v7
-    - name: Set up Python 3.12
+    - name: Set up Python ${{ matrix.python }}
       uses: actions/setup-python@v7
       with:
-        python-version: "3.12"
+        python-version: ${{ matrix.python }}
     - name: Install uv
       uses: astral-sh/setup-uv@v7
     - name: Install dependencies
@@ -60,6 +65,8 @@ jobs:
     timeout-minutes: 15
     steps:
     - uses: actions/checkout@v7
+      with:
+        fetch-depth: 0  # the whole history, so the guard below can tell whether main holds the tagged commit
     - name: Set up Python 3.12
       uses: actions/setup-python@v7
       with:
@@ -71,6 +78,15 @@ jobs:
         PKG_VERSION=$(python -c "import tomllib; print(tomllib.load(open('pyproject.toml','rb'))['project']['version'])")
         if [ "v$PKG_VERSION" != "$GITHUB_REF_NAME" ]; then
           echo "::error::Tag $GITHUB_REF_NAME does not match pyproject version $PKG_VERSION"
+          exit 1
+        fi
+    # A release is made from main: a tag on a commit of another branch (dev/main, a topic branch) is refused, so PyPI
+    # never ships a commit main does not hold and the README's links to the tag show what main shows.
+    - name: Guard - the tagged commit is on main
+      run: |
+        git fetch --no-tags --quiet origin main
+        if ! git merge-base --is-ancestor HEAD FETCH_HEAD; then
+          echo "::error::Tag $GITHUB_REF_NAME is on a commit main does not hold: merge it into main, then tag the commit there"
           exit 1
         fi
     # The date is the tagged commit's: a heading written days before the tag (or never updated) is refused.

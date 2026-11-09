@@ -61,11 +61,18 @@ def pure_wheel(payload: PypiProject) -> Optional[PypiFile]:
 
 
 def download_wheel(entry: PypiFile, dest: Path) -> Path:
-    """PyPI's file ``entry``, downloaded to ``dest`` and checked against the SHA-256 PyPI lists for it."""
+    """PyPI's file ``entry``, downloaded to ``dest`` and checked against the SHA-256 PyPI lists for it. An entry that
+    lists none is refused before anything is fetched: PyPI lists one for every file, and a file nothing vouches for is
+    no copy of the release the comparison could trust."""
+    wanted = (entry.get("digests") or {}).get("sha256")
+    if not wanted:
+        raise AislandError(
+            f"PyPI lists no SHA-256 for {entry.get('filename') or entry['url']}, so the file cannot be checked; "
+            "nothing was downloaded. Retry when PyPI (or the index in between) lists its digests."
+        )
     dest.parent.mkdir(parents=True, exist_ok=True)
     downloads.download(str(entry["url"]), dest)
-    wanted = (entry.get("digests") or {}).get("sha256")
-    if wanted and downloads.sha256(dest) != wanted:
+    if downloads.sha256(dest) != wanted:
         dest.unlink()
         raise AislandError(f"{entry['url']} is not the file PyPI lists: its SHA-256 differs from {wanted}")
     return dest

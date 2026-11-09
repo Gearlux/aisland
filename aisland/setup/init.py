@@ -389,7 +389,7 @@ def _build(
     rows += _write_starting_files(root, rewrite)
 
     if from_file is not None:
-        (root / workspace_file.FILE_NAME).write_text(from_file.read_text())
+        atomic.write_text(root / workspace_file.FILE_NAME, from_file.read_text())
     workspace_file.refresh(root)
     if (root / workspace_file.FILE_NAME).is_file():
         rows.append(_row(workspace_file.FILE_NAME, "the projects, how to start another machine from them"))

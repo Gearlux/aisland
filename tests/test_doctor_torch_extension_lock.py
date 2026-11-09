@@ -163,7 +163,6 @@ def _default_root(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     monkeypatch.delenv("TORCH_EXTENSIONS_DIR", raising=False)
     monkeypatch.setattr(Path, "home", classmethod(lambda cls: tmp_path))
     monkeypatch.delenv("XDG_CACHE_HOME", raising=False)
-    monkeypatch.delenv("LOCALAPPDATA", raising=False)
     return doctor._torch_extensions_root()
 
 
@@ -186,17 +185,6 @@ class TestTorchExtensionsRoot:
         assert doctor._torch_extensions_root() == tmp_path / "xdg" / "torch_extensions"
         monkeypatch.delenv("XDG_CACHE_HOME")
         assert doctor._torch_extensions_root() == tmp_path / ".cache" / "torch_extensions"
-
-    def test_windows_uses_localappdata(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-        monkeypatch.delenv("TORCH_EXTENSIONS_DIR", raising=False)
-        monkeypatch.setattr(doctor.sys, "platform", "win32")
-        monkeypatch.setenv("LOCALAPPDATA", str(tmp_path / "Local"))
-        assert doctor._torch_extensions_root() == tmp_path / "Local" / "torch_extensions" / "torch_extensions" / "Cache"
-        monkeypatch.delenv("LOCALAPPDATA")
-        monkeypatch.setattr(Path, "home", classmethod(lambda cls: tmp_path))
-        assert doctor._torch_extensions_root() == (
-            tmp_path / "AppData" / "Local" / "torch_extensions" / "torch_extensions" / "Cache"
-        )
 
     def test_the_real_torch_agrees_on_this_machine(self, monkeypatch: pytest.MonkeyPatch) -> None:
         """The torch-free rule names the folder torch itself builds in (skipped where torch is absent)."""

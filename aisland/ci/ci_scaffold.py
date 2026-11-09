@@ -7,6 +7,7 @@ linter first. Jenkins is asked for nothing else here: the jobs aisland seeds are
 """
 
 import functools
+import http.cookiejar
 import json
 import os
 import re
@@ -21,14 +22,16 @@ import click
 from packaging.requirements import InvalidRequirement, Requirement
 from packaging.utils import canonicalize_name
 
-from aisland import console, gitcmd
+from aisland import atomic, console, failures, gitcmd, locations
 from aisland import pyproject as pyproject_toml
 from aisland.ci import ci_templates
 from aisland.errors import AislandError
 from aisland.pypi import released_on_pypi
 from aisland.setup.playwright_browser import PLAYWRIGHT_BROWSER
 from aisland.wheels import extra as wheels_extra
+from aisland.wheels.check import is_shim
 from aisland.workspace.github import GitHubRepository, project_repositories
+from aisland.workspace.model import Workspace
 from aisland.workspace.projects import get_project_metadata, get_workspace_name, get_workspace_root
 from aisland.workspace.selection import axes as sel_axes
 from aisland.workspace.selection import declared as sel_declared
@@ -205,14 +208,13 @@ def scaffold(project_name: Optional[str], force: bool, jenkins_url: str) -> None
     unless ``force``; a Jenkinsfile the Jenkins at ``jenkins_url`` rejects is refused before it is written."""
     workspace_root = get_workspace_root()
     if project_name is None:
-        for child in sorted(workspace_root.iterdir()):
-            if child.is_dir() and (child / "pyproject.toml").exists():
-                scaffold(child.name, force, jenkins_url)
+        # Each project folder once: a link to another folder of the workspace is a short name, never a project.
+        for child in locations.project_folders(workspace_root):
+            scaffold(child.name, force, jenkins_url)
         return
 
+    project_name = _project_folder(workspace_root, project_name)
     project_path = workspace_root / project_name
-    if not project_path.exists() or not project_path.is_dir():
-        raise AislandError(f"Project directory '{project_name}' not found at {project_path}.")
     if not (project_path / "pyproject.toml").exists():
         raise AislandError(f"pyproject.toml not found in {project_name}. Cannot scaffold.")
 
@@ -220,6 +222,21 @@ def scaffold(project_name: Optional[str], force: bool, jenkins_url: str) -> None
     rendered = ci_templates.render(ci_templates.choice(workspace_root, project_name), facts)
     for relative, content in rendered.items():
         _write(project_path / relative, content, relative, force, jenkins_url)
+
+
+def _project_folder(workspace_root: Path, name: str) -> str:
+    """The folder of the project ``name`` names: a project's own name, its ``workspace.toml`` row's (whose ``path`` may
+    be another folder) or its folder; a link to a folder of the workspace is that folder, so the files, the GitHub
+    question and the template set are the real project's. Refused when none is."""
+    for project in Workspace(workspace_root).projects:
+        if name in (project.name, project.folder) or (project.listed is not None and project.listed.name == name):
+            return project.folder
+    named = workspace_root / name
+    if locations.is_alias(named, workspace_root):
+        return named.resolve().relative_to(workspace_root.resolve()).as_posix()
+    if named.is_dir():
+        return name  # a folder of the workspace no submodule lists
+    raise AislandError(f"Project directory '{name}' not found at {named}.")
 
 
 def project_facts(workspace_root: Path, project_name: str, jenkins_url: str) -> ci_templates.Facts:
@@ -270,6 +287,7 @@ def project_facts(workspace_root: Path, project_name: str, jenkins_url: str) -> 
         browser=PLAYWRIGHT_BROWSER if "playwright" in dev_extra_names(data) else None,
         slow_tests=registers_slow_marker(data),
         node_tests=node_test_folders(project_path),
+        coverage=coverage_target(project_path, data, package),
         unreleased=[ci_templates.Dependency(dep, github_projects[dep].url, DEFAULT_REF) for dep in from_github],
         unreleased_owners=", ".join(sorted({github_projects[dep].owner for dep in from_github})),
         token_owner=token_owner,
@@ -293,10 +311,35 @@ def package_folder(project_path: Path, distribution: str) -> str:
     dashless = distribution.replace("-", "")
     if (project_path / dashless / "__init__.py").exists():
         return dashless
-    for folder in project_path.iterdir():
+    for folder in sorted(project_path.iterdir()):
         if folder.is_dir() and (folder / "__init__.py").exists() and folder.name not in _NOT_PACKAGES:
             return folder.name
     return distribution
+
+
+def coverage_target(project_path: Path, data: pyproject_toml.Table, package: str) -> str:
+    """What CI measures (``--cov=``): the package — or, for a project that ships INSIDE another package, its own
+    subpackage. Such a project's ``[tool.setuptools.packages.find] include`` lists the parent beside the child
+    (``["vision", "vision.extra*"]``) and its parent folder's ``__init__.py`` is the ``pkgutil.extend_path`` shim (the
+    real parent lives in another project); measuring the parent counts only the shim. A project whose parent package
+    is its own (``["models", "models.ops"]`` with real code in ``models/__init__.py``) measures the package."""
+    found = data.get("tool", {}).get("setuptools", {}).get("packages", {})
+    finder = found.get("find", {}) if isinstance(found, dict) else {}
+    include = finder.get("include", []) if isinstance(finder, dict) else []
+    where = finder.get("where", ["."]) if isinstance(finder, dict) else ["."]
+    names = list(dict.fromkeys(str(pattern).rstrip("*").rstrip(".") for pattern in include))
+    children = [name for name in names if "." in name and name.split(".", 1)[0] in names]
+    if len(children) != 1:
+        return package
+    parent = children[0].split(".", 1)[0]
+    for folder in where if isinstance(where, list) else ["."]:
+        init = project_path / str(folder) / parent / "__init__.py"
+        try:
+            if is_shim(init.read_text(encoding="utf-8")):
+                return children[0]
+        except (OSError, UnicodeDecodeError):
+            continue
+    return package
 
 
 def selected_extras(workspace_root: Path, pyproject_path: Path) -> List[str]:
@@ -322,8 +365,8 @@ def internal_dependencies(
     selected: Sequence[str],
     github_projects: Dict[str, GitHubRepository],
 ) -> List[str]:
-    """The internal dependencies CI pre-installs for the project whose ``pyproject.toml`` is ``data``, each after the
-    ones it needs: the closure of exactly what CI's install steps resolve, nothing more.
+    """The internal dependencies CI pre-installs for the project whose ``pyproject.toml`` is ``data``, by name: the
+    closure of exactly what CI's install steps resolve, nothing more.
 
     When CI installs a direct dependency like `confluid` with --no-deps, `.[dev]` still needs confluid's own BASE
     dependencies (loggair), and an unreleased internal distribution is not on PyPI, so uv fails unless those are
@@ -364,17 +407,10 @@ def internal_dependencies(
             (req.name, frozenset(req.extras)) for req in _internal_requirements(table, dep_extras, github_projects)
         )
     seen.discard(distribution)
-
-    # Base dependencies suffice for the order: every install runs --no-deps anyway.
-    prereqs: Dict[str, Set[str]] = {}
-    for name in seen:
-        table = _project_table(_workspace_folder(workspace_root, name) / "pyproject.toml")
-        prereqs[name] = {
-            req.name
-            for req in _internal_requirements(table, frozenset(), github_projects)
-            if req.name in seen and req.name != name
-        }
-    return _dependencies_first(prereqs)
+    # By name, never in dependency order: every install runs --no-deps, so the order changes nothing, and the edges it
+    # would come from are read from the checkouts this machine has — a detached project's empty folder has none — so
+    # the same workspace would commit different CI files on two machines.
+    return sorted(seen)
 
 
 def _project_table(pyproject: Path) -> pyproject_toml.Table:
@@ -408,24 +444,6 @@ def _workspace_folder(workspace_root: Path, name: str) -> Path:
     if (workspace_root / name).is_dir():
         return workspace_root / name
     return workspace_root / name.replace("-", "")
-
-
-def _dependencies_first(prereqs: Dict[str, Set[str]]) -> List[str]:
-    """The names of ``prereqs``, each after the ones it needs (Kahn's algorithm, ties by name), so loggair installs
-    before confluid; a cycle's names come last, sorted."""
-    ordered: List[str] = []
-    remaining = {name: set(needs) for name, needs in prereqs.items()}
-    while remaining:
-        ready = sorted(name for name, needs in remaining.items() if not needs)
-        if not ready:
-            ordered.extend(sorted(remaining))
-            break
-        for name in ready:
-            ordered.append(name)
-            del remaining[name]
-            for needs in remaining.values():
-                needs.discard(name)
-    return ordered
 
 
 def _unreleased_from_wheels(project_name: str, pyproject_path: Path, unreleased: Sequence[str]) -> str:
@@ -486,40 +504,82 @@ def _write(path: Path, content: str, desc: str, force: bool, jenkins_url: str) -
         console.echo(click.style(f"  [ABORT] Not writing {desc} — fix the template.", fg="red"))
         raise AislandError(f"Template produced invalid {desc}")
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(content)
+    atomic.write_text(path, content)
     console.echo(f"  [OK] Created {desc}")
 
 
 def _validates(content: str, desc: str, jenkins_url: str) -> bool:
-    """POST the content to Jenkins' declarative linter. True when the file validates, or when Jenkins is not running
-    (nothing can check it then); False only when Jenkins rejects the file."""
+    """POST the content to Jenkins' declarative linter. True when the file validates, or when no Jenkins answers at
+    ``jenkins_url`` (nothing can check it then; said); False when Jenkins rejects the file.
+
+    A Jenkins that wants a login (401, 403: one `jenkins init` set up without anonymous read) writes the file saying
+    plainly it was NOT validated and how to lint it; any other HTTP error (a 500) is refused, since writing the file
+    as checked would be untrue. The crumb is tied to the session Jenkins opens with it, so the linter call carries
+    that session's cookie."""
+    opener = urllib.request.build_opener(urllib.request.HTTPCookieProcessor(http.cookiejar.CookieJar()))
+    crumb_url = f"{jenkins_url}/crumbIssuer/api/json"
     try:
         # A CSRF crumb is required for every POST, even with security disabled.
-        crumb_req = urllib.request.Request(f"{jenkins_url}/crumbIssuer/api/json")
-        with urllib.request.urlopen(crumb_req, timeout=3) as resp:
+        with opener.open(urllib.request.Request(crumb_url), timeout=3) as resp:
             crumb_data = json.loads(resp.read().decode())
         crumb_header = {crumb_data["crumbRequestField"]: crumb_data["crumb"]}
-    except (urllib.error.URLError, OSError, TimeoutError, KeyError):
-        console.echo(f"  [WARN] Jenkins not reachable — skipped validation of {desc}.")
+    except urllib.error.HTTPError as error:
+        if error.code in _LOGIN:
+            return _unvalidated_behind_login(desc, jenkins_url, error)
+        raise _not_validated(desc, crumb_url, error) from error
+    except (urllib.error.URLError, OSError, TimeoutError):
+        console.echo(f"  [WARN] Jenkins not reachable at {jenkins_url} — {desc} is written without validation.")
         return True
+    except (ValueError, KeyError, TypeError) as error:
+        raise AislandError(
+            f"{desc} not validated: {crumb_url} answered no crumb ({error}); nothing was written"
+        ) from error
 
+    validate_url = f"{jenkins_url}/pipeline-model-converter/validate"
     try:
         body = urllib.parse.urlencode({"jenkinsfile": content}).encode()
         req = urllib.request.Request(
-            f"{jenkins_url}/pipeline-model-converter/validate",
+            validate_url,
             data=body,
             headers={
                 **crumb_header,
                 "Content-Type": "application/x-www-form-urlencoded",
             },
         )
-        with urllib.request.urlopen(req, timeout=10) as resp:
+        with opener.open(req, timeout=10) as resp:
             result = resp.read().decode().strip()
-    except urllib.error.URLError as e:
-        console.echo(f"  [WARN] Linter call failed ({e}); skipped validation of {desc}.")
+    except urllib.error.HTTPError as error:
+        if error.code in _LOGIN:
+            return _unvalidated_behind_login(desc, jenkins_url, error)
+        raise _not_validated(desc, validate_url, error) from error
+    except (urllib.error.URLError, OSError, TimeoutError) as error:
+        console.echo(f"  [WARN] Jenkins stopped answering ({error}) — {desc} is written without validation.")
         return True
 
     if result.startswith("Jenkinsfile successfully validated"):
         return True
     console.echo(click.style(f"  [FAIL] {desc} did not validate:\n{result}", fg="red"))
     return False
+
+
+#: The answers of a Jenkins that wants a login before its linter.
+_LOGIN = (401, 403)
+
+
+def _unvalidated_behind_login(desc: str, jenkins_url: str, error: urllib.error.HTTPError) -> bool:
+    """Say that ``desc`` is written without validation because the Jenkins at ``jenkins_url`` wants a login, and how to
+    lint it; True, so the file is written."""
+    failures.warn(
+        f"  [WARN] {desc} is written NOT validated: Jenkins at {jenkins_url} wants a login (HTTP {error.code}). Lint "
+        f"it with your API token: curl --user <you>:<token> -F 'jenkinsfile=<{desc}' "
+        f"{jenkins_url}/pipeline-model-converter/validate — or let the linter read anonymously: "
+        "aisland jenkins init --local"
+    )
+    return True
+
+
+def _not_validated(desc: str, url: str, error: urllib.error.HTTPError) -> AislandError:
+    """The refusal for a Jenkins that answered the linter with an HTTP error: the file is not written as checked."""
+    return AislandError(
+        f"{desc} not validated: Jenkins answered {url} with HTTP {error.code} {error.reason}; nothing was written"
+    )

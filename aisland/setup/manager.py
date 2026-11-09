@@ -130,7 +130,9 @@ def setup_workspace(non_interactive: bool = False, install_all: bool = False) ->
     # 1b. Activation (aisland.workspace.activation): ask about each optional project, then check each one out or empty it as
     #     this machine has it. Before discovery, so an inactive checkout drops out.
     activation.resolve(workspace_root, non_interactive)
-    activation.reconcile(workspace_root)
+    for project in activation.reconcile(workspace_root):
+        # Said on the way (`skip <folder>: <why>`); setup goes on with the others and exits 1.
+        failures.report(f"Error: {project}'s folder could not follow its activation (see its skip line above)")
     # 1c. Per-project sources: each managed project on its branch, or replaced by its published wheel (which empties
     #     its folder). Before discovery, so a pypi-sourced project drops out of the editable installs.
     apply_all(workspace_root, uv_cmd)

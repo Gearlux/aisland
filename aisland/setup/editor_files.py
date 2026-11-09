@@ -9,7 +9,7 @@ import subprocess
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
-from aisland import console, editor, envfile, failures, git_exclude, locations
+from aisland import atomic, console, editor, envfile, failures, git_exclude, locations
 from aisland.paths import SERVICES_DIR
 from aisland.venv import venv_bin
 from aisland.workspace.model import Workspace
@@ -74,7 +74,7 @@ def write_pyrightconfig(workspace_root: Path, projects: List[ProjectMetadata]) -
         "exclude": [*_PYRIGHT_EXCLUDE, *inside],
     }
     out = workspace_root / "pyrightconfig.json"
-    out.write_text(json.dumps(config, indent=4) + "\n")
+    atomic.write_text(out, json.dumps(config, indent=4) + "\n")
     console.echo(f"==> Wrote {out} ({len(extra_paths)} project paths)")
 
     for project in projects:
@@ -86,7 +86,7 @@ def write_pyrightconfig(workspace_root: Path, projects: List[ProjectMetadata]) -
             "extraPaths": siblings,
             "exclude": list(_PYRIGHT_EXCLUDE),
         }
-        (project_dir / "pyrightconfig.json").write_text(json.dumps(project_config, indent=4) + "\n")
+        atomic.write_text(project_dir / "pyrightconfig.json", json.dumps(project_config, indent=4) + "\n")
         # Kept out of git with the editable install's metadata, in the project's own `.git/info/exclude`: a
         # `.gitignore` line would be a file to commit in every project (aisland.git_exclude).
         git_exclude.exclude(project_dir, ["pyrightconfig.json", "**/*.egg-info/"])
@@ -134,7 +134,7 @@ def sync_mypy_path(workspace_root: Path, projects: List[ProjectMetadata]) -> Non
         return
 
     lines[line_no] = f"{key.rstrip()} = {separator.join(entries + missing)}"
-    ini.write_text("\n".join(lines) + "\n")
+    atomic.write_text(ini, "\n".join(lines) + "\n")
     console.echo(f"==> mypy.ini: added {', '.join(missing)} to mypy_path")
 
 
@@ -288,6 +288,6 @@ def write_code_workspace(workspace_root: Path) -> Optional[Path]:
     out = code_workspace_path(workspace_root)
     if out.exists() and out.read_text() == text:
         return None
-    out.write_text(text)
+    atomic.write_text(out, text)
     console.echo(f"==> Wrote {out.name} ({len(folders)} folders)")
     return out

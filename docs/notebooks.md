@@ -5,7 +5,7 @@ How aisland keeps Jupyter notebooks small in Git by clearing their outputs, and 
 [`examples/05_notebooks_clean.py`](../examples/05_notebooks_clean.py) cleans a notebook and a documentation notebook and
 checks which outputs are kept.
 
-## Jupyter Notebook Management
+## Jupyter notebook management
 
 To keep the repository size small and diffs clean, Jupyter notebooks (`*.ipynb`) are processed by a Git filter (`aisland notebooks clean`) that clears their code cell outputs before staging. It also strips machine-specific metadata (the local Python version, the kernel's display name, per-cell execution timestamps), even from documentation notebooks.
 
@@ -19,7 +19,8 @@ To keep the repository size small and diffs clean, Jupyter notebooks (`*.ipynb`)
 
 The filter itself reads standard input and needs no workspace, so it also runs in a repository of its own.
 
-### Marking as Documentation
+### Marking a notebook as documentation
+
 If you have a notebook that serves as documentation and you **want** to preserve its outputs (e.g., visualizations, benchmark results), you must mark it as such in its metadata:
 
 1. Open the notebook in VS Code or Jupyter.
@@ -35,7 +36,8 @@ If you have a notebook that serves as documentation and you **want** to preserve
 }
 ```
 
-### Manual Cleaning
+### Cleaning a notebook by hand
+
 You can also manually clean a notebook using the CLI:
 ```bash
 cat my_notebook.ipynb | aisland notebooks clean > cleaned_notebook.ipynb

@@ -365,7 +365,7 @@ def jenkins_bin(machine: Dict[str, Any], monkeypatch: pytest.MonkeyPatch) -> Dic
     bin_dir = machine["tmp"] / "bin"
     make_war(bin_dir / f"jenkins-{JenkinsService.WAR_VERSION}.war")
     monkeypatch.setattr(paths, "bin_dir", lambda: bin_dir)
-    monkeypatch.setattr(JenkinsService, "setup", lambda self: None)
+    monkeypatch.setattr(JenkinsService, "setup", lambda self: True)
     monkeypatch.setattr(JenkinsService, "check_credentials_and_print_instructions", lambda self, port: None)
     started: List[List[str]] = []
     monkeypatch.setattr(JenkinsService, "start", lambda self, cmd, **kwargs: started.append(cmd))

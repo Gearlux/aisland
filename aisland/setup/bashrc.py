@@ -7,7 +7,7 @@ import logging
 import os
 from pathlib import Path
 
-from aisland import console, failures, locations, paths
+from aisland import atomic, console, failures, locations, paths
 
 logger = logging.getLogger(__name__)
 
@@ -24,7 +24,7 @@ def _copy_packaged_bashrc(target: Path) -> None:
     if target.exists() and target.read_text() == text:
         return
     target.parent.mkdir(parents=True, exist_ok=True)
-    target.write_text(text)
+    atomic.write_text(target, text)
 
 
 def link_project_bashrc(workspace_root: Path) -> None:

@@ -65,6 +65,7 @@ from __future__ import annotations
 import fnmatch
 import json
 import os
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -74,7 +75,7 @@ from typing import Dict, List, Optional, Sequence, Set, Tuple
 
 from packaging.version import InvalidVersion, Version
 
-from aisland import console, gitcmd
+from aisland import atomic, console, gitcmd
 from aisland.errors import AislandError
 from aisland.pypi import PypiProject
 from aisland.venv import ensure_uv_in_venv, venv_bin
@@ -378,32 +379,45 @@ def vendor_wheels(
     with tempfile.TemporaryDirectory() as tmp:
         scratch = Path(tmp)
         built = _build_all(uv, plan, dirty, scratch, options.builds_own_wheel)
-        extra_changed, bundle_path = _write_folder(plan, options, chosen, built, folder, choices, pyproject)
-        checked = _check(uv, plan, options, built, folder, scratch, bundle_path) if check else _unchecked(plan)
-
-    behind = [p for p in checked.compared if p.differing_files]
-    import_failures, import_warnings = _classify(
-        checked.failures, built.owners, behind, checked.new_names, checked.packages
-    )
-    bundle_import_failures, _ = _classify(
-        checked.bundle_failures, built.owners, behind, checked.new_names, checked.packages
-    )
-    passed = (
-        checked.install_error is None
-        and not import_failures
-        and checked.bundle_install_error is None
-        and not bundle_import_failures
-    )
+        # The check installs from the folder, so the folder is written first — and put back as it was when the check
+        # fails or the run stops, so a failed run leaves the clone as it found it.
+        before = _Before.keep(folder, pyproject, scratch / "before")
+        try:
+            extra_changed, bundle_path = _write_folder(plan, options, chosen, built, folder, choices, pyproject)
+            checked = _check(uv, plan, options, built, folder, scratch, bundle_path) if check else _unchecked(plan)
+        except BaseException:
+            before.put_back()
+            raise
+        behind = [p for p in checked.compared if p.differing_files]
+        import_failures, import_warnings = _classify(
+            checked.failures, built.owners, behind, checked.new_names, checked.packages
+        )
+        bundle_import_failures, _ = _classify(
+            checked.bundle_failures, built.owners, behind, checked.new_names, checked.packages
+        )
+        passed = (
+            checked.install_error is None
+            and not import_failures
+            and checked.bundle_install_error is None
+            and not bundle_import_failures
+        )
+        project_wheel = built.own_entry if include_project else None
+        wheels_bytes = sum(
+            (folder / b.wheel).stat().st_size for b in built.entries + ([project_wheel] if project_wheel else [])
+        )
+        # Measured before a failed check puts the folder back, which takes the bundle with it.
+        bundled = bundle_entry(bundle_path, workspace_root, target, built.entries)
+        if not passed:
+            before.put_back()
+            extra_changed = False
     wheels_dir = str(folder.relative_to(workspace_root))
     committed, commit_note, tracked_warning = _commit_or_note(target, options, chosen, passed, wheels_dir, pyproject)
-    archive = write_zip(target.name, folder) if make_zip else None
-    project_wheel = built.own_entry if include_project else None
+    archive = write_zip(target.name, folder) if make_zip and passed else None
     return WheelsReport(
         target=target.name,
         wheels_dir=wheels_dir,
-        wheels_bytes=sum(
-            (folder / b.wheel).stat().st_size for b in built.entries + ([project_wheel] if project_wheel else [])
-        ),
+        wheels_bytes=wheels_bytes,
+        put_back=not passed,
         built=built.entries,
         published=checked.compared,
         name_clashes=built.name_clashes,
@@ -423,7 +437,7 @@ def vendor_wheels(
         tracked_warning=tracked_warning,
         checked=check,
         project_wheel=project_wheel,
-        bundle=bundle_entry(bundle_path, workspace_root, target, built.entries),
+        bundle=bundled,
         bundle_install_error=checked.bundle_install_error,
         bundle_import_failures=bundle_import_failures,
         bundle_imported=checked.bundle_imported,
@@ -432,6 +446,34 @@ def vendor_wheels(
         extra_remembered=chosen.remembered,
         extra_left=chosen.left,
     )
+
+
+@dataclass
+class _Before:
+    """The wheels folder and the target's ``pyproject.toml`` as they were before the run wrote them: a copy of the
+    folder in the scratch folder (``None``: there was none) and the file's text."""
+
+    folder: Path
+    pyproject: Path
+    copy: Optional[Path]
+    text: Optional[str]
+
+    @classmethod
+    def keep(cls, folder: Path, pyproject: Path, scratch: Path) -> "_Before":
+        copy = None
+        if folder.is_dir():
+            shutil.copytree(folder, scratch, symlinks=True)
+            copy = scratch
+        return cls(folder, pyproject, copy, pyproject.read_text(encoding="utf-8") if pyproject.is_file() else None)
+
+    def put_back(self) -> None:
+        """The folder and the file as they were."""
+        if self.folder.exists():
+            shutil.rmtree(self.folder)
+        if self.copy is not None:
+            shutil.copytree(self.copy, self.folder, symlinks=True)
+        if self.text is not None and self.pyproject.read_text(encoding="utf-8") != self.text:
+            atomic.write_text(self.pyproject, self.text)
 
 
 def _refuse_flags(options: _Options) -> None:

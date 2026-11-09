@@ -14,3 +14,7 @@ format = 1  # the shape of this file; an aisland too old for a set's format refu
 ".github/workflows/ci.yml" = "ci.yml.jinja"
 
 [variables]
+# The Python versions ci.yml's unit tests run on, space-separated: several run as a matrix, one job each, and every
+# other job runs on the first. A project that claims more Pythons sets its own in workspace.toml:
+# [project."app"] ci = { python_versions = "3.12 3.13" }
+python_versions = { default = "3.12", help = "the Python versions ci.yml's unit tests run on, space-separated; the other jobs run on the first" }

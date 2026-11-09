@@ -66,10 +66,13 @@ def docker_restart(mounts: Tuple[str, ...]) -> None:
 
 
 @docker.command(name="reset")
-@click.confirmation_option(prompt="Are you sure you want to wipe all Docker data?")
-def docker_reset() -> None:
-    """Stop Docker and wipe all its data."""
-    docker_service().reset()
+@click.option("--yes", "-y", is_flag=True, help="Do not ask first.")
+def docker_reset(yes: bool) -> None:
+    """Stop Docker and wipe all its data: the Colima VM, with every container, image and volume in it."""
+    engine = docker_service()
+    if not yes:
+        click.confirm(f"Stop Docker and delete {engine.wipes()}?", abort=True)
+    engine.reset()
 
 
 # --- Jenkins Commands ---
@@ -125,7 +128,7 @@ def jenkins_restart(port: Optional[int], background: bool) -> None:
 
 @jenkins.command(name="reset")
 @click.option("--project", help="Only reset data for a specific project pipeline.")
-@click.confirmation_option(prompt="Are you sure you want to wipe data?")
+@click.confirmation_option("--yes", "-y", prompt="Are you sure you want to wipe data?")
 def jenkins_reset(project: Optional[str]) -> None:
     """Stop Jenkins and wipe its data (or just a specific project's data)."""
     if project:
@@ -184,7 +187,7 @@ def jenkins_templates_export(folder: Path) -> None:
 
 @jenkins.command(name="remove")
 @click.argument("project", required=False)
-@click.confirmation_option(prompt="Are you sure you want to remove the pipeline(s)?")
+@click.confirmation_option("--yes", "-y", prompt="Are you sure you want to remove the pipeline(s)?")
 def jenkins_remove(project: Optional[str]) -> None:
     """Remove a specific project pipeline or all pipelines from Jenkins."""
     jenkins_jobs.remove_pipelines(JenkinsService().service_data_dir, project)
@@ -314,10 +317,14 @@ def services_info(names: Tuple[str, ...]) -> None:
 
 @services.command(name="reset")
 @_SERVICE_NAMES
-@click.confirmation_option(prompt="Stop these services and wipe their data?")
-def services_reset(names: Tuple[str, ...]) -> None:
-    """Stop the services named and wipe their data (default: the services started by default)."""
-    service_registry.reset(service_entries(), names)
+@click.option("--yes", "-y", is_flag=True, help="Do not ask first.")
+def services_reset(names: Tuple[str, ...], yes: bool) -> None:
+    """Stop the services named and wipe their data (default: the services started by default). It asks once, naming
+    each service and what its reset deletes — the container engine's deletes every container, image and volume."""
+    entries = service_entries()
+    if not yes:
+        click.confirm(service_registry.reset_question(entries, names), abort=True)
+    service_registry.reset(entries, names)
 
 
 # --- Supervisor Commands ---
@@ -342,7 +349,7 @@ def supervisor_attach() -> None:
 
 
 @supervisor.command(name="down")
-@click.confirmation_option(prompt="Stop ALL supervised services and the supervisor itself?")
+@click.confirmation_option("--yes", "-y", prompt="Stop ALL supervised services and the supervisor itself?")
 def supervisor_down() -> None:
     """Stop every supervised service and the supervisor process."""
     supervisor_mod.shutdown_server()

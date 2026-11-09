@@ -19,12 +19,15 @@ one, from the clones. Every refusal is a :class:`FileError` naming the file and 
 
 from __future__ import annotations
 
-import json
 import re
 import tomllib
 from dataclasses import dataclass, field, replace
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Set, Tuple
+from typing import Any, Callable, Dict, List, Optional, Set, Tuple, Union
+
+import tomlkit
+from tomlkit import items as tomlkit_items
+from tomlkit.container import OutOfOrderTableProxy
 
 from aisland import __version__, atomic, gitcmd, locations
 from aisland.errors import AislandError
@@ -59,6 +62,10 @@ PROJECT_KEYS = ("path", "url", "branch")
 
 #: A folder of the workspace: one plain, visible folder name.
 _FOLDER_NAME = re.compile(r"[A-Za-z0-9_][A-Za-z0-9_.-]*")
+
+
+#: A table of the file as tomlkit holds it: one written in a piece, or one whose parts are apart in the file.
+_Table = Union[tomlkit_items.Table, OutOfOrderTableProxy]
 
 
 class FileError(AislandError, ValueError):
@@ -205,7 +212,7 @@ def _header(name: str) -> str:
     return f"""\
 # {FILE_NAME} — the {name} workspace: its projects and its choices, committed.
 # Kept by `aisland setup` (aisland/aisland/workspace/file.py): it adds a new project, follows a changed url or folder
-# and drops a project that is gone; the rest is yours to edit.
+# and drops a project that is gone, changing nothing else; the rest is yours to edit.
 # =========================================================================
 # A workspace aisland creates on a new machine. From the folder that will hold it:
 #
@@ -238,63 +245,209 @@ def _header(name: str) -> str:
 """
 
 
-def _value(value: object) -> str:
-    """One TOML value: text, a number, true/false, a list, or an inline table of them."""
-    if isinstance(value, bool):
-        return "true" if value else "false"
-    if isinstance(value, (int, float)):
-        return str(value)
-    if isinstance(value, list):
-        return "[" + ", ".join(_value(item) for item in value) + "]"
+#: The ruled lines that open and close the how-to (:func:`_header`).
+_RULE = "# ========"
+
+
+def _with_header(text: str, name: str) -> str:
+    """``text`` under the current how-to: the one a file starts with (its first line names the file, its second ruled
+    line closes it) is replaced, so a new name or aisland's version reaches it; a file starting with no comment gets
+    one; a file opening with comments of its own keeps them as they are."""
+    lines = text.splitlines(keepends=True)
+    if lines and lines[0].startswith(f"# {FILE_NAME} — "):
+        rules = [number for number, line in enumerate(lines) if line.startswith(_RULE)]
+        if len(rules) >= 2 and all(line.startswith("#") for line in lines[: rules[1] + 1]):
+            return _header(name) + "".join(lines[rules[1] + 1 :])
+        return text
+    if text.lstrip().startswith("#"):
+        return text
+    return _header(name) + "\n" + text.lstrip("\n")
+
+
+def _item(value: object) -> tomlkit_items.Item:
+    """A value as tomlkit writes it inside a table: a table of it inline, so a project stays one table as in
+    ``.gitmodules`` (``ci = { templates = "x" }``, a harness set ``{ git = "…" }``)."""
     if isinstance(value, dict):
-        return "{ " + ", ".join(f"{_key(k)} = {_value(v)}" for k, v in value.items()) + " }"
-    return json.dumps(str(value), ensure_ascii=False)
+        table = tomlkit.inline_table()
+        for key, part in value.items():
+            table[key] = _item(part)
+        return table
+    if isinstance(value, list):
+        array = tomlkit.array()
+        for part in value:
+            array.append(_item(part))
+        return array
+    return tomlkit.item(value)
 
 
-def _key(name: str) -> str:
-    return name if re.fullmatch(r"[A-Za-z0-9_-]+", name) else json.dumps(name)
+def _sub_table(value: object) -> tomlkit_items.Item:
+    """A ``[ci]`` value: a table of it is a ``[ci.<key>]`` table of its own (``[ci.variables]``)."""
+    if isinstance(value, dict):
+        table = tomlkit.table()
+        for key, part in value.items():
+            table[key] = _item(part)
+        return table
+    return _item(value)
 
 
-def render(workspace: WorkspaceFile, name: str) -> str:
-    """The whole file: the how-to, ``[workspace]`` (its ``format`` first), then a ``[project."<name>"]`` per project."""
-    lines = [_header(name), "[workspace]", f"{FORMAT_KEY} = {FORMAT}"]
-    lines += [f"{_key(key)} = {_value(value)}" for key, value in workspace.settings.items()]
-    lines.append("")
-    if workspace.ci:
-        lines.append(f"[{CI_SECTION}]")
-        lines += [
-            f"{_key(key)} = {_value(value)}" for key, value in workspace.ci.items() if not isinstance(value, dict)
-        ]
-        lines.append("")
-        for key, table in workspace.ci.items():
-            if isinstance(table, dict):
-                lines.append(f"[{CI_SECTION}.{_key(key)}]")
-                lines += [f"{_key(name)} = {_value(item)}" for name, item in table.items()]
-                lines.append("")
-    if workspace.harness:
-        lines.append(f"[{HARNESS_SECTION}]")
-        lines += [f"{_key(key)} = {_value(value)}" for key, value in workspace.harness.items()]
-        lines.append("")
-    for project in workspace.projects.values():
-        lines.append(f"[project.{json.dumps(project.name)}]")
-        if project.path != project.name:
-            lines.append(f"path = {_value(project.path)}")
-        if project.url is not None:
-            lines.append(f"url = {_value(project.url)}")
-        if project.branch is not None:
-            lines.append(f"branch = {_value(project.branch)}")
-        lines += [f"{_key(key)} = {_value(value)}" for key, value in project.others.items()]
-        lines.append("")
-    return "\n".join(lines).rstrip("\n") + "\n"
+#: What tomlkit hands over for a table of the file: one written in a piece, one apart in the file, or one inline.
+_TABLES = (tomlkit_items.Table, OutOfOrderTableProxy, tomlkit_items.InlineTable)
+
+
+def _sync(
+    table: Union[_Table, tomlkit_items.InlineTable],
+    wanted: Dict[str, Any],  # Any: TOML values
+    convert: Callable[[object], tomlkit_items.Item],
+) -> None:
+    """Make ``table`` hold ``wanted``: a key it no longer has goes, a changed value is replaced where it stands, a new
+    key is added at the end, and a value equal to the one written is left as written (its comment, its spelling). A
+    table inside it that changed is edited the same way, key by key, never replaced (``[ci.variables]`` keeps its
+    comments)."""
+    for key in [key for key in table if key not in wanted]:
+        del table[key]
+    for key, value in wanted.items():
+        if key in table and _plain(table[key]) == value:
+            continue
+        held = table[key] if key in table else None
+        if isinstance(held, _TABLES) and isinstance(value, dict):
+            _sync(held, value, _item)
+            continue
+        table[key] = convert(value)
+
+
+def _plain(value: object) -> object:
+    """A value tomlkit read, as tomllib reads it (tomlkit hands a boolean over as it is, everything else wrapped)."""
+    unwrap = getattr(value, "unwrap", None)
+    return unwrap() if callable(unwrap) else value
+
+
+def _section(document: tomlkit.TOMLDocument, name: str, first: Optional[Dict[str, object]] = None) -> _Table:
+    """The document's ``[name]`` table, added in its place among :data:`_SECTIONS` when the file has none (holding
+    ``first``: a table is written whole before the sections after it go back). One the file writes inline
+    (``ci = { templates = "x" }``) becomes a table of its own in its place, every value kept."""
+    current = document[name] if name in document else None
+    if current is not None and not isinstance(current, (tomlkit_items.Table, OutOfOrderTableProxy)):
+        held = _plain(current)
+        if not isinstance(held, dict):
+            raise FileError(f"{FILE_NAME}: {name} is no table: write it as [{name}]")
+        first = {**(first or {}), **held}
+        current = None
+    if current is None:
+        later = [section for section in _SECTIONS[_SECTIONS.index(name) + 1 :] if section in document]
+        moved = [(section, document[section]) for section in later]
+        for section in [name, *later]:
+            if section in document:
+                del document[section]
+        added = tomlkit.table(is_super_table=name == "project")
+        for key, value in (first or {}).items():
+            added.add(key, _sub_table(value) if name == CI_SECTION else _item(value))
+        document[name] = added
+        for section, item in moved:
+            document[section] = item
+    table = document[name]
+    if not isinstance(table, (tomlkit_items.Table, OutOfOrderTableProxy)):  # pragma: no cover - made a table above
+        raise FileError(f"{FILE_NAME}: [{name}] could not be written as a table")
+    return table
+
+
+def _project_table(tables: _Table, name: str) -> _Table:
+    """The ``[project."<name>"]`` table, added (quoted, as ``.gitmodules`` writes ``[submodule "<name>"]``) when the
+    file has none; one the file writes inline (``models = { url = "u" }`` under ``[project]``) becomes a table of its
+    own, every value kept."""
+    held = tables[name] if name in tables else None
+    values: Dict[str, object] = {}
+    if held is not None and not isinstance(held, (tomlkit_items.Table, OutOfOrderTableProxy)):
+        plain = _plain(held)
+        if not isinstance(plain, dict):
+            raise FileError(f'{FILE_NAME}: project {name!r} is not a table: write it as [project."{name}"]')
+        values = plain
+        del tables[name]
+        held = None
+    if held is None:
+        added = tomlkit.table()
+        for key, value in values.items():
+            added.add(key, _item(value))
+        if isinstance(tables, tomlkit_items.Table):
+            tables.append(tomlkit_items.SingleKey(name, t=tomlkit_items.KeyType.Basic), added)
+        else:
+            tables[name] = added
+    table = tables[name]
+    if not isinstance(table, (tomlkit_items.Table, OutOfOrderTableProxy)):  # pragma: no cover - made a table above
+        raise FileError(f"{FILE_NAME}: project {name!r} could not be written as a table")
+    return table
+
+
+def _drop(document: tomlkit.TOMLDocument, name: str) -> None:
+    if name in document:
+        del document[name]
+
+
+def _project_keys(project: Project) -> Dict[str, Any]:  # Any: TOML values
+    """The keys a project's table holds: ``path`` only when it is not the name, ``url``, ``branch``, then the rest."""
+    keys: Dict[str, Any] = {}  # Any: TOML values
+    if project.path != project.name:
+        keys["path"] = project.path
+    if project.url is not None:
+        keys["url"] = project.url
+    if project.branch is not None:
+        keys["branch"] = project.branch
+    keys.update(project.others)
+    return keys
+
+
+def render(workspace: WorkspaceFile, name: str, text: str = "") -> str:
+    """The file: the how-to, ``[workspace]`` (its ``format`` first), ``[ci]``, ``[harness]``, then a
+    ``[project."<name>"]`` per project — written into ``text``, the file as it is, so every comment, the order of the
+    keys and the type of each value a person wrote stays where it was (only a value that changed is rewritten)."""
+    document = tomlkit.parse(_with_header(text, name))
+    settings = _section(document, "workspace", {FORMAT_KEY: FORMAT})
+    if FORMAT_KEY not in settings:
+        # `format` goes first: the table is written again with it ahead of what the file holds — its comments too,
+        # when the file writes it in one piece; one apart in the file is gathered into one, its values kept.
+        if isinstance(settings, tomlkit_items.Table):
+            first = tomlkit.table()
+            first.add(FORMAT_KEY, FORMAT)
+            for key, item in settings.value.body:
+                first.value.append(key, item)
+            document["workspace"] = first
+        else:
+            held = _plain(settings)
+            del document["workspace"]
+            _section(document, "workspace", {FORMAT_KEY: FORMAT, **(held if isinstance(held, dict) else {})})
+        settings = _section(document, "workspace")
+    _sync(settings, {FORMAT_KEY: FORMAT, **workspace.settings}, _item)
+    for name_of_section, values, convert in (
+        (CI_SECTION, workspace.ci, _sub_table),
+        (HARNESS_SECTION, workspace.harness, _item),
+    ):
+        if values:
+            _sync(_section(document, name_of_section), values, convert)
+        else:
+            _drop(document, name_of_section)
+    if not workspace.projects:
+        _drop(document, "project")
+    else:
+        tables = _section(document, "project")
+        for gone in [key for key in tables if key not in workspace.projects]:
+            del tables[gone]
+        for project in workspace.projects.values():
+            table = _project_table(tables, project.name)
+            keys = _project_keys(project)
+            if "path" in table and "path" not in keys:
+                keys = {"path": project.path, **keys}  # a `path` equal to the name the user wrote stays
+            _sync(table, keys, _item)
+    return tomlkit.dumps(document).rstrip("\n") + "\n"
 
 
 def write(root: Path, workspace: WorkspaceFile) -> Optional[Path]:
-    """Write ``workspace`` to ``<root>/workspace.toml``; with nothing in it, remove the file and return None."""
+    """Write ``workspace`` to ``<root>/workspace.toml``, editing the file that is there; with nothing in it, remove the
+    file and return None."""
     path = root / FILE_NAME
     if not workspace.settings and not workspace.projects and not workspace.ci and not workspace.harness:
         path.unlink(missing_ok=True)
         return None
-    atomic.write_text(path, render(workspace, workspace.settings.get(NAME_KEY) or root.name))
+    text = path.read_text(encoding="utf-8") if path.is_file() else ""
+    atomic.write_text(path, render(workspace, workspace.settings.get(NAME_KEY) or root.name, text))
     return path
 
 

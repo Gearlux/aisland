@@ -92,6 +92,7 @@ def supervised(monkeypatch: pytest.MonkeyPatch) -> List[Dict[str, Any]]:
         env: Optional[dict] = None,
         background: bool = False,
         readiness: Optional[Dict[str, Any]] = None,
+        port: Optional[int] = None,
     ) -> None:
         calls.append({"start": self.name, "cmd": cmd, "env": env, "background": background, "readiness": readiness})
 
