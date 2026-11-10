@@ -555,7 +555,8 @@ optional project this machine has not answered — `Activate 'tools'? (clone + i
 committed value — even under `-y` (a machine consciously opts into a private project), and keeps the answer in
 `.git/config` (`aisland.active.<project>.active`), never in a committed file. It then brings the folders in line: an
 active project is checked out (added from its `url` and `branch` when the workspace does not have it yet), an
-inactive one emptied — never with `-f`, so a folder with uncommitted work is left and named. Setup also writes what
+inactive one emptied — never with `-f`, so a folder with uncommitted work is left and named, and so is one holding
+git-ignored files a deinit would delete (`aisland clean <project>` moves them into a backup first). Setup also writes what
 git reads: `.gitmodules` `active = false` for a project that is off by default, and this machine's
 `submodule.<name>.active`.
 

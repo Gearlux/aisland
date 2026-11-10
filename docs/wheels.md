@@ -310,8 +310,9 @@ an unchanged project still rebuilds byte for byte. A project on GitHub gets its 
 
 Every `--commit` that changes a wheel adds its bytes to the history for good, and every clone carries every version
 ever committed. `aisland wheels prune` removes from the history each version that no branch or tag holds — this
-clone's branches and tags, and origin's. Each branch tip and tag keeps exactly the files it has; only commit ids
-change. Without `--apply` it changes nothing and says what would go:
+clone's branches and tags, and origin's —, nor a detached HEAD, nor the commit the workspace root records for the
+project (what the workspace installs, often behind the branch of an untracked project). Each of those keeps exactly
+the files it has; only commit ids change. Without `--apply` it changes nothing and says what would go:
 
 ```text
 $ aisland wheels prune app

@@ -176,7 +176,7 @@ Idempotent: every block is marker-delimited and rewritten in place, so re-run th
 Options:
 
 - `--target-rc PATH` — Rc file to write into. Default: the workspace `.project.bashrc.completion`, which project.bashrc sources. Pass ~/.bashrc (or project.bashrc) to install elsewhere.
-- `--shell [bash|zsh|fish]` — Default: detect from $SHELL.
+- `--shell [bash|zsh|fish]` — Default: the shell that reads the rc file (bash for the workspace file), else $SHELL's.
 - `--no-prune` — Keep blocks for programs that are no longer installed.
 - `--help` — Show this message and exit.
 
@@ -1595,6 +1595,7 @@ Default: every mirror. Each branch is copied as the primary has it, so an unpush
 
 Options:
 
+- `--dry-run` — Fetch and show what a sync would push; push nothing.
 - `--help` — Show this message and exit.
 
 #### `aisland workspace projects`

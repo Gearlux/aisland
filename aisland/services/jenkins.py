@@ -348,6 +348,10 @@ class JenkinsService(BaseService):
             "JENKINS_HOME": str(self.service_data_dir),
             "PATH": f"{venv_bin}:{paths.bin_dir()}:{os.environ.get('PATH', '')}",
         }
+        # Jenkins saves its config.xml — which holds the workspace's .env values — readable by everyone, whatever mode
+        # aisland wrote it with: the home it lives in is its owner's alone.
+        self.service_data_dir.mkdir(parents=True, exist_ok=True)
+        self.service_data_dir.chmod(0o700)
 
         # /login answers 200 as soon as the Jenkins web UI is up (even while
         # the setup wizard is pending), which is exactly "ready" for aisland.

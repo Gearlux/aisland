@@ -16,7 +16,7 @@ from __future__ import annotations
 
 import hashlib
 from pathlib import Path
-from typing import Dict, List, Optional
+from typing import Dict, List, Optional, Tuple
 
 import click
 import pytest
@@ -33,7 +33,7 @@ def installs(monkeypatch: pytest.MonkeyPatch) -> Dict[str, List[object]]:
     calls: Dict[str, List[object]] = {"brew": [], "userspace": [], "java": [], "download": []}
     monkeypatch.setattr(installers, "install_brew_packages", lambda packages: calls["brew"].append(sorted(packages)))
     monkeypatch.setattr(installers, "install_userspace_tool", lambda name: calls["userspace"].append(name))
-    monkeypatch.setattr(installers, "offer_shell_switch", lambda packages: None)
+    monkeypatch.setattr(installers, "offer_shell_switch", lambda packages, ask=True: None)
     monkeypatch.setattr(
         "aisland.services.jenkins.JenkinsService.provision_java", lambda self: calls["java"].append("java")
     )
@@ -95,10 +95,10 @@ def test_setup_calls_the_install_without_aislands_own(tmp_path: Path, monkeypatc
         pass
 
     (tmp_path / ".venv" / "bin").mkdir(parents=True)
-    seen: List[bool] = []
+    seen: List[Tuple[bool, bool]] = []
 
-    def stop(workspace: Path, aislands_own: bool = True) -> None:
-        seen.append(aislands_own)
+    def stop(workspace: Path, aislands_own: bool = True, ask: bool = True) -> None:
+        seen.append((aislands_own, ask))
         raise _Stop()
 
     monkeypatch.setattr(locations, "workspace_root", lambda: tmp_path)
@@ -108,7 +108,7 @@ def test_setup_calls_the_install_without_aislands_own(tmp_path: Path, monkeypatc
     monkeypatch.setattr(provision, "install", stop)
     with pytest.raises(_Stop):
         manager.setup_workspace(non_interactive=True)
-    assert seen == [False]
+    assert seen == [(False, False)], "aisland's own tools wait for a feature; `-y` asks nothing (the shell switch)"
 
 
 # --- a feature asks before it installs its tool ----------------------------------------------------------------------

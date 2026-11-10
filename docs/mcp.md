@@ -22,6 +22,10 @@ aisland mcp claude    # .mcp.json            — Claude Code's project-scoped se
                 "...": {}}}
 ```
 
+Each run replaces only aisland's own entries — the servers it wrote there last time — so a server you add yourself
+(`claude mcp add --scope project`, or `aisland-mcp` below) stays, and one whose project no longer ships a server
+goes.
+
 A client starts a server with its own environment, not the workspace's. So each server is
 started through bash, which first sources the workspace's `project.bashrc` — the venv,
 `PROJECT_ROOT` and every `.env` setting, as in a terminal — with its output discarded (the

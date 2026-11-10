@@ -258,6 +258,21 @@ def test_a_set_file_aisland_cannot_use_is_refused(tmp_path: Path, set_file: str,
         ci_templates.load_set(folder, "set")
 
 
+@pytest.mark.parametrize("output", ["../escaped", "/tmp/abs", ".git/hooks/pre-commit", "ci/.GIT/config", ""])
+def test_a_set_writing_outside_the_project_is_refused(tmp_path: Path, output: str) -> None:
+    """A set is another person's files: its [files] keys were joined to the project folder and written as told."""
+    folder = _set(tmp_path / "set", set_file=f'[files]\n"{output}" = "Jenkinsfile.jinja"\n')
+    with pytest.raises(ci_templates.TemplateError, match=r"is no file of the project"):
+        ci_templates.load_set(folder, "set")
+
+
+def test_a_template_outside_the_set_is_refused(tmp_path: Path) -> None:
+    (tmp_path / "outside.jinja").write_text("x\n")
+    folder = _set(tmp_path / "set", set_file='[files]\n"Jenkinsfile" = "../outside.jinja"\n')
+    with pytest.raises(ci_templates.TemplateError, match=r"names no template of"):
+        ci_templates.load_set(folder, "set")
+
+
 @pytest.mark.parametrize("first_line", ["", "format = 1\n"], ids=["no format", "format 1"])
 def test_a_set_of_format_1_or_none_is_read(tmp_path: Path, first_line: str) -> None:
     """A set written before `format` existed is format 1; aisland's own set says so."""

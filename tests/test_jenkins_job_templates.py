@@ -65,7 +65,7 @@ def test_the_nightly_check_holds_the_workspace_name_as_given(monkeypatch: pytest
     xml = (tmp_path / "jobs" / f"{name}.nightly-check" / "config.xml").read_text()
     assert _text(xml, "description") == f"Reports the nightly runs of {name}.local each weekday morning."
     assert _text(xml, ".//hudson.triggers.TimerTrigger/spec") == job_config.NIGHTLY_CHECK_CRON
-    assert "${env.WORKSPACE_ROOT}/.venv/bin/aisland tests nightly" in _text(xml, "definition/script")
+    assert "'${env.WORKSPACE_ROOT}/.venv/bin/aisland' tests nightly" in _text(xml, "definition/script")
 
 
 def test_a_script_keeps_its_quotes_as_written_in_the_file() -> None:

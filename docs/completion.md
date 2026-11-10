@@ -83,7 +83,7 @@ free of diffs. Point it somewhere else with `--target-rc`:
 ```bash
 aisland completion install --target-rc ~/.bashrc     # into your own shell rc
 aisland completion install --target-rc project.bashrc
-aisland completion install --shell zsh               # default: detected from $SHELL
+aisland completion install --target-rc ~/.zshrc      # zsh's script: the shell follows the file
 ```
 
 Writing to an existing rc appends (and refreshes) only its own marked blocks; the rest of the

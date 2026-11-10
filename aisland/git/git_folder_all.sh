@@ -21,7 +21,7 @@
 CLONE_DIR="$(pwd)"
 unset $(git rev-parse --local-env-vars)
 
-WORKSPACE_ROOT="$(cd "${GIT_PULL_ALL_ROOT:?set by the workspace git aliases}" && pwd)"
+WORKSPACE_ROOT="$(CDPATH= cd -- "${GIT_PULL_ALL_ROOT:?set by the workspace git aliases}" && pwd)" || exit 1
 VERB="${1:-}"
 [ $# -gt 0 ] && shift
 

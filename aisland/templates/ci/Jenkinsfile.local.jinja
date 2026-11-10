@@ -26,7 +26,7 @@ pipeline {
         stage('Initialize') {
             steps {
                 echo 'Validating Environment...'
-                sh "${VENV_BIN}/python3 --version"
+                sh "'${VENV_BIN}'/python3 --version"
                 // This pipeline installs nothing: it tests the checkout against the workspace venv
                 // exactly as `aisland setup` left it. A missing dependency means `aisland setup`
                 // has not run since it was added — run it, never an install step here.
@@ -43,10 +43,10 @@ pipeline {
                             sh "rm -f black-diff.txt black-checkstyle.xml"
                             def targets = sh(script: "for d in <[ package ]> tests examples; do if [ -d \"\$d\" ] && find \"\$d\" -name '*.py' | grep -q .; then printf \"%s \" \"\$d\"; fi; done || true", returnStdout: true).trim()
                             if (targets) {
-                                def exitCode = sh(script: "bash -c 'set -o pipefail; ${VENV_BIN}/black --check --diff ${targets} 2>&1 | tee black-diff.txt'", returnStatus: true)
+                                def exitCode = sh(script: "bash -c 'set -o pipefail; \"${VENV_BIN}\"/black --check --diff ${targets} 2>&1 | tee black-diff.txt'", returnStatus: true)
 
                                 // Generate checkstyle report
-                                sh """${VENV_BIN}/python3 -c "
+                                sh """'${VENV_BIN}'/python3 -c "
 import sys, os
 if not os.path.exists('black-diff.txt'): sys.exit(0)
 lines = open('black-diff.txt').readlines()
@@ -92,10 +92,10 @@ with open('black-checkstyle.xml', 'w') as f:
                             sh "rm -f isort-diff.txt isort-checkstyle.xml"
                             def targets = sh(script: "for d in <[ package ]> tests examples; do if [ -d \"\$d\" ] && find \"\$d\" -name '*.py' | grep -q .; then printf \"%s \" \"\$d\"; fi; done || true", returnStdout: true).trim()
                             if (targets) {
-                                def exitCode = sh(script: "bash -c 'set -o pipefail; ${VENV_BIN}/isort --check-only --diff ${targets} 2>&1 | tee isort-diff.txt'", returnStatus: true)
+                                def exitCode = sh(script: "bash -c 'set -o pipefail; \"${VENV_BIN}\"/isort --check-only --diff ${targets} 2>&1 | tee isort-diff.txt'", returnStatus: true)
 
                                 // Generate checkstyle report
-                                sh """${VENV_BIN}/python3 -c "
+                                sh """'${VENV_BIN}'/python3 -c "
 import sys, os
 if not os.path.exists('isort-diff.txt'): sys.exit(0)
 lines = open('isort-diff.txt').readlines()
@@ -141,7 +141,7 @@ with open('isort-checkstyle.xml', 'w') as f:
                             sh "rm -f flake8.txt"
                             def targets = sh(script: "for d in <[ package ]> tests examples; do if [ -d \"\$d\" ] && find \"\$d\" -name '*.py' | grep -q .; then printf \"%s \" \"\$d\"; fi; done || true", returnStdout: true).trim()
                             if (targets) {
-                                sh "${VENV_BIN}/flake8 ${targets} --tee --output-file=flake8.txt"
+                                sh "'${VENV_BIN}'/flake8 ${targets} --tee --output-file=flake8.txt"
                             } else {
                                 echo "No python files found for Flake8. Skipping."
                             }
@@ -168,7 +168,7 @@ with open('isort-checkstyle.xml', 'w') as f:
                             // Run from workspace root so root mypy.ini is picked up and cross-project imports resolve.
                             // tee streams errors to the Jenkins console; pipefail ensures mypy's exit code (not tee's) propagates
                             // so the stage fails visibly when types break.
-                            def exitCode = sh(script: "bash -c 'set -o pipefail; cd ${env.WORKSPACE_ROOT} && ${VENV_BIN}/mypy <[ project ]> 2>&1 | tee ${env.WORKSPACE_ROOT}/<[ project ]>/mypy.txt'", returnStatus: true)
+                            def exitCode = sh(script: "bash -c 'set -o pipefail; cd \"${env.WORKSPACE_ROOT}\" && \"${VENV_BIN}\"/mypy <[ project ]> 2>&1 | tee \"${env.WORKSPACE_ROOT}/<[ project ]>/mypy.txt\"'", returnStatus: true)
                             if (exitCode != 0) {
                                 if (params.REPORT_ALL_WARNINGS) {
                                     unstable("Mypy found type errors. See console output above and Mypy report.")
@@ -201,7 +201,7 @@ with open('isort-checkstyle.xml', 'w') as f:
                     sh 'rm -f test-report.xml coverage.xml'
                     script {
                         if (fileExists('tests') && sh(script: "find tests -name '*.py' | grep -q .", returnStatus: true) == 0) {
-                            sh "${VENV_BIN}/pytest tests<% if slow_tests %> -m 'not slow'<% endif %> --junitxml=test-report.xml --cov=<[ coverage or package ]> --cov-branch --cov-report=xml:coverage.xml --cov-report=term"
+                            sh "'${VENV_BIN}'/pytest tests<% if slow_tests %> -m 'not slow'<% endif %> --junitxml=test-report.xml --cov=<[ coverage or package ]> --cov-branch --cov-report=xml:coverage.xml --cov-report=term"
                         } else {
                             echo "No tests found in 'tests' directory. Skipping."
                         }
@@ -234,7 +234,7 @@ with open('isort-checkstyle.xml', 'w') as f:
                         for f in examples/*.py; do
                             if [ -f "$f" ]; then
                                 echo "Verifying $f..."
-                                ${VENV_BIN}/python3 "$f"
+                                "${VENV_BIN}"/python3 "$f"
                             fi
                         done
                         # Directory examples opt in by shipping a run.py entry point;
@@ -243,7 +243,7 @@ with open('isort-checkstyle.xml', 'w') as f:
                         for f in examples/*/run.py; do
                             if [ -f "$f" ]; then
                                 echo "Verifying $f..."
-                                ${VENV_BIN}/python3 "$f"
+                                "${VENV_BIN}"/python3 "$f"
                             fi
                         done
                     '''
@@ -266,7 +266,7 @@ with open('isort-checkstyle.xml', 'w') as f:
                             [ -f "$nb" ] || continue
                             found=1
                             echo "Executing $nb..."
-                            ${VENV_BIN}/jupyter nbconvert --to notebook --execute \
+                            "${VENV_BIN}"/jupyter nbconvert --to notebook --execute \
                                 --output "/tmp/$(basename "$nb" .ipynb)-ci.ipynb" \
                                 "$nb"
                         done

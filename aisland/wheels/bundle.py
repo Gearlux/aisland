@@ -190,9 +190,15 @@ def _tags(wheel_file: str) -> List[str]:
     return [line.split(":", 1)[1].strip() for line in wheel_file.splitlines() if line.startswith("Tag:")]
 
 
+class _EntryPointParser(configparser.ConfigParser):
+    """``entry_points.txt``'s reader: an entry point's name keeps its case (the parser's own lower-cases each key)."""
+
+    def optionxform(self, optionstr: str) -> str:
+        return optionstr
+
+
 def _entry_points(text: str, part: BundlePart) -> Dict[str, Dict[str, str]]:
-    parser = configparser.ConfigParser(delimiters=("=",), interpolation=None)
-    parser.optionxform = str  # type: ignore[assignment,method-assign]  # entry point names keep their case
+    parser = _EntryPointParser(delimiters=("=",), interpolation=None)
     try:
         parser.read_string(text)
     except configparser.Error as error:

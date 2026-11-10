@@ -1715,7 +1715,7 @@ class TestInstallAndImport:
 
         class Interrupted(subprocess.Popen):  # the run's own Popen, interrupted while it waits
             def communicate(self, *args: Any, **kwargs: Any) -> Any:
-                if "-c" in self.args and not hasattr(self, "interrupted"):
+                if isinstance(self.args, list) and "-c" in self.args and not hasattr(self, "interrupted"):
                     self.interrupted = True
                     while not pid_file.is_file() or not pid_file.read_text().strip():
                         time.sleep(0.05)

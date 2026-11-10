@@ -15,6 +15,7 @@ executables that record their argv, instead of asserting on the shell text.
 from __future__ import annotations
 
 import hashlib
+import os
 import shutil
 import stat
 import subprocess
@@ -291,3 +292,30 @@ def test_setup_sh_no_longer_depends_on_homebrew_for_python() -> None:
     """The brew fallback is what left Linux/WSL dead; it must not creep back."""
     code_lines = [ln for ln in SETUP_SH.read_text().splitlines() if not ln.lstrip().startswith("#")]
     assert not any("brew" in ln for ln in code_lines), [ln for ln in code_lines if "brew" in ln]
+
+
+def _tasks_link(root: Path) -> subprocess.CompletedProcess[str]:
+    """setup.sh's step that links the workspace's `.vscode/tasks.json`, run alone in ``root``."""
+    block = SETUP_SH.read_text().split("# --- tasks-link ---", 1)[1].split("# --- /tasks-link ---", 1)[0]
+    env = {"PATH": "/usr/bin:/bin", "WORKSPACE_ROOT": str(root)}
+    return subprocess.run([BASH, "-e", "-c", block], capture_output=True, text=True, env=env, check=True)
+
+
+def test_the_tasks_file_is_linked_and_a_link_already_there_replaced(tmp_path: Path) -> None:
+    (tmp_path / "aisland").mkdir()
+    (tmp_path / "aisland" / "tasks.json").write_text("{}\n")
+    (tmp_path / ".vscode").mkdir()
+    (tmp_path / ".vscode" / "tasks.json").symlink_to("elsewhere.json")
+    _tasks_link(tmp_path)
+    assert os.readlink(tmp_path / ".vscode" / "tasks.json") == "../aisland/tasks.json"
+
+
+def test_a_tasks_file_of_the_persons_own_is_kept(tmp_path: Path) -> None:
+    """`ln -sf` replaced a regular file too: the person's own editor tasks were gone."""
+    (tmp_path / "aisland").mkdir()
+    (tmp_path / "aisland" / "tasks.json").write_text("{}\n")
+    (tmp_path / ".vscode").mkdir()
+    (tmp_path / ".vscode" / "tasks.json").write_text('{"tasks": ["mine"]}\n')
+    result = _tasks_link(tmp_path)
+    assert (tmp_path / ".vscode" / "tasks.json").read_text() == '{"tasks": ["mine"]}\n'
+    assert "Kept .vscode/tasks.json, a file of your own" in result.stdout

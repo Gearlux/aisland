@@ -6,11 +6,11 @@ set -e
 #
 # The root is the argument (what `aisland` passes, wherever this file is installed); without one, this
 # file is aisland/aisland/git/setup_git.sh inside the workspace, three levels below the root.
-SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+SCRIPT_DIR="$(CDPATH= cd -- "$(dirname "$0")" && pwd)"
 if [ -n "${1:-}" ]; then
-    WORKSPACE_ROOT="$(cd "$1" && pwd)"
+    WORKSPACE_ROOT="$(CDPATH= cd -- "$1" && pwd)"
 else
-    WORKSPACE_ROOT="$(cd "$SCRIPT_DIR/../../.." && pwd)"
+    WORKSPACE_ROOT="$(CDPATH= cd -- "$SCRIPT_DIR/../../.." && pwd)"
 fi
 cd "$WORKSPACE_ROOT"
 

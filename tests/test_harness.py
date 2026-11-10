@@ -491,7 +491,7 @@ def test_setup_installs_the_harness_before_provisioning(
     monkeypatch.setattr(manager, "ensure_uv_in_venv", lambda venv_bin: "uv")
     monkeypatch.setattr(manager, "link_project_bashrc", lambda root: None)
 
-    def provision(root: Path, aislands_own: bool = True) -> None:
+    def provision(root: Path, aislands_own: bool = True, ask: bool = True) -> None:
         raise _Stop
 
     monkeypatch.setattr("aisland.setup.provision.install", provision)
@@ -510,7 +510,7 @@ def test_setup_prints_what_the_harness_reports(
     monkeypatch.setattr(manager, "ensure_uv_in_venv", lambda venv_bin: "uv")
     monkeypatch.setattr(manager, "link_project_bashrc", lambda root: None)
     monkeypatch.setattr(
-        "aisland.setup.provision.install", lambda root, aislands_own=True: (_ for _ in ()).throw(_Stop())
+        "aisland.setup.provision.install", lambda root, aislands_own=True, ask=True: (_ for _ in ()).throw(_Stop())
     )
     with pytest.raises(_Stop):
         manager.setup_workspace(non_interactive=True)

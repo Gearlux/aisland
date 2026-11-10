@@ -111,6 +111,20 @@ def login_shell() -> str:
     return name if name in SHELLS else "bash"
 
 
+def shell_of(rc: Path) -> str:
+    """The shell that reads ``rc``: bash for a ``*bashrc*`` file — the workspace's ``.project.bashrc.completion``,
+    which the bash ``project.bashrc`` sources, included —, zsh for a ``*zshrc`` file, fish for a ``.fish`` one, else
+    ``$SHELL``'s (:func:`login_shell`). A zsh script in a file bash reads failed every shell start on a Mac's default
+    zsh."""
+    if "bashrc" in rc.name:
+        return "bash"
+    if rc.name.endswith("zshrc"):
+        return "zsh"
+    if rc.suffix == ".fish":
+        return "fish"
+    return login_shell()
+
+
 def default_target_rc() -> Path:
     """The workspace-local rc fragment, resolved from the workspace root (never hardcoded)."""
     return get_workspace_root() / DEFAULT_RC_NAME
@@ -228,14 +242,14 @@ def install_completions(
         target_rc: Where to write. Defaults to the workspace ``.project.bashrc.completion``,
             which ``project.bashrc`` sources — pass ``~/.bashrc`` (or ``project.bashrc``
             itself) to install somewhere else.
-        shell: ``bash`` / ``zsh`` / ``fish``. Defaults to ``$SHELL``'s (:func:`login_shell`).
+        shell: ``bash`` / ``zsh`` / ``fish``. Defaults to the shell that reads ``target_rc`` (:func:`shell_of`).
         apps: liquifai apps to install. ``None`` auto-discovers every one in the active venv.
         prune: Drop blocks for programs that no longer exist. Skipped when NO liquifai app
             was found, since that means discovery is broken rather than every app removed —
             pruning then would empty the file.
     """
     rc = Path(target_rc).expanduser() if target_rc is not None else default_target_rc()
-    shell = shell or login_shell()
+    shell = shell or shell_of(rc)
     rc.parent.mkdir(parents=True, exist_ok=True)
 
     try:

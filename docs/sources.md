@@ -112,6 +112,11 @@ This machine's own choice goes to `.git/config`, one key each: `aisland.source.l
 - `git switch` and `git submodule deinit` are never forced: a submodule with uncommitted work
   refuses, is reported, and neither the venv nor `workspace.toml` is changed — a failed apply rolls
   the configuration back so the configuration never claims a state the tree does not have.
+- A deinit deletes what git ignores along with the folder, so a checkout holding git-ignored files (a run's
+  `runs/`, a checkpoint, the project's own `.env`) is not emptied: the change is refused, naming them. Move them into
+  a backup with `aisland clean <project>`, then set the source again. Caches (`__pycache__/`, `.pytest_cache/`, …),
+  a `.venv/` or `node_modules/`, the editable install's `*.egg-info/` and the files setup writes into the project do
+  not count.
 - `aisland workspace configure source set` / `unset` never regenerate a CI file — see
   [What CI does with all this](ci.md#what-ci-does-with-all-this).
 - `aisland setup` applies the configuration on every run, so a fresh clone converges without any
@@ -151,11 +156,12 @@ $ aisland workspace mirror sync
 
 | command | effect |
 | --- | --- |
-| `aisland workspace configure mirror` | each mirror, its committed URL, this machine's override, and what a sync would push (`dev/main 3 behind · main in sync · 2 tags missing`) — pushes nothing |
+| `aisland workspace configure mirror` | each mirror, its committed URL, this machine's override and the checkout's `mirror` remote (`remote set`, `remote not added yet`) — read from the configuration, no host contacted |
 | `aisland workspace configure mirror set <project> <url>` | record the mirror as the project's `mirror` in `workspace.toml` and add the remote `mirror` to the checkout |
 | `aisland workspace configure mirror set <project> <url> --machine-only` | this machine only (`.git/config aisland.mirror.<project>.mirror`); nothing committed |
 | `aisland workspace configure mirror unset <project> [--machine-only]` | drop the mirror (or only the override) and the remote aisland added; the mirror host is not touched |
 | `aisland workspace mirror sync [<project>]` | push; exit 1 when anything was refused or a host could not be reached |
+| `aisland workspace mirror sync --dry-run [<project>]` | fetch and show what a sync would push (`dev/main to push (3 commits)`); push nothing |
 
 **What a sync never does.** It never forces and never deletes:
 

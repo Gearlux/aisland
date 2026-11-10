@@ -271,7 +271,12 @@ def completion() -> None:
     help="Rc file to write into. Default: the workspace `.project.bashrc.completion`, which "
     "project.bashrc sources. Pass ~/.bashrc (or project.bashrc) to install elsewhere.",
 )
-@click.option("--shell", type=click.Choice(["bash", "zsh", "fish"]), default=None, help="Default: detect from $SHELL.")
+@click.option(
+    "--shell",
+    type=click.Choice(["bash", "zsh", "fish"]),
+    default=None,
+    help="Default: the shell that reads the rc file (bash for the workspace file), else $SHELL's.",
+)
 @click.option("--no-prune", is_flag=True, help="Keep blocks for programs that are no longer installed.")
 def completion_install(target_rc: Optional[Path], shell: Optional[str], no_prune: bool) -> None:
     """Install completion for every workspace CLI — liquifai apps, click apps, argparse apps.

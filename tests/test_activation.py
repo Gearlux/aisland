@@ -192,6 +192,21 @@ def test_a_folder_with_uncommitted_work_is_never_emptied(ws: Path, capsys: pytes
     assert "skip models: deinit refused" in capsys.readouterr().out
 
 
+def test_a_folder_holding_ignored_files_is_never_emptied(ws: Path, capsys: pytest.CaptureFixture[str]) -> None:
+    """A deinit refuses uncommitted work, never what git ignores: a run's output would go with the folder."""
+    exclude = Path(_git(ws / "models", "rev-parse", "--path-format=absolute", "--git-path", "info/exclude"))
+    exclude.parent.mkdir(parents=True, exist_ok=True)
+    exclude.write_text("/runs/\n")
+    (ws / "models" / "runs").mkdir()
+    (ws / "models" / "runs" / "model.ckpt").write_text("weights\n")
+    activation.set_machine_choice(ws, "models", False)
+    assert activation.reconcile(ws) == ["models"]
+    assert (ws / "models" / "runs" / "model.ckpt").read_text() == "weights\n"
+    assert "skip models: models holds git-ignored files emptying it would delete for good (runs)" in (
+        capsys.readouterr().out
+    )
+
+
 @pytest.mark.slow
 def test_a_project_on_a_package_source_stays_empty_whatever_its_choice(
     ws: Path, monkeypatch: pytest.MonkeyPatch
@@ -364,7 +379,7 @@ def test_setup_asks_then_reconciles(tmp_path: Path, monkeypatch: pytest.MonkeyPa
     monkeypatch.setattr(manager, "ensure_uv_in_venv", lambda venv_bin: "uv")
     monkeypatch.setattr(manager, "link_project_bashrc", lambda root: None)
     monkeypatch.setattr(manager, "install_harness", lambda root: [])
-    monkeypatch.setattr("aisland.setup.provision.install", lambda root, aislands_own=True: None)
+    monkeypatch.setattr("aisland.setup.provision.install", lambda root, aislands_own=True, ask=True: None)
 
     def resolve(root: Path, non_interactive: bool) -> None:
         calls.append(f"resolve {non_interactive}")
@@ -398,7 +413,7 @@ def test_a_project_whose_folder_could_not_follow_fails_setup_which_goes_on(
     monkeypatch.setattr(manager, "ensure_uv_in_venv", lambda venv_bin: "uv")
     monkeypatch.setattr(manager, "link_project_bashrc", lambda root: None)
     monkeypatch.setattr(manager, "install_harness", lambda root: [])
-    monkeypatch.setattr("aisland.setup.provision.install", lambda root, aislands_own=True: None)
+    monkeypatch.setattr("aisland.setup.provision.install", lambda root, aislands_own=True, ask=True: None)
     monkeypatch.setattr(activation, "resolve", lambda root, non_interactive: None)
     monkeypatch.setattr(activation, "reconcile", lambda root: ["nourl", "bad"])
     went_on: List[str] = []

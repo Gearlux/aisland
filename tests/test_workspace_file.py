@@ -78,6 +78,20 @@ def _refusal(path: Path) -> str:
 # --- reading ---------------------------------------------------------------------------------------------------
 
 
+@pytest.mark.parametrize(
+    "text, said",
+    [
+        ('project = "x"\n\n[workspace]\nname = "studio"\n', ":1: project must hold one table per project"),
+        ("workspace = 3\n", ":1: [workspace] must be a table"),
+    ],
+    ids=["project", "workspace"],
+)
+def test_a_section_that_is_no_table_is_refused_naming_its_line(tmp_path: Path, text: str, said: str) -> None:
+    """`project = "x"` and `workspace = 3` crashed every command that read the file with a Python traceback."""
+    path = _file(tmp_path, text)
+    assert _refusal(path).startswith(f"{path}{said}")
+
+
 def test_a_file_reads_like_gitmodules(tmp_path: Path) -> None:
     path = _file(
         tmp_path,
@@ -421,7 +435,7 @@ def test_setup_keeps_the_file_current(tmp_path: Path, monkeypatch: pytest.Monkey
 
     monkeypatch.setattr(workspace_file, "refresh", refresh)
     monkeypatch.setattr(
-        "aisland.setup.provision.install", lambda root, aislands_own=True: (_ for _ in ()).throw(_Stop())
+        "aisland.setup.provision.install", lambda root, aislands_own=True, ask=True: (_ for _ in ()).throw(_Stop())
     )
     with pytest.raises(_Stop):
         manager.setup_workspace(non_interactive=True)

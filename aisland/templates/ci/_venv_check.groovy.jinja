@@ -1,4 +1,4 @@
-sh """${VENV_BIN}/python3 -P - '<[ distribution ]>' "${env.WORKSPACE_ROOT}/<[ project ]>" <<'PY'
+sh """'${VENV_BIN}'/python3 -P - '<[ distribution ]>' "${env.WORKSPACE_ROOT}/<[ project ]>" <<'PY'
 import importlib.metadata, json, pathlib, sys
 dist, checkout = sys.argv[1], pathlib.Path(sys.argv[2]).resolve()
 try:

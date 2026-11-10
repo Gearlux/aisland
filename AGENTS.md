@@ -325,13 +325,15 @@ naming the PID is the only signal). All service state lives under `<workspace>/a
   - The source package builds the wheel and nothing else: `MANIFEST.in` prunes `tests/`, whose suite needs the
     repository (`tests/test_packaging.py::test_the_source_package_carries_no_part_of_the_test_suite`).
   - A release ships `LICENSE`, `CHANGELOG.md` and `aisland/py.typed`; the newest `## [<version>]` of the CHANGELOG is
-    `pyproject.toml`'s version. It is published by `.github/workflows/release.yml` on a `v<version>` tag: the quality
-    gates and both test runs (`pytest tests -m ''`), the tag guard, the guard that the CHANGELOG dates the version
+    `pyproject.toml`'s version. It is published by `.github/workflows/release.yml` on a `v<version>` tag, every job's
+    token `contents: read`: first the `guards` job — the tag guard, the guard that the CHANGELOG dates the version
     (`## [<version>] - YYYY-MM-DD`; until then the newest heading, the next release, reads `- Unreleased`), the
-    guard that `main` holds the tagged commit, `python -m build`, `twine check --strict`, a smoke
-    test of the wheel in a clean venv from `/tmp`, then Trusted Publishing from the `pypi` environment. Change a step
-    and its test together (`tests/test_packaging.py`).
-  - `project.bashrc` ALWAYS sets `PROJECT_ROOT` from its own place, never keeps an inherited one; `.env` is SOURCED
+    guard that `main` holds the tagged commit —, then the quality gates and both test runs (`pytest tests -m ''`, Python
+    3.12 and 3.13 on Linux, 3.13 on macOS, checkout keeping no credentials), then `python -m build --no-isolation` on
+    an exact toolchain, `twine check --strict`, a smoke test of the wheel in a clean venv from `/tmp`, then Trusted
+    Publishing from the `pypi` environment. Change a step and its test together (`tests/test_packaging.py`).
+  - `project.bashrc` ALWAYS sets `PROJECT_ROOT` from its own place, never keeps an inherited one, and every
+    `$(cd … && pwd)` of the shell files is `$(CDPATH= cd -- … && pwd)` (a `CDPATH` made `cd` print the folder too); `.env` is SOURCED
     under `set -a`, never word-split through `xargs`, and one with no settings exports nothing; each shell function it
     defines (`cdp`, `cdd`, `cdm`, `cdr`, `h`, `tm`) is `unalias`ed first; Tab after a `cd*` helper completes a folder
     under ITS root under bash 3.2 (no `compopt`), unescaping the typed word without `eval`; `tm` hands `tmux
@@ -456,7 +458,8 @@ naming the PID is the only signal). All service state lives under `<workspace>/a
   place (`tests/test_errors_exit_one.py::test_a_plugin_manager_whose_digest_differs_is_refused_and_never_kept`).
 - **The local Jenkins is this machine's alone.** It listens on `JenkinsService.LISTEN_ADDRESS` (`127.0.0.1`) — never
   every interface, Jenkins' default, which offers its script console and the `.env` values its jobs see to the
-  network. Its initial admin password is named by its file (`admin_password_file`), never printed: output reaches
+  network. Its home is `0700` on every launch: Jenkins saves its `config.xml`, which holds `.env`'s values, readable by
+  all (`tests/test_jenkins_port.py`). Its initial admin password is named by its file (`admin_password_file`), never printed: output reaches
   scrollback, CI logs and, through `aisland-mcp`, an AI client. `jenkins init --local` may allow anonymous read
   (`allow_anonymous_read`: the nightly report, the SwiftBar menu and the scaffold's linter read without a login);
   never add back an option that turns the login or CSRF protection off — a page in the browser can post to
@@ -627,7 +630,8 @@ aisland rules → "Two Test Runs, The Fast One Within 5 Minutes". [test-stats] (
   install`, never Homebrew; a missing uv is its pinned release's archive (`UV_VERSION`), unpacked only when its
   SHA-256 is the one the release lists beside it — never `curl … | sh`; only POSIX syntax above the
   re-exec-under-bash guard; pip is seeded with `ensurepip`; setup runs as `aisland setup -y`. It names no workspace
-  or project; `tasks.json`, which it links into the workspace's `.vscode/`, holds aisland's own Jenkins only.
+  or project; `tasks.json`, which it links into the workspace's `.vscode/` (a link it replaces, a file of the person's
+  own it keeps), holds aisland's own Jenkins only.
 - `aisland setup` re-applies each managed project's effective source, `ref` included, so a checkout switched by hand
   goes back. Keep a branch with `aisland workspace configure source set <p> local --branch <branch> --machine-only`;
   after a branch switch run `uv pip install -e ./<p> --no-deps`.
@@ -637,7 +641,8 @@ aisland rules → "Two Test Runs, The Fast One Within 5 Minutes". [test-stats] (
   optional one (`resolve`: under `-y` only a project this machine never answered) and keeps the answer in
   `aisland.active.<project>.active` (aisland's key, so `submodule deinit` never erases it), then brings the folders in
   line (`reconcile`): active → init, or `git submodule add` from the file's url and branch when `.gitmodules` lacks it;
-  inactive → deinit, never `-f`; a `pypi`/`github` source stays empty and records no choice. It writes what git reads
+  inactive → deinit, never `-f` and never over git-ignored files ("A folder is never emptied over its git-ignored
+  files"); a `pypi`/`github` source stays empty and records no choice. It writes what git reads
   from the effective value (`.gitmodules` `active = false` exactly for a default-off project, and
   `submodule.<name>.active`); setup's upkeep keeps an optional project `.gitmodules` lacks. There are no
   `--activate`/`--deactivate` flags and no `aisland reconcile`: `aisland workspace configure active set|unset
@@ -685,7 +690,10 @@ aisland rules → "Two Test Runs, The Fast One Within 5 Minutes". [test-stats] (
   aisland; black-, isort- and flake8-clean at 120); a fix to it is made in the template and `aisland workspace
   env-test` re-run. Never write a project's `env.example` for the user (`tests/test_workspace_env_example.py`).
 - `.gemini/settings.json` and `.mcp.json` keep ABSOLUTE venv paths (clients launch from any cwd). MCP discovery matches a
-  `<pkg>.server:main` whose module imports `mcp.server`, never a class name.
+  `<pkg>.server:main` whose module imports `mcp.server`, never a class name. **Only aisland's own servers are
+  replaced:** the names it last wrote into that file (`aisland.mcp.claude` / `aisland.mcp.gemini` in this machine's
+  git config) and any entry started through the shell init; every other server is a person's and kept
+  (`tests/test_mcp_config.py::TestTheTwoClientFiles`).
 - **A service tool runs `aisland services <verb> <name>`, never the `aisland <name>` shortcut** (a project's service
   named like an aisland command has none), and the server imports no part of `aisland.cli`
   (`tests/test_server.py::test_a_service_named_like_an_aisland_command_is_still_the_service`).
@@ -772,6 +780,13 @@ aisland rules → "Two Test Runs, The Fast One Within 5 Minutes". [test-stats] (
   checks a `github` ref. Unreachable = warn, never reject.
 - Never force `git switch` / `submodule deinit`. Report the remedy for the ACTUAL blocker (`_deinit_remedy`: dirty tree
   vs stale gitlink) and roll the config back (`TestSetProjectSourceRollback`).
+- **A folder is never emptied over its git-ignored files.** [deinit-keeps-ignored] A deinit without `-f` refuses
+  uncommitted work yet deletes what git ignores, so every deinit (`source_apply.apply_source`, `activation._reconcile`)
+  first lists `projects.ignored_content` (`git status --ignored=matching`) and refuses on anything but what is made
+  again (`_REMADE_NAMES`: a cache folder, a `.venv` or `node_modules`, a `*.egg-info`, setup's `pyrightconfig.json` and
+  `.claude/commands`), naming
+  the paths and `aisland clean <project>`. A source change that fails after the deinit says its folder was emptied
+  and that `aisland setup` checks it out again (`tests/test_sources.py`, `tests/test_activation.py`).
 - `activation.reconcile` folds in `detached_projects()`. The scaffolder seeds a detached dep from the registry's
   `distribution`. The remote comes from `.gitmodules`; `pip_vcs_url` rewrites `git@host:org/repo`.
 
@@ -793,7 +808,10 @@ An aisland command, submodules only, run by `/push-all` and `/ship`. [mirror] (`
   pattern, no backward compatibility — an old `[mirrors.*]` table or one-key setting is simply not read); the commands
   are `setup/configure.py`'s generic ones and the action `aisland workspace mirror sync`. Setup re-applies the remote. Only a
   remote marked `remote.mirror.aislandManaged` is changed or removed.
-- Network calls run with `GIT_TERMINAL_PROMPT=0`; a project without a mirror is never contacted. `/push-all` and
+- Network calls run with `GIT_TERMINAL_PROMPT=0`; a project without a mirror is never contacted. **The listing
+  (`configure mirror`, `mirrors.rows`) reads the configuration alone** — no remote added, no host contacted; what a
+  sync would push is `aisland workspace mirror sync --dry-run`
+  (`::TestCli::test_the_listing_contacts_no_remote_and_writes_nothing`). `/push-all` and
   `/ship` call `aisland workspace mirror sync` last; change its exit status or wording and those workflows together.
 
 ## System tools (`aisland workspace provision`, `setup/provision.py`)
@@ -813,10 +831,12 @@ No configure plugin (which projects a machine has decides its tools); aisland's 
   tool missing calls `provision.ask_to_install(name)` (the supervisor's process-compose, `docker start`'s colima and
   docker, `swiftbar start`'s SwiftBar) or asks itself (`jenkins` before downloading its WAR,
   `JenkinsService.ensure_war_asking`, and before installing Java, `java_asking`); `aisland check` without `act` fails
-  that gate naming `install_command`. A question is asked only when stdin and stdout are a terminal
-  (`provision.agree`); without one, or on a "no", the command refuses with the line that installs the tool and installs
-  nothing — a script, CI or an MCP call never installs software as a side effect
-  (`tests/test_installs_on_demand.py`) [on-demand-tools].
+  that gate naming `install_command`. A question is asked only when a person can answer (`console.can_ask`: the
+  terminal console, stdin and stdout a terminal; `provision.agree`); without one, or on a "no", the command refuses
+  with the line that installs the tool and installs nothing — a script, CI or an MCP call never installs software as a
+  side effect (`tests/test_installs_on_demand.py`) [on-demand-tools]. **`setup -y` asks nothing:** the login-shell
+  switch (`installers.offer_shell_switch`, `sudo tee /etc/shells` and `chsh`) asks only then and otherwise prints
+  the two steps (`tests/test_provision.py::test_the_shell_switch_asks_nothing_under_yes_or_without_a_terminal`).
 
 ## What the projects declare (`workspace/discovery.py`)
 
@@ -877,7 +897,11 @@ A bare `::` pin in this section is in `tests/test_jenkins_scaffold.py`.
   templates = … }`; variables: the set's defaults, `[ci.variables]`, the project's `ci` table — an undeclared one and a
   required one unset are refused naming the file. aisland writes each file's provenance header
   (`ci_templates.header`); a set never needs to. A change to aisland's own output is a change to its templates, held
-  byte for byte by the existing pins (`tests/test_ci_templates.py`).
+  byte for byte by the existing pins (`tests/test_ci_templates.py`). A set's `[files]` paths and templates stay below
+  their folders and out of `.git` in any case (`ci_templates._inside`), as a harness set's do
+  (`::test_a_set_writing_outside_the_project_is_refused`). **Every path a generated `sh` step names is quoted**
+  (`'${VENV_BIN}'/…`, `\"${VENV_BIN}\"/…` inside `bash -c '…'`): a workspace at `~/My Projects/acme` must build
+  (`tests/test_jenkins_scaffold.py::TestTheLocalPipelineInstallsNothing::test_a_workspace_whose_path_holds_a_space_passes_the_check`).
 - **CI installs what is RELEASED.** The runner files ask PyPI per internal
   dep (`released_on_pypi`: a final, non-yanked version whose metadata points at `github.com/<owner>/`, the owner of
   the dep's remote): released → no install line; else `git+https://github.com/<owner>/<dep>.git@main`
@@ -916,7 +940,7 @@ A bare `::` pin in this section is in `tests/test_jenkins_scaffold.py`.
   `limited` helper (`templates/ci/_limited.groovy.jinja`), which past the limit FAILS the stage with
   `TIMED_OUT_MESSAGE` and rethrows an abort clicked before it. Initialize and the quality gates get none. `ci.yml`'s
   jobs get `RUNNER_LIMIT_FACTOR` (3) times their stage's limit (`runner_limit`); the push `Jenkinsfile` gets none;
-  `release.yml`'s jobs: tests 45, build 15, publish 10. Each pytest step first removes the files it writes (`rm -f
+  `release.yml`'s jobs: guards 5, tests 45, build 15, publish 10. Each pytest step first removes the files it writes (`rm -f
   test-report.xml coverage.xml`, `rm -f slow-test-report.xml`): a pytest killed before its report leaves the previous
   build's for the `junit` step. `aisland tests nightly` quotes the timed-out line (`nightly._TIMED_OUT`). Raise a
   limit in the table, never in a generated file (`::TestALongStageHasATimeLimit`,
@@ -998,7 +1022,9 @@ A bare `::` pin in this section is in `tests/test_jenkins_scaffold.py`.
     click-commands` (`completion.workspace_click_clis`, read by discovery: never import a script to tell). Never name a
     workspace CLI in aisland. argcomplete: no member; never add a row for a project's argparse CLI.
   - liquifai is never a dependency of aisland, not even behind an extra: a venv without it has no liquifai app, so the
-    install writes the other families; the default shell is `completion.login_shell` (`$SHELL`'s name, else bash).
+    install writes the other families; the default shell is the one that reads the file (`completion.shell_of`: bash
+    for a `*bashrc*` file — the workspace file `project.bashrc` sources included —, zsh for `*zshrc`, fish for
+    `.fish`), else `completion.login_shell` (`$SHELL`'s name, else bash).
     `--target-rc` appends marked blocks only; program lookup is venv-first.
   - **The generated block LEAVES a non-interactive shell at once** (`_INTERACTIVE_ONLY`, the block's first line after
     its provenance header): every line below it RUNS its CLI to get the script, so a non-interactive shell that reads
@@ -1087,8 +1113,9 @@ An aisland command, only the named project's closure, both checks; each flag's m
   another name beside the block is refused. A project without the block gets byte-identical files
   (`tests/test_wheels_extra.py`).
 - **`aisland wheels prune` / `reset`** (`wheels/prune.py`, `tests/test_wheels_prune.py`) [wheels-prune]:
-  - What goes is exactly the `wheels/**.whl` blobs no tip holds — this clone's branches and tags, origin's branches;
-    every kept tip's tree is checked unchanged after the rewrite. Without `--apply` nothing changes.
+  - What goes is exactly the `wheels/**.whl` blobs no tip holds — this clone's branches and tags, origin's branches,
+    a detached HEAD and the commit the root records (`prune._kept_commits`); every kept tip's tree, and each kept
+    commit's twin's, is checked unchanged after the rewrite. Without `--apply` nothing changes.
   - The strip is git-filter-repo with `--prune-empty never --prune-degenerate never --preserve-commit-hashes`, so it is
     a function of each commit and `reset` re-runs it to land on origin's ids. Never drop emptied commits or rewrite
     messages, and never replace `reset` by a rebase.

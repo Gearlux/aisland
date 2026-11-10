@@ -129,6 +129,14 @@ def read(path: Path) -> WorkspaceFile:
         raise FileError(
             f'{where}: [{key}] is no section of {FILE_NAME} — it has [workspace], [ci], [harness] and [project."<name>"]'
         )
+    # Another person's file once the workspace is cloned: a section that is no table is a refusal, never a crash.
+    if not isinstance(data.get("project", {}), dict):
+        raise FileError(
+            f'{Where(path, _top_line(text, "project"))}: project must hold one table per project: '
+            'write each as [project."<name>"]'
+        )
+    if not isinstance(data.get("workspace", {}), dict):
+        raise FileError(f"{Where(path, _top_line(text, 'workspace'))}: [workspace] must be a table")
     projects: Dict[str, Project] = {}
     for name, table in data.get("project", {}).items():
         line = table_line(text, "project", name)

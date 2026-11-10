@@ -19,6 +19,7 @@ from aisland.ci import jenkins_job_config as job_config
 from aisland.ci.jenkins_job_config import NIGHTLY_CRON
 from aisland.services import jenkins_jobs
 from aisland.workspace.model import Workspace
+from tests.records import project_metadata
 
 
 def _orchestrator_script(monkeypatch: pytest.MonkeyPatch, tmp_path: Path, local: bool, slow: Sequence[str] = ()) -> str:
@@ -35,9 +36,9 @@ def _orchestrator_script(monkeypatch: pytest.MonkeyPatch, tmp_path: Path, local:
         Workspace,
         "install_order",
         [
-            {"name": "libcore", "dependencies": []},
-            {"name": "app_a", "dependencies": ["libcore>=0.1.0"]},
-            {"name": "app_b", "dependencies": ["libcore>=0.1.0"]},
+            project_metadata("libcore", tmp_path / "libcore"),
+            project_metadata("app_a", tmp_path / "app_a", "libcore>=0.1.0"),
+            project_metadata("app_b", tmp_path / "app_b", "libcore>=0.1.0"),
         ],
     )
     home = tmp_path / "jenkins"

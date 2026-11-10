@@ -10,6 +10,7 @@ The console is a context variable, so a tool call (a thread or a task of its own
 """
 
 import contextvars
+import sys
 from contextlib import contextmanager
 from dataclasses import dataclass, field
 from typing import Any, Iterator, List, Protocol
@@ -83,6 +84,12 @@ def confirm(question: str, default: bool = False) -> bool:
 def prompt(text: str, **options: Any) -> Any:  # Any: as Console.prompt
     """Ask the console in charge for an answer to ``text``."""
     return _current.get().prompt(text, **options)
+
+
+def can_ask() -> bool:
+    """Whether a person can answer a question now: the console in charge is the terminal, and standard input and
+    output are both one — a script, CI and an MCP tool call are not."""
+    return isinstance(_current.get(), Terminal) and sys.stdin.isatty() and sys.stdout.isatty()
 
 
 @contextmanager

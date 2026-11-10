@@ -386,8 +386,8 @@ def test_without_liquifai_a_stale_liquifai_block_is_kept_not_pruned(
     "login_shell, expected",
     [("/bin/zsh", "zsh"), ("/usr/local/bin/fish", "fish"), ("/bin/bash", "bash"), ("/bin/tcsh", "bash")],
 )
-def test_without_liquifai_the_shell_comes_from_SHELL(
-    rc: Path,
+def test_without_liquifai_the_shell_of_a_file_no_shell_names_comes_from_SHELL(
+    tmp_path: Path,
     all_present: None,
     no_liquifai: None,
     monkeypatch: pytest.MonkeyPatch,
@@ -395,7 +395,20 @@ def test_without_liquifai_the_shell_comes_from_SHELL(
     expected: str,
 ) -> None:
     monkeypatch.setenv("SHELL", login_shell)
-    assert comp.install_completions(target_rc=rc).shell == expected
+    assert comp.install_completions(target_rc=tmp_path / "completion.sh").shell == expected
+
+
+@pytest.mark.parametrize(
+    "name, expected",
+    [(".project.bashrc.completion", "bash"), ("project.bashrc", "bash"), (".zshrc", "zsh"), ("config.fish", "fish")],
+)
+def test_a_file_a_shell_reads_gets_that_shells_script_whatever_SHELL_says(
+    tmp_path: Path, all_present: None, no_liquifai: None, monkeypatch: pytest.MonkeyPatch, name: str, expected: str
+) -> None:
+    """On a Mac's default zsh the workspace file, which the bash `project.bashrc` sources, got zsh's script: every
+    shell start printed `syntax error near unexpected token` and completion did nothing."""
+    monkeypatch.setenv("SHELL", "/bin/zsh" if expected != "zsh" else "/bin/bash")
+    assert comp.install_completions(target_rc=tmp_path / name).shell == expected
 
 
 def test_without_liquifai_the_command_reports_no_liquifai_app(

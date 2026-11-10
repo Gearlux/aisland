@@ -11,6 +11,7 @@ from typing import List
 
 import pytest
 
+from aisland.pyproject import PyprojectError
 from aisland.workspace import model
 from aisland.workspace.model import Workspace
 
@@ -89,3 +90,13 @@ def test_a_workspace_under_a_hidden_folder_still_finds_its_projects(tmp_path: Pa
         (root / folder).mkdir(parents=True)
         (root / folder / "pyproject.toml").write_text('[project]\nname = "x"\n')
     assert discover_projects(root) == [root / "app" / "pyproject.toml"]
+
+
+def test_a_sub_projects_broken_file_is_refused_naming_it(tmp_path: Path) -> None:
+    """A template's `pyproject.toml` with placeholders stopped every reader with tomllib's error, naming no file."""
+    _project(tmp_path / "app", "app")
+    broken = tmp_path / "app" / "template" / "pyproject.toml"
+    broken.parent.mkdir()
+    broken.write_text('[project]\nname = "{{ name }}\nversion = {{ version }}\n')
+    with pytest.raises(PyprojectError, match=rf"^{broken}: "):
+        Workspace(tmp_path).metadata

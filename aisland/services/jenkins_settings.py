@@ -57,8 +57,7 @@ def setup_dashboard_view(home: Path, name: Optional[str] = None) -> None:
 
 def _view_basics(view: ET.Element, name: str) -> None:
     """The elements every Jenkins view starts with: its owner, name, filters and properties."""
-    ET.SubElement(view, "owner").set("class", "hudson")
-    ET.SubElement(view, "owner").set("reference", "../../..")
+    ET.SubElement(view, "owner", {"class": "hudson", "reference": "../../.."})
     ET.SubElement(view, "name").text = name
     ET.SubElement(view, "filterExecutors").text = "false"
     ET.SubElement(view, "filterQueue").text = "false"

@@ -27,7 +27,7 @@ def stubbed_setup(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> List[Path]
     monkeypatch.setattr(manager, "ensure_uv_in_venv", lambda venv_bin: "uv")
     monkeypatch.setattr(manager, "link_project_bashrc", lambda root: None)
     monkeypatch.setattr(manager, "install_harness", lambda root: [])
-    monkeypatch.setattr("aisland.setup.provision.install", lambda root, aislands_own=True: None)
+    monkeypatch.setattr("aisland.setup.provision.install", lambda root, aislands_own=True, ask=True: None)
     monkeypatch.setattr("aisland.workspace.activation.resolve", lambda root, non_interactive: None)
     monkeypatch.setattr("aisland.workspace.activation.reconcile", lambda root: [])
     monkeypatch.setattr("aisland.setup.manager.apply_all", lambda *a, **k: None)

@@ -87,11 +87,44 @@ class TestTheTwoClientFiles:
         servers alone."""
         settings = fake_workspace / ".gemini" / "settings.json"
         settings.parent.mkdir()
-        settings.write_text(json.dumps({"theme": "GitHub", "mcpServers": {"gone": {"command": "x"}}}))
+        settings.write_text(json.dumps({"theme": "GitHub"}))
         write_gemini_settings(fake_workspace, fake_workspace / ".venv" / "bin")
         written = json.loads(settings.read_text())
         assert written["theme"] == "GitHub"
         assert set(written["mcpServers"]) == {"modern", "legacy"}
+
+    def test_a_server_the_person_added_stays_and_one_a_project_dropped_goes(
+        self, fake_workspace: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        """Setup replaced the whole server list: a server added with `claude mcp add --scope project`, and the
+        `aisland-mcp` entry docs/mcp.md has a person write, were gone after the next setup."""
+        subprocess.run(["git", "init", "-q"], cwd=fake_workspace, check=True)
+        venv_bin = fake_workspace / ".venv" / "bin"
+        write_mcp_json(fake_workspace, venv_bin)  # aisland writes modern and legacy, and remembers it did
+        theirs = {
+            "tools": {"command": "npx", "args": ["-y", "@acme/tools-mcp"]},
+            "aisland": {"command": str(venv_bin / "aisland-mcp"), "env": {"AISLAND_WORKSPACE": str(fake_workspace)}},
+        }
+        written = json.loads((fake_workspace / ".mcp.json").read_text())
+        (fake_workspace / ".mcp.json").write_text(json.dumps({"mcpServers": {**written["mcpServers"], **theirs}}))
+        shutil.rmtree(fake_workspace / "legacy")  # a project that no longer ships a server
+
+        write_mcp_json(fake_workspace, venv_bin)
+        servers = json.loads((fake_workspace / ".mcp.json").read_text())["mcpServers"]
+        assert set(servers) == {"modern", "tools", "aisland"}
+        assert {name: servers[name] for name in theirs} == theirs
+        assert "kept 2 of yours: aisland, tools" in capsys.readouterr().out
+
+    def test_a_server_started_through_the_shell_init_is_aislands_even_unrecorded(self, fake_workspace: Path) -> None:
+        """An entry an older aisland wrote, before it recorded the names: its program is aisland's alone."""
+        (fake_workspace / "project.bashrc").write_text("")
+        venv_bin = fake_workspace / ".venv" / "bin"
+        gone = mcp_config._with_workspace_env(fake_workspace, {"gone": {"command": str(venv_bin / "gone-mcp")}})
+        (fake_workspace / ".mcp.json").write_text(json.dumps({"mcpServers": gone}))
+        write_mcp_json(fake_workspace, venv_bin)
+        assert "gone" not in json.loads((fake_workspace / ".mcp.json").read_text())["mcpServers"] or not shutil.which(
+            "bash"
+        )
 
     def test_a_client_file_that_is_no_json_is_reported_and_left_as_it_is(
         self, fake_workspace: Path, capsys: pytest.CaptureFixture[str]

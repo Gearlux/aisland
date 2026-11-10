@@ -126,7 +126,7 @@ def setup_workspace(non_interactive: bool = False, install_all: bool = False) ->
         console.echo(line, err=True)
 
     # 1. The system tools the projects declare (aisland's own are installed by the feature that first needs one).
-    provision.install(workspace_root, aislands_own=False)
+    provision.install(workspace_root, aislands_own=False, ask=not non_interactive)
     # 1b. Activation (aisland.workspace.activation): ask about each optional project, then check each one out or empty it as
     #     this machine has it. Before discovery, so an inactive checkout drops out.
     activation.resolve(workspace_root, non_interactive)

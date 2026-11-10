@@ -17,13 +17,13 @@ while [ -L "$_aisland_self" ]; do
     _aisland_link_target="$(readlink "$_aisland_self")"
     case "$_aisland_link_target" in
         /*) _aisland_self="$_aisland_link_target" ;;
-        *)  _aisland_self="$(cd "$(dirname "$_aisland_self")" && cd "$(dirname "$_aisland_link_target")" && pwd)/$(basename "$_aisland_link_target")" ;;
+        *)  _aisland_self="$(CDPATH= cd -- "$(dirname "$_aisland_self")" && CDPATH= cd -- "$(dirname "$_aisland_link_target")" && pwd)/$(basename "$_aisland_link_target")" ;;
     esac
 done
-_aisland_home="$(cd "$(dirname "$_aisland_self")" && pwd)"
+_aisland_home="$(CDPATH= cd -- "$(dirname "$_aisland_self")" && pwd)"
 # Always this file's workspace, never an inherited PROJECT_ROOT: an editor or terminal started from a
 # shell that sourced another workspace passes that one's root down, and its venv would be activated.
-export PROJECT_ROOT="$(cd "$_aisland_home/.." && pwd)"
+export PROJECT_ROOT="$(CDPATH= cd -- "$_aisland_home/.." && pwd)"
 unset _aisland_self _aisland_link_target
 
 # Activate the python virtual environment for this project.

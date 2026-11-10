@@ -497,18 +497,38 @@ class TestCli:
         assert result.exit_code == 1
         assert "REFUSED" in result.output
 
-    def test_the_listing_shows_the_layers_and_the_state(self, ws: Workspace) -> None:
+    def test_the_listing_shows_the_layers_and_the_remote(self, ws: Workspace) -> None:
         runner = CliRunner()
         self._set(runner, ws)
-        runner.invoke(cli_main, ["workspace", "mirror", "sync"])
-        ws.publish("alpha", "two")
 
         result = runner.invoke(cli_main, ["workspace", "configure", "mirror"])
         assert result.exit_code == 0, result.output
         lines = result.output.splitlines()
         assert lines[0].split() == ["PROJECT", "COMMITTED", "OVERRIDE", "STATE"]
         assert lines[1].split()[:3] == ["alpha", ws.mirror_url(), "-"]
-        assert f"{BRANCH} 1 behind" in lines[1] and "main in sync" in lines[1]
+        assert lines[1].rstrip().endswith("remote set")
+
+    def test_the_listing_contacts_no_remote_and_writes_nothing(
+        self, ws: Workspace, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Printing the table ran a sync's plan: a remote added, two ls-remotes and two fetches per project."""
+        m.write_committed_mirrors(ws.root, {"alpha": ws.mirror_url()})
+        config = (ws.root / ".git" / "modules" / "alpha" / "config").read_text()
+        monkeypatch.setattr(m, "_git", lambda *args, **kwargs: pytest.fail(f"git ran: {args}"))
+        result = CliRunner().invoke(cli_main, ["workspace", "configure", "mirror"])
+        assert result.exit_code == 0, result.output
+        assert "remote not added yet (aisland setup adds it)" in result.output
+        assert (ws.root / ".git" / "modules" / "alpha" / "config").read_text() == config
+
+    def test_a_dry_run_sync_says_what_it_would_push_and_pushes_nothing(self, ws: Workspace) -> None:
+        runner = CliRunner()
+        self._set(runner, ws)
+        runner.invoke(cli_main, ["workspace", "mirror", "sync"])
+        ws.publish("alpha", "two")
+
+        result = runner.invoke(cli_main, ["workspace", "mirror", "sync", "--dry-run"])
+        assert result.exit_code == 0, result.output
+        assert "to push (1 commit)" in result.output
         assert ws.mirror_refs()[f"refs/heads/{BRANCH}"] != ws.primary_refs()[f"refs/heads/{BRANCH}"]
 
     def test_the_listing_with_nothing_configured_says_how_to_start(self) -> None:

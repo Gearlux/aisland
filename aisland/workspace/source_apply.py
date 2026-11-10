@@ -2,8 +2,9 @@
 
 ``local``: the submodule activated, initialized, fetched and switched to its ref, then installed editable.
 ``github`` / ``pypi``: the distribution name read while the folder is still there, the submodule deinit'd without
-``-f`` (uncommitted work refuses, and the venv is left untouched), then installed from the remote at its ref or from
-PyPI. A failure is reported and the sweep goes on: one project's unreachable remote never stops ``aisland setup``.
+``-f`` (uncommitted work refuses, and so do git-ignored files the folder would lose; the venv is left untouched), then
+installed from the remote at its ref or from PyPI. A failure is reported and the sweep goes on: one project's
+unreachable remote never stops ``aisland setup``.
 """
 
 from __future__ import annotations
@@ -16,7 +17,7 @@ from typing import List
 from aisland import console, failures, gitcmd
 from aisland.workspace import file as workspace_file
 from aisland.workspace import sources
-from aisland.workspace.projects import set_submodule_active
+from aisland.workspace.projects import ignored_content, ignored_content_refusal, set_submodule_active
 from aisland.workspace.selection import editable_target
 
 logger = logging.getLogger(__name__)
@@ -142,6 +143,11 @@ def apply_source(workspace_root: Path, project: str, source: sources.ProjectSour
         console.echo(f"==> {project}: pypi ({target})")
 
     if (path / ".git").exists():
+        # Before git empties the folder: a deinit refuses uncommitted work but deletes what git ignores.
+        kept = ignored_content(path)
+        if kept:
+            failures.report(f"  - Error: {ignored_content_refusal(project, rel, kept)}")
+            return False
         if not _git(workspace_root, "submodule", "deinit", "--", rel):
             console.echo(
                 f"  - {project}: deinit refused; the venv was left untouched. "

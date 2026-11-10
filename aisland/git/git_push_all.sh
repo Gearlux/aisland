@@ -15,7 +15,7 @@
 # below names its repository with -C, so drop them.
 unset $(git rev-parse --local-env-vars)
 
-WORKSPACE_ROOT="$(cd "${GIT_PULL_ALL_ROOT:?set by the git push-all alias}" && pwd)"
+WORKSPACE_ROOT="$(CDPATH= cd -- "${GIT_PULL_ALL_ROOT:?set by the git push-all alias}" && pwd)" || exit 1
 
 report() {
     printf '%-22s %s\n' "$1" "$2"

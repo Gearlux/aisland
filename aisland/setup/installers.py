@@ -226,13 +226,15 @@ def install_userspace_tool(name: str) -> None:
     console.echo(f"  - Ensure {paths.bin_dir()} is on PATH (project.bashrc handles this).")
 
 
-def offer_shell_switch(required_pkgs: AbstractSet[str]) -> None:
+def offer_shell_switch(required_pkgs: AbstractSet[str], ask: bool = True) -> None:
     """If ``bash`` is declared as a sys-dep, offer to make brew's bash the login shell.
 
     No-op on non-macOS (chsh / /etc/shells flow is macOS-specific) and when
     ``bash`` is not among the required packages. Interactive: prompts before
     each side-effecting step (adding to ``/etc/shells`` via sudo, and ``chsh``
-    itself which prompts the user for their own password).
+    itself which prompts the user for their own password). With ``ask`` False
+    (``setup -y``) or no one to answer (:func:`aisland.console.can_ask`) it only
+    names the two steps: ``sudo`` never runs unasked.
     """
     if platform.system() != "Darwin":
         return
@@ -254,6 +256,9 @@ def offer_shell_switch(required_pkgs: AbstractSet[str]) -> None:
     console.echo(
         f"\n==> Modern bash is installed at {new_bash}, but your login shell is {current_shell or '(unknown)'}."
     )
+    if not ask or not console.can_ask():
+        console.echo(f"  - To switch: add {new_bash} to /etc/shells (sudo), then run `chsh -s {new_bash}`.")
+        return
     if not console.confirm("    Switch your login shell to the new bash?", default=False):
         return
 

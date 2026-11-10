@@ -662,9 +662,10 @@ def _state_word(result: RefResult) -> str:
     return f"{result.ref} in sync"
 
 
-def run_sync(project: Optional[str] = None) -> int:
-    """``aisland workspace mirror sync``: push and report. Exit 1 when anything was refused or failed."""
-    results = sync(project)
+def run_sync(project: Optional[str] = None, push: bool = True) -> int:
+    """``aisland workspace mirror sync``: push and report (``push=False``, ``--dry-run``: what it would push). Exit 1
+    when anything was refused or failed."""
+    results = sync(project, push=push)
     if not results:
         console.echo("No mirrors configured. Set one with: aisland workspace configure mirror set <project> <url>")
         return 0
@@ -681,19 +682,32 @@ def run_sync(project: Optional[str] = None) -> int:
     return 1 if any(r.state in ("refused", "failed") for r in results) else 0
 
 
+def _remote_word(workspace_root: Path, project: str, url: Optional[str]) -> str:
+    """The checkout's ``mirror`` remote against ``url``, read from its config alone."""
+    path = workspace_root / _submodules(workspace_root).get(project, project)
+    if url is None:
+        return "-"
+    if not _has_checkout(path):
+        return "no checkout here"
+    current, managed = _remote_state(path)
+    if not current:
+        return "remote not added yet (aisland setup adds it)"
+    if not managed and not _same_repo(current, url):
+        return f"a remote `{MIRROR_REMOTE}` aisland did not create: {current}"
+    return "remote set" if current == url else "remote differs (aisland setup updates it)"
+
+
 def rows(workspace_root: Path) -> List[Dict[str, str]]:
-    """One row per mirrored project for ``aisland workspace configure mirror``: both layers and what a sync would do.
-    Pushes nothing."""
+    """One row per mirrored project for ``aisland workspace configure mirror``: both layers and the checkout's remote,
+    read from the configuration alone — no remote is contacted and nothing is written. What a sync would push is
+    ``aisland workspace mirror sync --dry-run``."""
     committed = read_committed_mirrors(workspace_root)
-    found = []
-    for project in mirrored_projects(workspace_root):
-        result = sync_project(workspace_root, project, push=False)
-        if result.state in ("skipped", "failed"):
-            state = f"{result.state}: {result.note}"
-        else:
-            state = " · ".join(_state_word(ref) for ref in result.refs)
-        override = local_override(workspace_root, project) or "-"
-        found.append(
-            {"project": project, "committed": committed.get(project, "-"), "override": override, "state": state}
-        )
-    return found
+    return [
+        {
+            "project": project,
+            "committed": committed.get(project, "-"),
+            "override": local_override(workspace_root, project) or "-",
+            "state": _remote_word(workspace_root, project, effective_mirror(workspace_root, project, committed)),
+        }
+        for project in mirrored_projects(workspace_root)
+    ]

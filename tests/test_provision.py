@@ -91,7 +91,8 @@ def test_shell_switch_declined_exits_cleanly(monkeypatch: pytest.MonkeyPatch, ca
 
     monkeypatch.setattr(Path, "exists", fake_exists)
     monkeypatch.setenv("SHELL", "/bin/bash")
-    # click.confirm reads from stdin; mock it to "no".
+    # click.confirm reads from stdin; mock it to "no", with someone at the terminal to answer.
+    monkeypatch.setattr(installers.console, "can_ask", lambda: True)
     monkeypatch.setattr(click, "confirm", lambda *a, **kw: False)
 
     # Spy subprocess.run/check_call so we can assert nothing was invoked.
@@ -108,6 +109,29 @@ def test_shell_switch_declined_exits_cleanly(monkeypatch: pytest.MonkeyPatch, ca
     out = capsys.readouterr().out
     assert "Modern bash is installed" in out
     assert calls == []
+
+
+@pytest.mark.parametrize("ask, terminal", [(False, True), (True, False)], ids=["setup -y", "no terminal"])
+def test_the_shell_switch_asks_nothing_under_yes_or_without_a_terminal(
+    monkeypatch: pytest.MonkeyPatch, capsys: Any, ask: bool, terminal: bool
+) -> None:
+    """`setup -y` asked about `sudo tee /etc/shells`, and without a terminal click's prompt aborted setup half way."""
+    monkeypatch.setattr(platform, "system", lambda: "Darwin", raising=False)
+    real_exists = Path.exists
+    monkeypatch.setattr(Path, "exists", lambda self: str(self) == "/opt/homebrew/bin/bash" or real_exists(self))
+    monkeypatch.setenv("SHELL", "/bin/zsh")
+    monkeypatch.setattr(installers.console, "can_ask", lambda: terminal)
+
+    def asked(*args: Any, **kwargs: Any) -> bool:
+        raise AssertionError("nothing may be asked")
+
+    monkeypatch.setattr(installers.console, "confirm", asked)
+    monkeypatch.setattr(subprocess, "run", asked)
+    monkeypatch.setattr(subprocess, "check_call", asked)
+    installers.offer_shell_switch({"bash"}, ask=ask)
+    assert "To switch: add /opt/homebrew/bin/bash to /etc/shells (sudo), then run `chsh -s /opt/homebrew/bin/bash`" in (
+        capsys.readouterr().out
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -528,6 +552,7 @@ def test_a_failed_shell_switch_step_fails_the_run(monkeypatch: pytest.MonkeyPatc
         lambda self: {"/opt/homebrew/bin/bash": True, "/etc/shells": False}.get(str(self), real_exists(self)),
     )
     monkeypatch.setenv("SHELL", "/bin/zsh")
+    monkeypatch.setattr(installers.console, "can_ask", lambda: True)
     monkeypatch.setattr(installers.console, "confirm", lambda *a, **k: True)
 
     def refused(argv: Any, **kwargs: Any) -> None:

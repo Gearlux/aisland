@@ -29,7 +29,7 @@ import shutil
 import tomllib
 import traceback
 from dataclasses import asdict, dataclass, field
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 from typing import Dict, List, Mapping, Optional
 
 import jinja2
@@ -168,10 +168,16 @@ def load_set(folder: Path, name: str) -> TemplateSet:
     outputs: List[OutputFile] = []
     for output, spec in files.items():
         where = Where(path, key_line(text, files_header, output) if files_header else None)
+        if not _inside(output):
+            # A set is another person's files: `../x`, `/abs` or `.git/hooks/pre-commit` would be written as told.
+            raise TemplateError(
+                f"{where}: {output!r} is no file of the project: a set writes only below the project's folder, "
+                "never into .git"
+            )
         template, comment = (spec, _comment(output)) if isinstance(spec, str) else (None, None)
         if isinstance(spec, dict):
             template, comment = spec.get("template"), spec.get("comment", _comment(output))
-        if not isinstance(template, str) or not (folder / template).is_file():
+        if not isinstance(template, str) or not _inside(template) or not (folder / template).is_file():
             raise TemplateError(f"{where}: {output} names no template of {folder} ({template!r})")
         if comment is None:
             raise TemplateError(
@@ -188,6 +194,18 @@ def load_set(folder: Path, name: str) -> TemplateSet:
             raise TemplateError(f'{where}: variable {variable!r} must be {{ default = …, help = "…" }}')
         variables[variable] = Variable(spec.get("default"), spec.get("help", ""))
     return TemplateSet(name, folder, outputs, variables)
+
+
+def _inside(place: str) -> bool:
+    """Whether ``place``, a path a set names, stays below its folder and out of ``.git`` (any case: a case-insensitive
+    disk reads ``.GIT/hooks`` as git's own)."""
+    parts = PurePosixPath(place).parts
+    return (
+        bool(parts)
+        and not PurePosixPath(place).is_absolute()
+        and ".." not in parts
+        and not any(part.casefold() == ".git" for part in parts)
+    )
 
 
 def registered() -> Dict[str, Path]:

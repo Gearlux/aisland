@@ -337,7 +337,7 @@ def test_the_check_job_runs_the_report_on_weekday_mornings(tmp_path: Path, monke
     assert f"cron('{NIGHTLY_CHECK_CRON}')" in config
     timer = config[config.index("<hudson.triggers.TimerTrigger>") : config.index("</hudson.triggers.TimerTrigger>")]
     assert f"<spec>{NIGHTLY_CHECK_CRON}</spec>" in timer
-    assert 'sh "${env.WORKSPACE_ROOT}/.venv/bin/aisland tests nightly"' in config
+    assert "sh \"'${env.WORKSPACE_ROOT}/.venv/bin/aisland' tests nightly\"" in config
     assert "label 'built-in'" in config
 
 

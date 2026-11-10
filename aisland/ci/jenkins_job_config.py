@@ -14,16 +14,17 @@ from __future__ import annotations
 
 import functools
 from pathlib import Path
-from typing import AbstractSet, Dict, List
+from typing import Dict, List
 from xml.sax.saxutils import escape
 
 import jinja2
 from markupsafe import Markup
+from packaging.utils import canonicalize_name
 
 from aisland import locations
 from aisland import pyproject as pyproject_toml
 from aisland.ci.ci_scaffold import registers_slow_marker
-from aisland.workspace.projects import ProjectMetadata
+from aisland.workspace.projects import ProjectMetadata, requirement_name
 
 #: When the LOCAL orchestrator (`<workspace>.local`) builds every project on its own: 01:00 every night, so
 #: each project's slow run happens and the test-run statistics fill (`aisland tests report`).
@@ -91,26 +92,25 @@ def build_phases(install_order: List[ProjectMetadata], initialized_projects: Lis
     """Each seeded project by its phase: one after the deepest of its workspace dependencies, so a phase builds in
     parallel what the next one needs.
 
-    ``initialized_projects`` are Jenkins job folder names, which follow the workspace folders — NOT the distribution
-    names, which may differ (a dashed name, a dashless folder): both are mapped to the folder form to match.
+    ``initialized_projects`` are the Jenkins jobs, named by the projects' workspace folders; a requirement reaches its
+    project by its PEP 503 name (:func:`aisland.workspace.projects.requirement_name`), whatever its specifier
+    (``lib~=1.0``) or spelling (``Lib_Core``). ``install_order`` is dependency-first, so a dependency's phase is known
+    before its dependents'.
     """
-    initialized_set = set(initialized_projects)
+    initialized = set(initialized_projects)
+    folders = {canonicalize_name(project["name"]): project["path"].name for project in install_order}
     depths: Dict[str, int] = {}
-    for p in install_order:
-        dir_name = pyproject_to_workspace_dir(p["name"], initialized_set)
-        if dir_name not in initialized_set:
+    for project in install_order:
+        folder = project["path"].name
+        if folder not in initialized:
             continue
-        deps = []
-        for dep in p["dependencies"]:
-            dep_name = dep.split(">=")[0].split("==")[0].split("<=")[0].split("[")[0].strip()
-            dep_dir = pyproject_to_workspace_dir(dep_name, initialized_set)
-            if dep_dir in initialized_set and dep_dir != dir_name:
-                deps.append(dep_dir)
-        depths[dir_name] = max((depths.get(d, -1) for d in deps), default=-1) + 1
+        needed = {folders.get(name) for name in map(requirement_name, project["dependencies"]) if name is not None}
+        deps = [dep for dep in needed if dep is not None and dep in initialized and dep != folder]
+        depths[folder] = max((depths.get(dep, -1) for dep in deps), default=-1) + 1
 
     phases: Dict[int, List[str]] = {}
-    for proj_name, depth_val in depths.items():
-        phases.setdefault(depth_val, []).append(proj_name)
+    for folder, depth in depths.items():
+        phases.setdefault(depth, []).append(folder)
     return phases
 
 
@@ -241,7 +241,7 @@ pipeline {{
     stages {{
         stage('Report the nightly runs') {{
             steps {{
-                sh "${{env.WORKSPACE_ROOT}}/.venv/bin/aisland tests nightly"
+                sh "'${{env.WORKSPACE_ROOT}}/.venv/bin/aisland' tests nightly"
             }}
         }}
     }}
@@ -255,21 +255,3 @@ def project_has_slow_tests(project_dir: Path) -> bool:
     if not pyproject.is_file():
         return False
     return registers_slow_marker(pyproject_toml.load(pyproject))
-
-
-def pyproject_to_workspace_dir(pyproject_name: str, initialized_set: AbstractSet[str]) -> str:
-    """Map a pyproject distribution name to its workspace directory name.
-
-    Handles two conventions:
-      1. Identity (most projects): ``confluid`` -> ``confluid``.
-      2. Dashed PyPI name -> dashless dir: ``acme-tools`` -> ``acmetools``.
-
-    Returns the input unchanged if no rule matches (caller decides whether
-    that unknown name is a problem).
-    """
-    if pyproject_name in initialized_set:
-        return pyproject_name
-    dashless = pyproject_name.replace("-", "")
-    if dashless in initialized_set:
-        return dashless
-    return pyproject_name

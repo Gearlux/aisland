@@ -8,7 +8,7 @@
                     sh 'rm -f slow-test-report.xml'
                     script {
                         // 5 = the marker is registered but nothing is currently marked — valid, not a failure.
-                        def rc = sh(script: "${VENV_BIN}/pytest tests -m slow --junitxml=slow-test-report.xml", returnStatus: true)
+                        def rc = sh(script: "'${VENV_BIN}'/pytest tests -m slow --junitxml=slow-test-report.xml", returnStatus: true)
                         if (rc != 0 && rc != 5) {
                             error("Slow tests failed (exit ${rc}).")
                         }

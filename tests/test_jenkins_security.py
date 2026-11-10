@@ -138,3 +138,18 @@ def test_removing_one_pipeline_removes_its_folder_only(tmp_path: Path) -> None:
         (home / "jobs" / job / "config.xml").write_text("<project/>")
     jenkins_jobs.remove_pipelines(home, "models")
     assert sorted(path.name for path in (home / "jobs").iterdir()) == ["tools"]
+
+
+def test_a_new_view_names_its_owner_once(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Every view aisland made carried two `<owner>` elements, one with the class and one with the reference; Jenkins
+    writes one holding both."""
+    monkeypatch.setattr(jenkins_settings, "get_workspace_name", lambda: "acme")
+    (tmp_path / "config.xml").write_text(
+        "<?xml version='1.1' encoding='UTF-8'?>\n<hudson><primaryView>x</primaryView></hudson>\n"
+    )
+    jenkins_settings.setup_dashboard_view(tmp_path)
+    views = ET.parse(tmp_path / "config.xml").getroot().find("views")
+    assert views is not None and len(views) == 2
+    for view in views:
+        owners = view.findall("owner")
+        assert [owner.attrib for owner in owners] == [{"class": "hudson", "reference": "../../.."}]

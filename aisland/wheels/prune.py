@@ -3,8 +3,9 @@ clone brought onto the pruned history (``aisland wheels reset``).
 
 ``aisland wheels build --commit`` commits ``wheels/``; every rebuild that changes a wheel adds its bytes to the
 history for good, and a clone carries every version ever committed. A prune keeps each wheel version that a branch
-or a tag holds — this clone's branches and tags and origin's — and removes every other ``wheels/**.whl`` version
-from every commit. Each branch tip and tag keeps exactly the files it has; only commit ids change.
+or a tag holds — this clone's branches and tags and origin's —, a detached HEAD's commit and the commit the workspace
+root records for the project (:func:`_kept_commits`), and removes every other ``wheels/**.whl`` version from every
+commit. Each branch tip, tag and kept commit keeps exactly the files it has; only commit ids change.
 
 The run, in order (``--apply``; without it the run fetches, counts and changes nothing):
 
@@ -17,7 +18,7 @@ The run, in order (``--apply``; without it the run fetches, counts and changes n
 3. **The rewrite**, by git-filter-repo (the ``prune`` extra): ``--strip-blobs-with-ids`` with the versions to go,
    ``--preserve-commit-hashes`` and no pruning of commits left empty, so the rewrite is a pure function of each
    commit — another clone stripping the same versions gets the same commit ids (what :func:`reset` relies on).
-   Every kept ref's tree is checked to be what it was.
+   Every kept ref's and kept commit's tree is checked to be what it was.
 4. **The push**, atomic, each branch and tag with ``--force-with-lease`` against the commit fetched: a push someone
    made meanwhile refuses the whole push and origin stays as it was. With it goes :data:`PRUNE_REF`, a chain of one
    commit per prune holding the versions stripped (:data:`STRIPPED_FILE`) and the old → new commit map
@@ -226,6 +227,10 @@ def _git_dir(repo: Path) -> Path:
     return Path(_git(repo, "rev-parse", "--absolute-git-dir").strip())
 
 
+def _tree(repo: Path, commit: str) -> str:
+    return _git(repo, "rev-parse", f"{commit}^{{tree}}").strip()
+
+
 def _store_size(repo: Path) -> int:
     """The object store's size in bytes, loose and packed (``git count-objects -v``, which counts KiB)."""
     values = dict(line.split(": ") for line in _git(repo, "count-objects", "-v").splitlines())
@@ -241,6 +246,29 @@ def _detached_head(repo: Path) -> Optional[str]:
     if _run(repo, "symbolic-ref", "-q", "HEAD").returncode == 0:
         return None
     return _git(repo, "rev-parse", "HEAD").strip()
+
+
+def _recorded_commit(workspace_root: Path, path: str) -> Optional[str]:
+    """The commit the workspace root's HEAD records at ``path``, or None (no root commit, no gitlink there)."""
+    if _run(workspace_root, "rev-parse", "--verify", "-q", "HEAD").returncode != 0:
+        return None
+    entry = _run(workspace_root, "ls-tree", "HEAD", "--", path).stdout.split()
+    return entry[2] if len(entry) >= 3 and entry[1] == "commit" else None
+
+
+def _kept_commits(workspace_root: Path, repo: Path) -> Dict[str, str]:
+    """``{label: commit}`` beside the refs whose wheels a prune keeps: a detached HEAD's commit (the files checked out)
+    and the commit the workspace root records for the project (what the workspace installs, often behind the tip of an
+    untracked project) — stripping either's wheels would leave its ``wheels.yaml`` naming files gone."""
+    kept: Dict[str, str] = {}
+    detached = _detached_head(repo)
+    if detached is not None:
+        kept["HEAD"] = detached
+    if workspace_root != repo and (workspace_root / ".git").exists():
+        recorded = _recorded_commit(workspace_root, repo.relative_to(workspace_root).as_posix())
+        if recorded is not None and _run(repo, "cat-file", "-e", f"{recorded}^{{commit}}").returncode == 0:
+            kept["the root's commit"] = recorded
+    return kept
 
 
 def _check_repository(repo: Path, name: str) -> None:
@@ -531,12 +559,10 @@ def _record_root_pointer(workspace_root: Path, path: str, changed: Dict[str, str
     the root stays staged and out of the commit. The root's own index takes the new id only where it held the old one;
     a gitlink the user staged for ``path`` (another commit, or the path removed) stays as they staged it.
     """
-    if _run(workspace_root, "rev-parse", "--verify", "-q", "HEAD").returncode != 0:
+    old = _recorded_commit(workspace_root, path)
+    if old is None or old not in changed:
         return None
-    entry = _run(workspace_root, "ls-tree", "HEAD", "--", path).stdout.split()
-    if len(entry) < 3 or entry[1] != "commit" or entry[2] not in changed:
-        return None
-    old, new = entry[2], changed[entry[2]]
+    new = changed[old]
     head = _git(workspace_root, "rev-parse", "HEAD").strip()
     with tempfile.TemporaryDirectory() as scratch:
         env = {"GIT_INDEX_FILE": str(Path(scratch) / "index")}
@@ -565,13 +591,15 @@ def prune(workspace_root: Path, project_name: str, apply: bool = False) -> Prune
     _fetch(repo, origin)
     problems = _problems(repo, origin)
     # Every branch and tag of this clone and every branch of origin keeps its wheels; origin's tags are this
-    # clone's, fetched above (a differing one is a problem).
+    # clone's, fetched above (a differing one is a problem). So do a detached HEAD and the root's commit.
     keep_refs = sorted({**_refs(repo, *_LOCAL_NAMESPACES), **_refs(repo, _ORIGIN_NAMESPACE)})
-    held = wheels_at(repo, keep_refs)
+    kept_commits = _kept_commits(workspace_root, repo)
+    labels = {commit: label for label, commit in kept_commits.items()}
+    held = wheels_at(repo, [*keep_refs, *kept_commits.values()])
     in_history = history_wheels(repo)
     stripped = sorted(in_history - set(held))
     problems += _other_remotes(repo, stripped)
-    holders = sorted({_short(ref) for refs in held.values() for ref in refs})
+    holders = sorted({labels.get(ref) or _short(ref) for refs in held.values() for ref in refs})
     report = PruneReport(
         project=target.name,
         applied=False,
@@ -590,14 +618,17 @@ def prune(workspace_root: Path, project_name: str, apply: bool = False) -> Prune
     report.size_before = _store_size(repo)
     bundle, restore = _backup(repo)
     report.backup, report.restore = str(bundle), restore
-    trees = {ref: _git(repo, "rev-parse", f"{ref}^{{tree}}").strip() for ref in keep_refs}
+    trees = {ref: _tree(repo, ref) for ref in [*keep_refs, *kept_commits.values()]}
     held_head = _hold_head(repo)
     rewrite_refs = [*keep_refs, *([_STASH] if _STASH in _refs(repo, _STASH) else []), *held_head]
     changed = strip(repo, stripped, rewrite_refs, restore)
-    moved_trees = [ref for ref in keep_refs if _git(repo, "rev-parse", f"{ref}^{{tree}}").strip() != trees[ref]]
+    # A ref names its rewritten commit; a kept commit is followed through the map.
+    moved_trees = [ref for ref in keep_refs if _tree(repo, ref) != trees[ref]] + [
+        label for label, commit in kept_commits.items() if _tree(repo, changed.get(commit, commit)) != trees[commit]
+    ]
     if moved_trees:
         raise PruneError(
-            f"{target.name}: the rewrite changed the files of {', '.join(_short(r) for r in moved_trees)}; "
+            f"{target.name}: the rewrite changed the files of {', '.join(labels.get(r) or _short(r) for r in moved_trees)}; "
             f"nothing was pushed. Put this clone back with: {restore}"
         )
     _follow_head(repo, held_head)
@@ -755,7 +786,8 @@ def render_prune(report: PruneReport) -> str:
     lines: List[str] = []
     if not report.stripped:
         lines.append(
-            f"{name}: every one of its {report.versions} wheel versions is held by a branch or a tag — nothing to prune"
+            f"{name}: every one of its {report.versions} wheel versions is held by a branch, a tag, HEAD or the root's "
+            "commit — nothing to prune"
         )
         return "\n".join(lines)
     count = f"{len(report.stripped)} of {report.versions} wheel versions"

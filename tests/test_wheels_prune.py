@@ -148,7 +148,7 @@ def test_a_wheel_only_this_clones_branch_holds_is_kept(setup: Setup) -> None:
     report = wp.prune(setup.root, "models")
     assert report.stripped == []
     assert wp.render_prune(report) == (
-        "models: every one of its 3 wheel versions is held by a branch or a tag — nothing to prune"
+        "models: every one of its 3 wheel versions is held by a branch, a tag, HEAD or the root's commit — nothing to prune"
     )
 
 
@@ -280,6 +280,26 @@ def test_a_gitlink_the_user_staged_for_the_project_stays_staged(setup: Setup) ->
 
     assert report.root_pointer == (recorded, _git(setup.repo, "rev-parse", "main~1"))
     assert _git(setup.root, "ls-files", "--stage", "--", "models").split()[1] == staged
+
+
+def test_the_commit_the_root_records_keeps_its_wheels(setup: Setup) -> None:
+    """The root's commit is the project as the workspace installs it: stripping its wheel left its root pointing at a
+    commit whose wheels/ lacked the file wheels.yaml names, and origin no longer had it."""
+    recorded = _git(setup.repo, "rev-parse", "HEAD~3")  # "code 1": holds v1, which no branch or tag holds
+    _git(setup.root, "update-index", "--add", "--cacheinfo", f"160000,{recorded},models")
+    _commit_index(setup.root, "record models")
+    report = wp.prune(setup.root, "models", apply=True)
+    assert report.stripped == [] and not report.applied
+    assert "the root's commit" in report.holders
+    assert not _gone(setup.origin, setup.v1)
+
+
+def test_a_detached_head_keeps_its_wheels(setup: Setup) -> None:
+    """The checked-out files are the clone's: `reset --hard` onto the stripped twin deleted the wheel from them."""
+    _git(setup.repo, "checkout", "-q", "--detach", "HEAD~3")
+    report = wp.prune(setup.root, "models", apply=True)
+    assert report.stripped == [] and "HEAD" in report.holders
+    assert _git(setup.repo, "rev-parse", f"HEAD:{WHEEL}") == setup.v1
 
 
 def test_a_root_recording_an_untouched_commit_is_left(setup: Setup) -> None:

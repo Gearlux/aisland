@@ -335,6 +335,18 @@ def recorder(monkeypatch: pytest.MonkeyPatch) -> _Recorder:
     return rec
 
 
+def _checkout_ignoring(folder: Path, *ignored: str) -> Path:
+    """A repository at ``folder`` whose ``.git/info/exclude`` ignores each of ``ignored``, each one written."""
+    folder.mkdir(parents=True)
+    subprocess.run(["git", "init", "-q"], cwd=folder, check=True)
+    (folder / ".git" / "info").mkdir(exist_ok=True)
+    (folder / ".git" / "info" / "exclude").write_text("".join(f"/{path}\n" for path in ignored))
+    for path in ignored:
+        (folder / path).parent.mkdir(parents=True, exist_ok=True)
+        (folder / path).write_text("kept\n")
+    return folder
+
+
 class TestApplySource:
     def test_git_initializes_switches_and_installs_editable(self, tmp_path: Path, recorder: _Recorder) -> None:
         """No ``pyproject.toml`` in the checkout -> the bare directory (uv then reports its own
@@ -421,6 +433,37 @@ class TestApplySource:
         (tmp_path / "loggair" / ".git").write_text("gitdir: x\n")
         sa.apply_source(tmp_path, "loggair", s.ProjectSource(kind="pypi", distribution="loggair"), "uv")
         assert "-f" not in recorder.calls[0]
+
+    def test_a_folder_holding_ignored_files_is_never_emptied(
+        self, tmp_path: Path, recorder: _Recorder, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        """`git submodule deinit` without `-f` refuses uncommitted work but deletes what git ignores: a run's
+        checkpoint went with the folder, and the command exited 0."""
+        checkout = _checkout_ignoring(tmp_path / "loggair", "runs/model.ckpt", "data/a.bin", ".env", "logs/x.log")
+        source = s.ProjectSource(kind="pypi", distribution="loggair")
+        assert sa.apply_source(tmp_path, "loggair", source, "uv") is False
+        assert recorder.flat() == [], "neither the deinit nor the venv was touched"
+        assert (checkout / "runs" / "model.ckpt").is_file()
+        err = capsys.readouterr().err
+        assert "loggair: loggair holds git-ignored files emptying it would delete for good" in err
+        assert "(.env, data/a.bin, logs/x.log and 1 more)" in err
+        assert "`aisland clean loggair`" in err
+
+    def test_caches_and_what_setup_writes_do_not_keep_a_folder(self, tmp_path: Path, recorder: _Recorder) -> None:
+        """What is made again — a cache, the editable install's egg-info, setup's own files — never blocks the deinit."""
+        _checkout_ignoring(
+            tmp_path / "loggair",
+            "loggair/__pycache__/a.pyc",
+            ".pytest_cache/v",
+            ".mypy_cache/x",
+            "loggair.egg-info/PKG-INFO",
+            "pyrightconfig.json",
+            ".claude/commands",
+            ".venv/bin/python",
+            "web/node_modules/x/index.js",
+        )
+        assert sa.apply_source(tmp_path, "loggair", s.ProjectSource(kind="pypi", distribution="loggair"), "uv")
+        assert recorder.flat()[0] == "git submodule deinit -- loggair"
 
     def test_refused_deinit_aborts_before_touching_the_venv(self, tmp_path: Path, recorder: _Recorder) -> None:
         (tmp_path / "loggair").mkdir()

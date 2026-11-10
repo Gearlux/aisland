@@ -22,7 +22,7 @@ fi
 PS1='\[\e[36m\]\w\[\e[0m\] \$ '
 
 # 3. Workspace activation: the root is this file's folder, so nothing here names a user or a path.
-WORKSPACE_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)"
+WORKSPACE_ROOT="$(CDPATH= cd -- "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)"
 if [ -f "$WORKSPACE_ROOT/project.bashrc" ]; then
     cd "$WORKSPACE_ROOT" || true
     source "$WORKSPACE_ROOT/project.bashrc"

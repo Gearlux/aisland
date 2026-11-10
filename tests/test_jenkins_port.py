@@ -76,6 +76,7 @@ def test_a_launch_with_no_port_takes_the_one_jenkins_last_ran_on(
 
     ((cmd, options),) = started
     assert f"--httpPort={expected}" in cmd and options["readiness"]["port"] == expected
+    assert (tmp_path / "jenkins").stat().st_mode & 0o777 == 0o700, "the home of a config.xml holding .env's values"
 
 
 def test_the_cli_passes_no_port_unless_one_is_given(monkeypatch: pytest.MonkeyPatch) -> None:

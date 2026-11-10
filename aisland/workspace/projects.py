@@ -1,7 +1,7 @@
 """The workspace and its projects: the root, the name, the project folders, and the order they install in."""
 
 from pathlib import Path
-from typing import Dict, List, NamedTuple, Optional, TypedDict
+from typing import Dict, List, NamedTuple, Optional, Sequence, TypedDict
 
 from packaging.requirements import InvalidRequirement, Requirement
 from packaging.utils import NormalizedName, canonicalize_name
@@ -54,8 +54,10 @@ class ProjectMetadata(TypedDict):
 
 
 def get_project_metadata(pyproject_path: Path) -> ProjectMetadata:
-    """The distribution name, folder and every requirement (its extras' included) of one ``pyproject.toml``."""
-    data = pyproject_toml.load(pyproject_path)
+    """The distribution name, folder and every requirement (its extras' included) of one ``pyproject.toml``. A file
+    that is no valid TOML raises :class:`aisland.pyproject.PyprojectError` naming it — a sub-project's too (a
+    template's placeholders), which tomllib's own error never named."""
+    data = pyproject_toml.parse(pyproject_path.read_text(), pyproject_path)
     project_info = data.get("project", {})
     optional_deps = project_info.get("optional-dependencies", {})
     deps = list(project_info.get("dependencies", []))  # a copy: the extras below never reach the loaded table
@@ -179,3 +181,53 @@ def workspace_folders(workspace_root: Path) -> List[ProjectFolder]:
 def set_submodule_active(workspace_root: Path, name: str, active: bool) -> None:
     """Record the per-machine activation decision in ``.git/config`` (never committed)."""
     machine_config.put(workspace_root, f"submodule.{name}.active", active)
+
+
+#: What emptying a project folder may delete because something makes it again: the caches a run writes, a venv or
+#: ``node_modules`` an install recreates, and what ``aisland setup`` puts in every project (:mod:`aisland.git_exclude`:
+#: ``pyrightconfig.json``, ``*.egg-info/``, the harness's ``.claude/commands``). Only names no data folder carries: a
+#: ``build/`` or ``dist/`` may hold what a person keeps. Anything else git ignores there is kept (:func:`ignored_content`).
+_REMADE_NAMES = frozenset(
+    {
+        "__pycache__",
+        ".pytest_cache",
+        ".mypy_cache",
+        ".ruff_cache",
+        ".coverage",
+        ".DS_Store",
+        ".venv",
+        "node_modules",
+        "pyrightconfig.json",
+    }
+)
+_REMADE_PATHS = frozenset({".claude/commands"})
+
+
+def ignored_content(folder: Path) -> List[str]:
+    """The git-ignored paths of the checkout ``folder`` that emptying it would delete for good, sorted.
+
+    ``git submodule deinit`` without ``-f`` refuses a checkout with uncommitted changes, yet deletes what git ignores
+    with the rest of the folder: a run's output, a checkpoint, a project's own ``.env``. A path something makes again
+    is left out: one inside a folder :data:`_REMADE_NAMES` names or a ``*.egg-info`` folder, or one of
+    :data:`_REMADE_PATHS`. A folder git cannot read lists nothing."""
+    listed = gitcmd.read(folder, "status", "--porcelain", "--ignored=matching", "-z") or ""
+    kept = []
+    for entry in listed.split("\0"):
+        if not entry.startswith("!! "):
+            continue
+        path = entry[3:].rstrip("/")
+        parts = path.split("/")
+        if path in _REMADE_PATHS or any(part in _REMADE_NAMES or part.endswith(".egg-info") for part in parts):
+            continue
+        kept.append(path)
+    return sorted(kept)
+
+
+def ignored_content_refusal(project: str, folder: str, paths: Sequence[str]) -> str:
+    """Why ``project``'s folder is not emptied: the ignored ``paths`` it holds (:func:`ignored_content`), and the
+    command that moves them into a backup first."""
+    shown = ", ".join(paths[:3]) + (f" and {len(paths) - 3} more" if len(paths) > 3 else "")
+    return (
+        f"{project}: {folder} holds git-ignored files emptying it would delete for good ({shown}); move them into "
+        f"a backup with `aisland clean {project}`, then run this again"
+    )

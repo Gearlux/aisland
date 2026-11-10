@@ -75,7 +75,9 @@ def installs(monkeypatch: pytest.MonkeyPatch) -> Dict[str, List[object]]:
     calls: Dict[str, List[object]] = {"brew": [], "userspace": [], "java": [], "shell": []}
     monkeypatch.setattr(installers, "install_brew_packages", lambda packages: calls["brew"].append(sorted(packages)))
     monkeypatch.setattr(installers, "install_userspace_tool", lambda name: calls["userspace"].append(name))
-    monkeypatch.setattr(installers, "offer_shell_switch", lambda packages: calls["shell"].append(sorted(packages)))
+    monkeypatch.setattr(
+        installers, "offer_shell_switch", lambda packages, ask=True: calls["shell"].append(sorted(packages))
+    )
     monkeypatch.setattr(
         "aisland.services.jenkins.JenkinsService.provision_java", lambda self: calls["java"].append("java")
     )
@@ -270,7 +272,7 @@ def test_setup_provisions_through_the_same_install(tmp_path: Path, monkeypatch: 
     (root / ".venv" / "bin").mkdir(parents=True)
     seen: List[Path] = []
 
-    def stop(workspace: Path, aislands_own: bool = True) -> None:
+    def stop(workspace: Path, aislands_own: bool = True, ask: bool = True) -> None:
         seen.append(workspace)
         raise _Stop()
 

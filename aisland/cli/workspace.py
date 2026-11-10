@@ -359,7 +359,8 @@ def workspace_mirror() -> None:
 
 @workspace_mirror.command("sync")
 @click.argument("project", required=False)
-def workspace_mirror_sync(project: Optional[str]) -> None:
+@click.option("--dry-run", is_flag=True, help="Fetch and show what a sync would push; push nothing.")
+def workspace_mirror_sync(project: Optional[str], dry_run: bool) -> None:
     """Push the primary's dev/main, main, every other branch checked out here and tags to PROJECT's mirror.
 
     Default: every mirror. Each branch is copied as the primary has it, so an unpushed commit never reaches the
@@ -369,7 +370,7 @@ def workspace_mirror_sync(project: Optional[str]) -> None:
 
     if not locations.workspace_found():
         raise AislandError(locations.missing_workspace_message())
-    raise SystemExit(run_sync(project))
+    raise SystemExit(run_sync(project, push=not dry_run))
 
 
 @workspace_group.command("bashrc")

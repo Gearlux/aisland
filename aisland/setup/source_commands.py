@@ -193,6 +193,8 @@ def set_project_source(
 
     file = root / workspace_file.FILE_NAME
     before = file.read_text() if file.is_file() else None
+    checkout = sources.project_path(root, project) / ".git"
+    had_checkout = checkout.exists()
 
     def roll_back() -> None:
         sources.set_local_override(root, project, previous_override)
@@ -215,7 +217,13 @@ def set_project_source(
         raise
     if not applied:
         roll_back()
-        raise AislandError(f"{project}: source change reverted; configuration is unchanged")
+        # The configuration goes back, the folder does not: a failure after the deinit leaves it empty.
+        emptied = (
+            "; its folder was emptied: `aisland setup` checks it out again"
+            if had_checkout and not checkout.exists()
+            else ""
+        )
+        raise AislandError(f"{project}: source change reverted; configuration is unchanged{emptied}")
 
     # The workspace file is per machine and gitignored, so a --machine-only change rewrites it too.
     write_code_workspace(root)

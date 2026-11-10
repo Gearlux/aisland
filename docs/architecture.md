@@ -225,3 +225,4 @@ mechanism that is replaced gets a new record, and the old one says which superse
 - [0078 — Imports at the top, containers typed, one completion guard](decisions/0078-imports-at-the-top-containers-typed-one-completion-guard.md)
 - [0079 — TOML is written by tomlkit, and the release review's setup, wheels and CI fixes](decisions/0079-toml-is-written-by-tomlkit-and-the-release-reviews-setup-fixes.md)
 - [0080 — The release review's service, tunnel and MCP fixes](decisions/0080-the-release-reviews-service-tunnel-and-mcp-fixes.md)
+- [0081 — Emptying a project folder keeps its ignored files, and the release review's safety fixes](decisions/0081-emptying-a-folder-keeps-ignored-files-and-the-release-reviews-safety-fixes.md)

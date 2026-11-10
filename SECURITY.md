@@ -21,7 +21,10 @@ These are the promises a report can hold aisland to:
   and on Linux process-compose and Node.js) is installed only when its SHA-256 matches a pinned value or the one its
   publisher lists. The one exception is Jenkins' plugins: the plugin manager fetches their current versions from the
   Jenkins update center, and aisland pins neither their versions nor their digests.
-- **Nothing is installed with `sudo` unasked.** A system tool is installed only after you agree to it.
+- **Nothing runs with `sudo` unasked, and aisland's own tools wait for a yes.** `aisland setup` installs the system
+  tools your projects declare (`aisland workspace provision` lists them). aisland's own tools are installed the first
+  time a command needs one, only after you agree; without a terminal, and under `setup -y`, nothing is asked and
+  nothing of aisland's is installed: the command prints the line that does it.
 - **Services stay on this machine.** Jenkins listens on `127.0.0.1` only and keeps its login and CSRF protection.
   aisland names the file that holds the initial admin password, and never prints the password itself.
 - **Secrets stay private.** A new `.env` is readable by its owner only. Jenkins' `config.xml`, which holds values

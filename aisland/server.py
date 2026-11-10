@@ -59,7 +59,9 @@ try:
     from mcp.server.mcpserver.exceptions import ToolError
     from mcp.types import ToolAnnotations
 except ImportError:  # the [mcp] extra is not installed: main() says so
-    MCPServer = None  # type: ignore[assignment,misc]
+    HAS_SDK = False
+else:
+    HAS_SDK = True
 
 MISSING_EXTRA = "Error: aisland-mcp needs the mcp extra: pip install 'aisland[mcp]'"
 #: The refusal when the SDK keeps its request handlers elsewhere: the one private attribute aisland reaches into.
@@ -412,7 +414,7 @@ def _build_server() -> "Optional[MCPServer]":
     alone — an empty ``resources/list`` reads to some clients as a dead server. Each method name is derived from
     the request model's own ``method`` default, never written as a string.
     """
-    if MCPServer is None:
+    if not HAS_SDK:
         return None
     built = MCPServer("aisland", instructions=INSTRUCTIONS)
     # The SDK offers no way to leave a capability out, so its private table is edited — checked first, so a release

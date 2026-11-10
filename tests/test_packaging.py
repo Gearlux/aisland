@@ -489,7 +489,7 @@ def test_the_tag_guard_refuses_a_tag_that_is_not_the_version(
 ) -> None:
     """The guard step's own script, run against a pyproject.toml declaring 0.1.0."""
     (tmp_path / "pyproject.toml").write_text('[project]\nname = "aisland"\nversion = "0.1.0"\n')
-    script = _step(release_workflow, "build", "Guard - tag matches pyproject version")["run"]
+    script = _step(release_workflow, "guards", "Guard - tag matches pyproject version")["run"]
     result = subprocess.run(
         ["bash", "-e", "-c", script.replace("python ", f"{sys.executable} ")],
         cwd=tmp_path,
@@ -523,7 +523,7 @@ def test_the_changelog_guard_refuses_a_version_the_changelog_does_not_date_as_it
     subprocess.run(
         [*git, "commit", "-q", "--allow-empty", "-m", "release"], cwd=tmp_path, check=True, env={**os.environ, **when}
     )
-    script = _step(release_workflow, "build", "Guard - the CHANGELOG dates this version")["run"]
+    script = _step(release_workflow, "guards", "Guard - the CHANGELOG dates this version")["run"]
     result = subprocess.run(
         ["bash", "-e", "-c", script],
         cwd=tmp_path,
@@ -547,7 +547,7 @@ def test_the_main_guard_refuses_a_tag_on_a_commit_main_does_not_hold(
     subprocess.run(["git", "switch", "-q", "-c", "dev/main"], cwd=origin, check=True)
     subprocess.run([*git, "commit", "-q", "--allow-empty", "-m", "not merged"], cwd=origin, check=True)
     subprocess.run(["git", "clone", "-q", "-b", tagged, str(origin), str(clone)], check=True)
-    script = _step(release_workflow, "build", "Guard - the tagged commit is on main")["run"]
+    script = _step(release_workflow, "guards", "Guard - the tagged commit is on main")["run"]
     result = subprocess.run(
         ["bash", "-e", "-c", script],
         cwd=clone,
@@ -570,6 +570,7 @@ def test_the_release_is_built_only_after_the_gates_and_every_test_pass(release_w
     that runs the quality gates and both test runs, fast and slow, under a time limit."""
     jobs = release_workflow["jobs"]
     assert jobs["build"]["needs"] == ["tests"]
+    assert jobs["tests"]["needs"] == ["guards"], "a wrong tag is refused before the tests' 45 minutes"
     tests = jobs["tests"]
     assert 0 < tests["timeout-minutes"] <= 60
     runs = [step["run"].strip() for step in tests["steps"] if "run" in step]
@@ -586,11 +587,39 @@ def test_the_release_is_built_only_after_the_gates_and_every_test_pass(release_w
 def test_every_release_job_has_a_time_limit(release_workflow: Workflow) -> None:
     """Never GitHub's six hours: the tests as long as the slow run allows, the build and the upload a few minutes."""
     jobs = release_workflow["jobs"]
-    assert {name: job.get("timeout-minutes") for name, job in jobs.items()} == {"tests": 45, "build": 15, "publish": 10}
+    assert {name: job.get("timeout-minutes") for name, job in jobs.items()} == {
+        "guards": 5,
+        "tests": 45,
+        "build": 15,
+        "publish": 10,
+    }
+
+
+def test_the_release_builds_with_a_toolchain_of_exact_versions(release_workflow: Workflow) -> None:
+    """`pip install build twine` and an isolated build took the newest of each, so one tag could build other files."""
+    install = _step(release_workflow, "build", "Install packaging toolchain")["run"].split()
+    assert install[:3] == ["python", "-m", "pip"] and install[3] == "install"
+    pinned = dict(requirement.split("==") for requirement in install[4:])
+    assert set(pinned) == {"build", "twine", "setuptools", "wheel"} and all(pinned.values())
+
+
+def test_the_release_token_only_reads_and_the_tests_keep_none(release_workflow: Workflow) -> None:
+    """The tests run every dependency's code for 45 minutes: the workflow's token reads, and checkout leaves it out
+    of `.git/config` there."""
+    assert release_workflow["permissions"] == {"contents": "read"}
+    tests = release_workflow["jobs"]["tests"]
+    (checkout,) = [step for step in tests["steps"] if str(step.get("uses", "")).startswith("actions/checkout@")]
+    assert checkout["with"]["persist-credentials"] is False
+
+
+def test_the_release_tests_run_once_on_macos_where_bash_is_3_2(release_workflow: Workflow) -> None:
+    matrix = release_workflow["jobs"]["tests"]["strategy"]["matrix"]
+    assert {"python": "3.13", "os": "macos-latest"} in matrix["include"]
+    assert release_workflow["jobs"]["tests"]["runs-on"] == "${{ matrix.os }}"
 
 
 def test_the_release_checks_the_build_strictly_and_smoke_tests_the_wheel(release_workflow: Workflow) -> None:
-    assert _step(release_workflow, "build", "Build sdist + wheel")["run"].strip() == "python -m build"
+    assert _step(release_workflow, "build", "Build sdist + wheel")["run"].strip() == "python -m build --no-isolation"
     assert _step(release_workflow, "build", "Check package metadata")["run"].strip() == (
         "python -m twine check --strict dist/*"
     )

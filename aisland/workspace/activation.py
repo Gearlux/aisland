@@ -20,7 +20,7 @@ from aisland import console, gitcmd, machine_config
 from aisland.workspace import file as workspace_file
 from aisland.workspace import local as local_workspace
 from aisland.workspace import tracking
-from aisland.workspace.projects import ProjectFolder, submodule_active_map
+from aisland.workspace.projects import ProjectFolder, ignored_content, ignored_content_refusal, submodule_active_map
 from aisland.workspace.sources import detached_projects
 
 #: The project's setting in ``workspace.toml`` and the last part of this machine's ``aisland.active.<project>.active``.
@@ -134,7 +134,7 @@ def _reconcile(root: Path) -> List[str]:
                 # A clone: git's own prompts are off (a credential asked for with the output captured would hang
                 # unseen), and it may take as long as the download does.
                 done = gitcmd.git(
-                    root, "submodule", "update", "--init", project.path, network=True, timeout=gitcmd.NO_LIMIT
+                    root, "submodule", "update", "--init", "--", project.path, network=True, timeout=gitcmd.NO_LIMIT
                 )
             elif project.url is not None:
                 console.echo(f"  - add {project.path} (active)")
@@ -166,8 +166,13 @@ def _reconcile(root: Path) -> List[str]:
                 stuck.append(project.name)
         elif not want and checked_out and name is not None:
             console.echo(f"  - deinit {project.path} (inactive)")
-            # No ``-f``: a deinit that would discard uncommitted work refuses, protecting it.
-            if gitcmd.git(root, "submodule", "deinit", project.path).returncode != 0:
+            # No ``-f``: a deinit that would discard uncommitted work refuses, protecting it. What git ignores it
+            # deletes with the folder, so that is checked first.
+            kept = ignored_content(root / project.path)
+            if kept:
+                console.echo(f"    skip {ignored_content_refusal(project.name, project.path, kept)}")
+                stuck.append(project.name)
+            elif gitcmd.git(root, "submodule", "deinit", "--", project.path).returncode != 0:
                 console.echo(f"    skip {project.name}: deinit refused; resolve local changes and re-run.")
                 stuck.append(project.name)
         if name is None:

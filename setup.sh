@@ -13,7 +13,7 @@ fi
 set -e
 
 # The workspace root: the folder above this script's checkout.
-WORKSPACE_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+WORKSPACE_ROOT="$(CDPATH= cd -- "$(dirname "$0")/.." && pwd)"
 VENV_DIR="$WORKSPACE_ROOT/.venv"
 
 echo "==> aisland bootstrap: setting up the workspace at $WORKSPACE_ROOT"
@@ -161,13 +161,19 @@ echo "==> Installing shell completion"
     || echo "    (completion install failed; non-fatal — re-run 'aisland completion install')"
 
 # 7. The workspace's .vscode/tasks.json links to aisland/tasks.json: the editor's task that opens Jenkins in its
-# Simple Browser. `ln -sf` replaces a link already there.
+# Simple Browser. `ln -sf` replaces a link already there, never a file of the person's own.
+# --- tasks-link ---
 TASKS_LINK="$WORKSPACE_ROOT/.vscode/tasks.json"
 if [ -f "$WORKSPACE_ROOT/aisland/tasks.json" ]; then
     mkdir -p "$WORKSPACE_ROOT/.vscode"
-    echo "==> Linking .vscode/tasks.json → aisland/tasks.json"
-    ln -sf "../aisland/tasks.json" "$TASKS_LINK"
+    if [ -e "$TASKS_LINK" ] && [ ! -L "$TASKS_LINK" ]; then
+        echo "==> Kept .vscode/tasks.json, a file of your own (aisland's Jenkins task is in aisland/tasks.json)"
+    else
+        echo "==> Linking .vscode/tasks.json → aisland/tasks.json"
+        ln -sf "../aisland/tasks.json" "$TASKS_LINK"
+    fi
 fi
+# --- /tasks-link ---
 
 echo "==> Setup complete."
 echo "==> Run 'source project.bashrc' to start working: it activates .venv, exports .env and loads completion."

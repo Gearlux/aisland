@@ -22,7 +22,6 @@ one — or on a "no" — the command refuses with the line that installs it, hav
 from __future__ import annotations
 
 import platform
-import sys
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Dict, List, Optional, Set, Tuple
@@ -129,11 +128,12 @@ def nothing_here() -> str:
     return f"aisland installs no system tools on {platform.system()}."
 
 
-def install(root: Path, aislands_own: bool = True) -> None:
+def install(root: Path, aislands_own: bool = True, ask: bool = True) -> None:
     """Install every tool this machine needs: ``aisland workspace provision install`` (everything) and ``aisland
     setup`` (``aislands_own=False``: the projects' declarations only — aisland's own come when a feature needs one).
     Jenkins' Java is no tool of this list (its WAR names the Java it runs on): the provision command installs it after
-    this, through :meth:`aisland.services.jenkins.JenkinsService.provision_java`."""
+    this, through :meth:`aisland.services.jenkins.JenkinsService.provision_java`. ``ask=False`` (``setup -y``) asks
+    nothing: the login-shell switch is only described."""
     console.echo(f"==> Installing the system tools the workspace needs ({root})...")
     needed = tools(root, aislands_own)
     kind = this_platform()
@@ -147,7 +147,7 @@ def install(root: Path, aislands_own: bool = True) -> None:
     if kind == "brew":
         console.echo(f"  - Homebrew: {', '.join(sorted(names))}")
         installers.install_brew_packages(names)
-        installers.offer_shell_switch(names)
+        installers.offer_shell_switch(names, ask=ask)
         return
     console.echo(f"  - aisland's downloads: {', '.join(sorted(names))}")
     for name in sorted(names):
@@ -155,8 +155,8 @@ def install(root: Path, aislands_own: bool = True) -> None:
 
 
 def _can_ask() -> bool:
-    """Whether a person is there to answer: both standard input and output are a terminal."""
-    return sys.stdin.isatty() and sys.stdout.isatty()
+    """Whether a person is there to answer (:func:`aisland.console.can_ask`)."""
+    return console.can_ask()
 
 
 def agree(question: str, default: bool = True) -> bool:

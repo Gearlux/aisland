@@ -33,7 +33,7 @@ The gates CI runs, each from the checkout:
 
 ```bash
 .venv/bin/black --check . && .venv/bin/isort --check-only . && .venv/bin/flake8 .
-.venv/bin/mypy .            # the package and the tests, held to what --strict checks (mypy.ini)
+.venv/bin/mypy .            # the package held to what --strict checks, the tests type-checked (mypy.ini)
 .venv/bin/lint-imports --no-cache   # the import layers below
 ```
 
@@ -94,9 +94,9 @@ Between releases the CHANGELOG's newest entry is the next release, `## [<version
 2. On `main`, date the entry: `## [<version>] - YYYY-MM-DD`, the day of the commit you will tag. The workflow
    compares it with that commit's date, so a heading dated ahead of time, or left `- Unreleased`, is refused.
 3. Tag that commit and push the tag: `git tag v<version> && git push origin v<version>`. This runs
-   `.github/workflows/release.yml`: it runs the gates and both test runs, checks the tag against the version, the
-   CHANGELOG's date and `main`, builds the package, checks it with `twine check --strict`, tests the wheel in a clean
-   venv, and publishes it to PyPI.
+   `.github/workflows/release.yml`: it checks the tag against the version, the CHANGELOG's date and `main` first, runs
+   the gates and both test runs (Python 3.12 and 3.13 on Linux, 3.13 on macOS), builds the package with a pinned
+   toolchain, checks it with `twine check --strict`, tests the wheel in a clean venv, and publishes it to PyPI.
 4. Open the next entry, `## [<next version>] - Unreleased`, and set `pyproject.toml`'s `version` to it. The README's
    links name the release's tag (`blob/v<version>/…`), so they move with the version; `tests/test_docs.py` checks
    they match.

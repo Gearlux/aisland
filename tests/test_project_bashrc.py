@@ -61,6 +61,15 @@ def test_from_a_wheel_the_root_and_the_workspace_s_aisland_bin_folder(tmp_path: 
     assert path.split(":")[0] == f"{root}/.aisland/bin"
 
 
+def test_a_cdpath_in_the_environment_changes_nothing(tmp_path: Path) -> None:
+    """`$(cd … && pwd)` also captured the folder `cd` prints when CDPATH finds it: PROJECT_ROOT read two lines and
+    neither the venv nor `.env` was found."""
+    root = (tmp_path / "acme").resolve()
+    _layout(root, "aisland")
+    out = _bash(root, 'source ./project.bashrc && printf "%s" "$PROJECT_ROOT"', {"CDPATH": f".:{tmp_path}"})
+    assert out == str(root)
+
+
 def test_a_project_root_inherited_from_another_workspace_is_replaced_by_this_ones(tmp_path: Path) -> None:
     # A terminal opened from a shell that sourced another workspace inherits its PROJECT_ROOT; this workspace's
     # file still activates this workspace's venv.

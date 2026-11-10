@@ -239,7 +239,7 @@ class TestAPlaywrightDevDependencyInstallsItsBrowser:
     ) -> None:
         files = _scaffolded(monkeypatch, tmp_path, _make_pyproject_with_playwright)
         content = files["Jenkinsfile"]
-        assert content.count('sh "${VENV_BIN}/playwright install chromium"') == 1
+        assert content.count("sh \"'${VENV_BIN}'/playwright install chromium\"") == 1
         assert content.index("pip install -e .[dev]") < content.index("playwright install chromium")
         assert "playwright" not in files["Jenkinsfile.local"], "the local pipeline tests the venv setup provisioned"
         ci = files["ci.yml"]
@@ -306,7 +306,7 @@ def _venv_check_script(jenkinsfile_local: str, python: str, workspace_root: Path
     """The emitted venv-check ``sh`` block, unwrapped from Groovy with Jenkins' substitutions applied."""
     start = jenkinsfile_local.index('sh """', jenkinsfile_local.index("stage('Initialize')")) + len('sh """')
     script = jenkinsfile_local[start : jenkinsfile_local.index('"""', start)]
-    return script.replace("${VENV_BIN}/python3", python).replace("${env.WORKSPACE_ROOT}", str(workspace_root))
+    return script.replace("'${VENV_BIN}'/python3", python).replace("${env.WORKSPACE_ROOT}", str(workspace_root))
 
 
 class TestTheLocalPipelineInstallsNothing:
@@ -339,7 +339,7 @@ class TestTheLocalPipelineInstallsNothing:
         """The CON pin: a runner has no workspace venv, so removing the local installs must not
         reach the files a runner executes."""
         files = _scaffold_app(monkeypatch, tmp_path, self._PROJECTS)
-        assert 'sh "${VENV_BIN}/uv pip install -e .[dev]"' in files["Jenkinsfile"]
+        assert "sh \"'${VENV_BIN}'/uv pip install -e .[dev]\"" in files["Jenkinsfile"]
         assert 'uv pip install --system -e ".[dev]"' in files["ci.yml"]
         for name, content in files.items():
             assert "Gearlux/libmid.git" in content, name
@@ -369,6 +369,23 @@ class TestTheLocalPipelineInstallsNothing:
         run = self._run_check(monkeypatch, tmp_path, env)
         assert run.returncode == 0, run.stderr
         assert f"app -> {(tmp_path / 'app').resolve()}" in run.stdout
+
+    def test_a_workspace_whose_path_holds_a_space_passes_the_check(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ) -> None:
+        """Every `sh` step named the venv unquoted: a workspace at `~/My Projects/acme` broke every stage."""
+        root = tmp_path / "My Projects"
+        root.mkdir()
+        venv_bin = root / ".venv" / "bin"
+        venv_bin.mkdir(parents=True)
+        (venv_bin / "python3").symlink_to(sys.executable)
+        local = self._local(monkeypatch, root)
+        start = local.index('sh """', local.index("stage('Initialize')")) + len('sh """')
+        script = local[start : local.index('"""', start)]
+        script = script.replace("${VENV_BIN}", str(venv_bin)).replace("${env.WORKSPACE_ROOT}", str(root))
+        env = self._install_record(root / "site", root / "app")
+        run = subprocess.run(["bash", "-c", script], capture_output=True, text=True, cwd=root / "app", env=env)
+        assert run.returncode == 0, run.stderr
 
     def test_the_venv_check_refuses_a_venv_without_the_project(
         self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
