@@ -124,3 +124,28 @@ def test_setup_global_properties_envvars_int_size_matches(tmp_path: Path, monkey
     # WORKSPACE_ROOT + FORCE_JAVASCRIPT_ACTIONS_TO_NODE24 + A + B + C = 5
     assert declared == 5
     assert len(tree_map.findall("string")) == 2 * declared
+
+
+def test_the_config_carrying_the_env_is_its_owners_alone_and_written_whole(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The `.env`'s values (tokens among them) land in `config.xml`: a file others could read before is made the
+    owner's alone, and a write that fails half way leaves the old file as it was."""
+    svc, workspace = _make_service(tmp_path, monkeypatch)
+    (workspace / ".env").write_text("API_TOKEN=secret\n", encoding="utf-8")
+    config_file = svc.service_data_dir / "config.xml"
+    config_file.chmod(0o644)
+
+    jenkins_settings.setup_global_properties(svc.service_data_dir)
+
+    assert config_file.stat().st_mode & 0o777 == 0o600
+    assert _read_envvars(config_file)["API_TOKEN"] == "secret"
+    before = config_file.read_bytes()
+
+    def full_disk(path: Path, text: str, new_mode: object = None) -> None:
+        raise OSError("No space left on device")
+
+    monkeypatch.setattr(jenkins_settings.atomic, "write_text", full_disk)
+    with pytest.raises(OSError):
+        jenkins_settings.setup_global_properties(svc.service_data_dir)
+    assert config_file.read_bytes() == before

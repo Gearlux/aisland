@@ -68,13 +68,14 @@ the entry's environment:
 | `editor_themes`, `editor_colors(part)` | the VS Code themes here, the CSS colour names, this window's choice |
 | `editor_set_theme(name)`, `editor_set_color(role, color, area)`, `editor_unset(what)` | `aisland workspace theme\|color set\|unset` |
 | `service_start(name)`, `service_stop(name)`, `service_restart(name)` | `aisland services start\|stop\|restart <name>` for any service of the workspace — aisland's own or one a project brings — in the background where it runs under the supervisor |
-| `tunnel_start(name, provider, cli)`, `tunnel_stop()` | `aisland tunnel start\|stop --json`; a sign-in still pending is answered at once with the code to hand over |
+| `tunnel_start(name, provider)`, `tunnel_stop()` | `aisland tunnel start\|stop --json`; a machine with no account yet starts nothing and answers `signin_required` with the `aisland tunnel login` command to run in a terminal, and a sign-in the started tunnel asks for is answered at once with the code to hand over. A VS Code CLI archive of your own (`--cli`) is installed unchecked, so it is no tool argument: start the tunnel yourself for that |
 
 Every tool answers with one JSON object, and a refusal is the tool's error in the command's own
 words (`no installed VS Code theme is named 'Solarzed Dark' (did you mean 'Solarized Dark'?)`).
 A warning the command would print on stderr comes back in the object as `warnings`, a list of lines (the key is
 there only when there is one); a question the command would ask is refused, since no one is there to answer it.
 The first nine only read; the others change this machine and are marked as such for the
-client. What prompts, runs for minutes or deletes — `setup`, `clean`, `backups prune`, the
+client. `service_stop`, `service_restart` and `tunnel_stop` are also marked destructive — stopping `docker` stops
+every container in it, stopping the tunnel ends every remote session — so a client asks before it calls them. What prompts, runs for minutes or deletes — `setup`, `clean`, `backups prune`, the
 `reset` commands, `jenkins init`, `source set` — is not a tool: run it yourself. Without the
 extra, `aisland-mcp` stops with `Error: aisland-mcp needs the mcp extra: pip install 'aisland[mcp]'`.

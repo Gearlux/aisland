@@ -278,8 +278,8 @@ def offer_shell_switch(required_pkgs: AbstractSet[str]) -> None:
                 check=True,
             )
             console.echo(f"  - Added {new_bash} to {shells_path}.")
-        except subprocess.CalledProcessError as e:
-            console.echo(f"  - Failed to update {shells_path}: {e}")
+        except (subprocess.CalledProcessError, FileNotFoundError) as e:
+            failures.report(f"  - Error: could not add {new_bash} to {shells_path}: {e}")
             return
 
     console.echo("==> Running chsh (will prompt for your USER password, not sudo)...")
@@ -287,5 +287,5 @@ def offer_shell_switch(required_pkgs: AbstractSet[str]) -> None:
         subprocess.check_call(["chsh", "-s", new_bash])
         console.echo(f"  - Login shell switched to {new_bash}.")
         console.echo("  - Open a new terminal window for it to take effect.")
-    except subprocess.CalledProcessError as e:
-        console.echo(f"  - chsh failed: {e}")
+    except (subprocess.CalledProcessError, FileNotFoundError) as e:
+        failures.report(f"  - Error: chsh could not switch your login shell to {new_bash}: {e}")

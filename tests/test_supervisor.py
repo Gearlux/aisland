@@ -14,6 +14,7 @@ The supervisor's contract has two halves:
 
 from __future__ import annotations
 
+import os
 import sqlite3
 import subprocess
 from contextlib import closing
@@ -199,6 +200,22 @@ def test_start_server_command_shape(isolated_config: Path) -> None:
     assert str(isolated_config) in cmd
 
 
+def test_the_server_starts_with_the_workspace_env_read_by_the_one_reader(isolated_config: Path) -> None:
+    """The services the server runs see the `.env` aisland reads (`envfile.read`, the shell's reading), laid over
+    this process's environment as `apply()` does: never only process-compose's own `.env` parser."""
+    with (
+        patch("aisland.services.supervisor.ensure_binary", return_value="/usr/bin/process-compose"),
+        patch("aisland.services.supervisor._preflight_full_disk_access"),
+        patch("aisland.envfile.read", return_value={"DATA_ROOT": "/data/from-dotenv"}),
+        patch.dict(os.environ, {"DATA_ROOT": "/stale/export", "KEPT": "1"}),
+        patch("aisland.services.supervisor.subprocess.run", return_value=_completed()) as run_mock,
+    ):
+        supervisor._start_server()
+    env = run_mock.call_args.kwargs["env"]
+    assert env["DATA_ROOT"] == "/data/from-dotenv"
+    assert env["KEPT"] == "1"
+
+
 # ---------------------------------------------------------------------------
 # Querying the server
 # ---------------------------------------------------------------------------
@@ -352,9 +369,7 @@ def test_ensure_binary_raises_when_uninstallable(monkeypatch: pytest.MonkeyPatch
             supervisor.ensure_binary()
 
 
-def test_connection_args_use_unix_socket_on_posix(isolated_config: Path) -> None:
-    if supervisor.os.name == "nt":
-        pytest.skip("posix-only")
+def test_connection_args_use_unix_socket(isolated_config: Path) -> None:
     args = supervisor._connection_args()
     assert args[0] == "--use-uds"
     assert args[2].endswith("process-compose.sock")
@@ -498,3 +513,26 @@ def test_preflight_silent_when_probe_inconclusive(
     ):
         supervisor._preflight_full_disk_access()
     assert capsys.readouterr().err == ""
+
+
+def test_services_registered_at_once_are_all_kept(isolated_config: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """An MCP client's tools run side by side: each edit of the document reads, changes and writes it as one step, so
+    none writes over another's (without the lock, each thread here writes back the document it read, alone)."""
+    import threading
+    import time
+
+    read = supervisor.load_config
+
+    def slow_read() -> Dict[str, Any]:
+        loaded = read()
+        time.sleep(0.05)  # every thread reads before any writes, unless the reads wait their turn
+        return loaded
+
+    monkeypatch.setattr(supervisor, "load_config", slow_read)
+    names = [f"service{n}" for n in range(6)]
+    threads = [threading.Thread(target=supervisor.register_process, args=(name, ["true"])) for name in names]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join()
+    assert sorted(read()["processes"]) == names

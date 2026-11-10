@@ -17,6 +17,7 @@ from typing import Any, Dict, List
 import pytest
 
 from aisland import locations
+from aisland.services import jenkins_jobs
 from aisland.setup import editor_files
 from aisland.workspace import file as workspace_file
 from aisland.workspace import projects, selection
@@ -170,3 +171,10 @@ def test_without_a_link_a_project_keeps_its_folders_name(acme: Path) -> None:
     (acme / "ml").unlink()
     editor_files.write_code_workspace(acme)
     assert {"name": "machine_learning", "path": "machine_learning"} in _folders(acme)
+
+
+def test_jenkins_seeds_one_job_per_project_never_one_for_its_short_name(acme: Path) -> None:
+    for folder in ("machine_learning", "object_detection"):
+        (acme / folder / "Jenkinsfile").write_text("pipeline {}\n")
+    seeded = jenkins_jobs._projects_to_seed(acme, None, local=False)
+    assert [path.name for path in seeded] == ["machine_learning", "object_detection"]

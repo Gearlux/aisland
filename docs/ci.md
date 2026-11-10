@@ -13,7 +13,7 @@ with `act`, and what the generated CI files install. Setting up Jenkins and seed
   parallel. The orchestrator holds no executor itself, so a phase's builds share only the built-in node's executors
   (two by default).
 
-## Check Quality Gates
+## Check quality gates
 You can run automated quality checks across projects using the `check` command. This includes formatting (`isort`, `black`), linting (`flake8`), type checking (`mypy`), unit tests (`pytest`), and GitHub Actions validation (`act`).
 
 ```bash
@@ -39,7 +39,7 @@ they would make. To let them rewrite the files instead, add `--write`:
 aisland check --write models
 ```
 
-## GitHub Actions Local Testing
+## GitHub Actions local testing
 
 `act` runs and tests GitHub Actions locally. The first time `aisland check` needs it, aisland asks before installing
 it (on macOS through Homebrew); on Linux install it yourself.
@@ -121,8 +121,8 @@ Two consequences worth knowing:
 
   The same applies to a dependency you just added to a project's `pyproject.toml`: until
   `aisland setup` has run, the local build fails with `ModuleNotFoundError` — run setup, the
-  pipeline will not install it for you. See [architecture: the local pipeline tests the venv, it
-  does not install](architecture.md#the-local-pipeline-tests-the-venv-it-does-not-install).
+  pipeline will not install it for you. See [the decision record: the local pipeline tests the venv, it
+  does not install](decisions/0012-the-local-pipeline-tests-the-venv-it-does-not-install.md).
 
 
 ## A `playwright` dev dependency installs its browser
@@ -222,6 +222,14 @@ url = "git@github.com:acme/models.git"
 ci = { agent_label = "gpu-pod" }      # this project's own value; `templates = "…"` here picks a set for it alone
 ```
 
+aisland's own set has one variable, `python_versions` (default `"3.12"`): the Python versions `ci.yml`'s unit
+tests run on, space-separated. Several run as a matrix, one job each, and every other job runs on the first:
+
+```toml
+[project."models"]
+ci = { python_versions = "3.12 3.13" }
+```
+
 Start a set from aisland's own:
 
 ```bash
@@ -258,12 +266,13 @@ The facts a template reads:
 | Fact | What it is |
 |---|---|
 | `project`, `title` | the project's folder, and its name in a title (`Models`) |
-| `distribution`, `package` | its `[project] name`, and the package `--cov` measures |
+| `distribution`, `package` | its `[project] name`, and its package folder (the lint targets) |
+| `coverage` | what `--cov` measures: the package, or for a project shipped inside another package its own subpackage, read from `[tool.setuptools.packages.find] include` (`vision.extra` beside `vision`) |
 | `extras` | the extras CI installs, `dev` first |
 | `slow_tests` | whether the project registers the `slow` marker |
 | `node_tests` | the project's folders whose `package.json` has a `test` script, relative and sorted (empty: none) |
 | `browser` | the browser a `playwright` dev dependency needs, or none |
-| `unreleased`, `unreleased_owners` | the workspace dependencies not on PyPI, in install order (`dep.name`, `dep.url`, `dep.ref`), and their owners |
+| `unreleased`, `unreleased_owners` | the workspace dependencies not on PyPI, by name — each installs with `--no-deps`, and the same workspace writes the same files on every machine (`dep.name`, `dep.url`, `dep.ref`), and their owners |
 | `token_owner`, `token_secret` | the GitHub owner whose private repositories CI clones with an app token, and its secrets' prefix |
 | `stage_limits`, `runner_limits` | each long stage's limit in minutes, on Jenkins and on a GitHub runner |
 | `actions` | the GitHub actions aisland's set uses, by name |
@@ -272,7 +281,10 @@ The facts a template reads:
 | `variables` | the set's own variables |
 
 aisland writes each file's header itself — what made it, from which template, how to remake it — and checks every
-`Jenkinsfile*` against the running Jenkins before writing it. A file whose name says nothing of its comments gives
+`Jenkinsfile*` against the running Jenkins before writing it: a file Jenkins rejects, and a Jenkins that answers the linter
+with a server error (a 500), write nothing. With no Jenkins running, or one that wants a login (set up without
+`aisland jenkins init --local`'s anonymous read), the file is written and the run says it was NOT validated — for a
+login, with the `curl` that lints it using your API token. A file whose name says nothing of its comments gives
 it in `[files]`: `"notes.txt" = { template = "notes.jinja", comment = ";" }`.
 
 A package offers a set to every workspace that installs it through an entry point naming the package that holds it:

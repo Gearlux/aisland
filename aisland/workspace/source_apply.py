@@ -11,7 +11,7 @@ from __future__ import annotations
 import logging
 import subprocess
 from pathlib import Path
-from typing import Dict, List, Optional
+from typing import List
 
 from aisland import console, failures, gitcmd
 from aisland.workspace import file as workspace_file
@@ -22,8 +22,8 @@ from aisland.workspace.selection import editable_target
 logger = logging.getLogger(__name__)
 
 
-def _run(cmd: List[str], cwd: Path, *, quiet: bool = False, env: Optional[Dict[str, str]] = None) -> bool:
-    """Run ``cmd`` (in ``env``, else this environment); return True on success. A failure is reported, never raised.
+def _run(cmd: List[str], cwd: Path, *, quiet: bool = False) -> bool:
+    """Run ``cmd`` (uv: its output reaches the terminal); return True on success. A failure is reported, never raised.
 
     One project's unreachable remote or dirty checkout must not abort a whole
     ``aisland setup`` sweep — the same non-fatal contract as
@@ -31,12 +31,25 @@ def _run(cmd: List[str], cwd: Path, *, quiet: bool = False, env: Optional[Dict[s
     """
     logger.debug("running %s (in %s)", " ".join(cmd), cwd)
     try:
-        subprocess.check_call(cmd, cwd=str(cwd), env=env)
+        subprocess.check_call(cmd, cwd=str(cwd))
         return True
     except (subprocess.CalledProcessError, FileNotFoundError) as e:
         if not quiet:
             failures.report(f"  - Error: `{' '.join(cmd)}` failed: {e}")
         return False
+
+
+def _git(repo: Path, *args: str, network: bool = False) -> bool:
+    """``git -C repo args`` through :func:`aisland.gitcmd.git`; True on success, else reported with git's own words.
+
+    ``network``: it reaches a remote — no credential prompt, a remote that stops sending given up, and no overall
+    limit (a clone may be long)."""
+    done = gitcmd.git(repo, *args, network=network, timeout=gitcmd.NO_LIMIT if network else None)
+    if done.returncode == 0:
+        return True
+    said = (done.stderr or done.stdout).strip().splitlines()
+    failures.report(f"  - Error: `git {' '.join(args)}` failed in {repo}: {said[-1] if said else 'git failed'}")
+    return False
 
 
 def _deinit_remedy(workspace_root: Path, path: Path, rel: str) -> str:
@@ -89,11 +102,10 @@ def apply_source(workspace_root: Path, project: str, source: sources.ProjectSour
 
     if source.kind == "local":
         console.echo(f"==> {project}: local checkout @ {source.ref}")
-        set_submodule_active(workspace_root, project, True)
+        set_submodule_active(workspace_root, sources.submodule_name(workspace_root, project), True)
         if not (path / ".git").exists():
             # It clones: no credential prompt, and a remote that stops sending is given up (gitcmd's guard).
-            clone = ["git", *gitcmd.network_options(), "submodule", "update", "--init", "--", rel]
-            if not _run(clone, workspace_root, env=gitcmd.network_env()):
+            if not _git(workspace_root, "submodule", "update", "--init", "--", rel, network=True):
                 return False
         # Non-fatal: an offline machine can still switch to a branch it already has.
         gitcmd.fetch(path, "--quiet", "origin")
@@ -103,12 +115,12 @@ def apply_source(workspace_root: Path, project: str, source: sources.ProjectSour
         if source.ref.startswith("-"):
             failures.report(f"  - Error: {project}: {source.ref!r} is no branch name (a branch never starts with '-')")
             return False
-        if not _run(["git", "switch", source.ref], path):
+        if not _git(path, "switch", source.ref):
             console.echo(f"  - {project}: left on its current branch; resolve local changes and re-run.", err=True)
             return False
         # The SAME target `aisland setup` installs (dev extra + the selected framework/tracker
         # extras) — the bare directory used to drop every extra the machine had selected.
-        return _run([uv_cmd, "pip", "install", "-e", editable_target(workspace_root, path, project)], workspace_root)
+        return _run([uv_cmd, "pip", "install", "-e", editable_target(workspace_root, path)], workspace_root)
 
     # github / pypi — both detach. Read the distribution name while the directory still exists
     # (afterwards there is no pyproject.toml left to ask), then empty it.
@@ -130,14 +142,14 @@ def apply_source(workspace_root: Path, project: str, source: sources.ProjectSour
         console.echo(f"==> {project}: pypi ({target})")
 
     if (path / ".git").exists():
-        if not _run(["git", "submodule", "deinit", rel], workspace_root):
+        if not _git(workspace_root, "submodule", "deinit", "--", rel):
             console.echo(
                 f"  - {project}: deinit refused; the venv was left untouched. "
                 f"{_deinit_remedy(workspace_root, path, rel)}",
                 err=True,
             )
             return False
-    set_submodule_active(workspace_root, project, False)
+    set_submodule_active(workspace_root, sources.submodule_name(workspace_root, project), False)
     # Uninstall first, unconditionally: an editable install would otherwise keep its .pth entry,
     # and re-pinning github:main -> github:dev/main reports the SAME version, which uv would
     # treat as already satisfied and skip.

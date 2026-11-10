@@ -17,6 +17,7 @@ import json
 import os
 import shutil
 import stat
+import tempfile
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 from pathlib import Path
@@ -465,18 +466,42 @@ def _announce(plan: _RestorePlan, backup: Backup, project: str, project_dir: Pat
         console.echo(click.style(f"  {'gone':<8} {rel}  (not in the payload)", fg="red"), err=True)
 
 
+def _remove(path: Path) -> None:
+    """Delete what is at ``path``: a folder with all it holds, else the file or link itself."""
+    if path.is_dir() and not path.is_symlink():
+        shutil.rmtree(path)
+    else:
+        path.unlink()
+
+
+def _move_into_place(source: Path, destination: Path) -> None:
+    """Move ``source`` to ``destination``. A copy already there (``--force``) is first moved aside beside it, and
+    deleted only once the move has succeeded; a move that fails puts it back, so the project never loses both."""
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    if not _exists(destination):
+        shutil.move(str(source), str(destination))
+        return
+    aside = Path(tempfile.mkdtemp(prefix=".aisland-restore-", dir=destination.parent)) / destination.name
+    os.rename(destination, aside)  # one folder, one file system: whole or not at all
+    try:
+        shutil.move(str(source), str(destination))
+    except BaseException:
+        if _exists(destination):  # half a copy from another file system
+            _remove(destination)
+        os.rename(aside, destination)
+        aside.parent.rmdir()
+        raise
+    _remove(aside)
+    aside.parent.rmdir()
+
+
 def _move_back(plan: _RestorePlan, payload: Path) -> Tuple[Set[str], List[Tuple[str, str]]]:
     """Move each pending entry into the project: the entries restored, and ``(rel, reason)`` of the ones that failed."""
     restored: Set[str] = set()
     failed: List[Tuple[str, str]] = []
     for rel, source, destination in plan.pending:
         try:
-            if destination.is_dir() and not destination.is_symlink():
-                shutil.rmtree(destination)
-            elif _exists(destination):
-                destination.unlink()
-            destination.parent.mkdir(parents=True, exist_ok=True)
-            shutil.move(str(source), str(destination))
+            _move_into_place(source, destination)
         except (OSError, shutil.Error) as exc:
             failed.append((rel, str(exc)))
             console.echo(click.style(f"  ! could not restore {rel}: {exc}", fg="red"), err=True)

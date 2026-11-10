@@ -28,6 +28,7 @@ from click.testing import CliRunner
 from aisland import locations
 from aisland.cli import main
 from aisland.cli import tunnel as tunnel_cli
+from aisland.errors import AislandError
 from aisland.tunnel import host as tunnel
 from aisland.tunnel import state as tunnel_state
 from aisland.tunnel import store as tunnel_store
@@ -385,3 +386,17 @@ def test_a_prefix_completes_the_workspace_after_the_first_open(editor: List[List
 
     assert [item.value for item in offered] == ["sandbox-4821"]
     assert "/mnt/workspace" in str(offered[0].help)
+
+
+@pytest.mark.parametrize(
+    "address",
+    [
+        "https://example.invalid/box/?folder=--install-extension%3Devil.vsix",
+        "https://example.invalid/box/?workspace=relative/x.code-workspace",
+    ],
+)
+def test_a_pasted_address_naming_no_absolute_path_is_refused(address: str) -> None:
+    """What the address names to open goes onto `code`'s command line: a value that reads as an option, or no
+    absolute path on the remote machine, never gets there."""
+    with pytest.raises(AislandError, match="no absolute path on the remote machine"):
+        tunnel_store.parse_workspace_url(address)

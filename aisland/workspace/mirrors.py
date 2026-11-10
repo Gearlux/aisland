@@ -56,8 +56,11 @@ from typing import Dict, List, Literal, Optional, Tuple
 from urllib.parse import urlparse
 
 from aisland import console, failures, gitcmd, machine_config
+from aisland.errors import AislandError
 from aisland.workspace import file as workspace_file
+from aisland.workspace import prune_record
 from aisland.workspace.projects import get_workspace_root, submodule_active_map
+from aisland.workspace.prune_record import PRUNE_REF, Prune
 
 #: The project's setting this module owns in its ``[project."<name>"]`` table of ``workspace.toml``, and the last part
 #: of this machine's ``aisland.mirror.<project>.mirror``.
@@ -90,7 +93,8 @@ class RefResult:
     Args:
         ref: The branch name, or ``"tags"``.
         outcome: What the sync did, or would do on a dry run.
-        count: Commits pushed (a branch behind), tags pushed; ``0`` for a new branch.
+        count: Commits pushed (a branch behind), tags pushed — or, refused, the tags that differ; ``0`` for a new
+            branch.
         detail: The tags concerned, or the refusal and its remedy.
     """
 
@@ -376,16 +380,33 @@ def unset_mirror(project: str, machine_only: bool = False, workspace_root: Optio
 # --- sync ------------------------------------------------------------------------------------
 
 
-def _ls_remote(path: Path, remote: str) -> Tuple[Optional[Dict[str, str]], str]:
-    """``({ref: sha}, "")`` for a remote's branches and tags, or ``(None, git's message)``."""
-    res = _git(path, "ls-remote", "--heads", "--tags", "--refs", remote, network=True)
+def _ls_remote(path: Path, remote: str) -> Tuple[Optional[Dict[str, str]], Dict[str, str], str]:
+    """``({ref: sha}, {tag: its commit}, "")`` for a remote's branches, tags and wheels-prune record
+    (:data:`PRUNE_REF`) — an annotated tag's commit is the one git lists it peeled to, a plain tag's its own — or
+    ``(None, {}, git's message)``."""
+    # The patterns leave out every other namespace a host keeps (a pull request's refs/pull/*); a peeled tag is kept.
+    res = _git(path, "ls-remote", remote, "refs/heads/*", "refs/tags/*", "refs/wheels-prune/*", network=True)
     if res.returncode != 0:
-        return None, _last_line(res)
+        return None, {}, _last_line(res)
     refs: Dict[str, str] = {}
+    peeled: Dict[str, str] = {}
     for line in res.stdout.splitlines():
         sha, _, ref = line.partition("\t")
-        refs[ref] = sha
-    return refs, ""
+        if ref.startswith("refs/tags/") and ref.endswith("^{}"):
+            peeled[ref[: -len("^{}")]] = sha
+        elif ref.startswith(("refs/heads/", "refs/tags/")) or ref == PRUNE_REF:
+            refs[ref] = sha
+    commits = {ref: peeled.get(ref, sha) for ref, sha in refs.items() if ref.startswith("refs/tags/")}
+    return refs, commits, ""
+
+
+#: A branch or tag of the mirror still on the history the primary had before ``aisland wheels prune`` rewrote it.
+_PRUNED = "the primary's history after a wheels prune"
+
+
+def _lease(ref: str, expected: Optional[str]) -> str:
+    """The push option that lets ``ref`` move only from ``expected`` (absent: only while the mirror has none)."""
+    return f"--force-with-lease={ref}:{expected or ''}"
 
 
 def _missing_objects(path: Path, shas: List[str]) -> List[str]:
@@ -404,44 +425,112 @@ def _branches(path: Path) -> List[str]:
 
 
 def _branch_result(
-    path: Path, rel: str, branch: str, primary: Optional[str], mirror: Optional[str], push: bool
-) -> Tuple[RefResult, Optional[str]]:
-    """The branch's outcome and, when it is to be pushed, its refspec."""
+    path: Path,
+    rel: str,
+    branch: str,
+    primary: Optional[str],
+    mirror: Optional[str],
+    push: bool,
+    rewritten: Dict[str, str],
+) -> Tuple[RefResult, Optional[str], Optional[str]]:
+    """The branch's outcome and, when it is to be pushed, its refspec and the lease a rewrite needs.
+
+    A mirror's branch at a commit a wheels prune rewrote (``rewritten``: old -> new, from the primary's record) is
+    the primary's own history before the prune, not work of the mirror's: it receives the primary's commit — a
+    descendant of the rewritten twin — leased on the commit the mirror has, so a push someone made there meanwhile
+    refuses it. Every other branch the mirror moved stays refused."""
     pushed: RefOutcome = "pushed" if push else "to push"
     if primary is None:
-        return RefResult(branch, "absent", detail="not on the primary"), None
-    spec = f"{primary}:refs/heads/{branch}"
+        return RefResult(branch, "absent", detail="not on the primary"), None, None
+    ref = f"refs/heads/{branch}"
+    spec = f"{primary}:{ref}"
     if mirror is None:
-        return RefResult(branch, pushed, detail="new branch"), spec
+        return RefResult(branch, pushed, detail="new branch"), spec, None
     if mirror == primary:
-        return RefResult(branch, "in sync"), None
-    ahead = int(_git_out(path, "rev-list", "--count", f"{primary}..{mirror}") or "0")
+        return RefResult(branch, "in sync"), None, None
+    twin = rewritten.get(mirror)
+    if twin is not None:
+        if twin == primary or _git(path, "merge-base", "--is-ancestor", twin, primary).returncode == 0:
+            return RefResult(branch, pushed, detail=_PRUNED), spec, _lease(ref, mirror)
+        detail = (
+            f"the mirror is on the history before a wheels prune ({mirror[:7]}), and the primary's {branch} no longer "
+            f"holds its rewritten commit {twin[:7]}\nmake origin's {branch} hold it again, then sync"
+        )
+        return RefResult(branch, "refused", detail=detail), None, None
+    ahead_commits = _git_out(path, "rev-list", f"{primary}..{mirror}").split()
+    ahead = len(ahead_commits)
+    old = next((commit for commit in ahead_commits if commit in rewritten), None)
+    if old is not None:
+        # Commits pushed to the mirror on top of the history before a prune: a merge would bring the stripped wheels
+        # back, so the remedy takes only those commits onto the primary's rewritten branch.
+        own = ahead_commits.index(old)
+        detail = (
+            f"the mirror has {_plural(own, 'commit')} on top of the history before a wheels prune\n"
+            f"put them on the primary's {branch} first: git -C {rel} fetch {MIRROR_REMOTE} && "
+            f"git -C {rel} cherry-pick {old[:12]}..{MIRROR_REMOTE}/{branch}"
+        )
+        return RefResult(branch, "refused", detail=detail), None, None
     if ahead:
         newest = _git_out(path, "log", "-1", '--format=%h "%s"', mirror)
         detail = (
             f"the mirror has {_plural(ahead, 'commit')} the primary does not ({newest})\n"
             f"merge it first: git -C {rel} fetch {MIRROR_REMOTE} && git -C {rel} merge {MIRROR_REMOTE}/{branch}"
         )
-        return RefResult(branch, "refused", detail=detail), None
+        return RefResult(branch, "refused", detail=detail), None, None
     behind = int(_git_out(path, "rev-list", "--count", f"{mirror}..{primary}") or "0")
-    return RefResult(branch, pushed, count=behind), spec
+    return RefResult(branch, pushed, count=behind), spec, None
 
 
-def _tags_result(primary: Dict[str, str], mirror: Dict[str, str], push: bool) -> Tuple[RefResult, List[str]]:
-    """The tags' outcome and the refspecs of the tags to push."""
+def _tags_result(
+    primary: Dict[str, str],
+    mirror: Dict[str, str],
+    push: bool,
+    rewritten: Dict[str, str],
+    commits: Tuple[Dict[str, str], Dict[str, str]] = ({}, {}),
+) -> Tuple[RefResult, List[str], List[str]]:
+    """The tags' outcome, the refspecs of the tags to push and the leases of those a wheels prune moved.
+
+    A tag the mirror has on a commit a prune rewrote into the commit of the primary's tag (``rewritten``; each tag's
+    commit in ``commits``, the primary's and the mirror's) is that tag before the prune: it is moved, leased on the
+    mirror's value. Every other tag that differs is never overwritten."""
+    primary_commits, mirror_commits = commits
     missing = sorted(tag for tag in primary if tag not in mirror)
-    differ = sorted(tag for tag in primary if tag in mirror and mirror[tag] != primary[tag])
-    specs = [f"{primary[tag]}:{tag}" for tag in missing]
-    names = [tag[len("refs/tags/") :] for tag in missing]
+    moved = sorted(
+        tag
+        for tag in primary
+        if tag in mirror
+        and mirror[tag] != primary[tag]
+        and rewritten.get(mirror_commits.get(tag, mirror[tag])) == primary_commits.get(tag, primary[tag])
+    )
+    differ = sorted(tag for tag in primary if tag in mirror and mirror[tag] != primary[tag] and tag not in moved)
+    specs = [f"{primary[tag]}:{tag}" for tag in missing + moved]
+    leases = [_lease(tag, mirror[tag]) for tag in moved]
+    names = [tag[len("refs/tags/") :] for tag in missing + moved]
     if differ:
         shown = ", ".join(tag[len("refs/tags/") :] for tag in differ)
         detail = f"{shown} differ{'s' if len(differ) == 1 else ''} on the mirror; a tag is never overwritten"
         if names:
             detail += f" (pushed {', '.join(names)})" if push else f" ({len(names)} to push)"
-        return RefResult("tags", "refused", count=len(missing), detail=detail), specs
-    if missing:
-        return RefResult("tags", "pushed" if push else "to push", count=len(missing), detail=", ".join(names)), specs
-    return RefResult("tags", "in sync"), specs
+        return RefResult("tags", "refused", count=len(differ), detail=detail), specs, leases
+    if names:
+        shown = ", ".join(names) + (f" ({_PRUNED})" if moved else "")
+        return RefResult("tags", "pushed" if push else "to push", count=len(names), detail=shown), specs, leases
+    return RefResult("tags", "in sync"), specs, leases
+
+
+def _record_result(
+    primary: Optional[str], mirror: Optional[str], chain: List[Prune], push: bool
+) -> Tuple[Optional[RefResult], Optional[str], Optional[str]]:
+    """The wheels-prune record (:data:`PRUNE_REF`): the mirror gets the primary's, so a clone of the mirror can follow
+    the prunes with ``aisland wheels reset``. A chain only grows, so the mirror's must be one of the primary's records;
+    a record the primary's chain does not hold is refused."""
+    if primary is None or primary == mirror:
+        return None, None, None
+    if mirror is not None and mirror not in {one.record for one in chain}:
+        detail = "the mirror's wheels-prune record is none of the primary's; it is never overwritten"
+        return RefResult("prune record", "refused", detail=detail), None, None
+    pushed: RefOutcome = "pushed" if push else "to push"
+    return RefResult("prune record", pushed, detail=_PRUNED), f"{primary}:{PRUNE_REF}", _lease(PRUNE_REF, mirror)
 
 
 def sync_project(workspace_root: Path, project: str, push: bool = True) -> ProjectSync:
@@ -458,43 +547,69 @@ def sync_project(workspace_root: Path, project: str, push: bool = True) -> Proje
         return ProjectSync(project, url, "failed", note=f"a remote `{MIRROR_REMOTE}` aisland did not create: {foreign}")
     _ensure_remote(path, url)
 
-    primary_refs, error = _ls_remote(path, PRIMARY_REMOTE)
+    primary_refs, primary_commits, error = _ls_remote(path, PRIMARY_REMOTE)
     if primary_refs is None:
         return ProjectSync(project, url, "failed", note=f"the primary: {error}")
-    mirror_refs, error = _ls_remote(path, MIRROR_REMOTE)
+    mirror_refs, mirror_commits, error = _ls_remote(path, MIRROR_REMOTE)
     if mirror_refs is None:
         return ProjectSync(project, url, "failed", note=f"the mirror: {error}")
 
-    # The objects the comparison and the push need, fetched by id: the primary's tips and tags
-    # (a local checkout may lack a tag or a commit another machine pushed), then the mirror's
-    # branches into refs/remotes/mirror/*, which the refusal's merge command names.
-    wanted = [sha for ref, sha in primary_refs.items() if ref.startswith(("refs/heads/", "refs/tags/"))]
-    missing = _missing_objects(path, wanted)
+    # The objects the comparison and the push need, fetched by id: the primary's tips, tags and wheels-prune record
+    # (a local checkout may lack a tag or a commit another machine pushed).
+    missing = _missing_objects(path, list(primary_refs.values()))
     if missing:
         res = _git(path, "fetch", "--quiet", "--no-tags", PRIMARY_REMOTE, *missing, network=True)
         if res.returncode != 0:
             return ProjectSync(project, url, "failed", note=f"the primary: {_last_line(res)}")
-    if any(ref.startswith("refs/heads/") for ref in mirror_refs):
-        res = _git(path, "fetch", "--quiet", MIRROR_REMOTE, network=True)
+    # The primary's prunes: a mirror's ref at a commit one rewrote is the primary's old history, sent the new one.
+    try:
+        chain = prune_record.prunes(path, primary_refs[PRUNE_REF]) if PRUNE_REF in primary_refs else []
+    except AislandError as unreadable:
+        return ProjectSync(project, url, "failed", note=f"the primary's wheels-prune record: {unreadable.message}")
+    rewritten = prune_record.compose(chain)
+    # The mirror's branches a sync compares into refs/remotes/mirror/*, which the refusal's merge command names — but
+    # never one on the history a prune rewrote, which would bring the stripped wheels back into this clone.
+    branches = _branches(path)
+    compared = [
+        f"+refs/heads/{branch}:refs/remotes/{MIRROR_REMOTE}/{branch}"
+        for branch in branches
+        if f"refs/heads/{branch}" in mirror_refs and mirror_refs[f"refs/heads/{branch}"] not in rewritten
+    ]
+    if compared:
+        res = _git(path, "fetch", "--quiet", "--no-tags", MIRROR_REMOTE, *compared, network=True)
         if res.returncode != 0:
             return ProjectSync(project, url, "failed", note=f"the mirror: {_last_line(res)}")
 
     results: List[RefResult] = []
     specs: List[str] = []
-    for branch in _branches(path):
+    leases: List[str] = []
+    for branch in branches:
         ref = f"refs/heads/{branch}"
-        result, spec = _branch_result(path, rel, branch, primary_refs.get(ref), mirror_refs.get(ref), push)
+        result, spec, lease = _branch_result(
+            path, rel, branch, primary_refs.get(ref), mirror_refs.get(ref), push, rewritten
+        )
         results.append(result)
-        if spec:
-            specs.append(spec)
+        specs += [spec] if spec else []
+        leases += [lease] if lease else []
     primary_tags = {ref: sha for ref, sha in primary_refs.items() if ref.startswith("refs/tags/")}
     mirror_tags = {ref: sha for ref, sha in mirror_refs.items() if ref.startswith("refs/tags/")}
-    tags, tag_specs = _tags_result(primary_tags, mirror_tags, push)
+    tags, tag_specs, tag_leases = _tags_result(
+        primary_tags, mirror_tags, push, rewritten, (primary_commits, mirror_commits)
+    )
     results.append(tags)
     specs.extend(tag_specs)
+    leases.extend(tag_leases)
+    record, record_spec, record_lease = _record_result(
+        primary_refs.get(PRUNE_REF), mirror_refs.get(PRUNE_REF), chain, push
+    )
+    if record is not None:
+        results.append(record)
+        specs += [record_spec] if record_spec else []
+        leases += [record_lease] if record_lease else []
 
     if push and specs:
-        res = _git(path, "push", "--quiet", MIRROR_REMOTE, *specs, network=True)
+        # A lease is no `+`: a `+` refspec overrides it. Only what a prune rewrote carries one.
+        res = _git(path, "push", "--quiet", *leases, MIRROR_REMOTE, *specs, network=True)
         if res.returncode != 0:
             return ProjectSync(project, url, "failed", tuple(results), note=f"the push: {_last_line(res)}")
     state: SyncState = "refused" if any(r.outcome == "refused" for r in results) else "synced"
@@ -519,7 +634,7 @@ def _sync_line(result: RefResult, width: int = 10) -> str:
     elif result.ref == "tags" and result.outcome in ("pushed", "to push"):
         text = f"{result.outcome} {result.detail}"
     elif result.outcome in ("pushed", "to push"):
-        how = "new branch" if result.detail == "new branch" else _plural(result.count, "commit")
+        how = result.detail if result.detail in ("new branch", _PRUNED) else _plural(result.count, "commit")
         text = f"{result.outcome} ({how})"
     elif result.outcome == "absent":
         text = "not on the primary"
@@ -537,6 +652,8 @@ def _state_word(result: RefResult) -> str:
             return f"{_plural(result.count, 'tag')} missing"
         return "tags in sync"
     if result.outcome == "to push":
+        if result.detail == _PRUNED:
+            return f"{result.ref} pruned on the primary"
         return f"{result.ref} new" if result.detail == "new branch" else f"{result.ref} {result.count} behind"
     if result.outcome == "refused":
         return f"{result.ref} mirror ahead"

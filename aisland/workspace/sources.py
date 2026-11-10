@@ -51,6 +51,7 @@ This module is the model: the kinds, both layers and the effective source. Apply
 from __future__ import annotations
 
 import logging
+import os
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Dict, List, Literal, Optional, Tuple, cast, get_args
@@ -58,7 +59,8 @@ from typing import Dict, List, Literal, Optional, Tuple, cast, get_args
 from aisland import failures, gitcmd, machine_config
 from aisland import pyproject as pyproject_toml
 from aisland.workspace import file as workspace_file
-from aisland.workspace.projects import get_workspace_root, submodule_active_map
+from aisland.workspace import gitmodules
+from aisland.workspace.projects import get_workspace_root
 
 logger = logging.getLogger(__name__)
 
@@ -259,12 +261,32 @@ def effective_source(
     return override
 
 
+def submodule_of(workspace_root: Path, project: str) -> Optional[gitmodules.Submodule]:
+    """``project``'s entry in ``.gitmodules``: the one at the folder ``workspace.toml`` gives it — a row renamed there
+    keeps its submodule's name — else the one of that name; ``None`` when ``.gitmodules`` has neither."""
+    submodules = gitmodules.read(workspace_root)
+    listed = workspace_file.load(workspace_root).projects.get(project)
+    if listed is not None:
+        at_its_folder = [s for s in submodules if os.path.normpath(s.path) == os.path.normpath(listed.path)]
+        if at_its_folder:
+            return at_its_folder[0]
+    return next((s for s in submodules if s.name == project), None)
+
+
+def submodule_name(workspace_root: Path, project: str) -> str:
+    """The name git knows ``project``'s submodule by (``submodule.<name>.*``), else the project's own."""
+    found = submodule_of(workspace_root, project)
+    return found.name if found is not None else project
+
+
 def project_path(workspace_root: Path, project: str) -> Path:
-    """Absolute path of ``project``'s directory, honouring a ``.gitmodules`` path that differs from its name."""
-    for name, path, _active in submodule_active_map(workspace_root):
-        if name == project:
-            return workspace_root / path
-    return workspace_root / project
+    """Absolute path of ``project``'s directory: its submodule's path, else its ``workspace.toml`` row's, else its
+    name."""
+    found = submodule_of(workspace_root, project)
+    if found is not None:
+        return workspace_root / found.path
+    listed = workspace_file.load(workspace_root).projects.get(project)
+    return workspace_root / (listed.path if listed is not None else project)
 
 
 def discover_distribution(project_dir: Path) -> Optional[str]:
@@ -284,10 +306,8 @@ def remote_url(workspace_root: Path, project: str) -> Optional[str]:
     works for the submodules that are NOT on GitHub (a private project on an internal Bitbucket), and so it always matches the remote the operator's git auth is
     already set up for.
     """
-    gitmodules = workspace_root / ".gitmodules"
-    if not gitmodules.exists():
-        return None
-    return gitcmd.read(workspace_root, "config", "-f", ".gitmodules", "--get", f"submodule.{project}.url") or None
+    found = submodule_of(workspace_root, project)
+    return found.url if found is not None and found.url else None
 
 
 def pip_vcs_url(url: str, ref: str) -> str:

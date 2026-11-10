@@ -14,12 +14,12 @@ import os
 import subprocess
 import textwrap
 from pathlib import Path
-from typing import List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 
 import pytest
 from click.testing import CliRunner
 
-from aisland import cli, console, locations
+from aisland import cli, console, failures, gitcmd, locations
 from aisland.setup import manager
 from aisland.workspace import activation
 from aisland.workspace import file as workspace_file
@@ -326,6 +326,26 @@ def test_setup_clones_a_project_written_into_the_file_by_hand(
     assert workspace_file.refresh(ws) == []  # listed and present: nothing more to say
 
 
+def test_setup_clones_with_no_prompt_and_no_time_limit(ws: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """A clone runs with git's prompts off — a credential prompt with the output captured would wait unseen — and
+    without the network time limit, since a download may be long."""
+    real = gitcmd.git
+    clones: List[Tuple[str, Dict[str, object]]] = []
+
+    def spy(repo: Path, *args: str, **options: Any) -> "subprocess.CompletedProcess[str]":  # Any: git's options
+        if args[:1] == ("submodule",) and args[1] in ("add", "update"):
+            clones.append((args[1], options))
+        return real(repo, *args, **options)
+
+    monkeypatch.setattr(gitcmd, "git", spy)
+    activation.reconcile(ws)  # adds `extra` from its url; `tools`, off by default, is emptied
+    activation.set_machine_choice(ws, "tools", True)
+    activation.reconcile(ws)  # checks `tools` out again
+    assert sorted(kind for kind, _options in clones) == ["add", "update"]
+    for _kind, options in clones:
+        assert options == {"network": True, "timeout": gitcmd.NO_LIMIT}
+
+
 @pytest.mark.parametrize("flag", ["--activate", "--deactivate"])
 def test_setup_has_no_activation_flags(flag: str) -> None:
     result = CliRunner().invoke(cli.main, ["setup", flag, "models"])
@@ -363,6 +383,38 @@ def test_setup_asks_then_reconciles(tmp_path: Path, monkeypatch: pytest.MonkeyPa
     with pytest.raises(_Stop):
         manager.setup_workspace(non_interactive=True)
     assert calls == ["resolve True", "reconcile"]
+
+
+def test_a_project_whose_folder_could_not_follow_fails_setup_which_goes_on(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """`reconcile` returns what it could not bring in line; setup dropped the list, so it exited 0."""
+    (tmp_path / ".venv" / "bin").mkdir(parents=True)
+
+    class _Stop(Exception):
+        pass
+
+    monkeypatch.setattr(locations, "workspace_root", lambda: tmp_path)
+    monkeypatch.setattr(manager, "ensure_uv_in_venv", lambda venv_bin: "uv")
+    monkeypatch.setattr(manager, "link_project_bashrc", lambda root: None)
+    monkeypatch.setattr(manager, "install_harness", lambda root: [])
+    monkeypatch.setattr("aisland.setup.provision.install", lambda root, aislands_own=True: None)
+    monkeypatch.setattr(activation, "resolve", lambda root, non_interactive: None)
+    monkeypatch.setattr(activation, "reconcile", lambda root: ["nourl", "bad"])
+    went_on: List[str] = []
+
+    def apply_all(*args: object, **kwargs: object) -> None:
+        went_on.append("sources")
+        raise _Stop
+
+    monkeypatch.setattr("aisland.setup.manager.apply_all", apply_all)
+    failures.reset()
+    with pytest.raises(_Stop):
+        manager.setup_workspace(non_interactive=True)
+    assert went_on == ["sources"] and failures.reported() == 2
+    err = capsys.readouterr().err
+    assert "Error: nourl's folder could not follow its activation" in err
+    assert "Error: bad's folder could not follow its activation" in err
 
 
 # --- the smaller cases -----------------------------------------------------------------------------------------

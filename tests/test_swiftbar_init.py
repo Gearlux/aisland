@@ -67,8 +67,8 @@ def test_the_scripts_watch_each_projects_jobs_and_repository_dependencies_first(
 
     jenkins = (bar.plugins_dir / "jenkins_status.5m.sh").read_text()
     github = (bar.plugins_dir / "gh_status.10m.sh").read_text()
-    assert 'PROJECTS=("lib" "app.local")' in jenkins
-    assert 'REPOS=$(echo -e "acme/lib\\nacme/app")' in github
+    assert "PROJECTS=(lib app.local)" in jenkins
+    assert "REPOS='acme/lib\nacme/app'" in github
     for script in (jenkins, github):
         assert script.startswith("#!/bin/bash\n# ===")
         assert "<[" not in script
@@ -98,3 +98,32 @@ def test_a_yes_points_swiftbar_at_the_scripts_and_starts_it_again(
         ["open", "-g", f"swiftbar://changePluginsDirectory?path={bar.plugins_dir}"],
         ["<launch>"],
     ]
+
+
+def test_a_name_the_menu_script_holds_stays_that_name_and_never_runs_as_code(
+    workspace: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A job folder or a Jenkins home named with a space, a quote or a `$(…)` reaches the script as one bash word."""
+    odd = 'a b"$(touch pwned)'
+    home = tmp_path / "it's here"
+    (home / "jenkins" / "jobs" / odd / "builds").mkdir(parents=True)
+    monkeypatch.setattr(paths, "data_dir", lambda: home)
+    bar = swiftbar.SwiftBarService()
+    bar._generate_jenkins_script([odd])
+    script = bar.plugins_dir / "jenkins_status.5m.sh"
+    ran = _REAL_RUN(["bash", str(script)], cwd=tmp_path, capture_output=True, text=True, timeout=30)
+    assert ran.returncode == 0, ran.stderr
+    assert f"{odd} | color=gray" in ran.stdout
+    assert not (tmp_path / "pwned").exists()
+
+
+def test_building_the_service_makes_no_folder(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """`aisland doctor`, `services status` and the MCP tool `services_status` build every service: none may leave a
+    `data/<service>/` folder behind (from a wheel, in the folder they run in)."""
+    monkeypatch.setattr(paths, "data_dir", lambda: tmp_path / "data")
+    monkeypatch.setattr(swiftbar.probe, "succeeds", lambda argv: False)
+    monkeypatch.setattr(swiftbar.platform, "system", lambda: "Darwin")
+    bar = swiftbar.SwiftBarService()
+    bar.state()
+    swiftbar.JenkinsService().state()
+    assert not (tmp_path / "data").exists()

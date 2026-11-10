@@ -52,6 +52,9 @@ class Service(Protocol):
     def state(self) -> ServiceState:
         """Its state, as data (``status`` prints it)."""
 
+    def wipes(self) -> str:
+        """What its reset deletes, in words."""
+
     def status(self) -> None:
         """Print its one-line state."""
 
@@ -247,9 +250,15 @@ def stop(entries: Sequence[Entry], names: Sequence[str]) -> None:
     _each(_last_first(entries, names), lambda entry: entry.make().stop())
 
 
+def reset_question(entries: Sequence[Entry], names: Sequence[str]) -> str:
+    """The one question asked before :func:`reset`: each service it will reset, in its order, and what that wipes —
+    so a yes (or ``-y``) is given knowing that the container engine's reset deletes every container."""
+    lines = [f"  {entry.name}: {entry.make().wipes()}" for entry in _last_first(entries, names)]
+    return "Stop these services and delete:\n" + "\n".join(lines) + "\nGo on?"
+
+
 def reset(entries: Sequence[Entry], names: Sequence[str]) -> None:
-    for entry in _last_first(entries, names):
-        entry.make().reset()
+    _each(_last_first(entries, names), lambda entry: entry.make().reset())
 
 
 def status(entries: Sequence[Entry], names: Sequence[str]) -> None:

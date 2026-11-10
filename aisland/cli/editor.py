@@ -7,7 +7,7 @@ import click
 from click.shell_completion import CompletionItem
 
 from aisland import editor
-from aisland.cli._base import _editor_root, _Group
+from aisland.cli._base import Group, workspace_root_found
 from aisland.errors import quiet_completion
 from aisland.setup import editor_files
 
@@ -24,7 +24,7 @@ def _complete_colors(ctx: click.Context, param: click.Parameter, incomplete: str
     return [CompletionItem(name) for name, _ in editor.named_colors() if name.startswith(incomplete.lower())]
 
 
-@click.group("theme", cls=_Group)
+@click.group("theme", cls=Group)
 def theme_group() -> None:
     """This machine's VS Code theme for the workspace window, kept in .git/config (never committed).
 
@@ -36,7 +36,7 @@ def theme_group() -> None:
 def theme_list() -> None:
     """The themes VS Code offers on this machine: name, kind, the extension that brings it; * marks the
     workspace's. Without VS Code here (a remote machine), a line saying the themes are your local VS Code's."""
-    chosen = editor.read_choice(_editor_root()).theme
+    chosen = editor.read_choice(workspace_root_found()).theme
     themes = editor.list_themes()
     if not themes:
         click.echo(editor.NO_THEMES_HERE)
@@ -54,7 +54,7 @@ def theme_set(name: str) -> None:
 
     On a machine without VS Code (a remote one: its window's themes are your local VS Code's) NAME is kept as
     typed, unchecked."""
-    root = _editor_root()
+    root = workspace_root_found()
     theme = editor.set_theme(root, name)
     editor_files.write_code_workspace(root)
     if theme is None or theme.checked:
@@ -66,13 +66,13 @@ def theme_set(name: str) -> None:
 @theme_group.command("unset")
 def theme_unset() -> None:
     """Forget the workspace's theme: the window shows your VS Code user setting again."""
-    root = _editor_root()
+    root = workspace_root_found()
     editor.set_theme(root, None)
     editor_files.write_code_workspace(root)
     click.echo("==> Theme: your VS Code user setting")
 
 
-@click.group("color", cls=_Group)
+@click.group("color", cls=Group)
 def color_group() -> None:
     """This machine's background and foreground colour for the workspace window, over any theme.
 
@@ -87,7 +87,7 @@ def color_group() -> None:
 def color_list(part: str) -> None:
     """The colour names to choose from (CSS's 148), each with its swatch and value; PART keeps the names holding
     it. The first line is this workspace's choice; ← marks the chosen names."""
-    choice = editor.read_choice(_editor_root())
+    choice = editor.read_choice(workspace_root_found())
     click.echo(
         f"This workspace: background: {editor.describe(choice.background)}, "
         f"foreground: {editor.describe(choice.foreground)}, area: {choice.area}"
@@ -116,7 +116,7 @@ def color_set(role: editor.ColorRole, color: str, area: Optional[editor.ColorAre
     COLOR is a CSS name (`aisland workspace color list`: navy, dark slate blue) or #RGB, #RGBA, #RRGGBB,
     #RRGGBBAA: `aisland workspace color set background navy --area both`.
     """
-    root = _editor_root()
+    root = workspace_root_found()
     editor.set_color(root, role, color, area)
     editor_files.write_code_workspace(root)
     choice = editor.read_choice(root)
@@ -132,7 +132,7 @@ def color_set(role: editor.ColorRole, color: str, area: Optional[editor.ColorAre
 @click.argument("role", required=False, type=click.Choice(editor.COLOR_ROLES))
 def color_unset(role: Optional[editor.ColorRole]) -> None:
     """Give ROLE's colour back to the theme; without ROLE, both colours (and the area)."""
-    root = _editor_root()
+    root = workspace_root_found()
     if role is None:
         editor.clear_colors(root)
     else:

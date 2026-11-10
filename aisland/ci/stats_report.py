@@ -19,6 +19,8 @@ from pathlib import Path
 from typing import Any, Dict, Iterator, List, Optional, Set, Tuple, Union
 
 from aisland import locations, paths, pytest_stats
+from aisland.errors import AislandError
+from aisland.workspace.model import Workspace
 
 #: The fast run's budget: about five minutes per project.
 FAST_RUN_BUDGET_SECONDS = 300.0
@@ -38,6 +40,21 @@ _COMPLETE_EXITS = (0, 1)
 def jenkins_jobs_folder() -> Path:
     """The local Jenkins' job folders (`<project>.local`, `<project>`), each build's JUnit record in it."""
     return paths.data_dir() / "jenkins" / "jobs"
+
+
+class UnknownProject(AislandError, LookupError):
+    """A project the report was asked for that the workspace does not have."""
+
+
+def project_folder(project: str) -> Path:
+    """The folder of the workspace's project called ``project`` (the workspace model's: a submodule's path need not
+    be its name), refused naming the workspace when it has no such project or the folder no ``pyproject.toml`` —
+    what `aisland tests report` and the MCP tool `tests_report` check before they read."""
+    root = locations.workspace_root()
+    found = Workspace(root).project(project)
+    if found is None or not (found.path / "pyproject.toml").is_file():
+        raise UnknownProject(f"no project {project!r} in the workspace {root}")
+    return found.path
 
 
 def junit_address(nodeid: str) -> str:

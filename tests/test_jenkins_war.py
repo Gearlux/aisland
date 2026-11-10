@@ -27,7 +27,7 @@ def clean_slate() -> Iterator[None]:
 def service(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> jenkins.JenkinsService:
     monkeypatch.setattr(paths, "data_dir", lambda: tmp_path)
     war = jenkins.JenkinsService()
-    war.war_file = tmp_path / "bin" / "jenkins.war"
+    war.war_file = tmp_path / "bin" / f"jenkins-{war.WAR_VERSION}.war"
     return war
 
 
@@ -61,7 +61,7 @@ def test_a_download_with_the_pinned_digest_is_installed_whole(
 
     assert served == [jenkins.JenkinsService.URL]
     assert service.war_file.read_bytes() == WAR
-    assert sorted(path.name for path in service.war_file.parent.iterdir()) == ["jenkins.war"]
+    assert sorted(path.name for path in service.war_file.parent.iterdir()) == [service.war_file.name]
     assert failures.reported() == 0
 
 
@@ -98,3 +98,23 @@ def test_a_war_already_in_the_bin_folder_is_used_as_it_is(service: jenkins.Jenki
 
     assert served == []
     assert service.war_file.read_bytes() == b"another release"
+
+
+def test_a_new_pin_downloads_its_own_war_and_removes_the_older_ones(
+    service: jenkins.JenkinsService, served: List[str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The file is named by its version: a WAR an older pin (or an older aisland, as `jenkins.war`) left is never
+    taken for the pinned release, and goes once that one is there."""
+    monkeypatch.setattr(jenkins.JenkinsService, "WAR_SHA256", hashlib.sha256(WAR).hexdigest())
+    folder = service.war_file.parent
+    folder.mkdir(parents=True)
+    for old in ("jenkins.war", "jenkins-2.0.1.war"):
+        (folder / old).write_bytes(b"an older release")
+    (folder / "jenkins-plugin-manager-2.13.2.jar").write_bytes(b"the manager")
+
+    assert service.ensure_war() is True
+
+    assert served == [jenkins.JenkinsService.URL]
+    assert sorted(path.name for path in folder.iterdir()) == sorted(
+        [service.war_file.name, "jenkins-plugin-manager-2.13.2.jar"]
+    )

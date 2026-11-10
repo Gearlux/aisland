@@ -60,11 +60,12 @@ class ServiceContext:
         port: Optional[int] = None,
         ready: Optional[str] = None,
     ) -> None:
-        """Run ``command`` under the supervisor; with ``port`` and ``ready``, wait until it answers there."""
+        """Run ``command`` under the supervisor, refusing a ``port`` another process holds; with ``ready`` too, wait
+        until it answers there."""
         readiness: Optional[supervisor.Readiness] = (
             {"port": port, "path": ready} if port is not None and ready is not None else None
         )
-        self._service.start(list(command), env=env, background=self.background, readiness=readiness)
+        self._service.start(list(command), env=env, background=self.background, readiness=readiness, port=port)
 
     def write_env(self, values: Dict[str, str]) -> None:
         """Set each key in the workspace ``.env``, an existing one replaced in place."""
@@ -113,6 +114,7 @@ class PluginService(BaseService):
         return found if callable(found) else None
 
     def launch(self, background: bool = False, port: Optional[int] = None, **options: Optional[str]) -> None:
+        self.service_data_dir.mkdir(parents=True, exist_ok=True)  # `ctx.data_dir`, which the class may write into
         self.implementation.start(ServiceContext(self, port=port, background=background, options=options))
 
     def restart(self, **kwargs: Any) -> None:  # Any: launch's options, each typed there
@@ -145,6 +147,11 @@ class PluginService(BaseService):
         own = self._own("info")
         if own:
             own(ServiceContext(self))
+
+    def wipes(self) -> str:
+        """The class's own words (``reset_question``) when its reset wipes something else, else the data folder."""
+        said = getattr(self.implementation, "reset_question", None)
+        return str(said) if said else super().wipes()
 
     def reset(self) -> None:
         own = self._own("reset")

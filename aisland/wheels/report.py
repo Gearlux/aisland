@@ -168,6 +168,8 @@ class WheelsReport:
     extra_remembered: bool = False
     #: The extra a generated block names that this run left as it is (``--include-project``, no ``--extra``).
     extra_left: Optional[str] = None
+    #: True when the check failed and the run put the wheels folder and ``pyproject.toml`` back as they were.
+    put_back: bool = False
 
     @property
     def ok(self) -> bool:
@@ -381,7 +383,11 @@ def _tail_lines(report: WheelsReport) -> List[str]:
     """What the run wrote beside the wheels: the extra, the commit, the zip and the bundle."""
     target = report.target
     tail = []
-    if report.extra is not None:
+    if report.put_back:
+        tail.append(
+            f"The check failed: {report.wheels_dir} and {target}/pyproject.toml are as they were before this run."
+        )
+    elif report.extra is not None:
         n_wheels = len(report.built)
         state = "written into" if report.extra_changed else "unchanged in"
         kept = ", which holds its generated block" if report.extra_remembered else ""

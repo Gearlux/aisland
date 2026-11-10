@@ -2,7 +2,7 @@
 
 How to free the space a checkout accumulates outside git with `aisland clean`, and how to inspect, restore and prune the backups it makes with `aisland backups`.
 
-## Reclaiming disk space (`aisland clean`)
+## Moving a project's ignored files aside (`aisland clean`)
 
 A checkout accumulates gigabytes that git never sees: `.venv/`, `build/`, `.mypy_cache/`,
 coverage reports, `lightning_logs/`, downloaded checkpoints, run directories. `git status`

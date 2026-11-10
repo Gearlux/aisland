@@ -88,7 +88,12 @@ class JenkinsApi:
 
     def json(self, path: str) -> Optional[Any]:  # Any: Jenkins' JSON, read by key
         body = self._read(path)
-        return None if body is None else json.loads(body)
+        if body is None:
+            return None
+        try:
+            return json.loads(body)
+        except ValueError as error:  # a proxy's or a starting Jenkins' HTML page: no answer to read
+            raise JenkinsUnreachable(f"{self.base_url}{path}: no JSON in the answer ({error})") from error
 
     def text(self, path: str) -> str:
         body = self._read(path)

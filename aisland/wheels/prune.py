@@ -9,8 +9,11 @@ from every commit. Each branch tip and tag keeps exactly the files it has; only 
 The run, in order (``--apply``; without it the run fetches, counts and changes nothing):
 
 1. **Refusals** (:func:`_problems`): changes no commit holds, a branch with commits origin lacks or behind origin's,
-   a tag that differs from origin's. A rewrite of such a clone would lose or tangle work.
-2. **A backup** of every ref, ``<git dir>/wheels-prune/<stamp>.bundle``, and the command that puts it back.
+   a tag that differs from origin's. A rewrite of such a clone would lose or tangle work. And another remote's refs
+   (a mirror's) reaching a version that goes (:func:`_other_remotes`): the rewrite leaves another host's refs as that
+   host has them, and they would keep the old history in the clone.
+2. **A backup** of every ref and of every commit only a reflog reaches, ``<git dir>/wheels-prune/<stamp>.bundle``, and
+   the command that puts it back.
 3. **The rewrite**, by git-filter-repo (the ``prune`` extra): ``--strip-blobs-with-ids`` with the versions to go,
    ``--preserve-commit-hashes`` and no pruning of commits left empty, so the rewrite is a pure function of each
    commit — another clone stripping the same versions gets the same commit ids (what :func:`reset` relies on).
@@ -53,15 +56,10 @@ from aisland.errors import AislandError
 from aisland.wheels.files import WHEELS_DIR
 from aisland.wheels.projects import find_target, workspace_projects
 from aisland.wheels.report import human_size
+from aisland.workspace.prune_record import COMMITS_FILE, PRUNE_REF, STRIPPED_FILE, Prune, compose, prunes
 
-#: Where origin keeps the record of every prune: a chain of commits, one per prune, never a branch or a tag.
-PRUNE_REF = "refs/wheels-prune/map"
-
-#: The record commit's file listing the wheel versions (blob ids) that prune stripped, one per line.
-STRIPPED_FILE = "stripped-blobs"
-
-#: The record commit's file mapping each commit the prune rewrote, ``<old> <new>`` per line.
-COMMITS_FILE = "commit-map"
+# The record's names (PRUNE_REF, STRIPPED_FILE, COMMITS_FILE) are defined in aisland.workspace.prune_record, below
+# the wheels layer so the mirror sync reads them too; imported here, they are this module's names as well.
 
 #: The folder inside the git directory that holds the backups.
 BACKUP_DIR = "wheels-prune"
@@ -76,6 +74,9 @@ _STASH = "refs/stash"
 
 #: Holds a detached HEAD's commit while the rewrite runs.
 _HEAD_REF = "refs/wheels-prune/head"
+
+#: In the backup bundle, each commit only a reflog reached, as ``<this><commit>``.
+_REFLOG_REFS = "refs/wheels-prune/reflog/"
 
 #: Holds a reset's changes no commit held (a ``git stash create`` commit) while the rewrite runs; never the user's
 #: stash, whose reflog git-filter-repo does not carry.
@@ -259,14 +260,14 @@ def _is_wheel(path: str) -> bool:
     return path.startswith(f"{WHEELS_DIR}/") and path.endswith(".whl")
 
 
-def history_wheels(repo: Path) -> Set[str]:
-    """Every wheel version (blob id) any commit of any ref ever held under ``wheels/``.
+def history_wheels(repo: Path, refs: Sequence[str] = ("--all",)) -> Set[str]:
+    """Every wheel version (blob id) any commit of ``refs`` (every ref by default) ever held under ``wheels/``.
 
     Each commit's change against each parent (``-m``) and the root commits' (``--root``) name every blob a path
     took, merges included; renames are off, so a moved wheel counts on both paths.
     """
     out = _git(
-        repo, "log", "--all", "--root", "-m", "--raw", "--no-abbrev", "--no-renames", "--format=", "--", WHEELS_DIR
+        repo, "log", *refs, "--root", "-m", "--raw", "--no-abbrev", "--no-renames", "--format=", "--", WHEELS_DIR
     )
     blobs: Set[str] = set()
     for line in out.splitlines():
@@ -320,12 +321,30 @@ def _restore_command(repo: Path, bundle: Path) -> str:
     return f"git -C {at} fetch --update-head-ok {shlex.quote(str(bundle))} '+refs/*:refs/*' && git -C {at} reset --hard"
 
 
+def _reflog_only_tips(repo: Path) -> List[str]:
+    """The newest commits only a reflog reaches (a commit left by ``reset --hard``, an amended one): what the shrink's
+    reflog expiry would otherwise drop with no copy anywhere."""
+    lines = _git(repo, "rev-list", "--parents", "--reflog", "--not", "--all").splitlines()
+    commits = [line.split() for line in lines]
+    parents = {parent for _commit, *its_parents in commits for parent in its_parents}
+    return [commit for commit, *_its_parents in commits if commit not in parents]
+
+
 def _backup(repo: Path) -> Tuple[Path, str]:
-    """Every ref and every object it reaches, bundled into ``<git dir>/wheels-prune/<stamp>.bundle``."""
+    """Every ref and every object it reaches, bundled into ``<git dir>/wheels-prune/<stamp>.bundle``.
+
+    A commit only a reflog reaches is bundled too, under :data:`_REFLOG_REFS` ``<commit>`` — the restore brings it
+    back as that ref — since the shrink expires the reflogs that held it. The refs live only while the bundle is
+    written, so the rewrite never carries them."""
     folder = _git_dir(repo) / BACKUP_DIR
     folder.mkdir(exist_ok=True)
     bundle = folder / f"{datetime.datetime.now().strftime('%Y%m%d-%H%M%S-%f')}.bundle"
-    _git(repo, "bundle", "create", str(bundle), "--all")
+    held = [f"{_REFLOG_REFS}{commit}" for commit in _reflog_only_tips(repo)]
+    _git(repo, "update-ref", "--stdin", stdin="".join(f"create {ref} {ref[len(_REFLOG_REFS):]}\n" for ref in held))
+    try:
+        _git(repo, "bundle", "create", str(bundle), "--all")
+    finally:
+        _git(repo, "update-ref", "--stdin", stdin="".join(f"delete {ref}\n" for ref in held))
     return bundle, _restore_command(repo, bundle)
 
 
@@ -447,6 +466,27 @@ def _problems(repo: Path, origin: Dict[str, str]) -> List[str]:
     return problems
 
 
+def _other_remotes(repo: Path, stripped: Sequence[str]) -> List[str]:
+    """Each remote but origin whose remote-tracking refs reach a wheel version the prune strips, in one line naming the
+    command that drops them. The rewrite never moves another host's refs — they would claim that host holds commits it
+    has not got — and while they hold the old history the clone cannot shrink; ``aisland workspace mirror sync`` sends
+    a mirror the rewritten history afterwards, and its next fetch brings the refs back."""
+    tracking = [ref for ref in _refs(repo, "refs/remotes/") if not ref.startswith(_ORIGIN_NAMESPACE)]
+    by_remote: Dict[str, List[str]] = {}
+    for ref in tracking:
+        by_remote.setdefault(ref[len("refs/remotes/") :].split("/", 1)[0], []).append(ref)
+    problems = []
+    at = shlex.quote(str(repo))
+    for remote, refs in sorted(by_remote.items()):
+        if history_wheels(repo, refs) & set(stripped):
+            problems.append(
+                f"{repo.name}: the refs of remote {remote!r} reach wheel versions the prune strips — drop them first "
+                f"(the next fetch of {remote} brings them back): git -C {at} for-each-ref "
+                f"--format='delete %(refname)' refs/remotes/{remote}/ | git -C {at} update-ref --stdin"
+            )
+    return problems
+
+
 def _record(repo: Path, stripped: Sequence[str], changed: Dict[str, str], parent: Optional[str]) -> str:
     """The prune's record commit: the versions stripped and the commit map, on top of origin's earlier record."""
     tree_lines = []
@@ -487,8 +527,9 @@ def _root_pointer(workspace_root: Path, repo: Path, changed: Dict[str, str]) -> 
 def _record_root_pointer(workspace_root: Path, path: str, changed: Dict[str, str]) -> Optional[Tuple[str, str]]:
     """Replace the commit the root records for ``path`` by its rewritten twin, committed alone; ``(old, new)``.
 
-    Only the gitlink moves: a scratch index built from the root's HEAD takes the new id, and the root's own index
-    takes it too, so whatever else is staged there stays staged and out of the commit.
+    Only the gitlink moves: a scratch index built from the root's HEAD takes the new id, so whatever else is staged in
+    the root stays staged and out of the commit. The root's own index takes the new id only where it held the old one;
+    a gitlink the user staged for ``path`` (another commit, or the path removed) stays as they staged it.
     """
     if _run(workspace_root, "rev-parse", "--verify", "-q", "HEAD").returncode != 0:
         return None
@@ -506,8 +547,10 @@ def _record_root_pointer(workspace_root: Path, path: str, changed: Dict[str, str
         tree = _run(workspace_root, "write-tree", env=env).stdout.strip()
     message = f"chore: sync submodule pointer — {path}: wheels pruned from its history"
     commit = _git(workspace_root, "commit-tree", tree, "-p", head, "-m", message).strip()
+    staged = _run(workspace_root, "ls-files", "--stage", "--", path).stdout.split()
     _git(workspace_root, "update-ref", "-m", message, "HEAD", commit, head)
-    _git(workspace_root, "update-index", "--cacheinfo", f"160000,{new},{path}")
+    if len(staged) >= 2 and staged[0] == "160000" and staged[1] == old:
+        _git(workspace_root, "update-index", "--cacheinfo", f"160000,{new},{path}")
     return old, new
 
 
@@ -527,6 +570,7 @@ def prune(workspace_root: Path, project_name: str, apply: bool = False) -> Prune
     held = wheels_at(repo, keep_refs)
     in_history = history_wheels(repo)
     stripped = sorted(in_history - set(held))
+    problems += _other_remotes(repo, stripped)
     holders = sorted({_short(ref) for refs in held.values() for ref in refs})
     report = PruneReport(
         project=target.name,
@@ -584,34 +628,6 @@ def prune(workspace_root: Path, project_name: str, apply: bool = False) -> Prune
 # --- aisland wheels reset -----------------------------------------------------------------------------
 
 
-@dataclass(frozen=True)
-class _Prune:
-    """One of origin's prunes: its record commit, the versions it stripped and the commits it rewrote."""
-
-    record: str
-    stripped: List[str]
-    changed: Dict[str, str]
-
-
-def _prunes(repo: Path) -> List[_Prune]:
-    """origin's prunes, oldest first, from the record chain fetched into :data:`PRUNE_REF`."""
-    prunes = []
-    for record in _git(repo, "rev-list", "--reverse", PRUNE_REF).split():
-        stripped = _git(repo, "show", f"{record}:{STRIPPED_FILE}").split()
-        pairs = [line.split() for line in _git(repo, "show", f"{record}:{COMMITS_FILE}").splitlines() if line]
-        prunes.append(_Prune(record, stripped, {old: new for old, new in pairs}))
-    return prunes
-
-
-def _compose(prunes: Sequence[_Prune]) -> Dict[str, str]:
-    """Each commit any prune rewrote and the id it has after the last prune."""
-    composed: Dict[str, str] = {}
-    for one in prunes:
-        composed = {old: one.changed.get(new, new) for old, new in composed.items()}
-        composed.update({old: new for old, new in one.changed.items() if old not in composed})
-    return composed
-
-
 def _reachable(repo: Path, refs: Sequence[str]) -> Set[str]:
     return set(_git(repo, "rev-list", *refs).split()) if refs else set()
 
@@ -652,11 +668,11 @@ def reset(workspace_root: Path, project_name: str) -> ResetReport:
     if PRUNE_REF not in origin:
         return report
     _git(repo, "fetch", "-q", "--no-tags", "origin", f"+{PRUNE_REF}:{PRUNE_REF}", network=True)
-    prunes = _prunes(repo)
-    expected = _compose(prunes)
+    chain = prunes(repo)
+    expected = compose(chain)
 
     reachable = _reachable(repo, [*_refs(repo, *_LOCAL_NAMESPACES, _STASH), "HEAD"])
-    if not any(reachable & set(one.changed) for one in prunes):
+    if not any(reachable & set(one.changed) for one in chain):
         _fetch(repo, origin)
         report.root_pointer = _root_pointer(workspace_root, repo, expected)
         return report
@@ -664,7 +680,7 @@ def reset(workspace_root: Path, project_name: str) -> ResetReport:
     _filter_repo()
     report.set_aside = _set_aside(repo)
     try:
-        _rewrite(repo, target.name, origin, prunes, expected, report)
+        _rewrite(repo, target.name, origin, chain, expected, report)
     except PruneError as error:
         if report.set_aside:
             raise PruneError(
@@ -682,7 +698,7 @@ def _rewrite(
     repo: Path,
     name: str,
     origin: Dict[str, str],
-    prunes: Sequence[_Prune],
+    chain: Sequence[Prune],
     expected: Dict[str, str],
     report: ResetReport,
 ) -> None:
@@ -694,7 +710,7 @@ def _rewrite(
     bundle, restore = _backup(repo)
     report.backup, report.restore = str(bundle), restore
     held = [*_hold_head(repo), *([_SET_ASIDE_REF] if report.set_aside else [])]
-    for one in prunes:
+    for one in chain:
         # A prune this clone already took (or never reached) has no old commit left to rewrite.
         if not _reachable(repo, [*local_refs, *held]) & set(one.changed):
             continue

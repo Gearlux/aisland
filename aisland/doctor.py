@@ -18,16 +18,19 @@ Adding a check: write a ``check_*`` function returning a :class:`CheckResult` an
 skew with the exact command that fixes it, never a generic "something looks off".
 """
 
+import contextvars
 import json
+import logging
 import os
 import shutil
 import subprocess
 import sys
+import threading
 import time
 from dataclasses import dataclass
 from importlib.metadata import PackageNotFoundError, version
 from pathlib import Path
-from typing import Callable, List, Optional, Tuple
+from typing import Callable, List, Optional, Tuple, TypeVar
 
 import click
 from packaging.version import InvalidVersion, Version
@@ -40,6 +43,8 @@ from aisland.tunnel import binary as tunnel_binary
 from aisland.tunnel import connect as tunnel_connect
 from aisland.tunnel import host as tunnel
 from aisland.tunnel import state as tunnel_state
+
+logger = logging.getLogger(__name__)
 
 #: The OpenCV variant the workspace keeps. Both distributions install the SAME files
 #: (`cv2/cv2.abi3.so` + `cv2/.dylibs/*` appear in BOTH RECORDs) with different bundled native
@@ -120,6 +125,32 @@ class CheckResult:
     remedy: str = ""
 
 
+#: Each check's name, the one its results and the doctor's own lines about it (`not checked`, a check that broke)
+#: carry — and the docs' and the remedies' names for it.
+OPENCV = "opencv"
+HUGGINGFACE_HUB = "huggingface_hub"
+MCP = "mcp"
+DOCKER_CREDS = "docker-creds"
+COLIMA_TLS = "colima-tls"
+JENKINS_JAVA = "jenkins-java"
+TORCH_EXT_LOCK = "torch-ext-lock"
+TUNNEL_RELAY = "tunnel-relay"
+TUNNEL_CONNECT = "tunnel-connect"
+PYLANCE_MEMORY = "pylance-memory"
+
+_Check = TypeVar("_Check", bound=Callable[[], CheckResult])
+
+
+def _reports(name: str) -> Callable[[_Check], _Check]:
+    """Mark a check with the name it reports under (:func:`_check_name` reads it)."""
+
+    def mark(check: _Check) -> _Check:
+        setattr(check, "check_name", name)
+        return check
+
+    return mark
+
+
 #: Seconds a probe the doctor runs in a process of its own may take: an import, the Colima VM's TLS request.
 PROBE_SECONDS = 120
 
@@ -153,6 +184,7 @@ def _import_probe(statement: str) -> Tuple[bool, str]:
     return False, error_lines[-1] if error_lines else f"exit code {completed.returncode}"
 
 
+@_reports(OPENCV)
 def check_opencv_single_variant() -> CheckResult:
     """Exactly ONE OpenCV distribution may be installed — the two overwrite each other's files.
 
@@ -178,7 +210,7 @@ def check_opencv_single_variant() -> CheckResult:
         if kept is not None:
             detail += f" and keeps {_OPENCV_KEPT}={kept} — both own cv2/, so .dylibs will mix"
         return CheckResult(
-            "opencv",
+            OPENCV,
             False,
             detail,
             f"uv pip uninstall {_OPENCV_DROPPED} && uv pip install --force-reinstall {_OPENCV_KEPT}"
@@ -186,19 +218,20 @@ def check_opencv_single_variant() -> CheckResult:
         )
 
     if kept is None:
-        return CheckResult("opencv", True, "no OpenCV installed — nothing to skew")
+        return CheckResult(OPENCV, True, "no OpenCV installed — nothing to skew")
 
     ok, output = _import_probe("import cv2; print(cv2.__version__)")
     if not ok:
         return CheckResult(
-            "opencv",
+            OPENCV,
             False,
             f"`import cv2` fails: {output}",
             f"uv pip install --force-reinstall {_OPENCV_KEPT}",
         )
-    return CheckResult("opencv", True, f"cv2 {output} imports; only {_OPENCV_KEPT}={kept} installed")
+    return CheckResult(OPENCV, True, f"cv2 {output} imports; only {_OPENCV_KEPT}={kept} installed")
 
 
+@_reports(HUGGINGFACE_HUB)
 def check_huggingface_hub_floor() -> CheckResult:
     """`huggingface_hub` must not sit below the floor `transformers` imports against.
 
@@ -208,21 +241,22 @@ def check_huggingface_hub_floor() -> CheckResult:
     `pytorch_lightning` (via `torchmetrics` -> `transformers`), nowhere near its cause.
     """
     if _installed_version("transformers") is None:
-        return CheckResult("huggingface_hub", True, "transformers not installed — floor does not apply")
+        return CheckResult(HUGGINGFACE_HUB, True, "transformers not installed — floor does not apply")
 
     ok, output = _import_probe(
         "from huggingface_hub import is_offline_mode; import huggingface_hub as h; print(h.__version__)"
     )
     if not ok:
         return CheckResult(
-            "huggingface_hub",
+            HUGGINGFACE_HUB,
             False,
             f"transformers' import surface is missing: {output}",
             "uv pip install 'huggingface_hub>=1.5.0,<2.0'",
         )
-    return CheckResult("huggingface_hub", True, f"huggingface_hub {output} satisfies transformers' import surface")
+    return CheckResult(HUGGINGFACE_HUB, True, f"huggingface_hub {output} satisfies transformers' import surface")
 
 
+@_reports(MCP)
 def check_mcp_server_api() -> CheckResult:
     """The installed `mcp` must expose the server class the workspace's MCP servers import.
 
@@ -233,19 +267,20 @@ def check_mcp_server_api() -> CheckResult:
     keeps working, because it never imports the server module.
     """
     if _installed_version("mcp") is None:
-        return CheckResult("mcp", True, "mcp not installed — no MCP server surface in play")
+        return CheckResult(MCP, True, "mcp not installed — no MCP server surface in play")
 
     ok, output = _import_probe(f"{_MCP_SERVER_IMPORT}; import importlib.metadata as m; print(m.version('mcp'))")
     if not ok:
         return CheckResult(
-            "mcp",
+            MCP,
             False,
             f"the MCP server class is missing — servers cannot start: {output}",
             "uv pip install 'mcp>=2.0'",
         )
-    return CheckResult("mcp", True, f"mcp {output} exposes MCPServer — MCP servers can start")
+    return CheckResult(MCP, True, f"mcp {output} exposes MCPServer — MCP servers can start")
 
 
+@_reports(DOCKER_CREDS)
 def check_docker_credsstore() -> CheckResult:
     """`~/.docker/config.json` must not name a credential helper that does not exist.
 
@@ -260,33 +295,33 @@ def check_docker_credsstore() -> CheckResult:
     """
     config_path = Path.home() / ".docker" / "config.json"
     if not config_path.exists():
-        return CheckResult("docker-creds", True, "no ~/.docker/config.json — nothing to skew")
+        return CheckResult(DOCKER_CREDS, True, "no ~/.docker/config.json — nothing to skew")
 
     try:
         document = json.loads(config_path.read_text())
     except (OSError, json.JSONDecodeError) as error:
         # An inconclusive probe must never cry wolf (same principle as
         # `supervisor._preflight_full_disk_access`): a mangled config is docker's to report.
-        return CheckResult("docker-creds", True, f"~/.docker/config.json did not parse ({error}) — inconclusive")
+        return CheckResult(DOCKER_CREDS, True, f"~/.docker/config.json did not parse ({error}) — inconclusive")
     if not isinstance(document, dict) or not document.get("credsStore"):
         detail = (
             "no credsStore configured — public pulls run anonymously"
             if isinstance(document, dict)
             else "~/.docker/config.json is not a JSON object — inconclusive"
         )
-        return CheckResult("docker-creds", True, detail)
+        return CheckResult(DOCKER_CREDS, True, detail)
 
     store = document["credsStore"]
     helper = f"docker-credential-{store}"
     if shutil.which(helper) is None:
         return CheckResult(
-            "docker-creds",
+            DOCKER_CREDS,
             False,
             f'credsStore "{store}" needs {helper}, which is not on PATH — '
             "every docker pull dies before contacting the registry",
             _CREDSSTORE_REMEDY,
         )
-    return CheckResult("docker-creds", True, f'credsStore "{store}" resolves — {helper} is on PATH')
+    return CheckResult(DOCKER_CREDS, True, f'credsStore "{store}" resolves — {helper} is on PATH')
 
 
 def _colima_running() -> bool:
@@ -317,6 +352,7 @@ def _vm_curl_exit(url: str) -> Optional[int]:
     return completed.returncode
 
 
+@_reports(COLIMA_TLS)
 def check_colima_vm_trust() -> CheckResult:
     """The Colima VM must be able to verify TLS on the network the host is on.
 
@@ -332,16 +368,16 @@ def check_colima_vm_trust() -> CheckResult:
     running Docker must pass preflight.
     """
     if shutil.which("colima") is None:
-        return CheckResult("colima-tls", True, "colima not installed — no VM trust store in play")
+        return CheckResult(COLIMA_TLS, True, "colima not installed — no VM trust store in play")
     if not _colima_running():
-        return CheckResult("colima-tls", True, "Colima is not running — VM trust store not probed")
+        return CheckResult(COLIMA_TLS, True, "Colima is not running — VM trust store not probed")
 
     exit_code = _vm_curl_exit(_VM_TLS_PROBE_URL)
     if exit_code is None:
-        return CheckResult("colima-tls", True, f"probe inconclusive — the VM did not answer within {PROBE_SECONDS} s")
+        return CheckResult(COLIMA_TLS, True, f"probe inconclusive — the VM did not answer within {PROBE_SECONDS} s")
     if exit_code == 60:
         return CheckResult(
-            "colima-tls",
+            COLIMA_TLS,
             False,
             f"the VM cannot verify TLS to {_VM_TLS_PROBE_URL} (curl exit 60) — an intercepting "
             "proxy's CA is trusted by macOS but not by the VM, so every docker pull fails",
@@ -349,9 +385,9 @@ def check_colima_vm_trust() -> CheckResult:
         )
     if exit_code != 0:
         return CheckResult(
-            "colima-tls", True, f"probe inconclusive (curl exit {exit_code}) — a network error, not a trust failure"
+            COLIMA_TLS, True, f"probe inconclusive (curl exit {exit_code}) — a network error, not a trust failure"
         )
-    return CheckResult("colima-tls", True, f"the VM verifies TLS to {_VM_TLS_PROBE_URL} — pulls can download")
+    return CheckResult(COLIMA_TLS, True, f"the VM verifies TLS to {_VM_TLS_PROBE_URL} — pulls can download")
 
 
 def _jenkins_java() -> Optional[JenkinsJava]:
@@ -365,6 +401,7 @@ def _jenkins_java() -> Optional[JenkinsJava]:
     return service.resolve_java()
 
 
+@_reports(JENKINS_JAVA)
 def check_jenkins_java() -> CheckResult:
     """An installed JDK must be one the Jenkins WAR accepts — `java` on PATH is not enough.
 
@@ -376,25 +413,21 @@ def check_jenkins_java() -> CheckResult:
     """
     choice = _jenkins_java()
     if choice is None:
-        return CheckResult("jenkins-java", True, "Jenkins not downloaded yet — no Java to check")
+        return CheckResult(JENKINS_JAVA, True, "Jenkins not downloaded yet — no Java to check")
     if choice.runtime is None:
-        return CheckResult("jenkins-java", False, choice.problem(), choice.remedy())
-    return CheckResult("jenkins-java", True, choice.describe())
+        return CheckResult(JENKINS_JAVA, False, choice.problem(), choice.remedy())
+    return CheckResult(JENKINS_JAVA, True, choice.describe())
 
 
 def _torch_extensions_root() -> Path:
     """Where torch builds JIT extensions, without importing torch: `$TORCH_EXTENSIONS_DIR`, else torch's
     per-user cache (`torch._appdirs.user_cache_dir("torch_extensions")`: `~/Library/Caches` on macOS,
-    `$XDG_CACHE_HOME` or `~/.cache` elsewhere, `%LOCALAPPDATA%` on Windows)."""
+    `$XDG_CACHE_HOME` or `~/.cache` elsewhere)."""
     configured = os.environ.get("TORCH_EXTENSIONS_DIR")
     if configured:
         return Path(configured).expanduser()
     if sys.platform == "darwin":
         return Path.home() / "Library" / "Caches" / "torch_extensions"
-    if sys.platform == "win32":
-        local = os.environ.get("LOCALAPPDATA")
-        base = Path(local) if local else Path.home() / "AppData" / "Local"
-        return base / "torch_extensions" / "torch_extensions" / "Cache"
     xdg = os.environ.get("XDG_CACHE_HOME")
     return (Path(xdg) if xdg else Path.home() / ".cache") / "torch_extensions"
 
@@ -421,6 +454,7 @@ def _torch_version() -> Optional[Version]:
         return None
 
 
+@_reports(TORCH_EXT_LOCK)
 def check_torch_extension_lock() -> CheckResult:
     """No torch JIT-extension build lock is left behind by a killed compile.
 
@@ -438,28 +472,28 @@ def check_torch_extension_lock() -> CheckResult:
     """
     torch = _torch_version()
     if torch is None:
-        return CheckResult("torch-ext-lock", True, "torch is not installed in this venv — it builds no extension")
+        return CheckResult(TORCH_EXT_LOCK, True, "torch is not installed in this venv — it builds no extension")
     if torch >= _TORCH_OS_LOCK_SINCE:
         return CheckResult(
-            "torch-ext-lock",
+            TORCH_EXT_LOCK,
             True,
             f"torch {torch} holds an OS lock while it builds — a killed build leaves no lock that blocks",
         )
     root = _torch_extensions_root()
     locks = _torch_build_locks(root)
     if not locks:
-        return CheckResult("torch-ext-lock", True, f"no torch extension build lock left behind under {root}")
+        return CheckResult(TORCH_EXT_LOCK, True, f"no torch extension build lock left behind under {root}")
     now = time.time()
     stale = [lock for lock in locks if now - lock.stat().st_mtime > _TORCH_LOCK_STALE_SECONDS]
     if not stale:
         building = ", ".join(f"{lock.parent.name} ({now - lock.stat().st_mtime:.0f} s)" for lock in locks)
-        return CheckResult("torch-ext-lock", True, f"torch is building an extension right now: {building}")
+        return CheckResult(TORCH_EXT_LOCK, True, f"torch is building an extension right now: {building}")
     oldest = stale[0]
     age_minutes = (now - oldest.stat().st_mtime) / 60
     names = ", ".join(lock.parent.name for lock in stale)
     remedy = "rm " + " ".join(f"'{lock}'" for lock in stale)
     return CheckResult(
-        "torch-ext-lock",
+        TORCH_EXT_LOCK,
         False,
         f"a torch extension build lock is {age_minutes:.0f} min old with no build to hold it ({names}: {oldest}) — "
         f"with torch {torch}, every import that compiles that extension waits on it forever",
@@ -467,6 +501,7 @@ def check_torch_extension_lock() -> CheckResult:
     )
 
 
+@_reports(TUNNEL_RELAY)
 def check_tunnel_relay() -> CheckResult:
     """A machine that uses `aisland tunnel` can still reach the relay the tunnel dials out to.
 
@@ -481,12 +516,12 @@ def check_tunnel_relay() -> CheckResult:
     state = tunnel_state.state_dir()
     configured = any(path.exists() for path in (tunnel_binary.cli_path(), tunnel.provider_path(), tunnel.pid_path()))
     if not configured:
-        return CheckResult("tunnel-relay", True, f"no tunnel configured here (nothing in {state})")
+        return CheckResult(TUNNEL_RELAY, True, f"no tunnel configured here (nothing in {state})")
     reachable, detail = tunnel.relay_reachable()
     if reachable:
-        return CheckResult("tunnel-relay", True, detail)
+        return CheckResult(TUNNEL_RELAY, True, detail)
     return CheckResult(
-        "tunnel-relay",
+        TUNNEL_RELAY,
         False,
         f"{detail} — a tunnel started here cannot reach the editor",
         f"curl -sS -m 8 -o /dev/null -w '%{{http_code}}\\n' https://{tunnel.RELAY_HOST}/   "
@@ -494,6 +529,7 @@ def check_tunnel_relay() -> CheckResult:
     )
 
 
+@_reports(TUNNEL_CONNECT)
 def check_tunnel_connect() -> CheckResult:
     """A machine that uses `aisland tunnel connect` has what it needs: `devtunnel`, signed in, and msgpack.
 
@@ -508,11 +544,11 @@ def check_tunnel_connect() -> CheckResult:
     """
     if not tunnel_connect.used_here():
         return CheckResult(
-            "tunnel-connect", True, f"`aisland tunnel connect` not used here (nothing in {tunnel_state.state_dir()})"
+            TUNNEL_CONNECT, True, f"`aisland tunnel connect` not used here (nothing in {tunnel_state.state_dir()})"
         )
     if shutil.which("devtunnel") is None:
         return CheckResult(
-            "tunnel-connect",
+            TUNNEL_CONNECT,
             False,
             "no `devtunnel` on PATH — `aisland tunnel connect` reaches the tunnel through it",
             tunnel_connect.install_hint(),
@@ -520,7 +556,7 @@ def check_tunnel_connect() -> CheckResult:
     imported, error = _import_probe("import msgpack")
     if not imported:
         return CheckResult(
-            "tunnel-connect",
+            TUNNEL_CONNECT,
             False,
             f"msgpack does not import ({error}) — `aisland tunnel connect` speaks the tunnel's messages with it",
             "pip install 'aisland[connect]'",
@@ -528,15 +564,15 @@ def check_tunnel_connect() -> CheckResult:
     try:
         account = tunnel_connect.account()
     except click.ClickException as exc:
-        return CheckResult("tunnel-connect", True, f"could not ask devtunnel whether it is signed in: {exc.message}")
+        return CheckResult(TUNNEL_CONNECT, True, f"could not ask devtunnel whether it is signed in: {exc.message}")
     if account is None:
         return CheckResult(
-            "tunnel-connect",
+            TUNNEL_CONNECT,
             False,
             "devtunnel is not signed in — `aisland tunnel connect` lists and reaches tunnels as that account",
             "devtunnel user login   # -g for a GitHub account; the account the remote tunnel runs under",
         )
-    return CheckResult("tunnel-connect", True, f"devtunnel ready: {account}")
+    return CheckResult(TUNNEL_CONNECT, True, f"devtunnel ready: {account}")
 
 
 #: Each VS Code window's Python language-server log, below `<logs>/<session>/window<N>/exthost/`.
@@ -565,13 +601,10 @@ _PYLANCE_HEAP_REMEDY = (
 
 
 def _vscode_logs_root() -> Path:
-    """Where VS Code keeps its logs: `~/Library/Application Support/Code/logs` on macOS, `%APPDATA%\\Code\\logs` on
-    Windows, `$XDG_CONFIG_HOME/Code/logs` (else `~/.config/Code/logs`) elsewhere."""
+    """Where VS Code keeps its logs: `~/Library/Application Support/Code/logs` on macOS, `$XDG_CONFIG_HOME/Code/logs`
+    (else `~/.config/Code/logs`) elsewhere."""
     if sys.platform == "darwin":
         return Path.home() / "Library" / "Application Support" / "Code" / "logs"
-    if sys.platform == "win32":
-        appdata = os.environ.get("APPDATA")
-        return (Path(appdata) if appdata else Path.home() / "AppData" / "Roaming") / "Code" / "logs"
     xdg = os.environ.get("XDG_CONFIG_HOME")
     return (Path(xdg) if xdg else Path.home() / ".config") / "Code" / "logs"
 
@@ -595,6 +628,7 @@ def _pylance_log(logs: Path, workspace: Path) -> Optional[Tuple[Path, List[str]]
     return None
 
 
+@_reports(PYLANCE_MEMORY)
 def check_pylance_memory() -> CheckResult:
     """VS Code's Python language server does not keep running out of memory in this workspace's window.
 
@@ -609,31 +643,31 @@ def check_pylance_memory() -> CheckResult:
     """
     found = _pylance_log(_vscode_logs_root(), locations.workspace_root())
     if found is None:
-        return CheckResult("pylance-memory", True, "no VS Code window of this workspace has logged Pylance here")
+        return CheckResult(PYLANCE_MEMORY, True, "no VS Code window of this workspace has logged Pylance here")
     log, lines = found
     crashes = [index for index, line in enumerate(lines) if _PYLANCE_OUT_OF_MEMORY in line]
     if not crashes:
-        return CheckResult("pylance-memory", True, f"Pylance has not run out of memory ({log})")
+        return CheckResult(PYLANCE_MEMORY, True, f"Pylance has not run out of memory ({log})")
     last_crash = crashes[-1]
     own_node = [index for index, line in enumerate(lines) if _PYLANCE_OWN_NODE in line]
     crashed_at = lines[last_crash][:19]
     if own_node and own_node[-1] > last_crash:
         since = lines[own_node[-1]][:19]
         return CheckResult(
-            "pylance-memory",
+            PYLANCE_MEMORY,
             True,
             f"Pylance ran out of memory at {crashed_at} and runs on its own Node.js since {since}",
         )
     if own_node:
         return CheckResult(
-            "pylance-memory",
+            PYLANCE_MEMORY,
             False,
             f"Pylance ran out of memory at {crashed_at} on its own Node.js too ({log})",
             _PYLANCE_HEAP_REMEDY,
         )
     times = len({lines[index][:19] for index in crashes})
     return CheckResult(
-        "pylance-memory",
+        PYLANCE_MEMORY,
         False,
         f"Pylance ran out of memory {times} times, the last at {crashed_at} ({log}) — no completion or symbol "
         "search while it restarts",
@@ -656,9 +690,67 @@ CHECKS: Tuple[Callable[[], CheckResult], ...] = (
 )
 
 
-def run_checks() -> List[CheckResult]:
-    """Run every registered check and return the results (no output)."""
-    return [check() for check in CHECKS]
+#: How long the whole doctor may take. Its checks run side by side, each probe bounded by :data:`PROBE_SECONDS`, so a
+#: run takes about as long as its slowest check; one still running past this is reported unchecked, and `aisland
+#: doctor` and the MCP tool `doctor` always answer.
+BUDGET_SECONDS = PROBE_SECONDS + 30
+
+
+def _check_name(check: Callable[[], CheckResult]) -> str:
+    """The name a check reports under (:func:`_reports`); an unmarked one's comes from its function's name
+    (``check_broken_jdk`` -> ``broken-jdk``)."""
+    marked = getattr(check, "check_name", None)
+    return marked if isinstance(marked, str) else check.__name__.removeprefix("check_").replace("_", "-")
+
+
+def _guarded(check: Callable[[], CheckResult]) -> CheckResult:
+    """``check()``, or — when the check itself breaks (a JDK that will not run, a log deleted while it is read) — a
+    failed result naming the error, so the other checks still report. ``--debug`` shows the traceback."""
+    try:
+        return check()
+    except Exception as error:  # a broken check is one ✗ of the report, never the end of it
+        logger.debug("%s raised", check.__name__, exc_info=True)
+        return CheckResult(
+            name=_check_name(check),
+            ok=False,
+            detail=f"the check itself failed: {type(error).__name__}: {error}",
+            remedy="aisland --debug doctor  (shows where it failed; the other checks ran)",
+        )
+
+
+def _run_into(results: List[Optional[CheckResult]], index: int, check: Callable[[], CheckResult]) -> None:
+    results[index] = _guarded(check)
+
+
+def run_checks(budget: float = BUDGET_SECONDS) -> List[CheckResult]:
+    """Run every registered check and return the results, in :data:`CHECKS`' order (no output); a check that raises
+    is a failed result, and one still running after ``budget`` seconds a failed one saying it was not checked.
+
+    The checks run side by side, each in a thread of its own, in a copy of the caller's context (its console): they
+    only read, and their probes wait on other processes. A thread left running past the budget is a daemon, so it
+    never holds the process up."""
+    results: List[Optional[CheckResult]] = [None] * len(CHECKS)
+    threads = []
+    for index, check in enumerate(CHECKS):
+        context = contextvars.copy_context()
+        thread = threading.Thread(
+            target=context.run, args=(_run_into, results, index, check), name=f"doctor {check.__name__}", daemon=True
+        )
+        thread.start()
+        threads.append(thread)
+    deadline = time.monotonic() + budget
+    for thread in threads:
+        thread.join(max(0.0, deadline - time.monotonic()))
+    return [
+        result
+        or CheckResult(
+            name=_check_name(check),
+            ok=False,
+            detail=f"not checked: time budget spent (the doctor gives every check {budget:g} s in all)",
+            remedy="aisland doctor  (again: a probe that hangs every time is the breakage to look into)",
+        )
+        for check, result in zip(CHECKS, list(results))
+    ]
 
 
 def run_doctor() -> int:

@@ -342,7 +342,7 @@ class TestSync:
 
         [result] = m.sync(workspace_root=ws.root)
         [tags] = [ref for ref in result.refs if ref.ref == "tags"]
-        assert tags.outcome == "refused"
+        assert (tags.outcome, tags.count) == ("refused", 1)  # the tags refused, never those pushed beside them
         assert "v0.1.0" in tags.detail
         assert ws.mirror_refs()["refs/tags/v0.1.0"] == theirs
 

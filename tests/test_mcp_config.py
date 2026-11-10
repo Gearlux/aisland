@@ -19,6 +19,7 @@ from typing import List
 
 import pytest
 
+from aisland import failures
 from aisland.setup import manager, mcp_config
 from aisland.setup.mcp_config import discover_mcp_servers, write_gemini_settings, write_mcp_json
 from aisland.workspace.projects import get_workspace_root
@@ -80,6 +81,29 @@ class TestTheTwoClientFiles:
         write_mcp_json(fake_workspace, fake_workspace / ".venv" / "bin")
         text = (fake_workspace / ".mcp.json").read_text()
         assert text.endswith("\n") and list(json.loads(text)) == ["mcpServers"]
+
+    def test_the_gemini_file_keeps_every_setting_of_its_own(self, fake_workspace: Path) -> None:
+        """Gemini CLI keeps a person's whole settings in `.gemini/settings.json`; setup wrote the file over with the
+        servers alone."""
+        settings = fake_workspace / ".gemini" / "settings.json"
+        settings.parent.mkdir()
+        settings.write_text(json.dumps({"theme": "GitHub", "mcpServers": {"gone": {"command": "x"}}}))
+        write_gemini_settings(fake_workspace, fake_workspace / ".venv" / "bin")
+        written = json.loads(settings.read_text())
+        assert written["theme"] == "GitHub"
+        assert set(written["mcpServers"]) == {"modern", "legacy"}
+
+    def test_a_client_file_that_is_no_json_is_reported_and_left_as_it_is(
+        self, fake_workspace: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        settings = fake_workspace / ".gemini" / "settings.json"
+        settings.parent.mkdir()
+        settings.write_text('{"theme": "GitHub",\n')
+        failures.reset()
+        write_gemini_settings(fake_workspace, fake_workspace / ".venv" / "bin")
+        assert settings.read_text() == '{"theme": "GitHub",\n'
+        assert failures.reported() == 1
+        assert f"Error: {settings} is no JSON aisland can read" in capsys.readouterr().err
 
     def test_a_discovered_command_missing_from_the_venv_is_named(
         self, fake_workspace: Path, capsys: pytest.CaptureFixture[str]

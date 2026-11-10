@@ -84,14 +84,7 @@ class Workspace:
     def top_level_folders(self) -> List[Path]:
         """Every direct, non-hidden folder of the root holding a ``pyproject.toml``, whatever ``.gitmodules`` says (a
         link to another folder of the workspace is none): the projects with something on disk to read."""
-        return sorted(
-            child
-            for child in self.root.iterdir()
-            if child.is_dir()
-            and not child.name.startswith(".")
-            and (child / "pyproject.toml").is_file()
-            and not locations.is_alias(child, self.root)
-        )
+        return locations.project_folders(self.root)
 
     @functools.cached_property
     def metadata(self) -> List[ProjectMetadata]:

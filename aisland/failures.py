@@ -11,16 +11,19 @@ only: everything else imports it.
 
 from __future__ import annotations
 
+import contextvars
+
 from aisland import console
 
-_reported = 0
+#: How many failures this run reported — per thread and task, as :mod:`aisland.console`'s console is, so two MCP tool
+#: calls served at once never count each other's.
+_reported: contextvars.ContextVar[int] = contextvars.ContextVar("aisland_failures_reported", default=0)
 
 
 def report(message: str) -> None:
     """Print ``message`` (an ``Error:`` line) to stderr and mark this run failed; the caller goes on."""
-    global _reported
     console.echo(message, err=True)
-    _reported += 1
+    _reported.set(_reported.get() + 1)
 
 
 def warn(message: str) -> None:
@@ -31,10 +34,9 @@ def warn(message: str) -> None:
 
 def reported() -> int:
     """How many failures this run reported."""
-    return _reported
+    return _reported.get()
 
 
 def reset() -> None:
     """Forget the failures reported so far — the CLI does it as each command starts."""
-    global _reported
-    _reported = 0
+    _reported.set(0)

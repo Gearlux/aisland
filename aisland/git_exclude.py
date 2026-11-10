@@ -11,7 +11,7 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Sequence
 
-from aisland import gitcmd
+from aisland import atomic, gitcmd
 
 
 def _git_path(folder: Path, *args: str) -> str:
@@ -39,4 +39,4 @@ def exclude(folder: Path, patterns: Sequence[str]) -> None:
         return
     path.parent.mkdir(parents=True, exist_ok=True)
     sep = "" if (not content or content.endswith("\n")) else "\n"
-    path.write_text(content + sep + "".join(line + "\n" for line in missing))
+    atomic.write_text(path, content + sep + "".join(line + "\n" for line in missing))

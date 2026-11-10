@@ -17,7 +17,9 @@ import zipfile
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple
 
+from aisland import atomic
 from aisland.errors import AislandError
+from aisland.venv import venv_dir
 from aisland.wheels import bundle as wheels_bundle
 from aisland.wheels import install as wheels_install
 from aisland.wheels import unzip as wheels_unzip
@@ -76,7 +78,7 @@ def write_wheels(folder: Path, staged: List[Path], files: Dict[str, str]) -> Non
     for wheel in staged:
         shutil.copy2(wheel, folder / wheel.name)
     for name, text in files.items():
-        (folder / name).write_text(text, encoding="utf-8")
+        atomic.write_text(folder / name, text)
 
 
 def read_install_choices(path: Path) -> Dict[str, bool]:
@@ -144,7 +146,7 @@ def install_zip(
     if not zip_path.is_file():
         raise AislandError(f"no zip at {zip_path}")
     if workspace_root is not None:
-        venv = (workspace_root / ".venv").absolute()
+        venv = venv_dir(workspace_root).absolute()
         if venv in python.absolute().parents:
             raise AislandError(
                 f"{python} is the workspace's .venv; install the zip into another environment (--python <its python>)"

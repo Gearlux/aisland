@@ -12,16 +12,25 @@ the sources at the end of ``[tool.uv.sources]`` (each table appended when the fi
 what is between the markers and nothing else. Everything is checked before any wheel is built
 (:func:`check_extra`): the project must list the extra in ``[tool.aisland] manual-extras`` — ``aisland setup``
 would otherwise install it, and the wheels would replace the workspace's checkouts — and no key outside the
-markers may hold the extra or one of the sources.
+markers may hold the extra or one of the sources. The check ends by making the whole edit on the file's text
+(:func:`edit`), so a layout the run could not write into is refused before the first build, not after the last.
+A table the project writes inline or as dotted keys is moved, values unchanged, into a table of its own first.
 """
 
 from __future__ import annotations
 
 import re
+import tomllib
 from dataclasses import dataclass
 from pathlib import Path
 from typing import AbstractSet, List, Optional, Sequence, Set, Tuple
 
+import tomlkit
+from tomlkit import items as tomlkit_items
+from tomlkit.container import OutOfOrderTableProxy
+from tomlkit.exceptions import TOMLKitError
+
+from aisland import atomic
 from aisland import pyproject as pyproject_toml
 from aisland.errors import AislandError
 
@@ -160,15 +169,19 @@ def check_extra(pyproject: Path, extra: str, distributions: Sequence[str]) -> No
             f"{', '.join(taken)}; --extra {extra} writes a source for each wheel — remove "
             f"{'it' if len(taken) == 1 else 'them'}"
         )
+    # The edit the run makes once every wheel is built, made now on the text alone: a layout it cannot write into stops
+    # the run here, never after the wheels folder was replaced.
+    edit(pyproject, text, extra, [ExtraWheel(name, f"{name}-0-py3-none-any.whl") for name in distributions], "")
 
 
 def _string(value: str) -> str:
-    return '"' + value.replace("\\", "\\\\").replace('"', '\\"') + '"'
+    """A TOML string as tomlkit writes it, every character TOML escapes escaped."""
+    return tomlkit.item(value).as_string()
 
 
 def _key(name: str) -> str:
-    """A TOML key: bare when TOML allows it (``lib-b``), quoted otherwise (a name with a dot)."""
-    return name if re.match(r"^[A-Za-z0-9_-]+$", name) else _string(name)
+    """A TOML key: bare when TOML allows it (``lib-b``), quoted otherwise (a name with a dot), as tomlkit writes it."""
+    return tomlkit.key(name).as_string()
 
 
 def render_blocks(extra: str, wheels: Sequence[ExtraWheel], command: str) -> Tuple[List[str], List[str]]:
@@ -215,20 +228,114 @@ def _insert(lines: List[str], table: str, block: List[str]) -> List[str]:
     return lines + ["", f"[{table}]", *block]
 
 
-def write_extra(pyproject: Path, extra: str, wheels: Sequence[ExtraWheel], command: str) -> bool:
-    """Write the extra and its sources into ``pyproject`` (see the module docstring); ``True`` when the file
-    changed. The result is parsed before it is written, and must hold exactly what was generated."""
-    text = pyproject.read_text(encoding="utf-8")
+def _inline(value: object) -> tomlkit_items.Item:
+    """A value as an entry of a table written by tomlkit: a table inside it stays inline (``{ path = "…" }``)."""
+    if isinstance(value, dict):
+        table = tomlkit.inline_table()
+        for key, part in value.items():
+            table[key] = _inline(part)
+        return table
+    if isinstance(value, list):
+        array = tomlkit.array()
+        for part in value:
+            array.append(_inline(part))
+        return array
+    return tomlkit.item(value)
+
+
+#: What tomlkit hands over for a table that holds others: the file, a table, or one written in parts (dotted keys).
+_CONTAINERS = (tomlkit.TOMLDocument, tomlkit_items.Table, OutOfOrderTableProxy)
+
+
+def _as_tables(pyproject: Path, text: str) -> str:
+    """``text`` with ``[project.optional-dependencies]`` and ``[tool.uv.sources]`` each written as a table of its own
+    — the place a generated block goes — where the project writes one another way: inline
+    (``optional-dependencies = { … }``, ``[tool.uv] sources = { … }``) or as dotted keys, inside its table
+    (``optional-dependencies.dev = […]``) or at the top (``project.optional-dependencies.dev = […]``). tomlkit moves
+    it — into its parent table when that has a header of its own, else to the end of the file — keeping every other
+    line and the comment the moved line carried; the move must change no value, or it is refused naming the table."""
+    written = {name for _index, name in _headers(text.splitlines())}
+    try:
+        document = tomlkit.parse(text)
+    except TOMLKitError as error:
+        raise AislandError(f"{pyproject}: {error}") from error
+    moved: List[str] = []
+    at_end: List[str] = []
+    for dotted in (_OPTIONAL, _SOURCES):
+        if dotted in written:
+            continue
+        *parents, key = dotted.split(".")
+        node: object = document
+        for part in parents:
+            node = node.get(part) if isinstance(node, _CONTAINERS) else None
+        if not isinstance(node, _CONTAINERS) or key not in node:
+            continue
+        held = node[key]
+        comment = held.trivia.comment if isinstance(held, tomlkit_items.Item) else ""
+        table = tomlkit.table()
+        for name, value in held.unwrap().items():
+            table.add(name, _inline(value))
+        if comment:
+            table.comment(comment.lstrip("# "))
+        del node[key]
+        moved.append(dotted)
+        if ".".join(parents) in written:
+            table.add(tomlkit.nl())
+            node[key] = table
+        else:
+            # Its parent is written as dotted keys at the top of the file: a header placed among them would take the
+            # keys after it, so the table goes last (TOML lets a [table] define a sub-table of a dotted-key table).
+            holder = tomlkit.document()
+            holder.add(dotted, table)
+            at_end.append(tomlkit.dumps(holder).replace(f'["{dotted}"]', f"[{dotted}]", 1))
+    if not moved:
+        return text
+    new = tomlkit.dumps(document)
+    if at_end:
+        new = new.rstrip("\n") + "\n\n" + "\n".join(part.strip("\n") + "\n" for part in at_end)
+    if pyproject_toml.parse(new, pyproject) != pyproject_toml.parse(text, pyproject):
+        raise AislandError(
+            f"{pyproject}: --extra writes into [{moved[0]}], which this file writes in a way aisland cannot move into "
+            f"a table of its own unchanged — write it as a [{moved[0]}] table, then run the build again"
+        )
+    return new
+
+
+def edit(pyproject: Path, text: str, extra: str, wheels: Sequence[ExtraWheel], command: str) -> str:
+    """``text`` (the project's ``pyproject.toml``) with the extra and its sources written in (see the module docstring).
+
+    The old blocks go, each table is made one a block can join (:func:`_as_tables`), the blocks go at the end of
+    their tables, and the result must read back as the file's own settings plus exactly what was generated — anything
+    else (a key written twice, a table TOML cannot extend) is refused naming the file. :func:`check_extra` makes this
+    edit before the first build; :func:`write_extra` makes it again with the wheels built."""
     lines = _without_blocks(pyproject, text.splitlines())
+    before = pyproject_toml.parse("\n".join(lines) + "\n", pyproject)
+    lines = _as_tables(pyproject, "\n".join(lines) + "\n").splitlines()
     extra_block, source_block = render_blocks(extra, wheels, command)
     lines = _insert(lines, _OPTIONAL, extra_block)
     lines = _insert(lines, _SOURCES, source_block)
     new = "\n".join(lines) + "\n"
-    data = pyproject_toml.parse(new, pyproject)  # check_extra parsed the rest: the generated blocks read back
-    expected = sorted(w.distribution for w in wheels)
-    if _table(data, _OPTIONAL).get(extra) != expected:  # pragma: no cover - the rendering above guarantees it
-        raise AislandError(f"{pyproject}: the written extra {extra!r} does not read back as generated")
+    try:
+        data = tomllib.loads(new)
+    except tomllib.TOMLDecodeError as error:
+        raise AislandError(f"{pyproject}: --extra {extra} cannot be written into this file ({error})") from error
+    expected = before
+    expected.setdefault("project", {}).setdefault("optional-dependencies", {})[extra] = sorted(
+        w.distribution for w in wheels
+    )
+    sources = expected.setdefault("tool", {}).setdefault("uv", {}).setdefault("sources", {})
+    for wheel in wheels:
+        sources[wheel.distribution] = [{"path": f"wheels/{wheel.wheel}", "extra": extra}]
+    if data != expected:
+        raise AislandError(f"{pyproject}: the extra {extra!r} does not read back as generated; write it by hand")
+    return new
+
+
+def write_extra(pyproject: Path, extra: str, wheels: Sequence[ExtraWheel], command: str) -> bool:
+    """Write the extra and its sources into ``pyproject`` (:func:`edit`); ``True`` when the file changed."""
+    text = pyproject.read_text(encoding="utf-8")
+    new = edit(pyproject, text, extra, wheels, command)
     if new == text:
         return False
-    pyproject.write_text(new, encoding="utf-8")
+    atomic.write_text(pyproject, new)
     return True

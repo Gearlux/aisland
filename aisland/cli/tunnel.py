@@ -9,7 +9,7 @@ from typing import List, Optional, Tuple
 import click
 from click.shell_completion import CompletionItem
 
-from aisland.cli._base import _Group
+from aisland.cli._base import Group
 from aisland.errors import AislandError, quiet_completion
 from aisland.tunnel import connect as tunnel_connect_mod
 from aisland.tunnel import host as tunnel_mod
@@ -54,7 +54,7 @@ def complete_tunnel(
 # --- Remote Tunnel ---
 
 
-@click.group(cls=_Group)
+@click.group(cls=Group)
 def tunnel() -> None:
     """Reach a remote machine from your local editor, over a VS Code Remote Tunnel.
 
@@ -206,7 +206,7 @@ def tunnel_list(as_json: bool) -> None:
 @tunnel.command(name="clear")
 @click.argument("names_or_urls", nargs=-1, shell_complete=complete_workspace)
 @click.option("--all", "clear_all", is_flag=True, help="Forget every remembered workspace.")
-@click.option("--yes", is_flag=True, help="Do not ask before forgetting everything.")
+@click.option("-y", "--yes", is_flag=True, help="Do not ask before forgetting everything.")
 def tunnel_clear(names_or_urls: Tuple[str, ...], clear_all: bool, yes: bool) -> None:
     """Forget a remembered workspace (by name or address), or all of them with --all.
 

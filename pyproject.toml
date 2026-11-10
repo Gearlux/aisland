@@ -45,6 +45,11 @@ dependencies = [
     # (services/jenkins.py) — an extras-carrying spec like `matrainer[keras]>=0.1.0`
     # must resolve to its dep and the named extra, which a regex split cannot do.
     "packaging>=23.0",
+    # Format-preserving TOML: aisland edits files a person also edits (workspace.toml, a project's pyproject.toml
+    # extra) and writes the root uv.toml, keeping comments, order and value types and escaping every string
+    # (docs/decisions/0079). 0.12.0: every test of those writers passes on it as on 0.15 (2026-11-08); the edits
+    # need `unwrap`, inline tables and super tables, all older.
+    "tomlkit>=0.12.0",
 ]
 requires-python = ">=3.12"
 
@@ -100,7 +105,8 @@ dev = [
 Homepage = "https://github.com/Gearlux/aisland"
 Repository = "https://github.com/Gearlux/aisland.git"
 Issues = "https://github.com/Gearlux/aisland/issues"
-Changelog = "https://github.com/Gearlux/aisland/blob/main/CHANGELOG.md"
+# The release's own tag, as the README's links (tests/test_docs.py): a version bump moves them together.
+Changelog = "https://github.com/Gearlux/aisland/blob/v0.1.0/CHANGELOG.md"
 
 [project.scripts]
 aisland = "aisland.cli:main"
@@ -187,7 +193,7 @@ id = "stdlib-only"
 name = "The standard-library-only modules import no third-party package"
 type = "forbidden"
 source_modules = ["aisland.atomic", "aisland.locations", "aisland.plugins", "aisland.pytest_stats", "aisland.tunnel.shell", "aisland.wheels.install", "aisland.wheels.unzip"]
-forbidden_modules = ["click", "git_filter_repo", "jinja2", "liquifai", "markupsafe", "mcp", "msgpack", "packaging", "yaml"]
+forbidden_modules = ["click", "git_filter_repo", "jinja2", "liquifai", "markupsafe", "mcp", "msgpack", "packaging", "tomlkit", "yaml"]
 # A standalone script's optional library stays lazy (AGENTS.md "Imports sit at the top…"): install.py reads a
 # wheels.yaml with PyYAML when it is there.
 ignore_imports = ["aisland.wheels.install -> yaml"]

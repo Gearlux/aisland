@@ -44,6 +44,7 @@ from aisland.setup.git_settings import install_git_aliases
 from aisland.setup.harness import install_harness
 from aisland.setup.harness import sets as harness_sets
 from aisland.setup.harness import summary as harness_summary
+from aisland.venv import venv_dir
 from aisland.workspace import clones
 from aisland.workspace import file as workspace_file
 from aisland.workspace import local as local_workspace
@@ -199,7 +200,7 @@ def _add_submodule(
 
 def runs_from_venv_of(root: Path) -> bool:
     """Whether this aisland runs from ``root``'s own ``.venv`` (a folder or a link to one): then it needs none made."""
-    venv = root / ".venv"
+    venv = venv_dir(root)
     return venv.exists() and Path(sys.prefix).resolve() == venv.resolve()
 
 
@@ -388,7 +389,7 @@ def _build(
     rows += _write_starting_files(root, rewrite)
 
     if from_file is not None:
-        (root / workspace_file.FILE_NAME).write_text(from_file.read_text())
+        atomic.write_text(root / workspace_file.FILE_NAME, from_file.read_text())
     workspace_file.refresh(root)
     if (root / workspace_file.FILE_NAME).is_file():
         rows.append(_row(workspace_file.FILE_NAME, "the projects, how to start another machine from them"))

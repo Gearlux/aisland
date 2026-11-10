@@ -2,7 +2,7 @@
 
 This page covers how a workspace project is consumed (a local checkout, a branch or tag of its repository, or a published wheel) and how a submodule is mirrored to a second host.
 
-## Project Sources (`aisland workspace configure source`)
+## Project sources (`aisland workspace configure source`)
 
 Each workspace project can be consumed either as a **local checkout** (developed here, installed
 editable) or as a **published wheel** (not checked out at all). `aisland workspace configure source` owns that choice
@@ -117,7 +117,7 @@ This machine's own choice goes to `.git/config`, one key each: `aisland.source.l
 - `aisland setup` applies the configuration on every run, so a fresh clone converges without any
   manual step.
 
-## Project Mirrors (`aisland workspace configure mirror`)
+## Project mirrors (`aisland workspace configure mirror`)
 
 A submodule can be kept on a second host — a GitHub repository and a Bitbucket one, say. The
 remote `.gitmodules` names stays the **primary**: you clone, pull and push it as usual.
@@ -169,6 +169,24 @@ $ aisland workspace mirror sync
 - a tag of the same name pointing elsewhere is refused, never overwritten;
 - a branch or tag that exists only on the mirror is left alone.
 
+**After `aisland wheels prune`.** A prune rewrites the primary's history and records each rewritten commit
+(`refs/wheels-prune/map`, see [wheels](wheels.md)). A mirror's branch or tag still on a commit the prune rewrote is the
+primary's own old history, not work of the mirror's: the sync sends it the rewritten one, leased on the commit the
+mirror has (a push made there meanwhile refuses it), and copies the record too, so a clone of the mirror can follow
+with `aisland wheels reset`. It never fetches the old history back into your clone:
+
+```
+==> app → git@github.com:Org/app.git
+    dev/main      pushed (the primary's history after a wheels prune)
+    main          pushed (the primary's history after a wheels prune)
+    tags          pushed v0.1.0 (the primary's history after a wheels prune)
+    prune record  pushed (the primary's history after a wheels prune)
+```
+
+Someone who pushed to the mirror on top of the old history is refused as above, with the remedy that takes only
+their commits onto the primary's rewritten branch (`git -C app cherry-pick <old>..mirror/dev/main`) — a merge would
+bring the stripped wheels back.
+
 **What is copied is the primary, not your checkout.** A commit you have not pushed to the primary
 does not reach the mirror either, so the two hosts can only differ by the mirror being behind.
 
@@ -183,5 +201,5 @@ password prompt. Use an SSH key, or an HTTPS token in `~/.netrc`, for both hosts
 - `aisland workspace configure mirror set` refuses a project whose checkout already has a remote named `mirror` that
   aisland did not create, and prints the `git remote rename` that frees the name.
 - `aisland setup` adds the remote for every committed mirror and removes the one aisland added
-  for a mirror unset on another machine. Why the mirror is push-only: [architecture.md](architecture.md),
-  "A mirror is push-only, fast-forward-only, and copies the primary".
+  for a mirror unset on another machine. Why the mirror is push-only: [the decision record
+  "A mirror is push-only, fast-forward-only, and copies the primary"](decisions/0024-a-mirror-is-push-only-fast-forward-only-and-copies.md).

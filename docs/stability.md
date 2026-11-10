@@ -18,11 +18,13 @@ and what to do about it. A patch release (0.1.0 → 0.1.1) changes none of it.
   misread by an older one.
 - **What a project declares in its own `pyproject.toml`**, so it never imports aisland:
   - `[tool.aisland.selection.<name>]` (`question`, `choices`) — [selections](selections.md);
-  - `[tool.aisland.service.<name>]` (`command`, `port`, `ready`, `needs`) — [services](services.md). A service is
-    always `aisland services start|stop|restart|status|info|reset <name>`, and also `aisland <name> …` while no
-    aisland command has that name. A release may add commands: one that takes a service's name takes only that
-    shortcut, and `aisland workspace show` says so. aisland's own services are `docker`, `jenkins` and `swiftbar`; a
-    name of a service aisland adds later is refused only from the release that adds it, which says so in its CHANGELOG;
+  - `[tool.aisland.service.<name>]` (`command`, `port`, `ready`, `needs`) — [services](services.md). Such a service
+    always runs as `aisland services start|stop|restart|status|info|reset <name>`. It also gets a shortcut,
+    `aisland <name> …`, as long as aisland has no command of that name. A release may add commands; when one takes
+    the service's name, the service loses only the shortcut, and `aisland workspace show` says so. A project's
+    service may not be named like one of aisland's own services, `docker`, `jenkins` and `swiftbar`. When a release
+    adds a service of its own, a project's service of that name is refused from that release on, and its CHANGELOG
+    says so;
   - `[tool.aisland.sys-dependencies]` (`brew`, `userspace`) and `[tool.aisland]` `manual-extras` and
     `click-commands` — [the workspace page](workspace.md);
   - the entry point group `aisland.plugins`: a class of kind `service` and what aisland hands it, `ctx.name`,
@@ -39,7 +41,8 @@ and what to do about it. A patch release (0.1.0 → 0.1.1) changes none of it.
   `<% %>` and `<# #>`, the entry point group `aisland.ci_templates`, and the facts a template reads: `project`,
   `title`, `distribution`, `package`, `extras`, `browser`, `slow_tests`, `unreleased` (each with `name`, `url`,
   `ref`), `unreleased_owners`, `token_owner`, `token_secret`, `stage_limits`, `runner_limits`, `actions`,
-  `timed_out_message`, `workspace`, `jenkins_url`, `node_tests`. A later release may add facts; it removes or renames none.
+  `timed_out_message`, `workspace`, `jenkins_url`, `node_tests`, `coverage`. A later release may add facts; it removes or renames none.
+  aisland's own set keeps its variable `python_versions`.
 - **The tools of `aisland-mcp`** ([mcp](mcp.md)): their names, their arguments and the keys of the JSON object each
   returns — for `services_status`, the same object `aisland services status --json` prints — and `warnings`, the
   lines a tool warned on stderr, there when it did.

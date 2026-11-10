@@ -7,7 +7,7 @@ from typing import Any, Dict, List, Literal, Optional, Sequence, TypedDict
 
 import click
 
-from aisland import console, failures, paths
+from aisland import console, failures, paths, venv
 from aisland.services import supervisor
 from aisland.workspace.projects import get_workspace_root
 
@@ -50,11 +50,20 @@ class BaseService:
     ``launch()`` hands to :meth:`start`.
     """
 
+    #: How long starting the service may take at most, its downloads and readiness wait included: what a caller
+    #: waiting on `aisland services start` (the MCP server) waits at least. A service that may take longer says so.
+    START_SECONDS: float = 5 * 60
+
     def __init__(self, name: str) -> None:
+        # Paths only: a status, an info or the doctor builds services too, and must leave no folder behind. The data
+        # folder is made when the service first starts (:meth:`start`).
         self.name = name
         self.service_data_dir = paths.data_dir() / name
         self.log_file = paths.data_dir() / f"{name}.log"
-        self.service_data_dir.mkdir(parents=True, exist_ok=True)
+
+    def launch(self, *args: Any, **kwargs: Any) -> None:  # Any: each service's own options, typed by the subclass
+        """Start the service: build its command, environment and probe, and hand them to :meth:`start`."""
+        raise NotImplementedError(f"the {self.name} service has no launch()")
 
     def is_running(self) -> bool:
         """Check if the service is currently running (per the supervisor)."""
@@ -80,6 +89,7 @@ class BaseService:
         env: Optional[Dict[str, str]] = None,
         background: bool = False,
         readiness: Optional[supervisor.Readiness] = None,
+        port: Optional[int] = None,
     ) -> None:
         """Register the service with the supervisor and bring it up.
 
@@ -94,13 +104,17 @@ class BaseService:
                 foreground semantics). The process itself always runs
                 detached under the supervisor.
             readiness: Optional HTTP readiness probe ``{"port": int, "path": str}``.
+            port: The port the service listens on, for a service without a probe: checked free before it starts,
+                as a probe's port is.
         """
         if self.is_running():
             console.echo(f"{self.name.capitalize()} is already running (PID: {self.get_pid()}).")
             return
-        if readiness is not None and self._port_taken(readiness["port"]):
+        listens_on = readiness["port"] if readiness is not None else port
+        if listens_on is not None and self._port_taken(listens_on):
             return
         console.echo(f"Starting {self.name.capitalize()}...")
+        self.service_data_dir.mkdir(parents=True, exist_ok=True)
         self._register_and_apply(cmd, self._process_env(env), readiness)
         outcome, state = supervisor.wait_for_outcome(self.name)
         if outcome == "failed":
@@ -140,7 +154,7 @@ class BaseService:
         """``env``, with the workspace venv put first on ``PATH`` unless the caller gave a ``PATH`` of its own."""
         process_env = dict(env or {})
         if "PATH" not in process_env:
-            venv_bin = get_workspace_root() / ".venv" / "bin"
+            venv_bin = venv.venv_bin(get_workspace_root())
             current_path = os.environ.get("PATH", "")
             if str(venv_bin) not in current_path:
                 current_path = f"{venv_bin}:{current_path}"
@@ -261,17 +275,25 @@ class BaseService:
         """Restart the service."""
         console.echo(f"Restarting {self.name}...")
         self.stop()
-        # We assume launch is the method to start with default/stored config
-        # Individual services might need to override this if launch signatures differ significantly
-        if hasattr(self, "launch"):
-            getattr(self, "launch")(**kwargs)
-        else:
-            failures.report(f"Error: {self.name} service does not have a launch method.")
+        if self.is_running():  # the stop said why; a second copy would fight the first for its port
+            return
+        self.launch(**kwargs)
+
+    def wipes(self) -> str:
+        """What :meth:`reset` deletes, in words for the question asked before it."""
+        return f"its data folder ({self.service_data_dir}) and its log"
 
     def reset(self) -> None:
-        """Stop the service and wipe its data directory, logs, and registration."""
+        """Stop the service and wipe its data directory, logs, and registration — never while it still runs: a
+        stop that failed leaves everything as it was, since a running service writes into the folder being wiped."""
         if self.is_running():
             self.stop()
+            if self.is_running():
+                failures.report(
+                    f"Error: {self.name.capitalize()} is still running, so its data was not wiped. "
+                    f"Stop it (aisland {self.name} stop), then reset again."
+                )
+                return
 
         # Drop the supervisor registration too — a reset service should not
         # linger (disabled) in the desired-state document.
@@ -280,8 +302,7 @@ class BaseService:
 
         if self.service_data_dir.exists():
             console.echo(f"Wiping data for {self.name} at {self.service_data_dir}...")
-            shutil.rmtree(self.service_data_dir)
-            self.service_data_dir.mkdir(parents=True, exist_ok=True)
+            shutil.rmtree(self.service_data_dir)  # made again by the next start
 
         if self.log_file.exists():
             self.log_file.unlink()

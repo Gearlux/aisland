@@ -133,5 +133,5 @@ agents  (folder, /Users/you/work/acme/agents)
 ```
 
 aisland's own set lives in the `harness/` folder of the aisland package (`harness.toml`, `AGENTS.md`, `commands/`,
-`scripts/`); why the harness is built this way: [architecture.md](architecture.md) → "A workspace combines harness
-sets".
+`scripts/`); why the harness is built this way: [the decision record "A workspace combines harness
+sets"](decisions/0075-a-workspace-combines-harness-sets.md).

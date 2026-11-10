@@ -14,6 +14,7 @@ from __future__ import annotations
 import re
 import subprocess
 import sys
+import tomllib
 from pathlib import Path
 from typing import Optional
 
@@ -24,7 +25,8 @@ from aisland.tunnel import connect as tunnel_connect
 
 PROJECT = Path(__file__).resolve().parents[1]
 PAGE = PROJECT / "docs" / "tunnel.md"
-PAGE_URL = "https://github.com/Gearlux/aisland/blob/main/docs/tunnel.md"
+VERSION = tomllib.loads((PROJECT / "pyproject.toml").read_text(encoding="utf-8"))["project"]["version"]
+PAGE_URL = f"https://github.com/Gearlux/aisland/blob/v{VERSION}/docs/tunnel.md"
 _LINK = re.compile(r"\]\(([^)\s]+)\)")
 
 

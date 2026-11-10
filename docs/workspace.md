@@ -58,10 +58,11 @@ writes `dist/aisland-<version>-py3-none-any.whl`, and `.venv/bin/pip install <th
 
 ### Developing aisland itself
 
-In a workspace that holds aisland's own checkout, `bash aisland/setup.sh` (run from the workspace root) provisions the
-`.venv`, installs aisland in editable mode, hands off to `aisland setup` and installs shell completion into the
-workspace-local `.project.bashrc.completion` (sourced by `project.bashrc`, gitignored). From a checkout, aisland works
-on the workspace it is checked out in, wherever you run it.
+A workspace can hold aisland's own checkout as one of its projects; that checkout is then the workspace's aisland,
+and it works on the workspace it is checked out in, wherever you run it. `bash aisland/setup.sh`, run from the
+workspace root, provisions the `.venv`, installs aisland in editable mode, hands off to `aisland setup` and installs
+shell completion. [CONTRIBUTING](../CONTRIBUTING.md) covers both ways to work on aisland: this one, and a clone of its
+own that only runs the tests.
 
 ### A root no one shares (`--local`), projects it does not record (`--untracked`)
 
@@ -100,9 +101,13 @@ $ .venv/bin/aisland setup
   - foo: untracked (the root records none of its commits)
 ```
 
-It is tracked as the workspace says: untracked when `workspace.toml` has `[workspace] track = false` — written by
-`init --untracked` and by `aisland workspace track unset` with no project named — or this machine untracks every project,
-tracked otherwise. A `--local` root commits it with `.gitmodules`; in a shared root they are left for you to commit.
+Whether the root records the new submodule's commits follows the workspace's choice:
+
+- **untracked** when `workspace.toml` says `[workspace] track = false` (which `init --untracked` writes, and so does
+  `aisland workspace track unset` with no project named), or when this machine untracks every project;
+- **tracked** otherwise.
+
+A `--local` root commits it with `.gitmodules`; in a shared root they are left for you to commit.
 So in a `--local --untracked` workspace, a project you clone into the folder needs only `aisland setup`: it becomes an
 untracked submodule, listed in `workspace.toml` and in the editor's workspace file, and committed.
 
@@ -260,6 +265,12 @@ branch = "dev/main"
 path = "ml"
 url = "git@github.com:acme/machine_learning.git"
 ```
+
+**The rest of the file is yours.** Setup and `aisland workspace configure` edit the file in place: a value they
+change is rewritten where it stands, and every comment you wrote, the order of the keys and the type of each value (a
+date stays a date) stay as they were. Only the how-to at the top — the comment block that opens with the file's
+name — is aisland's, rewritten with the workspace's name and aisland's version; a file that opens with comments of
+your own keeps them and gets no how-to.
 
 A project is named after its repository; `path` is its folder (its name when left out) and `branch` the
 branch it is cloned on (without one, the repository's default branch). A branch already in the file is
@@ -563,7 +574,10 @@ $ aisland workspace configure active
 
 From the activated set, setup **generates `uv.toml` in the workspace folder**: a base that drops the GUI
 `opencv-python` build (uv's `override-dependencies` with a marker that is never true) and pins headless opencv to one
-range every project shares, merged with each *activated* project's own `uv.toml` (union of `extra-index-url`, etc.).
+range every project shares, merged with each *activated* project's own `uv.toml` (union of `extra-index-url`, etc.). Every setting a project's
+file holds reaches it as written — an `[[index]]` table, a `[pip]` table, a path with a backslash, a marker with a
+quote — and the merged file is read back as TOML before it is written: a project's setting never breaks the file every
+install in the workspace reads.
 `lightning` is dropped the same way, but only in a workspace where a project names `pytorch-lightning` (the two
 conflict). The opencv lines are in every workspace's file, whatever its projects: `import cv2` is the headless build, so a
 window (`cv2.imshow`) does not open. Both builds install the same `cv2/` files with different native libraries, and

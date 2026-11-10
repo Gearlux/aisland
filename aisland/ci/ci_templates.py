@@ -82,7 +82,7 @@ class Facts:
     extras: List[str]
     browser: Optional[str]
     slow_tests: bool
-    #: The unreleased dependencies, in install order, and their owners as one phrase (``acme``, ``acme, labs``).
+    #: The unreleased dependencies, by name (each installs with --no-deps), and their owners as one phrase (``acme``, ``acme, labs``).
     unreleased: List[Dependency]
     unreleased_owners: str
     #: The GitHub owner whose private repositories CI clones with an app token, and its secrets' prefix (None: none).
@@ -100,6 +100,9 @@ class Facts:
     #: The project's folders holding a `package.json` with a `test` script (POSIX, relative, sorted; empty: none) —
     #: last and defaulted, so a set constructing the facts by position keeps working.
     node_tests: List[str] = field(default_factory=list)
+    #: What the test run measures (``--cov=``): the package, or a project's own subpackage when it ships inside another
+    #: package (``vision.extra``); None reads as the package — defaulted for the same reason.
+    coverage: Optional[str] = None
 
 
 @dataclass(frozen=True)

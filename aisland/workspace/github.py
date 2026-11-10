@@ -6,6 +6,7 @@ no organisation is written into aisland.
 
 from __future__ import annotations
 
+import os
 import re
 from pathlib import Path
 from typing import Dict, NamedTuple, Optional
@@ -38,6 +39,16 @@ def github_repository(url: str) -> Optional[GitHubRepository]:
     return GitHubRepository(match.group(1), match.group(2)) if match else None
 
 
+def _folder_key(workspace_root: Path, path: str) -> str:
+    """A project's folder relative to the root, as one spelling (``./app/`` → ``app``); a link that leads outside the
+    workspace keeps the path it is listed under."""
+    folder = (workspace_root / path).resolve()
+    try:
+        return folder.relative_to(workspace_root.resolve()).as_posix()
+    except ValueError:
+        return Path(os.path.normpath(path)).as_posix()
+
+
 def project_repositories(workspace_root: Path) -> Dict[str, GitHubRepository]:
     """Each project folder whose remote is on GitHub, and that repository.
 
@@ -50,6 +61,5 @@ def project_repositories(workspace_root: Path) -> Dict[str, GitHubRepository]:
         repository = github_repository(found.url)
         if repository is None:
             continue
-        folder = (workspace_root / found.path).resolve()
-        repositories[folder.relative_to(workspace_root.resolve()).as_posix()] = repository
+        repositories[_folder_key(workspace_root, found.path)] = repository
     return repositories

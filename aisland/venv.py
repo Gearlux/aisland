@@ -14,13 +14,36 @@ from aisland.errors import AislandError
 
 logger = logging.getLogger(__name__)
 
+#: The workspace venv's folder, in the workspace's root.
+VENV = ".venv"
+
+
+def venv_dir(workspace_root: Path) -> Path:
+    """The workspace's venv folder, ``<root>/.venv``, whether or not it exists."""
+    return workspace_root / VENV
+
+
+def venv_bin(workspace_root: Path) -> Path:
+    """The folder of the workspace venv's programs (``python``, ``pip``, ``uv``, ``aisland``), whether or not it
+    exists."""
+    return venv_dir(workspace_root) / "bin"
+
+
+def require_venv_bin(workspace_root: Path) -> Path:
+    """:func:`venv_bin`, for a command that installs into the venv or runs its tools: refused (:func:`no_venv`) when
+    the workspace has no venv."""
+    found = venv_bin(workspace_root)
+    if not found.exists():
+        raise no_venv(workspace_root)
+    return found
+
 
 def no_venv(workspace_root: Path) -> AislandError:
     """The refusal of a command that needs the workspace's ``.venv`` when it has none, with how to make one."""
     if locations.FROM_CHECKOUT:
-        return AislandError(f"Virtual environment not found at {workspace_root / '.venv'}. Run aisland/setup.sh first.")
+        return AislandError(f"Virtual environment not found at {venv_dir(workspace_root)}. Run aisland/setup.sh first.")
     return AislandError(
-        f"Virtual environment not found at {workspace_root / '.venv'}. Create it and install aisland "
+        f"Virtual environment not found at {venv_dir(workspace_root)}. Create it and install aisland "
         "into it: uv venv --seed .venv && .venv/bin/pip install aisland"
     )
 

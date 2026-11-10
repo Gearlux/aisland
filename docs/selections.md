@@ -33,6 +33,7 @@ aisland workspace configure framework unset                        # forget both
 aisland workspace configure tracker set mlflow tensorboard aim     # the same for every selection
 aisland workspace configure tracker unset aim --machine-only       # THIS machine without aim; nothing committed
 aisland workspace configure tracker unset aim                      # the committed choice without aim
+aisland workspace configure extras unset docs                      # aisland's own selection, the same way
 ```
 
 `unset` with names drops just those from the layer `set` would write — the committed list, or with `--machine-only`
@@ -43,7 +44,7 @@ forgets the whole layer, as above.
 TAB completes the names: after `set` the choices not typed yet, after `unset` the ones chosen on this machine.
 
 `set` takes the **whole list** and reinstalls, at once and in dependency order, every project offering one of the
-selection's choices:
+selection's choices — two projects that require each other in one install, as `aisland setup` installs them:
 
 ```text
 $ aisland workspace configure framework set keras --machine-only
@@ -89,6 +90,10 @@ anything else up front, naming the file and the line:
 Error: /w/models/pyproject.toml:31: models offers 'mlx' for selection 'framework', but defines no extra of that name
 ```
 
+A selection's own name cannot be one aisland already reads: `name`, `format`, `track` and `test-stats` are
+`[workspace]` settings, and `extras`, `active`, `mirror` and `source` are `aisland workspace configure` commands of
+aisland's own. A selection named like one is refused the same way, naming its file and line.
+
 The names line up across projects on purpose (`keras` is `keras` everywhere), so one choice drives every project.
 Each project installs what it offers ∩ what is chosen, in the order it lists them:
 
@@ -104,8 +109,9 @@ project that asks the question, there is no such selection and the others' choic
 ### Choosing at setup time
 
 `aisland setup` asks each selection's question once, offering every choice with the projects that offer it, and
-commits the answer (a blank answer is everything); `aisland setup -y` with nothing chosen takes everything rather
-than hanging. To choose beforehand, set it first: `aisland workspace configure framework set torch --machine-only &&
+commits the answer (a blank answer is everything). `aisland setup -y` (`--non-interactive`) reuses the answers this
+machine already gave and, with nothing chosen, takes everything rather than hanging; it still asks about an optional
+project this machine never answered. To choose beforehand, set it first: `aisland workspace configure framework set torch --machine-only &&
 aisland setup -y`. `aisland setup --all` takes every extra every project defines.
 
 An extra no machine should get by default — one that pins a dependency to a remote branch, which would replace a

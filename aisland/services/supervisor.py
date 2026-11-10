@@ -19,12 +19,11 @@ Desired-state model (verified empirically against process-compose v1.116.0):
 * Stopping a service disables its entry and re-applies — never a bare
   ``process stop``, so a later update cannot resurrect it.
 
-The server listens on a unix socket inside ``aisland/data/`` (TCP on Windows,
-where unix sockets are unavailable — port via ``AISLAND_SUPERVISOR_PORT``), so
-multiple workspace checkouts never collide and no TCP port is consumed on
-Unix.
+The server listens on a unix socket inside ``aisland/data/``, so multiple
+workspace checkouts never collide and no TCP port is consumed.
 """
 
+import contextvars
 import json
 import os
 import platform
@@ -33,7 +32,9 @@ import shlex
 import shutil
 import sqlite3
 import subprocess
+import time
 from contextlib import closing, contextmanager
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Dict, Iterator, List, NotRequired, Optional, Tuple, TypedDict, cast
 
@@ -60,10 +61,6 @@ def server_log() -> Path:
     """The supervisor's own log."""
     return paths.data_dir() / "process-compose.log"
 
-
-# TCP fallback for Windows, where unix domain sockets are not supported by
-# process-compose. Documented in the workspace .env.
-DEFAULT_TCP_PORT = 9089
 
 # Header prepended to the generated config (Generator Provenance mandate).
 _PROVENANCE_HEADER = """\
@@ -129,10 +126,7 @@ def ensure_binary() -> str:
 
 
 def _connection_args() -> List[str]:
-    """Client/server connection flags: unix socket on Unix, TCP on Windows."""
-    if os.name == "nt":
-        port = int(os.environ.get("AISLAND_SUPERVISOR_PORT", str(DEFAULT_TCP_PORT)))
-        return ["--port", str(port)]
+    """Client/server connection flags: the unix socket in ``aisland/data/``."""
     return ["--use-uds", "--unix-socket", str(socket_path())]
 
 
@@ -163,7 +157,7 @@ def is_server_running() -> bool:
     """True if the aisland process-compose server answers on its socket."""
     if find_binary() is None:
         return False
-    if os.name != "nt" and not socket_path().exists():
+    if not socket_path().exists():
         return False
     result = _run_client(["project", "state"])
     return result.returncode == 0
@@ -208,6 +202,16 @@ def save_config(config: Dict[str, object]) -> None:
     atomic.write_text(config_file(), _PROVENANCE_HEADER + body)
 
 
+@contextmanager
+def _editing() -> Iterator[Dict[str, Any]]:  # Any: as load_config's
+    """The desired-state document to change, written back when the block ends — one step for every process: two
+    services started at once (an MCP client's tools run side by side) would otherwise each write over the other."""
+    with atomic.locked(config_file()):
+        config = load_config()
+        yield config
+        save_config(config)
+
+
 def register_process(
     name: str,
     command: List[str],
@@ -227,7 +231,6 @@ def register_process(
         readiness: Optional HTTP readiness probe: ``{"port": int, "path": str}``.
         enabled: Desired state — False registers the entry without starting it.
     """
-    config = load_config()
     entry: Dict[str, object] = {
         "command": shlex.join(command),
         "working_dir": str(_workspace_root()),
@@ -254,19 +257,17 @@ def register_process(
             # cold starts (Jenkins plugin scans) must eventually flip Ready.
             "failure_threshold": 60,
         }
-    config["processes"][name] = entry
-    save_config(config)
+    with _editing() as config:
+        config["processes"][name] = entry
 
 
 def set_enabled(name: str, enabled: bool) -> bool:
     """Flip the desired state of a registered process. False if unknown."""
-    config = load_config()
-    entry = config["processes"].get(name)
-    if entry is None:
-        return False
-    entry["disabled"] = not enabled
-    save_config(config)
-    return True
+    with _editing() as config:
+        entry = config["processes"].get(name)
+        if entry is not None:
+            entry["disabled"] = not enabled
+    return entry is not None
 
 
 def get_registered_port(name: str) -> Optional[int]:
@@ -278,12 +279,9 @@ def get_registered_port(name: str) -> Optional[int]:
 
 def remove_process(name: str) -> bool:
     """Drop a process from the desired-state document. False if unknown."""
-    config = load_config()
-    if name not in config["processes"]:
-        return False
-    del config["processes"][name]
-    save_config(config)
-    return True
+    with _editing() as config:
+        found = config["processes"].pop(name, None) is not None
+    return found
 
 
 def apply() -> None:
@@ -396,17 +394,21 @@ def _start_server() -> None:
         str(server_log()),
         *_connection_args(),
     ]
-    # cwd = workspace root so process-compose's default `.env` loading picks
-    # up the workspace .env (DATA_ROOT, LABELSTUDIO_*, ...), mirroring
-    # `source project.bashrc` for every supervised service.
+    # The server's environment is the workspace .env as aisland reads it (DATA_ROOT, LABELSTUDIO_*, ...) over this
+    # process's, as apply() hands it to every `project update`: `source project.bashrc` for every supervised service,
+    # read by the one reader. process-compose's own `.env` loading (from cwd, the workspace root) sets no variable
+    # already set, so it changes none of these. A session of its own: the server outlives the command that started it,
+    # and an MCP tool that ends that command's process group past its time limit must not end the server with it.
     try:
         result = subprocess.run(
             cmd,
             cwd=_workspace_root(),
+            env={**os.environ, **envfile.read()},
             capture_output=True,
             text=True,
             check=False,
             timeout=_CLIENT_TIMEOUT,
+            start_new_session=True,
         )
     except subprocess.TimeoutExpired as exc:
         raise AislandError(
@@ -418,9 +420,18 @@ def _start_server() -> None:
         )
 
 
-#: The one `process list` answer of a snapshot (:func:`snapshot`); ``None`` outside one, or before its first question.
-_snapshot_list: Optional[Dict[str, ProcessState]] = None
-_in_snapshot = False
+@dataclass
+class _Snapshot:
+    """The one `process list` answer of a :func:`snapshot`; ``None`` before its first question."""
+
+    processes: Optional[Dict[str, ProcessState]] = None
+
+
+#: The snapshot the running block opened, per thread and task (as :mod:`aisland.console`'s console is): ``None``
+#: outside one, and one MCP tool call's snapshot never answers another's question.
+_current_snapshot: contextvars.ContextVar[Optional[_Snapshot]] = contextvars.ContextVar(
+    "aisland_supervisor_snapshot", default=None
+)
 
 
 @contextmanager
@@ -430,17 +441,16 @@ def snapshot() -> Iterator[None]:
     `aisland services status|info` asks for each service's state; a client process per service made the listing
     slow. Nothing is kept after the block, so a wait for a process to change (:func:`wait_for`) still sees each new
     answer."""
-    global _snapshot_list, _in_snapshot
-    _in_snapshot, _snapshot_list = True, None
+    token = _current_snapshot.set(_Snapshot())
     try:
         yield
     finally:
-        _in_snapshot, _snapshot_list = False, None
+        _current_snapshot.reset(token)
 
 
 def _client_reachable() -> bool:
-    """The checks that cost no process: the binary and, off Windows, the socket file."""
-    return find_binary() is not None and (os.name == "nt" or socket_path().exists())
+    """The checks that cost no process: the binary and the socket file."""
+    return find_binary() is not None and socket_path().exists()
 
 
 def list_processes() -> Dict[str, ProcessState]:
@@ -448,9 +458,9 @@ def list_processes() -> Dict[str, ProcessState]:
 
     One client call: a `process list` that fails already means there is no server to ask, so no `project state`
     first. Inside :func:`snapshot` the first answer serves the rest."""
-    global _snapshot_list
-    if _in_snapshot and _snapshot_list is not None:
-        return _snapshot_list
+    current = _current_snapshot.get()
+    if current is not None and current.processes is not None:
+        return current.processes
     processes: Dict[str, ProcessState] = {}
     if _client_reachable():
         result = _run_client(["process", "list", "--output", "json"])
@@ -462,8 +472,8 @@ def list_processes() -> Dict[str, ProcessState]:
             processes = {
                 proc["name"]: cast(ProcessState, proc) for proc in listed if isinstance(proc, dict) and "name" in proc
             }
-    if _in_snapshot:
-        _snapshot_list = processes
+    if current is not None:
+        current.processes = processes
     return processes
 
 
@@ -552,8 +562,6 @@ def wait_for(name: str, running: bool, timeout: float = 30.0) -> Optional[Proces
     is a deliberate poll against the supervisor's API — the supervisor owns
     the process lifecycle, so there is no aisland-side event to join on.
     """
-    import time
-
     deadline = time.monotonic() + timeout
     state: Optional[ProcessState] = None
     while time.monotonic() < deadline:
@@ -579,8 +587,6 @@ def wait_for_outcome(name: str, timeout: float = 45.0) -> Tuple[str, Optional[Pr
     * ``"pending"`` — still running at the timeout but the probe has not
       passed yet (long cold starts, e.g. Jenkins' first plugin scan).
     """
-    import time
-
     deadline = time.monotonic() + timeout
     stable_polls = 0
     state: Optional[ProcessState] = None

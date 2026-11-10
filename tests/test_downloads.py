@@ -72,6 +72,19 @@ def test_a_wheel_that_cannot_be_fetched_leaves_no_part_file(tmp_path: Path) -> N
     target = tmp_path / "pypi" / "lib-1.0-py3-none-any.whl"
 
     with pytest.raises(OSError):
-        published.download_wheel({"url": (tmp_path / "missing.whl").as_uri()}, target)
+        published.download_wheel({"url": (tmp_path / "missing.whl").as_uri(), "digests": {"sha256": "0" * 64}}, target)
+
+    assert not target.exists()
+
+
+def test_a_wheel_pypi_lists_no_digest_for_is_refused_before_it_is_fetched(tmp_path: Path) -> None:
+    """It was accepted unchecked: nothing vouched for the file the comparison then trusted."""
+    source = tmp_path / "source.whl"
+    source.write_bytes(b"w" * 1000)
+    target = tmp_path / "pypi" / "lib-1.0-py3-none-any.whl"
+
+    entry: PypiFile = {"url": source.as_uri(), "filename": "lib-1.0-py3-none-any.whl"}
+    with pytest.raises(AislandError, match="PyPI lists no SHA-256 for lib-1.0-py3-none-any.whl"):
+        published.download_wheel(entry, target)
 
     assert not target.exists()

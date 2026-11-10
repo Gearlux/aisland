@@ -1,6 +1,5 @@
 """The workspace and its projects: the root, the name, the project folders, and the order they install in."""
 
-import re
 from pathlib import Path
 from typing import Dict, List, NamedTuple, Optional, TypedDict
 
@@ -26,33 +25,21 @@ def get_workspace_name(root: Optional[Path] = None) -> str:
     named = workspace_file.name_of(root)
     if named:
         return named
-    output = gitcmd.remote_url(root) or ""  # no origin, or no git: the folder names it
-    # The repository's name: its URL's last part, `.git` dropped from its end only (https, ssh and scp-style:
-    # https://github.com/acme/models.git, git@github.com:acme/my.github-tools.git, git@host:models.git).
-    name = re.split(r"[/:]", output.rstrip("/"))[-1].removesuffix(".git") if output else ""
-    if name:
-        return name
-    return root.name
+    url = gitcmd.remote_url(root)  # no origin, or no git: the folder names it
+    return (workspace_file.repository_name(url) if url else None) or root.name
 
 
 def discover_projects(root: Path, workspace_root: Optional[Path] = None) -> List[Path]:
     """Recursively discover pyproject.toml files, but only in directories that are identified as projects.
 
-    A link to a folder inside the workspace (``workspace_root``, default ``root``) is skipped: it is a second name for
-    a folder found under its own (:func:`aisland.locations.is_alias`)."""
+    A hidden folder (``.venv``, ``.git``, a tool's cache) is never a project, nor is a link to a folder inside the
+    workspace (``workspace_root``, default ``root``): it is a second name for a folder found under its own
+    (:func:`aisland.locations.is_alias`). Only the folders' own names are read, never the path above the workspace."""
     workspace_root = workspace_root or root
     projects = []
-    # Skip standard ignored directories
-    if any(p in str(root) for p in [".venv", "aisland/data"]):
-        return []
-
-    for item in root.iterdir():
-        if item.is_dir() and not locations.is_alias(item, workspace_root):
-            pyproject = item / "pyproject.toml"
-            if pyproject.exists():
-                projects.append(pyproject)
-                # If it's a project, also check for sub-projects (submodules)
-                projects.extend(discover_projects(item, workspace_root))
+    for item in locations.project_folders(root, workspace_root):
+        projects.append(item / "pyproject.toml")
+        projects.extend(discover_projects(item, workspace_root))  # a project's own sub-projects (submodules)
     return projects
 
 
@@ -180,21 +167,13 @@ def submodule_active_map(workspace_root: Path) -> List[ProjectFolder]:
 def workspace_folders(workspace_root: Path) -> List[ProjectFolder]:
     """Return a :class:`ProjectFolder` for every project of the workspace.
 
-    With ``.gitmodules``, its submodules (:func:`submodule_active_map`). Without one, every direct, non-hidden
-    subfolder holding a ``pyproject.toml``, active and named by its folder — the workspace is read as if each were
-    a submodule (`aisland.locations.holds_projects` is the same test). A link to another folder of the workspace is
-    none of them (:func:`aisland.locations.is_alias`).
+    With ``.gitmodules``, its submodules (:func:`submodule_active_map`). Without one, every project folder of the
+    root (:func:`aisland.locations.project_folders`), active and named by its folder — the workspace is read as if
+    each were a submodule.
     """
     if (workspace_root / ".gitmodules").is_file():
         return submodule_active_map(workspace_root)
-    return [
-        ProjectFolder(child.name, child.name, True)
-        for child in sorted(workspace_root.iterdir(), key=lambda c: c.name)
-        if child.is_dir()
-        and not child.name.startswith(".")
-        and (child / "pyproject.toml").is_file()
-        and not locations.is_alias(child, workspace_root)
-    ]
+    return [ProjectFolder(child.name, child.name, True) for child in locations.project_folders(workspace_root)]
 
 
 def set_submodule_active(workspace_root: Path, name: str, active: bool) -> None:

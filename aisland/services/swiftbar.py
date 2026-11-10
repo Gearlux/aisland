@@ -2,10 +2,11 @@
 
 import os
 import platform
+import shlex
 import subprocess
 import time
 from pathlib import Path
-from typing import Any, List, Optional, Tuple
+from typing import Any, List, Optional, Sequence, Tuple, Union
 from urllib.parse import quote
 
 import click
@@ -24,12 +25,15 @@ TEMPLATES_DIR = locations.PACKAGE_DIR / "templates" / "swiftbar"
 SWIFTBAR_SECONDS = 30
 
 
-def _render_script(template: str, **values: str) -> str:
+def _render_script(template: str, **values: Union[str, Sequence[str]]) -> str:
     """The menu script made from ``template`` (a file of :data:`TEMPLATES_DIR`): the shebang and the provenance header,
-    then the template with each ``<[ key ]>`` replaced by ``values[key]``."""
+    then the template with each ``<[ key ]>`` replaced by ``values[key]`` as bash words — a string one word, a list one
+    word per item, each quoted (``shlex.quote``), so a folder or job name holding a space, a quote or a ``$`` stays
+    that name and never runs as code."""
     body = (TEMPLATES_DIR / template).read_text()
     for key, value in values.items():
-        body = body.replace(f"<[ {key} ]>", value)
+        words = [value] if isinstance(value, str) else list(value)
+        body = body.replace(f"<[ {key} ]>", " ".join(shlex.quote(word) for word in words))
     rule = "# " + "=" * 73
     header = [
         "#!/bin/bash",
@@ -53,8 +57,7 @@ class SwiftBarService(BaseService):
 
     def __init__(self) -> None:
         super().__init__("swiftbar")
-        self.plugins_dir = self.service_data_dir / "plugins"
-        self.plugins_dir.mkdir(parents=True, exist_ok=True)
+        self.plugins_dir = self.service_data_dir / "plugins"  # made when the first script is written
 
     @staticmethod
     def _require_macos() -> bool:
@@ -193,15 +196,19 @@ class SwiftBarService(BaseService):
             except (OSError, subprocess.TimeoutExpired) as e:
                 failures.report(f"  - Error clearing SwiftBar {key} configuration: {e}")
 
+    def wipes(self) -> str:
+        return "no data: SwiftBar stops showing this workspace's menus"
+
     def reset(self) -> None:
         """Alias for remove() to maintain consistency with other services."""
         self.remove()
 
     def state(self) -> ServiceState:
-        """Whether the SwiftBar app runs (``pgrep``); ``not supported`` off macOS."""
+        """Whether the SwiftBar app runs (``pgrep -x``: the process named SwiftBar, as :meth:`stop` reads it);
+        ``not supported`` off macOS."""
         if platform.system() != "Darwin":
             return service_state(self.name, "not supported")
-        return service_state(self.name, "running" if probe.succeeds(["pgrep", "SwiftBar"]) else "stopped")
+        return service_state(self.name, "running" if probe.succeeds(["pgrep", "-x", "SwiftBar"]) else "stopped")
 
     def status(self) -> None:
         """Display SwiftBar status."""
@@ -215,7 +222,7 @@ class SwiftBarService(BaseService):
         if platform.system() != "Darwin":
             console.echo(f"  Status        : {click.style('Not supported (macOS only)', fg='yellow')}")
             return
-        if probe.succeeds(["pgrep", "SwiftBar"]):
+        if probe.succeeds(["pgrep", "-x", "SwiftBar"]):
             console.echo(f"  Status        : {click.style('Running', fg='green')}")
         else:
             console.echo(f"  Status        : {click.style('Stopped', fg='red')}")
@@ -250,10 +257,11 @@ class SwiftBarService(BaseService):
         content = _render_script(
             "jenkins_status.sh",
             jenkins_home=str(jenkins_home),
-            projects=" ".join(f'"{p}"' for p in projects),
+            projects=projects,
             # The menu links the Jenkins running now, on the port it runs on (else its default).
             jenkins_url=JenkinsService().url(),
         )
+        self.plugins_dir.mkdir(parents=True, exist_ok=True)
         script_path.write_text(content)
         script_path.chmod(0o755)
         console.echo(f"  - Generated {script_path.name}")
@@ -262,7 +270,8 @@ class SwiftBarService(BaseService):
         """Generate the GitHub status script."""
         script_path = self.plugins_dir / "gh_status.10m.sh"
 
-        content = _render_script("gh_status.sh", repos="\\n".join(github_repos))
+        content = _render_script("gh_status.sh", repos="\n".join(github_repos))
+        self.plugins_dir.mkdir(parents=True, exist_ok=True)
         script_path.write_text(content)
         script_path.chmod(0o755)
         console.echo(f"  - Generated {script_path.name}")

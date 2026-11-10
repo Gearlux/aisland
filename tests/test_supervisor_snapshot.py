@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import json
 import subprocess
+import threading
 from pathlib import Path
 from typing import Any, Callable, List
 
@@ -103,3 +104,31 @@ def test_services_status_asks_for_the_process_list_once(server: List[List[str]])
     registry.info(entries, [])
     assert len(calls) == 6
     assert server.count(["process", "list", "--output", "json"]) == 2  # one for status, one for info
+
+
+def test_one_threads_snapshot_never_answers_another_threads_question(server: List[List[str]]) -> None:
+    """The MCP server serves tool calls side by side: a `services_status` call's snapshot must not hand its one answer
+    to a wait for a process to start (`wait_for`) running in another thread."""
+    opened, asked = threading.Event(), threading.Event()
+    elsewhere: List[int] = []
+
+    def inside() -> None:
+        with supervisor.snapshot():
+            supervisor.list_processes()
+            opened.set()
+            asked.wait(timeout=10)
+
+    def outside() -> None:
+        opened.wait(timeout=10)
+        supervisor.list_processes()
+        supervisor.list_processes()
+        elsewhere.append(1)
+        asked.set()
+
+    threads = [threading.Thread(target=inside), threading.Thread(target=outside)]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join(timeout=10)
+    assert elsewhere == [1]
+    assert server.count(["process", "list", "--output", "json"]) == 3

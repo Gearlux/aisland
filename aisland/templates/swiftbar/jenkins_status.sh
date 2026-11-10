@@ -1,6 +1,7 @@
 
 # Jenkins Data Root
-JENKINS_HOME="<[ jenkins_home ]>"
+JENKINS_HOME=<[ jenkins_home ]>
+JENKINS_URL=<[ jenkins_url ]>
 JOBS_DIR="${JENKINS_HOME}/jobs"
 
 GLOBAL_FAILED=false
@@ -74,10 +75,10 @@ process_item() {
 
     if [ "$IS_BRANCH" == "true" ]; then
         ENCODED_BRANCH=$(echo "$DISPLAY_NAME" | sed 's/\//%2F/g')
-        URL="<[ jenkins_url ]>/job/${PROJECT_NAME}/job/${ENCODED_BRANCH}"
+        URL="${JENKINS_URL}/job/${PROJECT_NAME}/job/${ENCODED_BRANCH}"
         DROPDOWN_TEXT+="${DISPLAY_NAME}: ${STATUS_STR} | href=${URL}\n"
     else
-        URL="<[ jenkins_url ]>/job/${PROJECT_NAME}"
+        URL="${JENKINS_URL}/job/${PROJECT_NAME}"
         DROPDOWN_TEXT+="Status: ${STATUS_STR} | href=${URL}\n"
     fi
 }
@@ -122,4 +123,4 @@ echo "---"
 echo -e "$DROPDOWN_TEXT"
 echo "---"
 echo "Refresh Now | refresh=true"
-echo "Open Jenkins | href=<[ jenkins_url ]>"
+echo "Open Jenkins | href=${JENKINS_URL}"

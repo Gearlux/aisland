@@ -13,6 +13,7 @@ from __future__ import annotations
 import asyncio
 import json
 import subprocess
+from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 import pytest
@@ -20,6 +21,7 @@ from mcp.client import Client
 
 from aisland import server
 from aisland.tunnel import host as tunnel_mod
+from aisland.tunnel import state as tunnel_state
 
 
 def _result(name: str, args: Optional[Dict[str, Any]] = None) -> Any:
@@ -79,8 +81,8 @@ def test_the_status_is_what_the_status_command_prints(monkeypatch: pytest.Monkey
     [
         ({}, ["tunnel", "start", "--json"]),
         (
-            {"name": "box", "provider": "github", "cli": "/tmp/vscode_cli.tar.gz"},
-            ["tunnel", "start", "--name", "box", "--provider", "github", "--cli", "/tmp/vscode_cli.tar.gz", "--json"],
+            {"name": "box", "provider": "github"},
+            ["tunnel", "start", "--name", "box", "--provider", "github", "--json"],
         ),
     ],
 )
@@ -91,9 +93,31 @@ def test_a_start_runs_the_start_command_and_answers_what_it_printed(
     assert commands.calls == [line]
 
 
-def test_a_start_waiting_for_a_sign_in_answers_the_code_to_hand_over(commands: _Commands) -> None:
-    commands.stdout = json.dumps({"pending_signin": {"url": "https://github.com/login/device", "code": "AB12-CD34"}})
-    assert _call("tunnel_start")["pending_signin"]["code"] == "AB12-CD34"
+def test_a_start_on_a_machine_with_no_account_answers_the_sign_in_command(
+    commands: _Commands, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """What `aisland tunnel start --json` prints on a machine holding no account — the real start's payload, never a
+    shape the command does not print: nothing started, and the command the person runs to sign in."""
+    monkeypatch.setenv(tunnel_state.TUNNEL_HOME_ENV, str(tmp_path / "tunnel"))
+    monkeypatch.setattr(tunnel_mod.binary, "install_cli", lambda tarball=None: tmp_path / "code")
+    monkeypatch.setattr(tunnel_mod, "signed_in", lambda: None)
+    monkeypatch.setattr(tunnel_mod.subprocess, "Popen", lambda *a, **k: pytest.fail("a tunnel was spawned"))
+    printed = tunnel_mod.start(provider="github", sign_in=False)  # what `--json` makes of it
+    commands.stdout = json.dumps(printed)
+    answer = _call("tunnel_start", {"provider": "github"})
+    assert answer["signin_required"] is True
+    assert answer["command"] == "aisland tunnel login --provider github"
+    assert answer["running"] is False
+
+
+def test_a_start_whose_tunnel_asks_for_a_sign_in_answers_the_code_to_hand_over(
+    commands: _Commands, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """The started tunnel's own log asks for a device sign-in: the payload `start` reads from it reaches the client."""
+    log = "To grant access to the server, please log into https://github.com/login/device and use code AB12-CD34\n"
+    printed = {"running": True, **tunnel_mod._scan_log(log)}
+    commands.stdout = json.dumps(printed)
+    assert _call("tunnel_start")["pending_signin"] == {"url": "https://github.com/login/device", "code": "AB12-CD34"}
 
 
 def test_a_stop_runs_the_stop_command(commands: _Commands) -> None:
@@ -117,11 +141,20 @@ def test_a_provider_aisland_does_not_offer_is_refused_before_anything_runs(comma
     assert commands.calls == []
 
 
-def test_the_status_only_reads_and_a_start_or_stop_destroys_nothing() -> None:
+def test_the_status_only_reads_a_start_destroys_nothing_and_a_stop_ends_the_sessions() -> None:
     assert server.mcp_server is not None
     hints = {tool.name: tool.annotations for tool in asyncio.run(server.mcp_server.list_tools())}
     status = hints["tunnel_status"]
     assert status is not None and status.read_only_hint is True
-    for name in ("tunnel_start", "tunnel_stop"):
+    for name, destructive in (("tunnel_start", False), ("tunnel_stop", True)):
         changing = hints[name]
-        assert changing is not None and changing.read_only_hint is False and changing.destructive_hint is False
+        assert changing is not None and changing.read_only_hint is False
+        assert changing.destructive_hint is destructive, name
+
+
+def test_a_cli_archive_of_ones_own_is_no_argument_of_the_tool(commands: _Commands) -> None:
+    """`--cli` installs and runs an archive unchecked: a person's choice at the command line, never a client's."""
+    assert _result("tunnel_start", {"cli": "/tmp/vscode_cli.tar.gz"}).is_error or commands.calls == [
+        ["tunnel", "start", "--json"]
+    ]
+    assert all("--cli" not in line for line in commands.calls)

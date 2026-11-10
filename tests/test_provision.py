@@ -24,7 +24,7 @@ from typing import Any
 import click
 import pytest
 
-from aisland import locations, paths
+from aisland import failures, locations, paths
 from aisland.setup import bashrc, installers
 
 
@@ -516,3 +516,31 @@ def test_a_half_unpacked_folder_from_an_interrupted_run_is_replaced(
     assert all((bin_dir / binary).is_symlink() for binary in ("node", "npm", "npx"))
     assert all((tools_dir / _subdir(spec) / "bin" / binary).is_file() for binary in ("node", "npm", "npx"))
     assert sorted(path.name for path in tools_dir.iterdir()) == sorted(["cache", _subdir(spec)])
+
+
+def test_a_failed_shell_switch_step_fails_the_run(monkeypatch: pytest.MonkeyPatch, capsys: Any) -> None:
+    """A refused `sudo tee /etc/shells` or `chsh` was only echoed: setup said nothing failed and exited 0."""
+    monkeypatch.setattr(platform, "system", lambda: "Darwin", raising=False)
+    real_exists = Path.exists
+    monkeypatch.setattr(
+        Path,
+        "exists",
+        lambda self: {"/opt/homebrew/bin/bash": True, "/etc/shells": False}.get(str(self), real_exists(self)),
+    )
+    monkeypatch.setenv("SHELL", "/bin/zsh")
+    monkeypatch.setattr(installers.console, "confirm", lambda *a, **k: True)
+
+    def refused(argv: Any, **kwargs: Any) -> None:
+        raise subprocess.CalledProcessError(1, argv)
+
+    monkeypatch.setattr(installers.subprocess, "run", refused)
+    failures.reset()
+    installers.offer_shell_switch({"bash"})
+    assert failures.reported() == 1
+    assert "Error: could not add /opt/homebrew/bin/bash to /etc/shells" in capsys.readouterr().err
+
+    monkeypatch.setattr(installers.subprocess, "run", lambda argv, **kwargs: None)
+    monkeypatch.setattr(installers.subprocess, "check_call", refused)
+    installers.offer_shell_switch({"bash"})
+    assert failures.reported() == 2
+    assert "Error: chsh could not switch your login shell to /opt/homebrew/bin/bash" in capsys.readouterr().err

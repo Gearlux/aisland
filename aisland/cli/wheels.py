@@ -8,7 +8,7 @@ from typing import List, Optional, Tuple
 import click
 from click.shell_completion import CompletionItem
 
-from aisland.cli._base import _Group
+from aisland.cli._base import Group
 from aisland.errors import quiet_completion
 from aisland.wheels import build as wheels
 from aisland.wheels import files as wheels_files
@@ -46,7 +46,7 @@ def _complete_zippable(ctx: click.Context, param: click.Parameter, incomplete: s
     return _complete_projects(incomplete, with_wheels=True)
 
 
-class _WheelsGroup(_Group):
+class _WheelsGroup(Group):
     """`aisland wheels <project> …` is `aisland wheels build <project> …`: a first word that names no command is
     the project to build — so a TAB there offers the projects after the commands."""
 

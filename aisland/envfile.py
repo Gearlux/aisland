@@ -4,7 +4,7 @@
 literal, double expanded, ``\\`` escapes), ``$VAR`` and ``${VAR}`` from an earlier line then the environment, a
 trailing comment dropped. :func:`read` is the ONE reader of that dialect — the services, the supervisor's ``apply`` and
 Jenkins all ask it — and :func:`write` the writer services publish through, quoting a value so both read it back as
-written. Imports nothing of aisland but :mod:`aisland.atomic` and :mod:`aisland.locations`.
+written. Imports nothing of aisland but :mod:`aisland.atomic`, :mod:`aisland.locations` and :mod:`aisland.paths`.
 """
 
 import os
@@ -12,7 +12,7 @@ import re
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple
 
-from aisland import atomic, locations
+from aisland import atomic, locations, paths
 
 #: A variable's name, as the shell reads one.
 _NAME = re.compile(r"[A-Za-z_][A-Za-z0-9_]*")
@@ -105,25 +105,40 @@ def _quoted(value: str) -> str:
     return "'" + value.replace("'", "'\\''") + "'"
 
 
+def _assigns(line: str) -> Optional[Tuple[str, bool]]:
+    """The name a line sets, as :func:`read` reads it, and whether it says ``export``; None for any other line."""
+    stripped = line.strip()
+    exported = stripped.startswith("export ")
+    if exported:
+        stripped = stripped[len("export ") :].lstrip()
+    name, equals, _raw = stripped.partition("=")
+    return (name, exported) if equals and _NAME.fullmatch(name) else None
+
+
 def write(values: Dict[str, str]) -> Path:
     """Set each ``KEY=VALUE`` in the workspace ``.env``, replacing an existing key IN PLACE.
 
     The counterpart of :func:`read`, for services that publish what they
     decided (a served directory, a URL) so a config or a later start can read it back as
     ``$KEY``. Neighbouring lines — comments included — are left untouched; a key not yet
-    present is appended. A value is quoted when the shell would otherwise change it (a space,
-    a ``$``, a quote), so both the shell and the reader get it back as written.
+    present is appended. A key set on several lines has its LAST one replaced — the one the shell and :func:`read`
+    keep — its ``export`` kept. A value is quoted when the shell would otherwise change it (a space,
+    a ``$``, a quote), so both the shell and the reader get it back as written. The read and the write are one step
+    under one lock (:func:`aisland.atomic.locked`, its file in the state's data folder, never beside ``.env`` in the
+    workspace root): two services starting at once each keep their key.
     """
     env_file = locations.workspace_root() / ".env"
-    lines = env_file.read_text().splitlines() if env_file.exists() else []
-    for key, value in values.items():
-        entry = f"{key}={_quoted(value)}"
-        for index, existing in enumerate(lines):
-            if existing.strip().startswith(f"{key}="):
-                lines[index] = entry
-                break
-        else:
-            lines.append(entry)
-    # Whole or not at all, and a new one readable by its owner alone: it holds the workspace's secrets.
-    atomic.write_text(env_file, "\n".join(lines) + "\n", new_mode=atomic.PRIVATE)
+    with atomic.locked(paths.data_dir() / "env"):
+        lines = env_file.read_text().splitlines() if env_file.exists() else []
+        for key, value in values.items():
+            entry = f"{key}={_quoted(value)}"
+            for index in reversed(range(len(lines))):
+                assigned = _assigns(lines[index])
+                if assigned is not None and assigned[0] == key:
+                    lines[index] = f"export {entry}" if assigned[1] else entry
+                    break
+            else:
+                lines.append(entry)
+        # Whole or not at all, and a new one readable by its owner alone: it holds the workspace's secrets.
+        atomic.write_text(env_file, "\n".join(lines) + "\n", new_mode=atomic.PRIVATE)
     return env_file

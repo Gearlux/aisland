@@ -1,35 +1,17 @@
-// VSCode tasks for opening the workspace services in the integrated
-// Simple Browser. Canonical copy lives here at `aisland/tasks.json`;
-// `aisland/setup.sh` symlinks `<workspace_root>/.vscode/tasks.json` to it
-// during bootstrap so VSCode picks it up automatically.
+// VS Code tasks of an aisland workspace: open the local Jenkins in VS Code's integrated Simple Browser.
+// This file is the copy aisland keeps; `aisland/setup.sh` links `<workspace>/.vscode/tasks.json` to it, so a
+// workspace bootstrapped from aisland's checkout has the task. A workspace of its own may copy it.
 //
-// How it works:
+// How it works: each entry of `tasks` is listed under "Tasks: Run Task" (Cmd/Ctrl+Shift+P, or Terminal → Run Task…).
+// Running one resolves its `${input:<id>}`, an entry of `inputs` of `type: "command"` that runs `simpleBrowser.show`
+// on the url; the task's `echo` only gives the shell task the command it must have.
 //
-//   - Each entry in `tasks[]` shows up in the "Tasks: Run Task" Quick Pick
-//     (Cmd/Ctrl+Shift+P → "Tasks: Run Task", or Terminal → Run Task...).
-//   - Selecting a task resolves its `${input:<id>}` reference, which fires
-//     the matching `inputs[]` entry of `type: "command"`. The command
-//     `simpleBrowser.show` opens the supplied URL in VSCode's built-in
-//     Simple Browser panel.
-//   - The trailing `echo` is a no-op shell — required because tasks of
-//     `type: "shell"` need a `command` field. The real work happens in the
-//     `inputs` resolution before `echo` runs.
+// The url is Jenkins' default port, 9080 (`aisland jenkins info` names the one it runs on). A Jenkins started with
+// `aisland jenkins start --port <port>` needs the url below changed to that port.
 //
-// Adding a new service:
-//
-//   1. Append a `{label, type: "shell", command: "echo",
-//      args: ["${input:openX}"], problemMatcher: []}` block under `tasks`.
-//   2. Append a `{id: "openX", type: "command",
-//      command: "simpleBrowser.show", args: "http://..."}` block under
-//      `inputs`.
-//   3. Save — VSCode auto-reloads the task list.
-//
-// Default ports (mirror `aisland/aisland/services/*.py`):
-//   - Jenkins      : 9080
-//   - MLflow       : 5005   (the aisland-launched service, not the
-//                            `mlflow ui` subcommand which defaults to 5000)
-//   - LabelStudio  : 9081
-//   - FiftyOne     : 5151
+// A task of your own for another service (one a project brings, such as `aisland <service> start`): add a task with
+// `"args": ["${input:openX}"]` and an input `{ "id": "openX", "type": "command", "command": "simpleBrowser.show",
+// "args": "http://localhost:<its port>" }`; VS Code reloads the list when the file is saved.
 {
     "version": "2.0.0",
     "tasks": [
@@ -44,42 +26,6 @@
                 "panel": "dedicated",
                 "close": true
             }
-        },
-        {
-            "label": "Open MLflow (integrated browser)",
-            "type": "shell",
-            "command": "echo",
-            "args": ["${input:openMlflow}"],
-            "problemMatcher": [],
-            "presentation": {
-                "reveal": "silent",
-                "panel": "dedicated",
-                "close": true
-            }
-        },
-        {
-            "label": "Open LabelStudio (integrated browser)",
-            "type": "shell",
-            "command": "echo",
-            "args": ["${input:openLabelStudio}"],
-            "problemMatcher": [],
-            "presentation": {
-                "reveal": "silent",
-                "panel": "dedicated",
-                "close": true
-            }
-        },
-        {
-            "label": "Open FiftyOne (integrated browser)",
-            "type": "shell",
-            "command": "echo",
-            "args": ["${input:openFiftyOne}"],
-            "problemMatcher": [],
-            "presentation": {
-                "reveal": "silent",
-                "panel": "dedicated",
-                "close": true
-            }
         }
     ],
     "inputs": [
@@ -88,24 +34,6 @@
             "type": "command",
             "command": "simpleBrowser.show",
             "args": "http://localhost:9080"
-        },
-        {
-            "id": "openMlflow",
-            "type": "command",
-            "command": "simpleBrowser.show",
-            "args": "http://localhost:5005"
-        },
-        {
-            "id": "openLabelStudio",
-            "type": "command",
-            "command": "simpleBrowser.show",
-            "args": "http://localhost:9081"
-        },
-        {
-            "id": "openFiftyOne",
-            "type": "command",
-            "command": "simpleBrowser.show",
-            "args": "http://localhost:5151"
         }
     ]
 }

@@ -4,21 +4,19 @@ The jobs aisland seeds into it are :mod:`aisland.services.jenkins_jobs`; the CI 
 :mod:`aisland.ci.ci_scaffold`'s.
 """
 
-import base64
-import json
 import logging
 import os
 import subprocess
-import urllib.request
 import xml.etree.ElementTree as ET
 from pathlib import Path
-from typing import Set
+from typing import Optional, Set
 
 import click
 
-from aisland import console, failures, paths
+from aisland import console, failures, paths, venv
 from aisland.downloads import download, sha256
 from aisland.errors import AislandError
+from aisland.services import supervisor
 from aisland.services.base import BaseService
 from aisland.services.jenkins_java import JenkinsJava, choose_java, find_runtimes, newest_versioned_formula
 from aisland.setup import provision
@@ -72,13 +70,20 @@ class JenkinsService(BaseService):
 
     def __init__(self) -> None:
         super().__init__("jenkins")
-        self.war_file = paths.bin_dir() / "jenkins.war"
+        self.war_file = paths.bin_dir() / f"jenkins-{self.WAR_VERSION}.war"
         self.manager_jar = paths.bin_dir() / f"jenkins-plugin-manager-{self.MANAGER_VERSION}.jar"
 
     def ensure_war(self) -> bool:
-        """Download the pinned Jenkins WAR unless one is already in the bin dir; return whether it is there now. A WAR
-        already in the bin dir is used as it is."""
-        return _fetch_pinned(f"Jenkins {self.WAR_VERSION}", self.URL, self.war_file, self.WAR_SHA256)
+        """Download the pinned Jenkins WAR unless it is already in the bin dir; return whether it is there now. The file
+        is named by its version, so a new pin downloads its own; once it is there, the WARs of other versions (and the
+        unversioned ``jenkins.war`` of an older aisland) are removed. A WAR of the pinned version already there is used
+        as it is."""
+        if not _fetch_pinned(f"Jenkins {self.WAR_VERSION}", self.URL, self.war_file, self.WAR_SHA256):
+            return False
+        for other in [*self.war_file.parent.glob("jenkins-*.war"), self.war_file.parent / "jenkins.war"]:
+            if other != self.war_file:
+                other.unlink(missing_ok=True)
+        return True
 
     def ensure_manager(self) -> bool:
         """Download the pinned plugin manager unless it is already in the bin dir; return whether it is there now. Once
@@ -155,11 +160,11 @@ class JenkinsService(BaseService):
             return
         console.echo(f"  - {choice.describe()}.")
 
-    def setup(self) -> None:
-        """Download the Jenkins WAR (once the user agrees) and the plugin manager. A failed download is reported: the
-        command exits 1 (aisland.failures)."""
-        if self.ensure_war_asking():
-            self.ensure_manager()
+    def setup(self) -> bool:
+        """Download the Jenkins WAR (once the user agrees) and the plugin manager; whether both are there now. A failed
+        download is reported once (aisland.failures: the command exits 1), and the caller stops there — Jenkins is
+        neither started nor seeded without them."""
+        return self.ensure_war_asking() and self.ensure_manager()
 
     def _are_plugins_installed(self) -> bool:
         """Check if all required plugins are present in the plugins directory."""
@@ -250,9 +255,7 @@ class JenkinsService(BaseService):
                     remote_elem = root.find(".//remote")
                     if remote_elem is not None and remote_elem.text:
                         url = remote_elem.text
-                        # Local paths start with / (Unix) or X: (Windows)
-                        is_local = url.startswith("/") or (len(url) > 1 and url[1] == ":")
-                        if not is_local:
+                        if not url.startswith("/"):  # a local job's remote is this machine's path
                             return True
                 except (OSError, ET.ParseError):  # a job file Jenkins is still writing: no remote to read
                     pass
@@ -303,9 +306,12 @@ class JenkinsService(BaseService):
             )
             console.echo("=" * 65 + "\n")
 
-    def launch(self, port: int = DEFAULT_PORT, background: bool = False) -> None:
-        """Start the Jenkins server."""
-        self.setup()
+    def launch(self, port: Optional[int] = None, background: bool = False) -> None:
+        """Start the Jenkins server, on ``port``, else the port it last ran on (:meth:`port`)."""
+        port = self.port() if port is None else port
+        if not self.setup():
+            console.echo("Jenkins was not started: the download above failed.")
+            return
         java = self.java_asking()
         console.echo(f"Jenkins: http://localhost:{port}")
         self.check_credentials_and_print_instructions(port)
@@ -332,7 +338,7 @@ class JenkinsService(BaseService):
             f"--httpListenAddress={self.LISTEN_ADDRESS}",
         ]
         workspace_root = get_workspace_root()
-        venv_bin = workspace_root / ".venv" / "bin"
+        venv_bin = venv.venv_bin(workspace_root)
         # The bin folder (aisland/bin) hosts symlinks to userspace-installed tools like
         # node/npm/npx (see installers.install_userspace_tool). Putting it on
         # Jenkins' PATH means every job inherits these without per-Jenkinsfile
@@ -359,10 +365,18 @@ class JenkinsService(BaseService):
         if self.is_running() and self.admin_password_file.exists():
             console.echo(f"    Initial admin password: in {self.admin_password_file}")
 
-    def url(self) -> str:
-        """Where Jenkins answers: the port it runs on, else :attr:`DEFAULT_PORT` (it is not running, or not here)."""
+    def port(self) -> int:
+        """The port Jenkins runs on, else the one it last ran on (its supervisor registration, which a ``reset``
+        drops), else :attr:`DEFAULT_PORT`: a restart, ``jenkins init`` and every link keep a ``--port`` once given."""
         ports = self.get_ports()
-        return f"http://localhost:{ports[0] if ports else self.DEFAULT_PORT}"
+        if ports:
+            return ports[0]
+        registered = supervisor.get_registered_port(self.name)
+        return self.DEFAULT_PORT if registered is None else registered
+
+    def url(self) -> str:
+        """Where Jenkins answers: ``http://localhost:<port>`` on :meth:`port`."""
+        return f"http://localhost:{self.port()}"
 
     def info(self) -> None:
         """Show detailed Jenkins configuration."""
@@ -382,48 +396,6 @@ class JenkinsService(BaseService):
             console.echo("  Admin password: (not yet generated — start Jenkins to create it)")
         creds_file = self.service_data_dir / "credentials.xml"
         console.echo(f"  Credentials   : {creds_file} " + ("(present)" if creds_file.exists() else "(not configured)"))
-
-    def safe_restart(self) -> None:
-        """Issue a safeRestart command to Jenkins."""
-        if not self.is_running():
-            return
-
-        console.echo("  - Issuing Safe Restart to Jenkins (waiting for active jobs)...")
-        url = self.url()
-
-        if self.admin_password_file.exists():
-            password = self.admin_password_file.read_text().strip()
-            auth = base64.b64encode(f"admin:{password}".encode()).decode()
-            auth_str = f"Basic {auth}"
-
-            # Get Crumb
-            crumb_headers = {}
-            try:
-                crumb_url = f"{url}/crumbIssuer/api/json"
-                req = urllib.request.Request(crumb_url)
-                req.add_header("Authorization", auth_str)
-                with urllib.request.urlopen(req, timeout=5) as response:
-                    data = json.loads(response.read().decode())
-                    crumb_headers[data["crumbRequestField"]] = data["crumb"]
-            except (OSError, ValueError, KeyError):  # no crumb issuer: the restart is tried without one
-                pass
-
-            try:
-                req = urllib.request.Request(url + "/safeRestart", method="POST")
-                req.add_header("Authorization", auth_str)
-                for k, v in crumb_headers.items():
-                    req.add_header(k, v)
-                with urllib.request.urlopen(req, timeout=5):
-                    pass
-                console.echo("  - Safe Restart initiated. Jenkins will reload soon.")
-                return
-            except (OSError, ValueError) as e:  # no answer, a refusal (HTTPError is an OSError), no JSON
-                console.echo(f"  - Safe Restart API failed: {e}. Falling back to process restart.")
-        else:
-            console.echo("  - Missing API credentials. Falling back to process restart.")
-
-        self.stop()
-        self.launch(background=True)
 
 
 def _fetch_pinned(what: str, url: str, target: Path, digest: str) -> bool:

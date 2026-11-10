@@ -186,6 +186,78 @@ class TestWriteExtra:
         assert list(_read(path)["tool"]["uv"]["sources"]) == ["acme.tools"]
 
 
+#: The same project, its extras and its uv sources written inline: TOML's other ways of writing a table.
+_INLINE = """\
+[project]
+name = "app"
+version = "0.1.0"
+dependencies = ["liba"]
+optional-dependencies = { remote = ["liba @ git+https://example.com/liba.git"] }
+
+[tool.aisland]
+manual-extras = ["remote", "wheels"]
+
+[tool.uv]
+sources = { viewer = { path = "../viewer" } }
+"""
+
+
+class TestTheProjectsOtherLayouts:
+    """`check_extra` missed an inline table or dotted keys, so `write_extra` appended a second
+    `[project.optional-dependencies]` and failed — after every wheel was built and the wheels folder replaced."""
+
+    @pytest.mark.parametrize(
+        "text",
+        [
+            _INLINE,
+            _INLINE.replace(
+                'optional-dependencies = { remote = ["liba @ git+https://example.com/liba.git"] }',
+                'optional-dependencies.remote = ["liba @ git+https://example.com/liba.git"]',
+            ),
+            'project.name = "app"\nproject.version = "0.1.0"\nproject.dependencies = ["liba"]\n'
+            'project.optional-dependencies.remote = ["liba @ git+https://example.com/liba.git"]\n'
+            'tool.aisland.manual-extras = ["remote", "wheels"]\ntool.uv.sources.viewer = { path = "../viewer" }\n',
+        ],
+        ids=["inline", "dotted", "dotted-at-the-top"],
+    )
+    def test_the_check_passes_and_the_extra_joins_the_projects_own_tables(self, tmp_path: Path, text: str) -> None:
+        path = _pyproject(tmp_path, text)
+
+        we.check_extra(path, "wheels", ["liba", "lib-b"])
+        assert path.read_text() == text  # the check writes nothing
+        we.write_extra(path, "wheels", _WHEELS, _COMMAND)
+
+        data = _read(path)
+        assert data["project"]["optional-dependencies"] == {
+            "remote": ["liba @ git+https://example.com/liba.git"],
+            "wheels": ["lib-b", "liba"],
+        }
+        assert data["tool"]["uv"]["sources"]["viewer"] == {"path": "../viewer"}
+        assert data["tool"]["uv"]["sources"]["liba"] == [
+            {"path": "wheels/liba-0.1.0-py3-none-any.whl", "extra": "wheels"}
+        ]
+        assert data["tool"]["aisland"] == {"manual-extras": ["remote", "wheels"]}
+        assert we.write_extra(path, "wheels", _WHEELS, _COMMAND) is False  # a rerun finds its blocks
+
+    def test_the_comment_of_a_moved_inline_table_stays_with_it(self, tmp_path: Path) -> None:
+        path = _pyproject(tmp_path, _INLINE.replace('git"] }\n', 'git"] }  # pinned for the demo\n', 1))
+
+        we.write_extra(path, "wheels", _WHEELS, _COMMAND)
+
+        assert "[project.optional-dependencies] # pinned for the demo\n" in path.read_text()
+
+    def test_a_layout_the_edit_cannot_write_into_is_refused_by_the_check(self, tmp_path: Path) -> None:
+        """`tool.uv` itself inline: no `[tool.uv.sources]` may extend it, so the check refuses before any build."""
+        path = _pyproject(
+            tmp_path,
+            '[project]\nname = "app"\nversion = "0.1.0"\n\n[tool]\nuv = { native-tls = true }\n'
+            'aisland = { manual-extras = ["wheels"] }\n',
+        )
+
+        with pytest.raises(click.ClickException, match=rf"^{path}: "):
+            we.check_extra(path, "wheels", ["liba"])
+
+
 class TestCheckExtra:
     def test_a_project_that_does_not_mark_the_extra_manual_is_refused_at_the_line(self, tmp_path: Path) -> None:
         path = _pyproject(tmp_path, _PYPROJECT.replace('["remote", "wheels"]', '["remote"]'))

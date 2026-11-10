@@ -25,6 +25,7 @@ import signal
 import subprocess
 import sys
 import tarfile
+import zipfile
 from pathlib import Path
 from subprocess import CompletedProcess
 from typing import Any, Dict, List, Optional
@@ -385,16 +386,51 @@ def test_an_archive_without_the_binary_is_refused_by_name(tmp_path: Path) -> Non
 
 
 @pytest.mark.parametrize(
-    "machine, asset",
-    [("x86_64", "cli-alpine-x64"), ("AMD64", "cli-alpine-x64"), ("aarch64", "cli-alpine-arm64")],
+    "system, machine, asset",
+    [
+        ("Linux", "x86_64", "cli-alpine-x64"),
+        ("Linux", "AMD64", "cli-alpine-x64"),
+        ("Linux", "aarch64", "cli-alpine-arm64"),
+        ("Darwin", "arm64", "cli-darwin-arm64"),
+        ("Darwin", "x86_64", "cli-darwin-x64"),
+    ],
 )
-def test_the_download_identifier_follows_the_architecture(machine: str, asset: str) -> None:
-    assert tunnel_binary.cli_asset(machine) == asset
+def test_the_download_identifier_follows_the_system_and_the_architecture(system: str, machine: str, asset: str) -> None:
+    """macOS gets macOS's CLI: Linux's alpine build there ran into `Exec format error` on the first `status`."""
+    assert tunnel_binary.cli_asset(machine, system) == asset
 
 
-def test_an_unsupported_architecture_is_refused_and_named() -> None:
-    with pytest.raises(click.ClickException, match="ppc64le"):
-        tunnel_binary.cli_asset("ppc64le")
+@pytest.mark.parametrize("system, machine", [("Linux", "ppc64le"), ("FreeBSD", "amd64")])
+def test_an_unsupported_system_or_architecture_is_refused_and_named(system: str, machine: str) -> None:
+    with pytest.raises(click.ClickException, match=f"{system.lower()} {machine}"):
+        tunnel_binary.cli_asset(machine, system)
+
+
+def test_macos_s_zip_archive_installs_its_code_binary(state: Path, tmp_path: Path) -> None:
+    archive = tmp_path / "vscode_cli_darwin_arm64_cli.zip"
+    with zipfile.ZipFile(archive, "w") as zipped:
+        zipped.writestr("code", b"#!/bin/sh\nexit 0\n")
+    installed = tunnel_binary.install_cli(tarball=archive)
+    assert installed.read_bytes() == b"#!/bin/sh\nexit 0\n"
+    assert installed.stat().st_mode & 0o111
+    empty = tmp_path / "empty.zip"
+    with zipfile.ZipFile(empty, "w") as zipped:
+        zipped.writestr("README", b"")
+    with pytest.raises(click.ClickException, match="holds no 'code' binary"):
+        tunnel_binary.install_cli(tarball=empty, force=True)
+
+
+@pytest.mark.parametrize(
+    "body, mode", [(b"\x7fELF\x02 another machine's build", 0o755), (b"#!/bin/sh\nexit 0\n", 0o644)]
+)
+def test_a_cli_the_system_will_not_run_is_refused_in_words(state: Path, body: bytes, mode: int) -> None:
+    """A CLI left by another machine's build, or one that lost its execute bit: `status` names the file and what to do,
+    never a traceback."""
+    tunnel_binary.cli_path().parent.mkdir(parents=True, exist_ok=True)
+    tunnel_binary.cli_path().write_bytes(body)
+    tunnel_binary.cli_path().chmod(mode)
+    with pytest.raises(AislandError, match=r"The VS Code CLI at .* cannot run here .*Remove it and run"):
+        tunnel.signed_in()
 
 
 # --- 5. where state lives ---------------------------------------------------------------------

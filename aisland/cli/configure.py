@@ -10,7 +10,7 @@ import click
 from click.shell_completion import CompletionItem
 
 from aisland import locations
-from aisland.cli._base import _Command, _complete_workspace_projects, _configure_root, _Group
+from aisland.cli._base import Command, Group, complete_workspace_projects, workspace_root_found
 from aisland.errors import quiet_completion
 from aisland.setup import configure
 from aisland.workspace import check as workspace_check
@@ -21,13 +21,13 @@ from aisland.workspace.projects import get_workspace_root
 def _plugin_group(plugin: configure.Plugin) -> click.Group:
     """`aisland workspace configure <plugin>`: its rows, and `set` / `unset` built from its keys."""
 
-    @click.group(name=plugin.name, cls=_Group, invoke_without_command=True, help=plugin.summary)
+    @click.group(name=plugin.name, cls=Group, invoke_without_command=True, help=plugin.summary)
     @click.option("--json", "as_json", is_flag=True, help="Print the rows and notes as one JSON object.")
     @click.pass_context
     def group(ctx: click.Context, as_json: bool) -> None:
         if ctx.invoked_subcommand is not None:
             return
-        root = _configure_root()
+        root = workspace_root_found()
         rows, notes = plugin.rows(root), plugin.notes(root)
         if as_json:
             click.echo(json.dumps({"rows": rows, "notes": notes}, indent=2))
@@ -39,22 +39,22 @@ def _plugin_group(plugin: configure.Plugin) -> click.Group:
         value = values.pop(plugin.main.name)
         assert value is not None  # a required argument
         options = {key.name: values.get(key.name) for key in plugin.options}
-        raise SystemExit(plugin.set(_configure_root(), project, value, options, machine_only))
+        raise SystemExit(plugin.set(workspace_root_found(), project, value, options, machine_only))
 
     def unset(project: str, machine_only: bool) -> None:
-        raise SystemExit(plugin.unset(_configure_root(), project, machine_only))
+        raise SystemExit(plugin.unset(workspace_root_found(), project, machine_only))
 
     choices = click.Choice(plugin.main.choices) if plugin.main.choices else click.STRING
     machine = click.Option(
         ["--machine-only"], is_flag=True, help="Change this machine only (.git/config); commit nothing."
     )
     group.add_command(
-        _Command(
+        Command(
             "set",
             callback=set_,
             help=f"Set PROJECT's {plugin.main.name}: {plugin.main.help}",
             params=[
-                click.Argument(["project"], shell_complete=_complete_workspace_projects),
+                click.Argument(["project"], shell_complete=complete_workspace_projects),
                 click.Argument([plugin.main.name], type=choices),
                 *(click.Option([f"--{key.name}"], default=None, help=key.help) for key in plugin.options),
                 machine,
@@ -62,11 +62,11 @@ def _plugin_group(plugin: configure.Plugin) -> click.Group:
         )
     )
     group.add_command(
-        _Command(
+        Command(
             "unset",
             callback=unset,
             help=f"Remove PROJECT's {plugin.name} settings (with --machine-only, this machine's only).",
-            params=[click.Argument(["project"], shell_complete=_complete_workspace_projects), machine],
+            params=[click.Argument(["project"], shell_complete=complete_workspace_projects), machine],
         )
     )
     return group
@@ -76,13 +76,13 @@ def _selection_group(plugin: configure.SelectionPlugin) -> click.Group:
     """`aisland workspace configure <selection>`: its names and both layers, `set NAME…` and `unset`."""
     axis = plugin.axis
 
-    @click.group(name=axis.name, cls=_Group, invoke_without_command=True, help=axis.question)
+    @click.group(name=axis.name, cls=Group, invoke_without_command=True, help=axis.question)
     @click.option("--json", "as_json", is_flag=True, help="Print the rows as one JSON object.")
     @click.pass_context
     def group(ctx: click.Context, as_json: bool) -> None:
         if ctx.invoked_subcommand is not None:
             return
-        rows = selection.rows(_configure_root(), axis)
+        rows = selection.rows(workspace_root_found(), axis)
         if as_json:
             click.echo(json.dumps({"rows": rows, "notes": []}, indent=2))
             return
@@ -102,16 +102,16 @@ def _selection_group(plugin: configure.SelectionPlugin) -> click.Group:
         return complete
 
     def set_(names: Tuple[str, ...], machine_only: bool) -> None:
-        raise SystemExit(selection.set_selection(_configure_root(), axis, names, machine_only))
+        raise SystemExit(selection.set_selection(workspace_root_found(), axis, names, machine_only))
 
     def unset(names: Tuple[str, ...], machine_only: bool) -> None:
-        raise SystemExit(selection.unset_selection(_configure_root(), axis, machine_only, names))
+        raise SystemExit(selection.unset_selection(workspace_root_found(), axis, machine_only, names))
 
     machine = click.Option(
         ["--machine-only"], is_flag=True, help="Change this machine only (.git/config); commit nothing."
     )
     group.add_command(
-        _Command(
+        Command(
             "set",
             callback=set_,
             help=f"Choose the {axis.one}s to install (the whole list) and reinstall the projects offering them.",
@@ -124,7 +124,7 @@ def _selection_group(plugin: configure.SelectionPlugin) -> click.Group:
         )
     )
     group.add_command(
-        _Command(
+        Command(
             "unset",
             callback=unset,
             help=(
@@ -149,7 +149,7 @@ def _configure_plugins() -> Dict[str, configure.AnyPlugin]:
     return configure.plugins(get_workspace_root() if locations.workspace_found() else None)
 
 
-class _ConfigureGroup(_Group):
+class _ConfigureGroup(Group):
     """`aisland workspace configure`: one subgroup per plugin and selection, built when it is asked for."""
 
     def list_commands(self, ctx: click.Context) -> List[str]:

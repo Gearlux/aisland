@@ -2,9 +2,9 @@
 
 The services aisland runs for a workspace — Jenkins, Docker and, on macOS, the SwiftBar menu — with the supervisor
 that keeps them running and the commands that start, stop and inspect each. A project of the workspace can bring more services; they run the same way and start only when named
-(declared in the project's `pyproject.toml`: the example under [Check Status](#check-status)).
+([a service a project brings](#a-service-a-project-brings)).
 
-## Default Ports
+## Default ports
 
 | Service       | Port | URL                        |
 |---------------|------|----------------------------|
@@ -12,8 +12,10 @@ that keeps them running and the commands that start, stop and inspect each. A pr
 
 Jenkins takes another port with `--port` (`aisland jenkins start --port 9081`).
 
-## Check Status
-Retrieve service information for all infrastructure components:
+## Run and inspect the services
+
+Start, stop and inspect every service, or the ones named:
+
 ```bash
 aisland services                  # the supervisor and every service
 aisland services start -b         # start the default ones in the background
@@ -22,17 +24,22 @@ aisland services status           # each service's state
 aisland services info             # each one's URL, credentials and paths
 aisland services restart jenkins  # stop and start those named
 aisland services stop             # stop the default ones, the container engine last
-aisland services reset jenkins    # stop it and wipe its data (asks first)
+aisland services reset jenkins    # stop it and wipe its data (asks first, naming what goes; -y does not)
 ```
 
 Without a name, `start`, `stop`, `restart` and `reset` act on the services started by default — Docker, Jenkins and
-SwiftBar — and `status` and `info` on every service. Each service also has its own group with the same verbs
+SwiftBar — and `status` and `info` on every service. A service that does not stop in time is left as it is: `restart`
+starts no second copy, and `reset` wipes nothing while it still runs (`Error: Jenkins is still running, so its data
+was not wiped.`). Of several services named, one that fails — to start, stop or reset — is reported and the others
+still get their turn. Each service also has its own group with the same verbs
 (`aisland jenkins status`).
 
 `aisland services status --json` prints the same states for a script, one object per service:
 `{"services": [{"service": "jenkins", "state": "running", "pid": 4242, "ports": [9080], "ready": null}, …]}`. A
 `state` is `running`, `stopped`, `not installed`, `not supported` (SwiftBar off macOS) or `unknown` (a project's
 service that Docker runs: its own `status` shows it).
+
+## A service a project brings
 
 A project can bring a service of its own, declared in its `pyproject.toml` — no aisland code:
 
@@ -108,7 +115,7 @@ class Viewer:
         ctx.run(["viewer-app", "--port", str(port)], port=port, ready="/")
 ```
 
-## Service Supervision (process-compose)
+## Service supervision (process-compose)
 
 Aisland delegates process supervision (spawn, liveness, readiness, crash
 recovery, log capture, port discovery) to
@@ -341,7 +348,7 @@ aisland docker stop
 # Check Docker status
 aisland docker status
 
-# Stop Docker and wipe all its data (asks first; --yes does not)
+# Stop Docker and wipe all its data (asks once; --yes / -y does not)
 aisland docker reset
 ```
 

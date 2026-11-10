@@ -2,15 +2,15 @@
 
 The Git aliases `aisland setup` installs for a workspace whose projects are Git submodules — pull, push, switch, merge, tag and status across the root (the workspace's own repository) and every project — and the `safe` alias that runs the quality gates before pushing.
 
-## Submodule Management
+## Submodule management
 
 A workspace can keep its projects as Git submodules of the root repository. The aliases below work on the root and every active submodule at once.
 
-### Workspace Git Aliases
+### Workspace git aliases
 
 The aliases below (`pull-all`, `push-all`, `switch-all`, `merge-all`, `tag-all`, `status-all`, `safe`) are installed by `aisland setup` into the **local** config of the root repository *and* every active submodule. They assume the workspace layout and toolchain, so they are deliberately not written to the global config — that would leak workspace-specific behavior into unrelated repositories. The definitions live in the aisland package's [`setup_git.sh`](../aisland/git/setup_git.sh) (`pull-all` calls [`git_pull_all.sh`](../aisland/git/git_pull_all.sh) beside it); `aisland setup` installs them again, which is also how to pick up a newly activated submodule.
 
-### Pulling Everything (`pull-all`)
+### Pulling everything (`pull-all`)
 
 `git pull-all` brings the whole workspace up to date with origin: every active submodule, then the root, on the root's branch. Type it in the root or inside any submodule — it always pulls the whole workspace.
 
@@ -70,9 +70,9 @@ root                   recorded submodule pointers: alpha, beta
 An untracked submodule (`aisland workspace track unset`: `ignore = all` in `.gitmodules` or this machine's
 `.git/config`) is pulled the same way and never recorded.
 
-The merges are explicit (`git fetch` + `git merge`, never `git pull`), so the result does not depend on a machine's `pull.rebase` setting. The logic lives in [`git_pull_all.sh`](../aisland/git/git_pull_all.sh) (why it is shaped this way: [architecture.md](architecture.md), "`pull-all` settles a submodule pointer only to a commit holding both sides"). In Claude Code, `/pull-all` (one of the commands [harness.md](harness.md) describes) runs it and finishes the listed conflicts for you; `/push-all` runs `/pull-all`, pushes, and ends with `aisland workspace mirror sync` (see [Project Mirrors](sources.md#project-mirrors-aisland-workspace-configure-mirror)).
+The merges are explicit (`git fetch` + `git merge`, never `git pull`), so the result does not depend on a machine's `pull.rebase` setting. The logic lives in [`git_pull_all.sh`](../aisland/git/git_pull_all.sh) (why it is shaped this way: [the decision record "`pull-all` settles a submodule pointer only to a commit holding both sides"](decisions/0016-pull-all-settles-a-submodule-pointer-only-to-a-commit.md)). In Claude Code, `/pull-all` (one of the commands [harness.md](harness.md) describes) runs it and finishes the listed conflicts for you; `/push-all` runs `/pull-all`, pushes, and ends with `aisland workspace mirror sync` (see [Project Mirrors](sources.md#project-mirrors-aisland-workspace-configure-mirror)).
 
-### Pushing Everything (`push-all`)
+### Pushing everything (`push-all`)
 
 `git push-all` pushes the current branch of every submodule, then the root's — the root only when every submodule push succeeded, so the root on origin never records a submodule commit origin does not have. A root with no `origin` remote is skipped, ending with `root: no origin remote — not pushed`.
 
@@ -80,7 +80,7 @@ The merges are explicit (`git fetch` + `git merge`, never `git pull`), so the re
 git push-all
 ```
 
-### Switching All Submodules (`switch-all`)
+### Switching all submodules (`switch-all`)
 
 When moving between development streams (e.g., switching from a feature branch back to `dev/main`), you often need to update the branch context for both the parent repository and all its constituent submodules simultaneously.
 
@@ -90,7 +90,7 @@ To use it:
 git switch-all dev/main
 ```
 
-### Merging All Submodules (`merge-all`)
+### Merging all submodules (`merge-all`)
 
 When you need to merge a base branch (e.g., `main` or `dev/main`) into your current feature branch across all projects in the workspace, you can use `merge-all`. This ensures your entire dependency tree stays synchronized with upstream changes.
 
@@ -100,7 +100,7 @@ To use it (e.g., to merge `dev/main` into your current branch everywhere):
 git merge-all dev/main
 ```
 
-### Tagging All Submodules (`tag-all`)
+### Tagging all submodules (`tag-all`)
 
 When you want to mark a workspace-wide snapshot (a release, or a proof-of-concept milestone), you need the *same* tag on the root repository and every active submodule, then pushed to each remote. `tag-all` is the cross-repo analogue of a single `git tag`: it creates one **annotated** tag at the current `HEAD` of the parent and each active submodule, then pushes it. Tags are created everywhere **first** (cheap, local) before any push, so an unreachable remote (e.g. an off-VPN private host) leaves every local tag intact — you simply re-run to push the rest. The tag message defaults to the tag name if omitted.
 
@@ -112,7 +112,7 @@ git tag-all 'v1.0.0' 'First stable release'
 
 > Tags are non-forcing: if `<tag>` already exists, the command aborts before pushing. Delete it first (`git tag -d <tag>` / `git submodule foreach 'git tag -d <tag>'`) to re-tag.
 
-### Checking Status of All Submodules (`status-all`)
+### Checking the status of all submodules (`status-all`)
 
 To quickly see the status and current branch of the root repository and all its constituent submodules, you can use the `status-all` alias.
 
@@ -122,7 +122,7 @@ To use it:
 git status-all
 ```
 
-### Safely Pushing Changes (`safe`)
+### Safely pushing changes (`safe`)
 
 `git safe "<message>"` runs a project's quality gates, then commits and pushes it. Run it from inside a project
 submodule (or the workspace root), on the branch you want pushed:

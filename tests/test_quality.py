@@ -157,3 +157,8 @@ def test_act_is_a_gate_only_for_a_project_with_workflows(workspace: Path) -> Non
 
     assert result.exit_code == 0, result.output
     assert [(tool, Path(folder).name, args) for tool, folder, args in _calls(log)] == [("act", "lib", "--list")]
+
+
+def test_the_help_names_what_each_word_takes() -> None:
+    usage = CliRunner().invoke(main, ["check", "--help"]).output.splitlines()[0]
+    assert usage.endswith("check [OPTIONS] [TOOL] [PROJECT]")

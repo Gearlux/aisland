@@ -80,7 +80,7 @@ Outside a workspace, and for a single run, pytest's own switches work as well:
 
 To keep the records but out of git, add `.aisland/` to the repository's `.gitignore`.
 
-## Test-run statistics (`aisland tests report`)
+## The report (`aisland tests report`)
 
 Every project has two test runs: plain `pytest` is the **fast run** (within 5 minutes — what
 you run before and after a change), `pytest -m slow` the **slow run** (CI's), `pytest -m ''`
@@ -122,5 +122,5 @@ several tests at once (pytest-xdist's `-n`) loses one second of wall time for ev
 list covers the overrun in test time: the report says how many tests the latest runs ran at once, and, when every
 never-failed test together still leaves the run over budget, by how much.
 The fast run's time counts only complete runs of the whole fast run. Why it is built this way:
-[`architecture.md`](architecture.md) → "Every pytest run of a workspace project is
-recorded".
+[the decision record "Every pytest run of a workspace project is
+recorded"](decisions/0015-every-pytest-run-of-a-workspace-project-is-recorded.md).

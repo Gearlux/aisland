@@ -214,7 +214,7 @@ def test_the_release_names_its_author_and_where_it_lives(release_metadata: Messa
         "Homepage": "https://github.com/Gearlux/aisland",
         "Repository": "https://github.com/Gearlux/aisland.git",
         "Issues": "https://github.com/Gearlux/aisland/issues",
-        "Changelog": "https://github.com/Gearlux/aisland/blob/main/CHANGELOG.md",
+        "Changelog": f"https://github.com/Gearlux/aisland/blob/v{release_metadata['Version']}/CHANGELOG.md",
     }
 
 
@@ -504,17 +504,25 @@ def test_the_tag_guard_refuses_a_tag_that_is_not_the_version(
     "heading, accepted",
     [
         ("## [0.1.0] - 2026-11-03", True),
-        ("## [0.1.0] - unreleased", False),
+        ("## [0.1.0] - 2026-11-02", False),
+        ("## [0.1.0] - Unreleased", False),
         ("## [0.1.0]", False),
         ("## [0.1.01] - 2026-11-03", False),
         ("## [0.2.0] - 2026-11-03", False),
     ],
 )
-def test_the_changelog_guard_refuses_a_version_the_changelog_does_not_date(
+def test_the_changelog_guard_refuses_a_version_the_changelog_does_not_date_as_its_tag(
     release_workflow: Workflow, tmp_path: Path, heading: str, accepted: bool
 ) -> None:
-    """Keep a Changelog gives a release its date: the tag `v0.1.0` is refused until the entry has one."""
+    """Keep a Changelog gives a release its date: the tag `v0.1.0` is refused until the entry carries the day of the
+    commit it tags (here 2026-11-03), so a date written ahead of time, or left from an earlier attempt, never ships."""
     (tmp_path / "CHANGELOG.md").write_text(f"# Changelog\n\n## [Unreleased]\n\n{heading}\n\n- a change\n")
+    when = {"GIT_COMMITTER_DATE": "2026-11-03T12:00:00+00:00", "GIT_AUTHOR_DATE": "2026-11-03T12:00:00+00:00"}
+    git = ["git", "-c", "user.name=t", "-c", "user.email=t@example.com", "-c", "commit.gpgsign=false"]
+    subprocess.run(["git", "init", "-q"], cwd=tmp_path, check=True)
+    subprocess.run(
+        [*git, "commit", "-q", "--allow-empty", "-m", "release"], cwd=tmp_path, check=True, env={**os.environ, **when}
+    )
     script = _step(release_workflow, "build", "Guard - the CHANGELOG dates this version")["run"]
     result = subprocess.run(
         ["bash", "-e", "-c", script],
@@ -524,6 +532,37 @@ def test_the_changelog_guard_refuses_a_version_the_changelog_does_not_date(
         text=True,
     )
     assert (result.returncode == 0) is accepted, result.stdout + result.stderr
+
+
+@pytest.mark.parametrize("tagged, accepted", [("main", True), ("dev/main", False)])
+def test_the_main_guard_refuses_a_tag_on_a_commit_main_does_not_hold(
+    release_workflow: Workflow, tmp_path: Path, tagged: str, accepted: bool
+) -> None:
+    """A release is made from `main`: the guard's own script, run in a clone whose origin's `main` lags `dev/main`
+    by one commit, passes on main's commit and refuses the one only `dev/main` holds."""
+    git = ["git", "-c", "user.name=t", "-c", "user.email=t@example.com", "-c", "commit.gpgsign=false"]
+    origin, clone = tmp_path / "origin", tmp_path / "clone"
+    subprocess.run(["git", "init", "-q", "-b", "main", str(origin)], check=True)
+    subprocess.run([*git, "commit", "-q", "--allow-empty", "-m", "released"], cwd=origin, check=True)
+    subprocess.run(["git", "switch", "-q", "-c", "dev/main"], cwd=origin, check=True)
+    subprocess.run([*git, "commit", "-q", "--allow-empty", "-m", "not merged"], cwd=origin, check=True)
+    subprocess.run(["git", "clone", "-q", "-b", tagged, str(origin), str(clone)], check=True)
+    script = _step(release_workflow, "build", "Guard - the tagged commit is on main")["run"]
+    result = subprocess.run(
+        ["bash", "-e", "-c", script],
+        cwd=clone,
+        env={**os.environ, "GITHUB_REF_NAME": "v0.1.0"},
+        capture_output=True,
+        text=True,
+    )
+    assert (result.returncode == 0) is accepted, result.stdout + result.stderr
+
+
+def test_the_release_tests_every_python_the_classifiers_claim(release_workflow: Workflow) -> None:
+    project = tomllib.loads((PROJECT / "pyproject.toml").read_text(encoding="utf-8"))["project"]
+    version = re.compile(r"Programming Language :: Python :: (3\.\d+)")
+    claimed = [found[1] for found in map(version.fullmatch, project["classifiers"]) if found]
+    assert release_workflow["jobs"]["tests"]["strategy"]["matrix"]["python"] == claimed
 
 
 def test_the_release_is_built_only_after_the_gates_and_every_test_pass(release_workflow: Workflow) -> None:

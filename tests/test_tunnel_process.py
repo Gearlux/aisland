@@ -127,3 +127,41 @@ def test_a_tunnel_that_outlives_the_kill_keeps_its_pidfile(state: Path, monkeypa
         tunnel.stop()
     assert [args[0] for args in sent.call_args_list] == [(4711, signal.SIGTERM), (4711, signal.SIGKILL)]
     assert tunnel.pid_path().read_text() == "4711\n"  # so `start` reports it instead of starting a second one
+
+
+def test_a_pid_whose_command_line_cannot_be_read_is_never_signalled(
+    stranger: "subprocess.Popen[bytes]", monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A box without `ps` (and, here, without `/proc`): the pid is not identified, so it is not the tunnel."""
+    real_read_bytes = Path.read_bytes
+
+    def no_proc(self: Path) -> bytes:
+        if str(self).startswith("/proc/"):
+            raise FileNotFoundError(str(self))
+        return real_read_bytes(self)
+
+    def no_ps(*args: object, **kwargs: object) -> None:
+        raise FileNotFoundError("ps")
+
+    monkeypatch.setattr(tunnel.Path, "read_bytes", no_proc)
+    monkeypatch.setattr(tunnel.subprocess, "run", no_ps)
+    tunnel.pid_path().write_text(f"{stranger.pid}\n")
+    assert tunnel.running() is False
+    assert tunnel.stop() == {"running": False, "stopped": False}
+    assert stranger.poll() is None
+
+
+def test_on_linux_the_command_line_is_read_from_proc_without_ps(
+    stranger: "subprocess.Popen[bytes]", monkeypatch: pytest.MonkeyPatch
+) -> None:
+    real_read_bytes = Path.read_bytes
+    cli = str(tunnel_binary.cli_path()).encode()
+
+    def read_bytes(self: Path) -> bytes:
+        if str(self) == f"/proc/{stranger.pid}/cmdline":
+            return cli + b"\0tunnel\0"
+        return real_read_bytes(self)
+
+    monkeypatch.setattr(tunnel.Path, "read_bytes", read_bytes)
+    monkeypatch.setattr(tunnel.subprocess, "run", lambda *a, **k: pytest.fail("ps was asked"))
+    assert tunnel._is_tunnel(stranger.pid) is True

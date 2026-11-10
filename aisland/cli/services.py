@@ -9,7 +9,7 @@ from typing import Optional, Tuple
 import click
 
 from aisland.ci import ci_scaffold, ci_templates
-from aisland.cli._base import _Group, _service_entries
+from aisland.cli._base import Group, service_entries
 from aisland.services import jenkins_jobs
 from aisland.services import registry as service_registry
 from aisland.services import supervisor as supervisor_mod
@@ -20,7 +20,7 @@ from aisland.services.swiftbar import SwiftBarService
 # --- Docker Commands ---
 
 
-@click.group(cls=_Group)
+@click.group(cls=Group)
 def docker() -> None:
     """Manage the Docker engine: in Colima's VM on macOS, the system's own engine on Linux."""
     pass
@@ -66,25 +66,32 @@ def docker_restart(mounts: Tuple[str, ...]) -> None:
 
 
 @docker.command(name="reset")
-@click.confirmation_option(prompt="Are you sure you want to wipe all Docker data?")
-def docker_reset() -> None:
-    """Stop Docker and wipe all its data."""
-    docker_service().reset()
+@click.option("--yes", "-y", is_flag=True, help="Do not ask first.")
+def docker_reset(yes: bool) -> None:
+    """Stop Docker and wipe all its data: the Colima VM, with every container, image and volume in it."""
+    engine = docker_service()
+    if not yes:
+        click.confirm(f"Stop Docker and delete {engine.wipes()}?", abort=True)
+    engine.reset()
 
 
 # --- Jenkins Commands ---
 
 
-@click.group(cls=_Group)
+@click.group(cls=Group)
 def jenkins() -> None:
     """Manage local Jenkins CI/CD server."""
     pass
 
 
 @jenkins.command(name="start")
-@click.option("--port", default=JenkinsService.DEFAULT_PORT, help="HTTP port for Jenkins.")
+@click.option(
+    "--port",
+    type=int,
+    help=f"HTTP port for Jenkins (default: the port it last ran on, else {JenkinsService.DEFAULT_PORT}).",
+)
 @click.option("--background", "-b", is_flag=True, help="Run in background.")
-def jenkins_start(port: int, background: bool) -> None:
+def jenkins_start(port: Optional[int], background: bool) -> None:
     """Start Jenkins."""
     JenkinsService().launch(port=port, background=background)
 
@@ -108,16 +115,20 @@ def jenkins_info() -> None:
 
 
 @jenkins.command(name="restart")
-@click.option("--port", default=JenkinsService.DEFAULT_PORT, help="HTTP port for Jenkins.")
+@click.option(
+    "--port",
+    type=int,
+    help=f"HTTP port for Jenkins (default: the port it last ran on, else {JenkinsService.DEFAULT_PORT}).",
+)
 @click.option("--background", "-b", is_flag=True, help="Run in background.")
-def jenkins_restart(port: int, background: bool) -> None:
+def jenkins_restart(port: Optional[int], background: bool) -> None:
     """Restart Jenkins."""
     JenkinsService().restart(port=port, background=background)
 
 
 @jenkins.command(name="reset")
 @click.option("--project", help="Only reset data for a specific project pipeline.")
-@click.confirmation_option(prompt="Are you sure you want to wipe data?")
+@click.confirmation_option("--yes", "-y", prompt="Are you sure you want to wipe data?")
 def jenkins_reset(project: Optional[str]) -> None:
     """Stop Jenkins and wipe its data (or just a specific project's data)."""
     if project:
@@ -146,7 +157,7 @@ def jenkins_scaffold(project: Optional[str], force: bool) -> None:
     ci_scaffold.scaffold(project, force, JenkinsService().url())
 
 
-@jenkins.group(name="templates", cls=_Group)
+@jenkins.group(name="templates", cls=Group)
 def jenkins_templates() -> None:
     """The template set `aisland jenkins scaffold` writes a project's CI files from.
 
@@ -176,7 +187,7 @@ def jenkins_templates_export(folder: Path) -> None:
 
 @jenkins.command(name="remove")
 @click.argument("project", required=False)
-@click.confirmation_option(prompt="Are you sure you want to remove the pipeline(s)?")
+@click.confirmation_option("--yes", "-y", prompt="Are you sure you want to remove the pipeline(s)?")
 def jenkins_remove(project: Optional[str]) -> None:
     """Remove a specific project pipeline or all pipelines from Jenkins."""
     jenkins_jobs.remove_pipelines(JenkinsService().service_data_dir, project)
@@ -185,7 +196,7 @@ def jenkins_remove(project: Optional[str]) -> None:
 # --- SwiftBar Commands ---
 
 
-@click.group(cls=_Group)
+@click.group(cls=Group)
 def swiftbar() -> None:
     """Manage SwiftBar menu bar plugins."""
     pass
@@ -236,7 +247,7 @@ def swiftbar_reset() -> None:
 # --- Global Commands ---
 
 
-@click.group(name="services", cls=_Group, invoke_without_command=True)
+@click.group(name="services", cls=Group, invoke_without_command=True)
 @click.pass_context
 def services(ctx: click.Context) -> None:
     """Every aisland service at once, or the ones named. Alone: the supervisor and each service's state.
@@ -251,7 +262,7 @@ def services(ctx: click.Context) -> None:
     aisland services stop
     """
     if ctx.invoked_subcommand is None:
-        every = _service_entries()  # a declaration aisland cannot use stops here, before anything is printed
+        every = service_entries()  # a declaration aisland cannot use stops here, before anything is printed
         click.echo("Aisland Infrastructure Status:")
         supervisor_mod.print_status()
         service_registry.status(every, ())
@@ -268,14 +279,14 @@ _BACKGROUND = click.option("--background", "-b", is_flag=True, help="Run in the 
 @_BACKGROUND
 def services_start(names: Tuple[str, ...], background: bool) -> None:
     """Start the services named (default: the services started by default)."""
-    service_registry.start(_service_entries(), names, background)
+    service_registry.start(service_entries(), names, background)
 
 
 @services.command(name="stop")
 @_SERVICE_NAMES
 def services_stop(names: Tuple[str, ...]) -> None:
     """Stop the services named (default: the services started by default, the container engine last)."""
-    service_registry.stop(_service_entries(), names)
+    service_registry.stop(service_entries(), names)
 
 
 @services.command(name="restart")
@@ -283,7 +294,7 @@ def services_stop(names: Tuple[str, ...]) -> None:
 @_BACKGROUND
 def services_restart(names: Tuple[str, ...], background: bool) -> None:
     """Restart the services named (default: the services started by default)."""
-    service_registry.restart(_service_entries(), names, background)
+    service_registry.restart(service_entries(), names, background)
 
 
 @services.command(name="status")
@@ -292,30 +303,34 @@ def services_restart(names: Tuple[str, ...], background: bool) -> None:
 def services_status(names: Tuple[str, ...], as_json: bool) -> None:
     """Each named service's state (default: every service)."""
     if as_json:
-        click.echo(json.dumps({"services": service_registry.states(_service_entries(), names)}, indent=2))
+        click.echo(json.dumps({"services": service_registry.states(service_entries(), names)}, indent=2))
         return
-    service_registry.status(_service_entries(), names)
+    service_registry.status(service_entries(), names)
 
 
 @services.command(name="info")
 @_SERVICE_NAMES
 def services_info(names: Tuple[str, ...]) -> None:
     """URLs, credentials and paths of the services named (default: every service)."""
-    service_registry.info(_service_entries(), names)
+    service_registry.info(service_entries(), names)
 
 
 @services.command(name="reset")
 @_SERVICE_NAMES
-@click.confirmation_option(prompt="Stop these services and wipe their data?")
-def services_reset(names: Tuple[str, ...]) -> None:
-    """Stop the services named and wipe their data (default: the services started by default)."""
-    service_registry.reset(_service_entries(), names)
+@click.option("--yes", "-y", is_flag=True, help="Do not ask first.")
+def services_reset(names: Tuple[str, ...], yes: bool) -> None:
+    """Stop the services named and wipe their data (default: the services started by default). It asks once, naming
+    each service and what its reset deletes — the container engine's deletes every container, image and volume."""
+    entries = service_entries()
+    if not yes:
+        click.confirm(service_registry.reset_question(entries, names), abort=True)
+    service_registry.reset(entries, names)
 
 
 # --- Supervisor Commands ---
 
 
-@click.group(cls=_Group)
+@click.group(cls=Group)
 def supervisor() -> None:
     """Manage the process-compose supervisor backing aisland services."""
     pass
@@ -334,7 +349,7 @@ def supervisor_attach() -> None:
 
 
 @supervisor.command(name="down")
-@click.confirmation_option(prompt="Stop ALL supervised services and the supervisor itself?")
+@click.confirmation_option("--yes", "-y", prompt="Stop ALL supervised services and the supervisor itself?")
 def supervisor_down() -> None:
     """Stop every supervised service and the supervisor process."""
     supervisor_mod.shutdown_server()

@@ -6,10 +6,10 @@
     timeout-minutes: <[ runner_limits['Node Tests'] ]>
     steps:
     - uses: <[ actions['checkout'] ]>
-<% if token_owner %><% include '_gh_token.yml.jinja' %><% endif %>    - name: Set up Python 3.12
+<% if token_owner %><% include '_gh_token.yml.jinja' %><% endif %>    - name: Set up Python <[ pythons[0] ]>
       uses: <[ actions['setup-python'] ]>
       with:
-        python-version: "3.12"
+        python-version: "<[ pythons[0] ]>"
     - name: Install uv
       uses: <[ actions['setup-uv'] ]>
     - name: Install dependencies

@@ -22,7 +22,7 @@ from aisland.setup.harness import install_harness
 from aisland.setup.mcp_config import write_gemini_settings, write_mcp_json
 from aisland.setup.playwright_browser import install_browsers
 from aisland.setup.uv_config import write_root_uv_toml
-from aisland.venv import ensure_uv_in_venv, no_venv
+from aisland.venv import ensure_uv_in_venv, require_venv_bin
 from aisland.workspace import activation
 from aisland.workspace import check as workspace_check
 from aisland.workspace import clones
@@ -45,6 +45,7 @@ def _run_installs(workspace_root: Path, uv_cmd: str, projects: List[ProjectMetad
     failed, and a dozen such repeats buried the one real error. Unrelated projects still install.
     """
     adj = internal_dependencies(projects)
+    workspace_axes = axes(workspace_root)  # read once: each read scans every project
     failed: List[str] = []
     skipped: List[str] = []
     for group in install_groups(projects):
@@ -57,7 +58,7 @@ def _run_installs(workspace_root: Path, uv_cmd: str, projects: List[ProjectMetad
             continue
         # Each target carries every extra the project DECLARES, narrowed to what the machine SELECTED
         # (shared with `aisland workspace configure source … local`, so the two installs cannot drift).
-        targets = [selection.editable_target(workspace_root, p["path"], p["name"]) for p in group]
+        targets = [selection.editable_target(workspace_root, p["path"], workspace_axes) for p in group]
         suffix = " — a dependency cycle, installed together" if len(group) > 1 else ""
         console.echo(f"==> Installing {', '.join(names)} ({' '.join(targets)}){suffix}...")
         cmd = [uv_cmd, "pip", "install"] + [arg for t in targets for arg in ("-e", t)]
@@ -106,9 +107,7 @@ def setup_workspace(non_interactive: bool = False, install_all: bool = False) ->
     every project defines. A choice is changed with ``aisland workspace configure <selection> set``.
     """
     workspace_root = get_workspace_root()
-    venv_bin = workspace_root / ".venv" / "bin"
-    if not venv_bin.exists():
-        raise no_venv(workspace_root)
+    venv_bin = require_venv_bin(workspace_root)
 
     # 0. uv in the venv — everything below needs it, and so does every Jenkinsfile.local job of this workspace.
     uv_cmd = ensure_uv_in_venv(venv_bin)
@@ -131,7 +130,9 @@ def setup_workspace(non_interactive: bool = False, install_all: bool = False) ->
     # 1b. Activation (aisland.workspace.activation): ask about each optional project, then check each one out or empty it as
     #     this machine has it. Before discovery, so an inactive checkout drops out.
     activation.resolve(workspace_root, non_interactive)
-    activation.reconcile(workspace_root)
+    for project in activation.reconcile(workspace_root):
+        # Said on the way (`skip <folder>: <why>`); setup goes on with the others and exits 1.
+        failures.report(f"Error: {project}'s folder could not follow its activation (see its skip line above)")
     # 1c. Per-project sources: each managed project on its branch, or replaced by its published wheel (which empties
     #     its folder). Before discovery, so a pypi-sourced project drops out of the editable installs.
     apply_all(workspace_root, uv_cmd)

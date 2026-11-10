@@ -363,9 +363,9 @@ class TestNewestVersionedFormula:
 def jenkins_bin(machine: Dict[str, Any], monkeypatch: pytest.MonkeyPatch) -> Dict[str, Any]:
     """A JenkinsService whose bin dir holds the fake WAR, with downloads and the supervisor stubbed."""
     bin_dir = machine["tmp"] / "bin"
-    make_war(bin_dir / "jenkins.war")
+    make_war(bin_dir / f"jenkins-{JenkinsService.WAR_VERSION}.war")
     monkeypatch.setattr(paths, "bin_dir", lambda: bin_dir)
-    monkeypatch.setattr(JenkinsService, "setup", lambda self: None)
+    monkeypatch.setattr(JenkinsService, "setup", lambda self: True)
     monkeypatch.setattr(JenkinsService, "check_credentials_and_print_instructions", lambda self, port: None)
     started: List[List[str]] = []
     monkeypatch.setattr(JenkinsService, "start", lambda self, cmd, **kwargs: started.append(cmd))
@@ -386,7 +386,7 @@ class TestJenkinsStart:
         assert cmd[0] == str(keg_25)
         assert cmd[-4:] == [
             "-jar",
-            str(jenkins_bin["tmp"] / "bin" / "jenkins.war"),
+            str(jenkins_bin["tmp"] / "bin" / f"jenkins-{JenkinsService.WAR_VERSION}.war"),
             "--httpPort=9080",
             "--httpListenAddress=127.0.0.1",
         ]
@@ -563,7 +563,7 @@ class TestDoctorCheck:
         assert choice is not None and choice.runtime == JavaRuntime(keg_25, "25.0.3")
 
     def test_the_seam_is_none_without_a_war(self, jenkins_bin: Dict[str, Any]) -> None:
-        (jenkins_bin["tmp"] / "bin" / "jenkins.war").unlink()
+        (jenkins_bin["tmp"] / "bin" / f"jenkins-{JenkinsService.WAR_VERSION}.war").unlink()
         assert doctor._jenkins_java() is None
 
 

@@ -12,7 +12,7 @@ import xml.etree.ElementTree as ET
 from pathlib import Path
 from typing import Optional
 
-from aisland import console, envfile, failures
+from aisland import atomic, console, envfile, failures
 from aisland.workspace.projects import get_workspace_name, get_workspace_root
 
 logger = logging.getLogger(__name__)
@@ -20,6 +20,14 @@ logger = logging.getLogger(__name__)
 #: The jobs the dashboard shows: the branches the ecosystem is built from, and every job of the local pipeline.
 _DASHBOARD_JOBS = "^(main|dev/main|.*\\.local)$"
 _BUILD_MONITOR_VIEW = "com.smartcodeltd.jenkinsci.plugins.buildmonitor.BuildMonitorView"
+
+
+def _write(tree: "ET.ElementTree[ET.Element]", config_file: Path) -> None:
+    """``config_file`` written whole or not at all, readable by its owner alone: the global properties carry the
+    workspace's ``.env``, secrets included, and a Jenkins home's ``config.xml`` is no one else's to read."""
+    config_file.chmod(atomic.PRIVATE)  # first: the file moved into place keeps these bits
+    text = ET.tostring(tree.getroot(), encoding="UTF-8", xml_declaration=True).decode("utf-8")
+    atomic.write_text(config_file, text + "\n")
 
 
 def setup_dashboard_view(home: Path, name: Optional[str] = None) -> None:
@@ -44,7 +52,7 @@ def setup_dashboard_view(home: Path, name: Optional[str] = None) -> None:
     primary_view = root.find("primaryView")
     if primary_view is not None:
         primary_view.text = "all"
-    tree.write(config_file, encoding="UTF-8", xml_declaration=True)
+    _write(tree, config_file)
 
 
 def _view_basics(view: ET.Element, name: str) -> None:
@@ -187,7 +195,7 @@ def setup_global_properties(home: Path) -> None:
         else:
             console.echo(f"  - Added global Jenkins property: {key}=<from .env>")
 
-    tree.write(config_file, encoding="UTF-8", xml_declaration=True)
+    _write(tree, config_file)
 
 
 def allow_anonymous_read(home: Path) -> None:
@@ -212,4 +220,4 @@ def allow_anonymous_read(home: Path) -> None:
         return
     deny_anon.text = "false"
     console.echo("  - Enabled anonymous read access.")
-    tree.write(config_file, encoding="UTF-8", xml_declaration=True)
+    _write(tree, config_file)

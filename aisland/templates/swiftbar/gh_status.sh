@@ -8,7 +8,7 @@ if ! command -v gh &> /dev/null; then
 fi
 
 # Monitored repositories
-REPOS=$(echo -e "<[ repos ]>")
+REPOS=<[ repos ]>
 
 if [ -z "$REPOS" ]; then
     echo "GH: ⚪️"

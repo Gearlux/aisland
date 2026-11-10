@@ -16,7 +16,7 @@ import shutil
 import subprocess
 import tomllib
 from pathlib import Path
-from typing import Any, Callable, Dict, List, Optional, Set
+from typing import Any, Callable, Dict, List, Optional, Set, Tuple
 
 import click
 import pytest
@@ -24,11 +24,12 @@ import pytest
 from aisland import gitcmd, locations, pypi
 from aisland.ci import ci_scaffold
 from aisland.errors import AislandError
-from aisland.services.jenkins import JenkinsService
 from aisland.setup import source_commands as sc
 from aisland.workspace import file as workspace_file
+from aisland.workspace import gitmodules
 from aisland.workspace import source_apply as sa
 from aisland.workspace import sources as s
+from tests.records import NO_JENKINS
 
 # --- the model ----------------------------------------------------------------------------
 
@@ -275,13 +276,26 @@ class _Recorder:
 
     def __init__(self, fail_on: str = "") -> None:
         self.calls: List[List[str]] = []
+        self.git_options: List[Tuple[str, Dict[str, Any]]] = []
         self.fail_on = fail_on
+        self.real_git = gitcmd.git
 
     def check_call(self, cmd: List[str], **kwargs: Any) -> int:
         self.calls.append(cmd)
         if self.fail_on and self.fail_on in " ".join(cmd):
             raise subprocess.CalledProcessError(1, cmd)
         return 0
+
+    def git(self, repo: Path, *args: str, **options: Any) -> "subprocess.CompletedProcess[str]":
+        """Stands in for ``gitcmd.git`` in what a source changes (``submodule``, ``switch``): each command recorded with
+        the options it ran under (``network``). Every other git command (this machine's settings) runs for real."""
+        if args[:1] not in (("submodule",), ("switch",)):
+            return self.real_git(repo, *args, **options)
+        cmd = ["git", *args]
+        self.calls.append(cmd)
+        self.git_options.append((" ".join(cmd), options))
+        failed = bool(self.fail_on) and self.fail_on in " ".join(cmd)
+        return subprocess.CompletedProcess(cmd, 1 if failed else 0, "", "refused\n" if failed else "")
 
     def fetch(self, repo: Path, *args: str) -> "subprocess.CompletedProcess[str]":
         """Stands in for ``gitcmd.fetch``, the best-effort fetch before a switch: recorded, never failing."""
@@ -313,9 +327,10 @@ def _fake_read(*, status: str, head: str, recorded: str) -> Callable[..., Option
 def recorder(monkeypatch: pytest.MonkeyPatch) -> _Recorder:
     rec = _Recorder()
     monkeypatch.setattr(subprocess, "check_call", rec.check_call)
+    monkeypatch.setattr(gitcmd, "git", rec.git)
     monkeypatch.setattr(gitcmd, "fetch", rec.fetch)
     monkeypatch.setattr(sa, "set_submodule_active", lambda *a, **k: None)
-    monkeypatch.setattr(s, "submodule_active_map", lambda root: [("loggair", "loggair", True)])
+    monkeypatch.setattr(s, "submodule_of", lambda root, project: gitmodules.Submodule(project, project))
     monkeypatch.setattr(s, "remote_url", lambda root, project: "https://github.com/Gearlux/loggair.git")
     return rec
 
@@ -327,9 +342,10 @@ class TestApplySource:
         source = s.ProjectSource(kind="local", ref="dev/main")
         assert sa.apply_source(tmp_path, "loggair", source, "/venv/bin/uv") is True
         flat = recorder.flat()
-        assert flat[0] == (
-            "git -c http.lowSpeedLimit=1 -c http.lowSpeedTime=60 submodule update --init -- loggair"
-        ), "the clone gives up on a remote that stops sending"
+        assert recorder.git_options[0] == (
+            "git submodule update --init -- loggair",
+            {"network": True, "timeout": gitcmd.NO_LIMIT},
+        ), "the clone runs through gitcmd's network guard: no prompt, a remote that stops sending given up"
         assert "git switch dev/main" in flat
         assert flat[-1] == f"/venv/bin/uv pip install -e {tmp_path / 'loggair'}"
 
@@ -394,7 +410,7 @@ class TestApplySource:
         source = s.ProjectSource(kind="pypi", version=">=0.1.0", distribution="loggair")
         assert sa.apply_source(tmp_path, "loggair", source, "/venv/bin/uv") is True
         assert recorder.flat() == [
-            "git submodule deinit loggair",
+            "git submodule deinit -- loggair",
             "/venv/bin/uv pip uninstall loggair",
             "/venv/bin/uv pip install -U loggair>=0.1.0",
         ]
@@ -484,7 +500,7 @@ class TestApplyGithubSource:
         source = s.ProjectSource(kind="github", ref="dev/main", distribution="loggair")
         assert sa.apply_source(tmp_path, "loggair", source, "/venv/bin/uv") is True
         assert recorder.flat() == [
-            "git submodule deinit loggair",
+            "git submodule deinit -- loggair",
             "/venv/bin/uv pip uninstall loggair",
             "/venv/bin/uv pip install -U git+https://github.com/Gearlux/loggair.git@dev/main",
         ]
@@ -566,7 +582,7 @@ class TestScaffoldAsksPypiNotTheSource:
     THIS machine's checkout; it never reaches a runner."""
 
     def test_an_unreleased_dep_is_installed_from_github_main(self, ci_workspace: Path) -> None:
-        ci_scaffold.scaffold("confluid", force=True, jenkins_url=JenkinsService().url())
+        ci_scaffold.scaffold("confluid", force=True, jenkins_url=NO_JENKINS)
         files = _generated(ci_workspace, "confluid")
         assert "git+https://github.com/Gearlux/loggair.git@main" in files["Jenkinsfile"]
         assert "git+https://github.com/Gearlux/loggair.git@main" in files["ci.yml"]
@@ -576,7 +592,7 @@ class TestScaffoldAsksPypiNotTheSource:
     ) -> None:
         """`.[dev]` resolves it from PyPI. Jenkinsfile.local is not included — it installs nothing."""
         released_packages.add("loggair")
-        ci_scaffold.scaffold("confluid", force=True, jenkins_url=JenkinsService().url())
+        ci_scaffold.scaffold("confluid", force=True, jenkins_url=NO_JENKINS)
         files = _generated(ci_workspace, "confluid")
         for name in ("Jenkinsfile", "ci.yml"):
             assert "Gearlux/loggair.git" not in files[name], f"{name} still installs loggair from git"
@@ -591,14 +607,14 @@ class TestScaffoldAsksPypiNotTheSource:
         released_packages.add("loggair")
         s.write_committed_sources(ci_workspace, {"loggair": s.ProjectSource(kind="local", ref="dev/main")})
         assert (ci_workspace / "loggair" / "pyproject.toml").exists()
-        ci_scaffold.scaffold("confluid", force=True, jenkins_url=JenkinsService().url())
+        ci_scaffold.scaffold("confluid", force=True, jenkins_url=NO_JENKINS)
         assert "Gearlux/loggair.git" not in _generated(ci_workspace, "confluid")["ci.yml"]
 
     def test_a_pypi_sourced_dep_with_no_final_release_comes_from_github(self, ci_workspace: Path) -> None:
         """`source set … pypi` accepts a pre-release-only name (recordstream 0.1.0a1); the
         scaffolder does not count that as released, so the runner builds from GitHub `main`."""
         s.write_committed_sources(ci_workspace, {"loggair": s.ProjectSource(kind="pypi", distribution="loggair")})
-        ci_scaffold.scaffold("confluid", force=True, jenkins_url=JenkinsService().url())
+        ci_scaffold.scaffold("confluid", force=True, jenkins_url=NO_JENKINS)
         assert "git+https://github.com/Gearlux/loggair.git@main" in _generated(ci_workspace, "confluid")["ci.yml"]
 
     def test_no_source_setting_changes_a_ci_file(self, ci_workspace: Path, released_packages: Set[str]) -> None:
@@ -615,7 +631,7 @@ class TestScaffoldAsksPypiNotTheSource:
                 s.ProjectSource(kind="pypi", distribution="loggair"),
             ):
                 s.write_committed_sources(ci_workspace, {} if source is None else {"loggair": source})
-                ci_scaffold.scaffold("confluid", force=True, jenkins_url=JenkinsService().url())
+                ci_scaffold.scaffold("confluid", force=True, jenkins_url=NO_JENKINS)
                 rendered.append(_generated(ci_workspace, "confluid"))
             assert all(r == rendered[0] for r in rendered), f"released={released}"
 
@@ -632,7 +648,7 @@ class TestScaffoldAsksPypiNotTheSource:
         from aisland.ci.ci_scaffold import discover_github_projects
 
         assert "loggair" in discover_github_projects(ci_workspace)
-        ci_scaffold.scaffold("confluid", force=True, jenkins_url=JenkinsService().url())
+        ci_scaffold.scaffold("confluid", force=True, jenkins_url=NO_JENKINS)
         assert "git+https://github.com/Gearlux/loggair.git@main" in _generated(ci_workspace, "confluid")["ci.yml"]
 
     def test_a_released_dep_is_dropped_when_its_directory_is_gone(
@@ -641,7 +657,7 @@ class TestScaffoldAsksPypiNotTheSource:
         released_packages.add("loggair")
         s.write_committed_sources(ci_workspace, {"loggair": s.ProjectSource(kind="pypi", distribution="loggair")})
         shutil.rmtree(ci_workspace / "loggair")
-        ci_scaffold.scaffold("confluid", force=True, jenkins_url=JenkinsService().url())
+        ci_scaffold.scaffold("confluid", force=True, jenkins_url=NO_JENKINS)
         assert "Gearlux/loggair.git" not in _generated(ci_workspace, "confluid")["ci.yml"]
 
     def test_an_unreachable_pypi_stops_the_scaffold_and_names_the_package(
@@ -655,7 +671,7 @@ class TestScaffoldAsksPypiNotTheSource:
 
         monkeypatch.setattr("aisland.ci.ci_scaffold.released_on_pypi", _unreachable)
         with pytest.raises(click.ClickException, match="loggair.*could not reach PyPI"):
-            ci_scaffold.scaffold("confluid", force=True, jenkins_url=JenkinsService().url())
+            ci_scaffold.scaffold("confluid", force=True, jenkins_url=NO_JENKINS)
         assert not (ci_workspace / "confluid" / ".github" / "workflows" / "ci.yml").exists()
 
 
@@ -995,3 +1011,17 @@ class TestUnsetProjectSource:
         sc.unset_project_source("loggair", machine_only=True, workspace_root=tmp_path)
         assert cleared == [("loggair", None)]
         assert set(s.read_committed_sources(tmp_path)) == {"loggair"}
+
+
+def test_a_row_renamed_in_workspace_toml_still_finds_its_submodule_by_its_folder(tmp_path: Path) -> None:
+    """`.gitmodules` names a submodule once; `workspace.toml` may call the project otherwise. Its url, folder and
+    git's active key are found by the folder the row gives, never by the row's name."""
+    (tmp_path / ".gitmodules").write_text(
+        '[submodule "models-old"]\n\tpath = models\n\turl = https://example.com/acme/models.git\n'
+    )
+    (tmp_path / "workspace.toml").write_text('[project."models"]\npath = "models"\n')
+    assert s.remote_url(tmp_path, "models") == "https://example.com/acme/models.git"
+    assert s.project_path(tmp_path, "models") == tmp_path / "models"
+    assert s.submodule_name(tmp_path, "models") == "models-old"
+    assert s.remote_url(tmp_path, "missing") is None
+    assert s.project_path(tmp_path, "missing") == tmp_path / "missing"

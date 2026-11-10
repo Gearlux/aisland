@@ -235,7 +235,8 @@ def test_the_cli_passes_repeated_mount_flags_to_start_and_restart(tmp_path: Path
 
     seen: List[dict] = []
     with patch.object(DockerService, "launch", side_effect=lambda **kw: seen.append(kw)):
-        with patch.object(DockerService, "stop"):
+        # Stopped, whatever this machine's Colima is doing: a running one makes `restart` stop before its start.
+        with patch.object(DockerService, "stop"), patch.object(DockerService, "is_running", return_value=False):
             runner = CliRunner()
             result = runner.invoke(main, ["docker", "start", "--mount", "/a:r", "--mount", "/b:w"])
             assert result.exit_code == 0, result.output
@@ -328,3 +329,56 @@ def test_on_linux_status_and_info_read_the_engine(
     service.info()
     out = capsys.readouterr().out
     assert f"Docker (engine)  : {word}" in out and f"Status        : {word}" in out
+
+
+def test_on_linux_the_engine_is_asked_through_the_state_probe(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A hung daemon must not hang `aisland services status` or an MCP tool: `docker info` is a state probe, given up
+    past `probe.PROBE_SECONDS` like a missing program."""
+    asked: List[List[str]] = []
+    monkeypatch.setattr(probe, "run", lambda argv: asked.append(list(argv)))  # no answer in time
+    assert docker_mod.LinuxDockerService().is_running() is False
+    assert asked == [["docker", "info"]]
+
+
+# --------------------------------------------------------------------------- #
+# reset and the socket
+# --------------------------------------------------------------------------- #
+
+
+def test_a_reset_asks_once_the_command_asked_already(monkeypatch: pytest.MonkeyPatch) -> None:
+    """`aisland docker reset` and `aisland services reset` ask before they call it; the engine asks nothing more."""
+    from aisland import console
+    from aisland.cli import main
+
+    monkeypatch.setattr(docker_mod.platform, "system", lambda: "Darwin")
+    monkeypatch.setattr(console, "confirm", lambda *a, **k: pytest.fail("asked a second time"))
+    monkeypatch.setattr(DockerService, "is_running", lambda self: False)
+    ran: List[List[str]] = []
+    monkeypatch.setattr(docker_mod.subprocess, "check_call", lambda argv, **kw: ran.append(argv))
+    result = CliRunner().invoke(main, ["docker", "reset", "-y"])
+    assert result.exit_code == 0, result.output
+    assert ran == [["colima", "delete"]]
+
+
+def test_an_older_colima_s_socket_is_the_one_info_and_the_link_name(
+    home: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    legacy = home / ".colima" / "docker.sock"
+    legacy.write_text("")
+    assert docker_mod.colima_socket_path() == legacy
+    monkeypatch.setattr(probe, "run", lambda argv: MagicMock(returncode=0, stdout="", stderr=""))
+    monkeypatch.setattr(docker_mod.shutil, "which", lambda tool: f"/usr/local/bin/{tool}")
+    DockerService().info()
+    assert f"Colima socket : {legacy} (present)" in capsys.readouterr().out
+    (home / ".colima" / "default" / "docker.sock").write_text("")
+    assert docker_mod.colima_socket_path() == home / ".colima" / "default" / "docker.sock"
+
+
+def test_docker_reset_names_what_it_deletes_and_a_no_deletes_nothing(monkeypatch: pytest.MonkeyPatch) -> None:
+    from aisland.cli import main
+
+    monkeypatch.setattr(docker_mod.platform, "system", lambda: "Darwin")
+    monkeypatch.setattr(docker_mod.subprocess, "check_call", lambda argv, **kw: pytest.fail("deleted"))
+    result = CliRunner().invoke(main, ["docker", "reset"], input="n\n")
+    assert "Stop Docker and delete the Colima VM, with every container, image and volume in it?" in result.output
+    assert result.exit_code == 1

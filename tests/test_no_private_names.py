@@ -79,7 +79,7 @@ def test_no_published_file_names_a_private_project() -> None:
 
 def test_no_file_of_the_package_carries_a_users_dated_ruling() -> None:
     """The wheel runs in other workspaces: a "user ruling 2026-…" is one person's decision in the workspace aisland is
-    developed in. A comment states the reason; the decision's date stays in `docs/architecture.md`."""
+    developed in. A comment states the reason; the decision's date stays in its record under `docs/decisions/`."""
     dated = re.compile(r"\buser (ruling|request|choice|pick|correction|decision)s?:? \d", re.IGNORECASE)
     package = [path for path in _project_files() if path.relative_to(PROJECT).parts[0] == "aisland"]
     hits = [
