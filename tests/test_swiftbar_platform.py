@@ -67,6 +67,9 @@ def test_launch_runs_on_macos() -> None:
     svc = SwiftBarService()
     with (
         patch("aisland.services.swiftbar.platform.system", return_value="Darwin"),
+        patch(
+            "aisland.services.swiftbar.swiftbar_installed", return_value=True
+        ),  # installed, whatever this machine has
         patch("aisland.services.swiftbar.subprocess.run") as run_mock,
     ):
         svc.launch()

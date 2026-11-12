@@ -476,10 +476,11 @@ def test_a_service_that_detaches_by_itself_gets_no_background_flag(
 
 @pytest.mark.parametrize(("tool", "factor"), [("service_start", 1), ("service_restart", 2)])
 def test_a_service_tool_waits_as_long_as_the_service_may_take_to_start(
-    ran: List[List[str]], tool: str, factor: int
+    ran: List[List[str]], tool: str, factor: int, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """A first Colima start boots its VM, up to `COLIMA_START_SECONDS`: a tool that gave up sooner left it starting,
     unseen."""
+    monkeypatch.setattr(docker.platform, "system", lambda: "Darwin")  # Colima's engine, whatever the runner is
     _call(tool, {"name": "docker"})
     assert limits == [factor * max(server.SERVICE_TIMEOUT, docker.COLIMA_START_SECONDS)]
 

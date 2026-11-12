@@ -28,7 +28,9 @@ from aisland.services.docker import DockerService, Mount, parse_mount
 
 @pytest.fixture
 def home(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
-    """A fake ``$HOME`` carrying a colima profile with the DEFAULT (empty) mounts list.
+    """A fake ``$HOME`` carrying a colima profile with the DEFAULT (empty) mounts list, and colima and docker
+    installed (a machine without them, as a CI runner, would be asked to install them first; the tests that check that
+    say so themselves).
 
     Set through the environment (not a ``Path.home`` patch) so ``~`` expansion agrees with it.
     """
@@ -37,6 +39,7 @@ def home(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     profile.mkdir(parents=True)
     (profile / "colima.yaml").write_text("mounts: []\n")
     monkeypatch.setenv("HOME", str(fake_home))
+    monkeypatch.setattr(docker_mod.shutil, "which", lambda tool: f"/usr/local/bin/{tool}")
     return fake_home
 
 
@@ -230,9 +233,12 @@ def test_launch_validates_every_mount_before_touching_colima(home: Path, tmp_pat
 # --------------------------------------------------------------------------- #
 
 
-def test_the_cli_passes_repeated_mount_flags_to_start_and_restart(tmp_path: Path) -> None:
+def test_the_cli_passes_repeated_mount_flags_to_start_and_restart(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     from aisland.cli import main
 
+    monkeypatch.setattr(docker_mod.platform, "system", lambda: "Darwin")  # --mount is Colima's: on Linux it is refused
     seen: List[dict] = []
     with patch.object(DockerService, "launch", side_effect=lambda **kw: seen.append(kw)):
         # Stopped, whatever this machine's Colima is doing: a running one makes `restart` stop before its start.
