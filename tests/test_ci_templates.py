@@ -74,6 +74,9 @@ def ws(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     root.mkdir()
     _project(root, "models", slow=True)
     monkeypatch.setattr(locations, "workspace_root", lambda: root)
+    # A set's Jenkinsfile is for its company's Jenkins (a pod agent): what the Jenkins running on this machine says of
+    # it decides nothing here, so its linter is never asked — these tests read what the set rendered.
+    monkeypatch.setattr("aisland.ci.ci_scaffold._validates", lambda content, desc, jenkins_url: True)
     return root
 
 
