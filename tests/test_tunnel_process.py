@@ -96,7 +96,9 @@ def test_stop_returns_only_once_the_tunnel_has_exited(state: Path) -> None:
     process = _fake_cli("trap 'sleep 1; exit 0' TERM\n")
     try:
         assert tunnel.stop()["stopped"] is True
-        assert process.poll() == 0  # exited through its own shutdown, already
+        # Exited through its own shutdown, already: its 1 s shutdown would outlast this wait. (On Linux a process's
+        # command line goes empty a moment before it can be reaped, so an instant poll() can still see it.)
+        assert process.wait(timeout=0.5) == 0
         assert not tunnel.pid_path().exists()
         assert tunnel.running() is False
     finally:
@@ -109,7 +111,7 @@ def test_a_tunnel_that_ignores_the_stop_is_killed(state: Path, monkeypatch: pyte
     process = _fake_cli("trap '' TERM\n")
     try:
         assert tunnel.stop()["stopped"] is True
-        assert process.poll() == -signal.SIGKILL
+        assert process.wait(timeout=0.5) == -signal.SIGKILL  # killed, and reaped within a moment of stop's return
         assert not tunnel.pid_path().exists()
     finally:
         process.kill()

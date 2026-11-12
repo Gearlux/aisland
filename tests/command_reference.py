@@ -72,6 +72,8 @@ def _section(ctx: click.Context, command: click.Command) -> List[str]:
         lines += _help(command.help)
     options = []
     for param in command.get_params(ctx):
+        if isinstance(param, click.Argument):
+            continue  # shown in the usage line; click 8.5.1 began giving an argument a help row, 8.5.0 none
         record = param.get_help_record(ctx)
         if record is not None:
             names, text = record

@@ -105,13 +105,18 @@ def no_real_state(
     From a checkout :func:`aisland.locations.state_dir` is the checkout itself, whatever the test pointed the root at:
     a test that forgot it would write ``data/``, ``bin/``, backups or the supervisor's document into the developer's
     aisland. Here that answer is a folder of the test's own; a test pointing ``state_dir`` elsewhere replaces this, and
-    one that checks the real rule says so with ``@pytest.mark.real_workspace``."""
+    one that checks the real rule says so with ``@pytest.mark.real_workspace``. In a clone no workspace lists (GitHub
+    CI's) the state is ``<root>/.aisland/``, so a test that names no root gets a folder of its own there too, never
+    :class:`RealWorkspaceReached` for a question it did not ask."""
     if reads_the_real_workspace(request.node):
         return
     real = locations.state_dir
 
     def own_state() -> Path:
-        found = real()
+        try:
+            found = real()
+        except RealWorkspaceReached:
+            return tmp_path_factory.mktemp("state")
         return tmp_path_factory.mktemp("state") if found == locations.CHECKOUT_DIR else found
 
     own = functools.lru_cache(maxsize=1)(own_state)  # one folder for the whole test, asked any number of times
