@@ -136,13 +136,48 @@ def test_every_link_in_the_readme_is_absolute_or_an_anchor_of_its_own() -> None:
     assert wrong == []
 
 
-@pytest.mark.parametrize("page", ["README.md", "CHANGELOG.md"])
-def test_the_repository_links_name_the_tag_of_the_version(page: str) -> None:
-    """PyPI shows the README and links the CHANGELOG of a release: their links to the repository name its tag,
-    `v<pyproject's version>`, so a version bump moves them."""
-    text = (PROJECT / page).read_text(encoding="utf-8")
-    refs = _REPOSITORY_LINK.findall(text)
+def test_the_readme_links_name_the_tag_of_the_version() -> None:
+    """PyPI shows the README of a release: its links to the repository name the release's tag, `v<pyproject's
+    version>`, so a version bump moves them."""
+    refs = _REPOSITORY_LINK.findall(README.read_text(encoding="utf-8"))
     assert refs and set(refs) == {f"v{VERSION}"}, sorted(set(refs))
+
+
+_CHANGELOG_ENTRY = re.compile(r"^## \[([^\]]+)\]", re.MULTILINE)
+
+
+def _entries_linking_another_tag(changelog: str, version: str) -> List[str]:
+    """Each repository link of a CHANGELOG entry that names another tag than its own release's: an entry's text runs
+    to the next entry (the text above the first is the first's), and an `## [Unreleased]` entry is ``version``'s."""
+    starts = list(_CHANGELOG_ENTRY.finditer(changelog))
+    wrong = []
+    for index, entry in enumerate(starts):
+        begin = entry.start() if index else 0
+        end = starts[index + 1].start() if index + 1 < len(starts) else len(changelog)
+        tag = "v" + (version if entry.group(1).lower() == "unreleased" else entry.group(1))
+        wrong += [
+            f"[{entry.group(1)}] links {ref}" for ref in _REPOSITORY_LINK.findall(changelog[begin:end]) if ref != tag
+        ]
+    return wrong
+
+
+def test_each_changelog_entry_links_the_tag_of_its_own_release() -> None:
+    """PyPI links the CHANGELOG of a release: an entry's links to the repository name ITS release's tag, so opening
+    the next version moves the newest entry's links alone, and a released entry keeps pointing at the docs it
+    described."""
+    text = (PROJECT / "CHANGELOG.md").read_text(encoding="utf-8")
+    assert _REPOSITORY_LINK.search(text), "CHANGELOG.md links no page of the repository"
+    assert _entries_linking_another_tag(text, VERSION) == []
+
+
+def test_a_released_entry_keeps_its_tag_when_the_next_one_opens() -> None:
+    page = "https://github.com/Gearlux/aisland/blob/{}/docs/a.md"
+    changelog = (
+        f"# Changelog\n\n## [0.2.0] - Unreleased\n\n- [a]({page.format('v0.2.0')})\n\n"
+        f"## [0.1.0] - 2026-11-13\n\n- [a]({page.format('v0.1.0')}), [b]({page.format('v0.2.0')})\n"
+    )
+    assert _entries_linking_another_tag(changelog, "0.2.0") == ["[0.1.0] links v0.2.0"]
+    assert _entries_linking_another_tag(f"## [Unreleased]\n\n- [a]({page.format('v0.2.0')})\n", "0.2.0") == []
 
 
 def test_a_link_whose_text_runs_over_a_line_break_is_read() -> None:

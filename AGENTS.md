@@ -392,9 +392,11 @@ naming the PID is the only signal). All service state lives under `<workspace>/a
   workspace with its output, configure, a common-tasks table and an index of every page; each topic is a
   `docs/<topic>.md`. A new topic adds its page and its README index row in one change; a feature section never grows
   back into the README (`tests/test_docs.py`).
-- The README links only absolutely, to the release's tag (`https://github.com/Gearlux/aisland/blob/v<version>/…`, the
-  CHANGELOG and `[project.urls] Changelog` too, so a version bump moves them); a page links relatively, and every
-  link — one whose text runs over a line break included — lands on a file and, with an anchor, on a heading of it.
+- The README links only absolutely, to the release's tag (`https://github.com/Gearlux/aisland/blob/v<version>/…`, and
+  `[project.urls] Changelog` too, so a version bump moves them); each CHANGELOG entry links its OWN release's tag, so
+  opening the next version moves the newest entry's links alone, and a released entry keeps the docs it described
+  (`::test_each_changelog_entry_links_the_tag_of_its_own_release`); a page links relatively, and every link — one
+  whose text runs over a line break included — lands on a file and, with an anchor, on a heading of it.
   `docs/commands.md` is rendered from the click tree (`tests/command_reference.py`): a change to a command's help or
   options rewrites it (`AISLAND_WRITE_COMMANDS=1 pytest -n 0 tests/test_docs.py -k command_reference`). `docs/architecture.md` indexes every record of
   `docs/decisions/` once, by number and title, and the records are numbered without a gap (`tests/test_docs.py`).

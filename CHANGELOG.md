@@ -6,6 +6,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html). The newest entry is the
 next release: it reads `- Unreleased` until the release dates it.
 
+## [0.1.1] - Unreleased
+
 ## [0.1.0] - 2026-11-13
 
 The first release on PyPI: `pip install aisland`.
@@ -41,4 +43,5 @@ The first release on PyPI: `pip install aisland`.
   `aisland --debug` adds the traceback. `workspace.toml`, template sets and harness sets carry a `format`, so a file
   written for a newer aisland is refused with the upgrade to make ([stability](https://github.com/Gearlux/aisland/blob/v0.1.0/docs/stability.md)).
 
+[0.1.1]: https://github.com/Gearlux/aisland/releases/tag/v0.1.1
 [0.1.0]: https://github.com/Gearlux/aisland/releases/tag/v0.1.0
