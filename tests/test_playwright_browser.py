@@ -7,8 +7,15 @@ and makes the scaffolded CI emit the same step (`test_jenkins_scaffold.py`).
 """
 
 from pathlib import Path
+from typing import List, Tuple
 
-from aisland.selection import PLAYWRIGHT_BROWSER, browser_install_command, dev_extra_names
+import pytest
+
+from aisland.setup import playwright_browser
+from aisland.setup.playwright_browser import PLAYWRIGHT_BROWSER, browser_install_command
+from aisland.workspace.projects import ProjectMetadata
+from aisland.workspace.selection import dev_extra_names
+from tests.records import project_metadata
 
 
 class TestDevExtraNames:
@@ -69,3 +76,56 @@ class TestBrowserInstallCommand:
             encoding="utf-8",
         )
         assert browser_install_command(pyproject, tmp_path / ".venv" / "bin") is None
+
+
+class TestSetupStep:
+    """`aisland setup` fetches the browser for each project it installed that declares `playwright`."""
+
+    @staticmethod
+    def _project(tmp_path: Path, name: str, dev: str) -> ProjectMetadata:
+        folder = tmp_path / name
+        folder.mkdir()
+        (folder / "pyproject.toml").write_text(
+            f'[project]\nname = "{name}"\nversion = "0.0.0"\n\n[project.optional-dependencies]\ndev = ["{dev}"]\n',
+            encoding="utf-8",
+        )
+        return project_metadata(name, folder)
+
+    def test_only_a_declaring_project_runs_the_install_in_its_folder(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        ran: List[Tuple[List[str], Path]] = []
+
+        def check_call(cmd: List[str], cwd: Path) -> int:
+            ran.append((cmd, cwd))
+            return 0
+
+        monkeypatch.setattr(playwright_browser.subprocess, "check_call", check_call)
+        with_it = self._project(tmp_path, "viewer", "playwright>=1.40")
+        without = self._project(tmp_path, "lib", "pytest")
+        venv_bin = tmp_path / ".venv" / "bin"
+        playwright_browser.install_browsers([with_it, without], venv_bin)
+        assert ran == [([str(venv_bin / "playwright"), "install", PLAYWRIGHT_BROWSER], with_it["path"])]
+        assert capsys.readouterr().out == f"==> Installing Playwright's {PLAYWRIGHT_BROWSER} for viewer...\n"
+
+    def test_a_fetch_that_fails_is_reported_and_the_next_still_runs(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        ran: List[Path] = []
+
+        def check_call(cmd: List[str], cwd: Path) -> int:
+            ran.append(cwd)
+            raise FileNotFoundError(cmd[0])
+
+        reported: List[str] = []
+        monkeypatch.setattr(playwright_browser.subprocess, "check_call", check_call)
+        monkeypatch.setattr(playwright_browser.failures, "report", reported.append)
+        first = self._project(tmp_path, "viewer", "playwright")
+        second = self._project(tmp_path, "app", "playwright")
+        venv_bin = tmp_path / ".venv" / "bin"
+        playwright_browser.install_browsers([first, second], venv_bin)
+        assert ran == [first["path"], second["path"]]
+        assert reported == [
+            f"  - Error: Failed to install Playwright's {PLAYWRIGHT_BROWSER} for {name}: {venv_bin / 'playwright'}"
+            for name in ("viewer", "app")
+        ]

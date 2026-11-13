@@ -1,0 +1,10 @@
+# aisland's own harness set: what `aisland setup` installs from it (aisland/setup/harness.py). A set of your own starts as a
+# copy of this folder: aisland workspace harness export <folder>.
+format = 1                           # the shape of this file; an older aisland refuses a newer one
+rules = "AGENTS.md"                  # lands in .agents/aisland/AGENTS.md; .agents/rules.md imports it
+commands = ["commands/*.md"]         # into .agents/workflows/ (.claude/commands links there)
+scripts = ["scripts/*.py"]           # into .agents/scripts/
+
+# Any other file, a pattern of the set to a place in the workspace (a folder when it ends in /):
+# [files]
+# "cursor/*.mdc" = ".cursor/rules/"

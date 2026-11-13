@@ -20,7 +20,7 @@ from pathlib import Path
 import pytest
 import yaml
 
-from aisland import supervisor
+from aisland.services import supervisor
 
 BINARY = supervisor.find_binary()
 

@@ -6,13 +6,16 @@ whole provisioning script. So the pins are about the things that fail SILENTLY �
 missing from the file, a block that evals to nothing, and a pruner that could empty it.
 """
 
+import sys
 from pathlib import Path
 
 import pytest
 from click.testing import CliRunner
 
-from aisland import completion as comp
 from aisland.cli import main
+from aisland.cli import toplevel as cli_toplevel
+from aisland.setup import completion as comp
+from aisland.workspace.projects import get_workspace_name
 
 LIQUIFAI_APPS = ["matrainer", "sonair"]
 
@@ -33,6 +36,16 @@ def fake_apps(monkeypatch: pytest.MonkeyPatch) -> None:
     import liquifai.completion as lc
 
     monkeypatch.setattr(lc, "discover_liquifai_apps", lambda prefix=None: list(LIQUIFAI_APPS))
+
+
+#: The real discovery of the workspace's click scripts, kept before the autouse stub replaces it.
+_WORKSPACE_CLICK_CLIS = comp.workspace_click_clis
+
+
+@pytest.fixture(autouse=True)
+def no_workspace_clis(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The workspace these tests run in has click scripts of its own; a test names the ones it means."""
+    monkeypatch.setattr(comp, "workspace_click_clis", lambda root=None: [])
 
 
 @pytest.fixture
@@ -59,10 +72,39 @@ def test_the_families_land_in_one_file(rc: Path, all_present: None) -> None:
     for app in LIQUIFAI_APPS:  # (a) liquifai
         assert f"# >>> liquifai completion for {app} >>>" in text
     assert "_AISLAND_COMPLETE=bash_source aisland" in text  # (b) click
-    assert "_HYDRAIDE_COMPLETE=bash_source hydraide" in text  # (b) click — confluid's preprocessor command
 
     assert report.liquifai_apps == LIQUIFAI_APPS
-    assert report.non_liquifai == ["aisland", "hydraide"]
+    assert report.non_liquifai == ["aisland"]
+
+
+def test_a_projects_declared_click_command_is_found_without_importing_it(tmp_path: Path) -> None:
+    """aisland names no workspace CLI: a project lists its click scripts in `[tool.aisland] click-commands`."""
+    root = tmp_path / "ws"
+    (root / "tools").mkdir(parents=True)
+    (root / "tools" / "pyproject.toml").write_text(
+        '[project]\nname = "tools"\nversion = "0.1.0"\n\n[project.scripts]\n'
+        'tool = "nosuch_module:main"\nplain = "nosuch_module:plain"\n\n[tool.aisland]\nclick-commands = ["tool"]\n'
+    )
+    assert _WORKSPACE_CLICK_CLIS(root) == [comp.NonLiquifaiCli("tool", "click")]
+
+
+def test_a_workspace_whose_declarations_are_refused_completes_no_project_cli(tmp_path: Path) -> None:
+    root = tmp_path / "ws"
+    (root / "tools").mkdir(parents=True)
+    (root / "tools" / "pyproject.toml").write_text(
+        '[project]\nname = "tools"\nversion = "0.1.0"\n\n[tool.aisland]\nclick-commands = ["missing"]\n'
+    )
+    assert _WORKSPACE_CLICK_CLIS(root) == []
+
+
+def test_a_found_click_script_is_installed_beside_aisland(
+    rc: Path, all_present: None, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    found = [comp.NonLiquifaiCli("tool", "click"), comp.NonLiquifaiCli("matrainer", "click")]
+    monkeypatch.setattr(comp, "workspace_click_clis", lambda root=None: found)
+    report = comp.install_completions(target_rc=rc, shell="bash", apps=["matrainer"])
+    assert "_TOOL_COMPLETE=bash_source tool" in rc.read_text()
+    assert report.non_liquifai == ["aisland", "tool"]  # a liquifai app keeps its own block, never a second one
 
 
 def test_a_streamstudio_row_would_be_a_SECOND_dead_block(rc: Path, all_present: None) -> None:
@@ -211,7 +253,7 @@ def test_the_generated_file_carries_its_provenance(rc: Path, all_present: None) 
     text = rc.read_text()
 
     assert "AUTO-GENERATED" in text
-    assert "aisland/aisland/completion.py" in text
+    assert "aisland.setup.completion" in text
     assert f"To regenerate:  {comp.REGENERATE_COMMAND}" in text
 
 
@@ -252,7 +294,7 @@ def test_the_cli_warns_when_a_click_app_emits_nothing(
 ) -> None:
     """An inert block is the silent failure this whole module exists to surface."""
     monkeypatch.setattr(comp, "_program_exists", lambda prog: True)
-    monkeypatch.setattr(comp, "verify_click_completion", lambda prog="aisland": False)
+    monkeypatch.setattr(cli_toplevel, "verify_click_completion", lambda prog="aisland": False)
 
     result = CliRunner().invoke(main, ["completion", "install", "--target-rc", str(tmp_path / "frag")])
 
@@ -270,3 +312,124 @@ def test_setup_sh_delegates_instead_of_reimplementing() -> None:
     assert 'aisland" completion install' in setup or "aisland completion install" in setup
     assert "liquifai-install-completions" not in setup, "the shell copy is gone; the command owns this"
     assert comp._NON_LIQUIFAI_START not in setup, "the block is rendered in Python now"
+
+
+# --------------------------------------------------------------------------- #
+# the interactive-only guard (the fork bomb of 2026-10-20)
+# --------------------------------------------------------------------------- #
+
+
+def test_the_block_does_nothing_in_a_NON_interactive_shell(rc: Path, all_present: None) -> None:
+    """The block's `eval "$(_X_COMPLETE=bash_source X)"` RUNS the CLI at source time, so any
+    non-interactive bash that reads this file executes it.
+
+    Measured 2026-10-20: with `BASH_ENV` pointing at `project.bashrc` (which sources this file),
+    `aisland` emitted completion, click probed the shell with `bash --norc -c 'echo
+    "${BASH_VERSION}"'`, that shell read `BASH_ENV`, sourced this file and ran `aisland` again —
+    an endless aisland <-> bash recursion that filled the machine's process table (2931
+    processes; nothing on the machine could fork, twice needing a reboot). It is self-sustaining:
+    killing a slice lets the survivors refill.
+
+    Completion means nothing without a prompt, so the block leaves at once unless the shell is
+    interactive. That makes the recursion impossible whatever sets `BASH_ENV`.
+    """
+    comp.install_completions(target_rc=rc, shell="bash", apps=[])
+    body = rc.read_text()
+    start = body.index(comp._NON_LIQUIFAI_START)
+
+    guard = "case $- in *i*) ;; *) return 0 ;; esac"
+    assert guard in body, "the generated block must leave a non-interactive shell at once"
+    assert body.index(guard) < body.index(
+        "_AISLAND_COMPLETE", start
+    ), "the guard must come BEFORE the eval that runs the CLI, or it guards nothing"
+
+
+def test_the_guard_is_rendered_for_every_shell(rc: Path, all_present: None) -> None:
+    """zsh and fish emit no bash version guard, but they run the CLI at source time just the
+    same — the recursion is not bash's alone."""
+    for shell in ("bash", "zsh"):
+        comp.install_completions(target_rc=rc, shell=shell, apps=[])
+        assert "case $- in *i*) ;; *) return 0 ;; esac" in rc.read_text(), shell
+
+
+# --------------------------------------------------------------------------- #
+# without liquifai (aisland installed from PyPI on its own)
+# --------------------------------------------------------------------------- #
+
+
+@pytest.fixture
+def no_liquifai(monkeypatch: pytest.MonkeyPatch) -> None:
+    """`import liquifai.completion` fails, as in a venv where aisland is installed without it."""
+    monkeypatch.setitem(sys.modules, "liquifai", None)
+    monkeypatch.setitem(sys.modules, "liquifai.completion", None)
+
+
+def test_without_liquifai_the_other_clis_are_still_installed(rc: Path, all_present: None, no_liquifai: None) -> None:
+    """A venv without liquifai has no liquifai app to complete, so there is nothing to hand over — and no error."""
+    report = comp.install_completions(target_rc=rc, shell="bash")
+    assert report.liquifai_apps == []
+    assert "aisland" in report.non_liquifai
+    assert 'eval "$(_AISLAND_COMPLETE=bash_source aisland 2>/dev/null)" || true' in rc.read_text()
+
+
+def test_without_liquifai_a_stale_liquifai_block_is_kept_not_pruned(
+    rc: Path, all_present: None, no_liquifai: None
+) -> None:
+    """No liquifai means no discovery; pruning then would delete blocks of apps that may still exist."""
+    rc.write_text("# >>> liquifai completion for sonair >>>\nblock\n# <<< liquifai completion for sonair <<<\n")
+    report = comp.install_completions(target_rc=rc, shell="bash")
+    assert report.pruned == []
+    assert "liquifai completion for sonair" in rc.read_text()
+
+
+@pytest.mark.parametrize(
+    "login_shell, expected",
+    [("/bin/zsh", "zsh"), ("/usr/local/bin/fish", "fish"), ("/bin/bash", "bash"), ("/bin/tcsh", "bash")],
+)
+def test_without_liquifai_the_shell_of_a_file_no_shell_names_comes_from_SHELL(
+    tmp_path: Path,
+    all_present: None,
+    no_liquifai: None,
+    monkeypatch: pytest.MonkeyPatch,
+    login_shell: str,
+    expected: str,
+) -> None:
+    monkeypatch.setenv("SHELL", login_shell)
+    assert comp.install_completions(target_rc=tmp_path / "completion.sh").shell == expected
+
+
+@pytest.mark.parametrize(
+    "name, expected",
+    [(".project.bashrc.completion", "bash"), ("project.bashrc", "bash"), (".zshrc", "zsh"), ("config.fish", "fish")],
+)
+def test_a_file_a_shell_reads_gets_that_shells_script_whatever_SHELL_says(
+    tmp_path: Path, all_present: None, no_liquifai: None, monkeypatch: pytest.MonkeyPatch, name: str, expected: str
+) -> None:
+    """On a Mac's default zsh the workspace file, which the bash `project.bashrc` sources, got zsh's script: every
+    shell start printed `syntax error near unexpected token` and completion did nothing."""
+    monkeypatch.setenv("SHELL", "/bin/zsh" if expected != "zsh" else "/bin/bash")
+    assert comp.install_completions(target_rc=tmp_path / name).shell == expected
+
+
+def test_without_liquifai_the_command_reports_no_liquifai_app(
+    tmp_path: Path, all_present: None, no_liquifai: None
+) -> None:
+    rc = tmp_path / ".project.bashrc.completion"
+    result = CliRunner().invoke(main, ["completion", "install", "--target-rc", str(rc), "--shell", "bash"])
+    assert result.exit_code == 0, result.output
+    assert "    liquifai apps: (none discovered)" in result.output.splitlines()
+
+
+@pytest.mark.usefixtures("empty_workspace")
+def test_the_file_names_no_workspace_project(rc: Path, all_present: None) -> None:
+    """What aisland writes into a user's shell file is aisland's: its block is marked `aisland`, and its
+    provenance line names the module (a pip user has no `aisland/aisland/` folder)."""
+    comp.install_completions(target_rc=rc, shell="bash", apps=LIQUIFAI_APPS)
+    text = rc.read_text()
+    block = text[text.index(comp._NON_LIQUIFAI_START) : text.index(comp._NON_LIQUIFAI_END)]
+    # aisland's block; liquifai's helpers hold this machine's venv path. A workspace named "aisland" is the block's own.
+    name = get_workspace_name().lower()
+    assert name == "aisland" or name not in block.lower()
+    assert "# >>> aisland completion for non-liquifai CLIs >>>" in text
+    assert "# <<< aisland completion for non-liquifai CLIs <<<" in text
+    assert "# Source template: aisland.setup.completion (_render_non_liquifai)" in text

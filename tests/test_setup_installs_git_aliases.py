@@ -1,0 +1,82 @@
+"""`aisland setup` installs the workspace git aliases however aisland is installed.
+
+There is no separate command for them: from a wheel they name the scripts by their path in the venv, so the next
+`aisland setup` points them at a recreated venv or a new aisland, and from a checkout it gives a newly activated
+submodule its copy. The steps before them need a real machine (provisioning, the installs), so they are stubbed.
+"""
+
+from __future__ import annotations
+
+from pathlib import Path
+from typing import List
+
+import pytest
+from click.testing import CliRunner
+
+from aisland import cli, locations
+from aisland.setup import manager
+from aisland.workspace.model import Workspace
+
+
+@pytest.fixture
+def stubbed_setup(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> List[Path]:
+    """`setup_workspace` over an empty workspace with every step but the aliases' stubbed; the aliases' roots."""
+    (tmp_path / ".venv" / "bin").mkdir(parents=True)
+    installed: List[Path] = []
+    monkeypatch.setattr(locations, "workspace_root", lambda: tmp_path)
+    monkeypatch.setattr(manager, "ensure_uv_in_venv", lambda venv_bin: "uv")
+    monkeypatch.setattr(manager, "link_project_bashrc", lambda root: None)
+    monkeypatch.setattr(manager, "install_harness", lambda root: [])
+    monkeypatch.setattr("aisland.setup.provision.install", lambda root, aislands_own=True, ask=True: None)
+    monkeypatch.setattr("aisland.workspace.activation.resolve", lambda root, non_interactive: None)
+    monkeypatch.setattr("aisland.workspace.activation.reconcile", lambda root: [])
+    monkeypatch.setattr("aisland.setup.manager.apply_all", lambda *a, **k: None)
+    monkeypatch.setattr("aisland.setup.manager.apply_mirrors", lambda *a, **k: None)
+    monkeypatch.setattr(Workspace, "install_order", [])
+    monkeypatch.setattr(manager, "write_pyrightconfig", lambda *a: None)
+    monkeypatch.setattr(manager, "sync_mypy_path", lambda *a: None)
+    monkeypatch.setattr("aisland.setup.manager.resolve_for_setup", lambda *a, **k: ([], False))
+    monkeypatch.setattr(manager, "write_root_uv_toml", lambda *a: None)
+    monkeypatch.setattr(manager, "_run_installs", lambda *a: ([], []))
+    monkeypatch.setattr(manager, "write_gemini_settings", lambda *a: None)
+    monkeypatch.setattr(manager, "write_mcp_json", lambda *a: None)
+    monkeypatch.setattr(manager, "write_code_workspace", lambda root: None)
+
+    def install(root: Path) -> bool:
+        installed.append(root)
+        return True
+
+    monkeypatch.setattr(manager, "install_git_aliases", install)
+    return installed
+
+
+@pytest.mark.parametrize("from_checkout", [True, False], ids=["from a checkout", "from a wheel"])
+def test_setup_installs_the_git_aliases(
+    stubbed_setup: List[Path], tmp_path: Path, monkeypatch: pytest.MonkeyPatch, from_checkout: bool
+) -> None:
+    monkeypatch.setattr(locations, "FROM_CHECKOUT", from_checkout)
+    manager.setup_workspace(non_interactive=True)
+    assert stubbed_setup == [tmp_path]
+
+
+@pytest.mark.usefixtures("empty_workspace")
+def test_there_is_no_separate_command_for_the_aliases() -> None:
+    result = CliRunner().invoke(cli.main, ["git", "aliases"])
+    assert result.exit_code == 2
+    assert "No such command 'git'" in result.output
+
+
+@pytest.mark.parametrize("non_interactive", [True, False], ids=["-y", "without -y"])
+def test_setup_adds_the_clones_the_workspace_does_not_list(
+    stubbed_setup: List[Path], tmp_path: Path, monkeypatch: pytest.MonkeyPatch, non_interactive: bool
+) -> None:
+    """`aisland.workspace.clones` adds them, with or without -y (tests/test_setup_adds_clones.py); setup hands it the root."""
+    calls: List[Path] = []
+
+    def add_unlisted(root: Path) -> List[str]:
+        calls.append(root)
+        return ["added foo"]
+
+    monkeypatch.setattr("aisland.workspace.clones.add_unlisted", add_unlisted)
+    manager.setup_workspace(non_interactive=non_interactive)
+    assert calls == [tmp_path]

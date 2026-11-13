@@ -1,0 +1,10 @@
+# The source package carries project.bashrc: setup.py copies it into the wheel, and `python -m build` builds
+# the wheel FROM the source package. Pinned by tests/test_packaging.py::test_a_release_build_puts_the_shell_init_into_the_wheel.
+include project.bashrc
+# Nothing references CHANGELOG.md (LICENSE comes with `license-files`), so without this line the source
+# package would ship none. Pinned by tests/test_packaging.py::test_the_source_package_carries_the_licence_and_the_changelog.
+include CHANGELOG.md
+# The source package builds the wheel and nothing else. setuptools adds tests/test_*.py by default, but the suite also
+# needs its helpers, docs/, examples/ and .github/, so a partial copy cannot run: the tests stay in the repository.
+# Pinned by tests/test_packaging.py::test_the_source_package_carries_no_part_of_the_test_suite.
+prune tests

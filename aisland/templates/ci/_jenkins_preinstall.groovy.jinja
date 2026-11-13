@@ -1,0 +1,5 @@
+<% if unreleased %>
+                // Internal <[ unreleased_owners ]> dependencies — installed FIRST with --no-deps
+                // so .[dev] below finds them pre-satisfied instead of hitting PyPI
+                // (these are not released on PyPI; a released one resolves through .[dev]).<% for dep in unreleased %>
+                sh "'${VENV_BIN}'/uv pip install --no-deps git+<[ dep.url ]>@<[ dep.ref ]>"<% endfor %><% endif %>

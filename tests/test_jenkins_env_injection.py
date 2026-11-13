@@ -17,8 +17,9 @@ from pathlib import Path
 
 import pytest
 
-from aisland import manager
-from aisland.services.jenkins import JenkinsService, _parse_dotenv
+from aisland import locations
+from aisland.services import jenkins_settings
+from aisland.services.jenkins import JenkinsService
 
 _MINIMAL_CONFIG_XML = """<?xml version='1.1' encoding='UTF-8'?>
 <hudson>
@@ -38,40 +39,7 @@ def _read_envvars(config_file: Path) -> dict[str, str]:
     return dict(zip(strings[::2], strings[1::2]))
 
 
-# --------------------------------------------------------------------------- #
-# _parse_dotenv unit cases
-# --------------------------------------------------------------------------- #
-
-
-def test_parse_dotenv_missing_file_returns_empty(tmp_path: Path) -> None:
-    assert _parse_dotenv(tmp_path / "does-not-exist.env") == {}
-
-
-def test_parse_dotenv_skips_comments_and_blanks(tmp_path: Path) -> None:
-    env = tmp_path / ".env"
-    env.write_text(
-        "\n"
-        "# a comment\n"
-        "DATA_ROOT=/tmp/data\n"
-        "   \n"
-        "# DATA_ROOT=/wrong (commented assignment must be ignored)\n"
-        'HF_HOME="/tmp/hf"\n'
-        "QUOTED_SINGLE='/tmp/single'\n"
-        "BARE=value\n"
-    )
-    parsed = _parse_dotenv(env)
-    assert parsed == {
-        "DATA_ROOT": "/tmp/data",
-        "HF_HOME": "/tmp/hf",
-        "QUOTED_SINGLE": "/tmp/single",
-        "BARE": "value",
-    }
-
-
-def test_parse_dotenv_keeps_equals_in_value(tmp_path: Path) -> None:
-    env = tmp_path / ".env"
-    env.write_text("TOKEN=abc=def=ghi\n")
-    assert _parse_dotenv(env) == {"TOKEN": "abc=def=ghi"}
+# The `.env` reader's cases: tests/test_workspace_env.py (Jenkins reads it with envfile.read).
 
 
 # --------------------------------------------------------------------------- #
@@ -85,7 +53,7 @@ def _make_service(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> tuple[Jenk
     workspace.mkdir()
     # get_workspace_root walks up looking for TASKS.md; give it one to find.
     (workspace / "TASKS.md").write_text("# tasks\n", encoding="utf-8")
-    monkeypatch.setattr(manager, "get_workspace_root", lambda: workspace)
+    monkeypatch.setattr(locations, "workspace_root", lambda: workspace)
 
     svc = JenkinsService()
     jenkins_dir = tmp_path / "jenkins"
@@ -102,7 +70,7 @@ def test_setup_global_properties_injects_dotenv_keys(tmp_path: Path, monkeypatch
         encoding="utf-8",
     )
 
-    svc.setup_global_properties()
+    jenkins_settings.setup_global_properties(svc.service_data_dir)
 
     envvars = _read_envvars(svc.service_data_dir / "config.xml")
     assert envvars["WORKSPACE_ROOT"] == str(workspace)
@@ -115,7 +83,7 @@ def test_setup_global_properties_no_dotenv_only_computed_keys(tmp_path: Path, mo
     svc, workspace = _make_service(tmp_path, monkeypatch)
     # No .env in workspace.
 
-    svc.setup_global_properties()
+    jenkins_settings.setup_global_properties(svc.service_data_dir)
 
     envvars = _read_envvars(svc.service_data_dir / "config.xml")
     assert envvars == {
@@ -132,7 +100,7 @@ def test_setup_global_properties_computed_keys_win_collision(tmp_path: Path, mon
         encoding="utf-8",
     )
 
-    svc.setup_global_properties()
+    jenkins_settings.setup_global_properties(svc.service_data_dir)
 
     envvars = _read_envvars(svc.service_data_dir / "config.xml")
     assert envvars["WORKSPACE_ROOT"] == str(workspace)
@@ -145,7 +113,7 @@ def test_setup_global_properties_envvars_int_size_matches(tmp_path: Path, monkey
     svc, workspace = _make_service(tmp_path, monkeypatch)
     (workspace / ".env").write_text("A=1\nB=2\nC=3\n", encoding="utf-8")
 
-    svc.setup_global_properties()
+    jenkins_settings.setup_global_properties(svc.service_data_dir)
 
     tree = ET.parse(svc.service_data_dir / "config.xml")
     tree_map = tree.getroot().find(".//tree-map")
@@ -156,3 +124,28 @@ def test_setup_global_properties_envvars_int_size_matches(tmp_path: Path, monkey
     # WORKSPACE_ROOT + FORCE_JAVASCRIPT_ACTIONS_TO_NODE24 + A + B + C = 5
     assert declared == 5
     assert len(tree_map.findall("string")) == 2 * declared
+
+
+def test_the_config_carrying_the_env_is_its_owners_alone_and_written_whole(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The `.env`'s values (tokens among them) land in `config.xml`: a file others could read before is made the
+    owner's alone, and a write that fails half way leaves the old file as it was."""
+    svc, workspace = _make_service(tmp_path, monkeypatch)
+    (workspace / ".env").write_text("API_TOKEN=secret\n", encoding="utf-8")
+    config_file = svc.service_data_dir / "config.xml"
+    config_file.chmod(0o644)
+
+    jenkins_settings.setup_global_properties(svc.service_data_dir)
+
+    assert config_file.stat().st_mode & 0o777 == 0o600
+    assert _read_envvars(config_file)["API_TOKEN"] == "secret"
+    before = config_file.read_bytes()
+
+    def full_disk(path: Path, text: str, new_mode: object = None) -> None:
+        raise OSError("No space left on device")
+
+    monkeypatch.setattr(jenkins_settings.atomic, "write_text", full_disk)
+    with pytest.raises(OSError):
+        jenkins_settings.setup_global_properties(svc.service_data_dir)
+    assert config_file.read_bytes() == before

@@ -1,6 +1,6 @@
 """Tests for the ``pyrightconfig.json`` generator wired into ``aisland setup``.
 
-The generator (``manager._write_pyrightconfig``) replaces the previously
+The generator (``editor_files.write_pyrightconfig``) replaces the previously
 hand-maintained, hardcoded-path ``pyrightconfig.json`` at the workspace root
 with a portable, regenerated-on-every-setup artifact.
 """
@@ -10,22 +10,24 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-from aisland.manager import _ensure_gitignore_line, _write_pyrightconfig
+from aisland.setup.editor_files import write_pyrightconfig
+from aisland.workspace.projects import ProjectMetadata
+from tests.records import project_metadata
 
 
-def _fake_projects(workspace: Path, names: list[str]) -> list[dict]:
+def _fake_projects(workspace: Path, names: list[str]) -> list[ProjectMetadata]:
     """Build ``get_install_order``-shaped dicts (only ``path`` is consumed)."""
-    projects = []
+    projects: list[ProjectMetadata] = []
     for name in names:
         (workspace / name).mkdir(parents=True, exist_ok=True)
-        projects.append({"name": name, "path": workspace / name})
+        projects.append(project_metadata(name, workspace / name))
     return projects
 
 
 class TestWritePyrightConfig:
     def test_writes_valid_json_with_expected_shape(self, tmp_path: Path) -> None:
         projects = _fake_projects(tmp_path, ["confluid", "matrainer"])
-        _write_pyrightconfig(tmp_path, projects)
+        write_pyrightconfig(tmp_path, projects)
 
         out = tmp_path / "pyrightconfig.json"
         assert out.is_file()
@@ -37,11 +39,32 @@ class TestWritePyrightConfig:
             "**/.venv",
             "**/.*_cache",
             "**/node_modules",
+            "confluid",
+            "matrainer",
         ]
+
+    def test_the_root_excludes_every_project_inside_it(self, tmp_path: Path) -> None:
+        """An editor window lists each project as a folder of its own, whose instance analyses it; the root's
+        instance analysing them too read every file twice and ran Pylance out of memory. Imports still resolve
+        through `extraPaths`. A project outside the workspace is no file of the root's: it is not excluded."""
+        projects = _fake_projects(tmp_path / "acme", ["matrainer", "confluid"])
+        (tmp_path / "elsewhere").mkdir()
+        projects.append(project_metadata("elsewhere", tmp_path / "elsewhere"))
+        write_pyrightconfig(tmp_path / "acme", projects)
+
+        data = json.loads((tmp_path / "acme" / "pyrightconfig.json").read_text())
+        assert data["exclude"][-2:] == ["confluid", "matrainer"]
+        assert "../elsewhere" not in data["exclude"]
+        assert data["extraPaths"] == ["../elsewhere", "confluid", "matrainer"]
+
+    def test_a_projects_own_config_excludes_no_project(self, tmp_path: Path) -> None:
+        write_pyrightconfig(tmp_path, _fake_projects(tmp_path, ["confluid", "matrainer"]))
+        data = json.loads((tmp_path / "confluid" / "pyrightconfig.json").read_text())
+        assert data["exclude"] == ["**/__pycache__", "**/.venv", "**/.*_cache", "**/node_modules"]
 
     def test_extra_paths_are_relative_and_sorted(self, tmp_path: Path) -> None:
         projects = _fake_projects(tmp_path, ["matrainer", "confluid", "raidar-ultralytics"])
-        _write_pyrightconfig(tmp_path, projects)
+        write_pyrightconfig(tmp_path, projects)
 
         data = json.loads((tmp_path / "pyrightconfig.json").read_text())
         assert data["extraPaths"] == ["confluid", "matrainer", "raidar-ultralytics"]
@@ -50,7 +73,7 @@ class TestWritePyrightConfig:
         """The whole point of generating this file is portability — no machine-
         specific absolute path may leak into the output (No-Hardcoded-Paths)."""
         projects = _fake_projects(tmp_path, ["confluid"])
-        _write_pyrightconfig(tmp_path, projects)
+        write_pyrightconfig(tmp_path, projects)
 
         raw = (tmp_path / "pyrightconfig.json").read_text()
         assert str(tmp_path) not in raw
@@ -60,24 +83,24 @@ class TestWritePyrightConfig:
         assert not Path(data["venvPath"]).is_absolute()
 
     def test_trailing_newline(self, tmp_path: Path) -> None:
-        _write_pyrightconfig(tmp_path, _fake_projects(tmp_path, ["confluid"]))
+        write_pyrightconfig(tmp_path, _fake_projects(tmp_path, ["confluid"]))
         assert (tmp_path / "pyrightconfig.json").read_text().endswith("}\n")
 
     def test_regenerates_idempotently(self, tmp_path: Path) -> None:
         """Re-running setup must overwrite, not append/duplicate — the file
         always reflects the live project set."""
-        _write_pyrightconfig(tmp_path, _fake_projects(tmp_path, ["confluid", "matrainer"]))
+        write_pyrightconfig(tmp_path, _fake_projects(tmp_path, ["confluid", "matrainer"]))
         first = (tmp_path / "pyrightconfig.json").read_text()
 
         # Project removed on the second run.
-        _write_pyrightconfig(tmp_path, _fake_projects(tmp_path, ["confluid"]))
+        write_pyrightconfig(tmp_path, _fake_projects(tmp_path, ["confluid"]))
         second = json.loads((tmp_path / "pyrightconfig.json").read_text())
 
         assert second["extraPaths"] == ["confluid"]
         assert first != (tmp_path / "pyrightconfig.json").read_text()
 
     def test_empty_project_list(self, tmp_path: Path) -> None:
-        _write_pyrightconfig(tmp_path, [])
+        write_pyrightconfig(tmp_path, [])
         data = json.loads((tmp_path / "pyrightconfig.json").read_text())
         assert data["extraPaths"] == []
 
@@ -87,13 +110,13 @@ class TestWritePerProjectPyrightConfig:
 
     def test_writes_config_into_every_project(self, tmp_path: Path) -> None:
         projects = _fake_projects(tmp_path, ["confluid", "matrainer", "recordstream"])
-        _write_pyrightconfig(tmp_path, projects)
+        write_pyrightconfig(tmp_path, projects)
 
         for name in ["confluid", "matrainer", "recordstream"]:
             assert (tmp_path / name / "pyrightconfig.json").is_file()
 
     def test_venv_resolves_to_shared_workspace_venv(self, tmp_path: Path) -> None:
-        _write_pyrightconfig(tmp_path, _fake_projects(tmp_path, ["confluid", "matrainer"]))
+        write_pyrightconfig(tmp_path, _fake_projects(tmp_path, ["confluid", "matrainer"]))
 
         data = json.loads((tmp_path / "confluid" / "pyrightconfig.json").read_text())
         assert data["venvPath"] == ".."
@@ -101,13 +124,13 @@ class TestWritePerProjectPyrightConfig:
         assert (tmp_path / "confluid" / data["venvPath"]).resolve() == tmp_path
 
     def test_extra_paths_are_sorted_siblings_excluding_self(self, tmp_path: Path) -> None:
-        _write_pyrightconfig(tmp_path, _fake_projects(tmp_path, ["matrainer", "confluid", "recordstream"]))
+        write_pyrightconfig(tmp_path, _fake_projects(tmp_path, ["matrainer", "confluid", "recordstream"]))
 
         data = json.loads((tmp_path / "confluid" / "pyrightconfig.json").read_text())
         assert data["extraPaths"] == ["../matrainer", "../recordstream"]
 
     def test_no_absolute_paths_anywhere(self, tmp_path: Path) -> None:
-        _write_pyrightconfig(tmp_path, _fake_projects(tmp_path, ["confluid", "matrainer"]))
+        write_pyrightconfig(tmp_path, _fake_projects(tmp_path, ["confluid", "matrainer"]))
 
         raw = (tmp_path / "confluid" / "pyrightconfig.json").read_text()
         assert str(tmp_path) not in raw
@@ -117,39 +140,9 @@ class TestWritePerProjectPyrightConfig:
         assert not Path(data["venvPath"]).is_absolute()
 
     def test_regenerates_idempotently(self, tmp_path: Path) -> None:
-        _write_pyrightconfig(tmp_path, _fake_projects(tmp_path, ["confluid", "matrainer"]))
+        write_pyrightconfig(tmp_path, _fake_projects(tmp_path, ["confluid", "matrainer"]))
         # Project removed on the second run — the surviving config sheds the sibling.
-        _write_pyrightconfig(tmp_path, _fake_projects(tmp_path, ["confluid"]))
+        write_pyrightconfig(tmp_path, _fake_projects(tmp_path, ["confluid"]))
 
         data = json.loads((tmp_path / "confluid" / "pyrightconfig.json").read_text())
         assert data["extraPaths"] == []
-
-    def test_gitignore_gains_artifact_entry(self, tmp_path: Path) -> None:
-        _write_pyrightconfig(tmp_path, _fake_projects(tmp_path, ["confluid"]))
-        assert "/pyrightconfig.json" in (tmp_path / "confluid" / ".gitignore").read_text().splitlines()
-
-
-class TestEnsureGitignoreLine:
-    def test_creates_missing_gitignore(self, tmp_path: Path) -> None:
-        _ensure_gitignore_line(tmp_path, "/pyrightconfig.json")
-        assert (tmp_path / ".gitignore").read_text() == "/pyrightconfig.json\n"
-
-    def test_appends_preserving_existing_content(self, tmp_path: Path) -> None:
-        (tmp_path / ".gitignore").write_text("*.pyc\n")
-        _ensure_gitignore_line(tmp_path, "/pyrightconfig.json")
-        assert (tmp_path / ".gitignore").read_text() == "*.pyc\n/pyrightconfig.json\n"
-
-    def test_appends_newline_separator_when_missing(self, tmp_path: Path) -> None:
-        (tmp_path / ".gitignore").write_text("*.pyc")
-        _ensure_gitignore_line(tmp_path, "/pyrightconfig.json")
-        assert (tmp_path / ".gitignore").read_text() == "*.pyc\n/pyrightconfig.json\n"
-
-    def test_idempotent_exact_match(self, tmp_path: Path) -> None:
-        (tmp_path / ".gitignore").write_text("/pyrightconfig.json\n")
-        _ensure_gitignore_line(tmp_path, "/pyrightconfig.json")
-        assert (tmp_path / ".gitignore").read_text() == "/pyrightconfig.json\n"
-
-    def test_idempotent_unanchored_variant_counts_as_covered(self, tmp_path: Path) -> None:
-        (tmp_path / ".gitignore").write_text("pyrightconfig.json\n")
-        _ensure_gitignore_line(tmp_path, "/pyrightconfig.json")
-        assert (tmp_path / ".gitignore").read_text() == "pyrightconfig.json\n"

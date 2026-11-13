@@ -14,8 +14,8 @@ Two real drifts motivated this file (2026-08-25):
   five projects became unsatisfiable. The BASE dependencies had been migrated to
   ``>=0.1.0a1``; the ones inside ``optional-dependencies`` were missed — which is
   why the check below walks extras, not just ``project.dependencies``.
-* ``vendorcli`` capped ``liquifai>=0.1.0,<0.2`` while ``liquifai`` moved to
-  ``0.2.0``, so installing vendorcli evicted the local editable checkout and
+* ``app`` capped ``liquifai>=0.1.0,<0.2`` while ``liquifai`` moved to
+  ``0.2.0``, so installing app evicted the local editable checkout and
   replaced it with the last PyPI build that fit the cap.
 
 Deliberately NOT flagged: a dependency written with no specifier at all (a bare
@@ -24,7 +24,7 @@ contradict — the resolver takes whatever the workspace provides. Only a spec
 that names versions is held to accepting the local one.
 
 Projects whose source is ``github`` / ``pypi`` are deinit'd to an empty
-directory (see ``config.toml`` ``[sources]``), so they declare no local version
+directory (``aisland workspace configure source``), so they declare no local version
 and specs naming them are resolved against a real index instead. Those are
 skipped rather than guessed at.
 """
@@ -35,10 +35,11 @@ import tomllib
 from pathlib import Path
 from typing import Dict, List, NamedTuple
 
+import pytest
 from packaging.requirements import Requirement
 from packaging.version import Version
 
-from aisland.manager import discover_projects, get_project_metadata, get_workspace_root
+from aisland.workspace.projects import discover_projects, get_project_metadata, get_workspace_root
 
 
 class Violation(NamedTuple):
@@ -129,7 +130,7 @@ def test_a_prerelease_floor_accepts_the_prerelease(tmp_path: Path) -> None:
     root = _workspace(
         tmp_path,
         ("recordstream", "0.1.0a1", [], []),
-        ("signals", "0.1.0", ["recordstream>=0.1.0a1"], []),
+        ("navigaitor", "0.1.0", ["recordstream>=0.1.0a1"], []),
     )
     assert find_unsatisfiable_specs(root) == []
 
@@ -139,9 +140,9 @@ def test_a_plain_floor_rejects_a_prerelease_sibling(tmp_path: Path) -> None:
     root = _workspace(
         tmp_path,
         ("recordstream", "0.1.0a1", [], []),
-        ("signals", "0.1.0", ["recordstream>=0.1.0"], []),
+        ("navigaitor", "0.1.0", ["recordstream>=0.1.0"], []),
     )
-    assert find_unsatisfiable_specs(root) == [Violation("signals", "recordstream>=0.1.0", "recordstream", "0.1.0a1")]
+    assert find_unsatisfiable_specs(root) == [Violation("navigaitor", "recordstream>=0.1.0", "recordstream", "0.1.0a1")]
 
 
 def test_specs_inside_an_extra_are_checked_too(tmp_path: Path) -> None:
@@ -155,13 +156,13 @@ def test_specs_inside_an_extra_are_checked_too(tmp_path: Path) -> None:
 
 
 def test_an_upper_cap_below_the_sibling_is_a_violation(tmp_path: Path) -> None:
-    """CON case: vendorcli's `liquifai<0.2` against a liquifai that moved to 0.2.0."""
+    """CON case: app's `liquifai<0.2` against a liquifai that moved to 0.2.0."""
     root = _workspace(
         tmp_path,
         ("liquifai", "0.2.0", [], []),
-        ("vendorcli", "0.1.0", ["liquifai>=0.1.0,<0.2"], []),
+        ("app", "0.1.0", ["liquifai>=0.1.0,<0.2"], []),
     )
-    assert find_unsatisfiable_specs(root) == [Violation("vendorcli", "liquifai>=0.1.0,<0.2", "liquifai", "0.2.0")]
+    assert find_unsatisfiable_specs(root) == [Violation("app", "liquifai>=0.1.0,<0.2", "liquifai", "0.2.0")]
 
 
 def test_a_cap_that_still_covers_the_sibling_is_fine(tmp_path: Path) -> None:
@@ -169,7 +170,7 @@ def test_a_cap_that_still_covers_the_sibling_is_fine(tmp_path: Path) -> None:
     root = _workspace(
         tmp_path,
         ("liquifai", "0.2.0", [], []),
-        ("vendorcli", "0.1.0", ["liquifai>=0.2.0,<0.3"], []),
+        ("app", "0.1.0", ["liquifai>=0.2.0,<0.3"], []),
     )
     assert find_unsatisfiable_specs(root) == []
 
@@ -188,12 +189,13 @@ def test_external_and_detached_dependencies_are_left_alone(tmp_path: Path) -> No
     """`loggair` is pypi-sourced (empty dir, no local version) and `torch` is not ours."""
     root = _workspace(
         tmp_path,
-        ("signals", "0.1.0", ["loggair>=99.0", "torch>=2.0"], []),
+        ("navigaitor", "0.1.0", ["loggair>=99.0", "torch>=2.0"], []),
     )
     (tmp_path / "loggair").mkdir()  # deinit'd submodule: directory exists, pyproject does not
     assert find_unsatisfiable_specs(root) == []
 
 
+@pytest.mark.real_workspace
 def test_the_real_workspace_has_no_unsatisfiable_internal_specs() -> None:
     """The integration pin: `aisland setup` can resolve the whole graph from local checkouts."""
     violations = find_unsatisfiable_specs(get_workspace_root())

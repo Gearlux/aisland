@@ -1,0 +1,35 @@
+---
+description: Commit only the changes made by the running session — its own files and its own edits inside files other sessions also touched — across the root repository and the submodules, with generated messages. Other sessions' uncommitted work stays in the working tree.
+model: sonnet
+allowed-tools: [Bash(git add:*), Bash(git commit:*), Bash(git status:*), Bash(git diff:*), Bash(git log:*), Bash(git apply:*), Bash(git rev-parse:*), Bash(git branch:*), Bash(git -C * branch:*), Bash(git -C * add:*), Bash(git -C * commit:*), Bash(git -C * status:*), Bash(git -C * diff:*), Bash(git -C * log:*), Bash(git -C * apply:*), Bash(git -C * rev-parse:*), Bash(git -C * config:*), Bash(cd:*), Bash(for *), Bash(while *), Bash(if *), Bash(python3:*)]
+---
+<!-- Shipped by aisland (aisland/harness/commands/commit-session.md), installed into .agents/workflows/ by `aisland setup` (aisland/setup/harness.py). Change it in aisland; the rules it cites are aisland's (.agents/aisland/AGENTS.md). -->
+
+# Workflow: Commit Session (commit only what this session changed)
+
+Several sessions work in this workspace at once, so `git status` shows everyone's uncommitted work. `/commit-all` commits all of it; `/commit-session` commits only the part this session made.
+
+When the user invokes `/commit-session`:
+
+0. **Branch check, before anything is staged** (aisland rules → "Commits Go To A `dev/*` Branch — Never Create A Branch"): for the root and every repository holding this session's changes, `git -C <repo> branch --show-current`. Each may be on any `dev/*` branch (`dev/main`, `dev/<name>`), and each commit goes to the branch its repository is on. Any that prints something outside `dev/*` — `main`, another branch, or nothing (a detached HEAD) — → stage and commit NOTHING anywhere; report each such repository with its branch to the user and stop.
+
+1. **List the session's changes from the conversation, never from `git status`.** Walk this session's own tool calls and collect every path it changed: Edit / Write / NotebookEdit targets, and every file a Bash command created, rewrote, moved or deleted (`rm`, `mv`, `sed -i`, a formatter such as `black`/`isort`, a generator or scaffold). Leave out scratchpad files and anything outside the workspace. A file the session changed and later restored has nothing to commit — skip it.
+   - If the history no longer lets you name every changed file with certainty (e.g. the conversation was compacted), show the list you can prove and ask the user to confirm or extend it before committing anything.
+
+2. **Group by repository.** For each path, find the repository that owns it (`git -C <dir> rev-parse --show-toplevel`): a submodule or the root.
+   - **No HOLD, no waiting** (aisland rules → "Sessions On This Machine Coordinate Before They Edit"): commits never wait for other sessions; the staged-diff checks in step 3 are the guard.
+
+3. **Per submodule, then the root**, for each repository holding session changes:
+   a. **Stage the session's changes only.** For each path, compare `git diff -- <path>` (for an untracked file: the whole file) with the edits this session made.
+      - Every change in the file is the session's → `git add -A -- <path>` (also covers new and deleted files).
+      - The file also carries changes this session did NOT make (another session edited it too) → stage only the session's hunks with the helper, run inside the repository that owns the file (the `$(…)` finds the workspace root from the root or a submodule alike): `python3 "$(git rev-parse --show-superproject-working-tree --show-toplevel | head -1)/.agents/scripts/stage_hunks.py" list <path>` numbers the hunks (index → working tree), and the same command with `take <path> 0,2` stages exactly those, each where it was written, on top of whatever the index already holds. **Never** `git apply --cached --unidiff-zero` on a patch of some of the hunks: git places an insertion after a left-out hunk too far down by that hunk's lines (twice in real commits — a function then read a variable before setting it, README rows landed at the end of the file; reproduced in aisland's `tests/test_stage_hunks.py`). Then confirm with `git diff --cached -- <path>` (only the session's lines) and `git diff -- <path>` (ONLY the other session's lines — a deleted-and-added copy of one of your own lines there means a misplacement); for code, parse the staged copy (`git show :<path> | python3 -c 'import ast,sys; ast.parse(sys.stdin.read())'`).
+      - A single hunk mixes the session's lines with someone else's (edits on adjacent lines merge into one hunk) → do not guess: show the hunk and ask the user whether to include it whole or leave that file out.
+   b. **Never** `git add .`, a path-less `git add -A`, or `git commit -a` — each one sweeps in other sessions' work.
+   c. **Message:** written from the STAGED diff only (`git diff --cached`), concise and conventional (`feat:`, `fix:`, `chore:`, `docs:`).
+   d. **Commit**, and report the commit hash and message. Only whole files staged → `git commit -- <paths>`, so anything another session staged stays out. A hand-staged file among them → first confirm `git diff --cached --name-only` lists only your files, then a plain `git commit` (a pathspec commits the working tree, the other session's hunks included).
+
+4. **Root repository last.** An UNTRACKED submodule (`aisland workspace track unset`) is never recorded, and a workspace may untrack every one. Before staging any pointer, read each submodule's tracking — this machine's setting first, then the committed one: `git -C <root> config --get "submodule.<name>.ignore" || git -C <root> config -f .gitmodules --get "submodule.<name>.ignore"` (`<name>` is the submodule's name in `.gitmodules`; in most workspaces its path). `all` = untracked: leave its pointer out — never `git add -f` — and never run its `git add` chained with `&&` before a commit (git refuses it with `hint: Skipping submodule due to ignore=all` and exits 1). When every committed submodule is untracked and the root has no file of its own to commit, the root has nothing to record: make no root commit, and say so in the summary, naming the submodules (their commits live on their own branch). Otherwise stage the pointer of each TRACKED submodule this session just committed in (`git add <submodule_path>`) together with the session's own root files (rules of step 3a), then commit (e.g. `chore: sync submodule pointer — <project> <what changed>`). Do NOT stage the pointer of a submodule this session did not commit in, even when it shows as modified.
+
+5. **No quality gates** in this shortcut (same as `/commit-all`), and **NEVER `git push`** unless the user asks in a follow-up instruction.
+
+6. **Final summary:** a table of the commits made (repository, branch, SHA, message) — an untracked submodule's commit with "untracked: the root records no pointer" — followed by what was deliberately left uncommitted because another session made it (what `git status` still shows), so the user can see nothing was lost.

@@ -1,30 +1,135 @@
 [build-system]
-requires = ["setuptools>=61.0", "wheel"]
+# setuptools>=77 is the PEP 639 floor: `license` as a plain SPDX string below requires it (the TOML-table
+# form is deprecated). Pinned by tests/test_packaging.py::test_a_release_build_prints_no_deprecation_warning.
+requires = ["setuptools>=77.0", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "aisland-manager"
+name = "aisland"
 version = "0.1.0"
-description = "Development Infrastructure Aisland Manager"
-authors = [{name = "Acme"}]
-license = {text = "MIT"}
+description = "One workspace of many Python projects: a shared venv, local services, generated CI and git aliases."
+readme = "README.md"
+keywords = ["workspace", "monorepo", "git submodules", "virtualenv", "continuous integration", "jenkins", "developer tools"]
+authors = [{name = "Gert Behiels"}]
+# PEP 639 SPDX expression; no `License ::` classifier (setuptools warns on one beside this field).
+license = "MIT"
+license-files = ["LICENSE"]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Environment :: Console",
+    "Intended Audience :: Developers",
+    "Operating System :: MacOS",
+    "Operating System :: POSIX :: Linux",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Topic :: Software Development :: Build Tools",
+    "Typing :: Typed",
+]
 dependencies = [
-    "click>=8.0.0",
-    # Generates the process-compose desired-state document (aisland/supervisor.py).
-    "pyyaml>=6.0",
+    # The command line. Every floor below was run on: the fast suite in a venv of `--resolution lowest-direct`
+    # (2026-11-05), held by tests/test_packaging.py::test_aisland_runs_on_the_lowest_versions_its_dependencies_allow.
+    # 8.2.1: below it an empty word after a command offers no options, and below 8.2 a CliRunner result has no stderr
+    # of its own. (Before 8.4 a refused option reads `No such option: --x`, after it `No such option '--x'`.)
+    "click>=8.2.1",
+    # Renders a project's CI files from a template set (aisland/ci/ci_templates.py): aisland's own in
+    # aisland/templates/ci/, or one a workspace or an installed package brings.
+    "jinja2>=3.1.6",
+    # Jinja's own escaping library: the Jenkins jobs' config.xml templates (aisland/services/jenkins_jobs.py) mark the
+    # values they have escaped as XML text with its `Markup`. 2.0 is the floor jinja2 3.1 itself asks for.
+    "markupsafe>=2.0",
+    # Generates the process-compose desired-state document (aisland/services/supervisor.py). 6.0.1: 6.0 ships no wheel for
+    # Python 3.12 and its sdist no longer builds, so the lowest version a resolver may pick must install.
+    "pyyaml>=6.0.1",
     # PEP 508 requirement parsing for the CI scaffolder's internal-dep closure
     # (services/jenkins.py) — an extras-carrying spec like `matrainer[keras]>=0.1.0`
     # must resolve to its dep and the named extra, which a regex split cannot do.
     "packaging>=23.0",
+    # Format-preserving TOML: aisland edits files a person also edits (workspace.toml, a project's pyproject.toml
+    # extra) and writes the root uv.toml, keeping comments, order and value types and escaping every string
+    # (docs/decisions/0079). 0.12.0: every test of those writers passes on it as on 0.15 (2026-11-08); the edits
+    # need `unwrap`, inline tables and super tables, all older.
+    "tomlkit>=0.12.0",
 ]
 requires-python = ">=3.12"
 
+[project.optional-dependencies]
+# `aisland tunnel connect` speaks the VS Code tunnel's MessagePack messages (aisland/tunnel/connect.py);
+# only the machine you connect FROM needs it, so it stays out of the base install.
+connect = ["msgpack>=1.2"]
+# `aisland-mcp`, the MCP server (aisland/server.py): only a machine whose AI client calls aisland's tools needs it.
+# Below 3: the server drops the SDK's resources and prompts handlers through a private attribute, which a next major
+# version may move (tests/test_packaging.py::test_the_mcp_sdk_is_held_below_its_next_major_version).
+mcp = ["mcp>=2.0,<3"]
+# `aisland wheels prune --apply` and `aisland wheels reset` rewrite history with git-filter-repo
+# (aisland/wheels/prune.py, run as `python -m aisland.wheels.filter_repo`, which reads a multi-line config value);
+# only a clone that rewrites needs it.
+prune = ["git-filter-repo>=2.47"]
+# What CI installs (`.[dev]`): the [connect], [mcp] and [prune] extras' packages, so their tests run — spelled out, not
+# `<name>[connect]`, so the line never depends on the distribution's name.
+dev = [
+    "msgpack>=1.2",
+    "mcp>=2.0,<3",
+    "git-filter-repo>=2.47",
+    # `aisland completion install` hands liquifai apps to liquifai (aisland/setup/completion.py), and its tests stub that.
+    "liquifai>=0.3.1",
+    # The quality gates ci.yml and the Jenkinsfiles run.
+    "pytest>=8.0,<9.0",
+    "pytest-cov>=6.0",
+    # The fast run is parallel (addopts below): required, not optional — in one process it is minutes over the
+    # 5-minute budget the workspace holds a fast run to.
+    "pytest-xdist>=3.8,<4.0",
+    "black>=24.0,<25.0",
+    "isort>=5.13,<6.0",
+    "flake8>=7.0",
+    # The import contracts (`[tool.importlinter]` below), run by tests/test_imports.py. 2.12: 2.11 refuses the
+    # `aisland.**` contract ("Modules have shared descendants").
+    "import-linter>=2.12",
+    # Below 2.0, as the workspace's other projects pin it.
+    "mypy>=1.20,<2.0",
+    "types-PyYAML>=6.0",
+    # The release build and PyPI's own check (tests/test_packaging.py builds and checks the release).
+    "build>=1.5",
+    "twine>=7.0",
+    # Those tests (and tests/test_wheels.py's end-to-end ones) build WITHOUT isolation, so the build backend
+    # must already be in the venv — a fresh one has neither.
+    "setuptools>=77.0",
+    # 0.34: below it the no-isolation builds fail (0.33.6), and a bare "wheel" let a resolver take 0.1, which no longer
+    # installs.
+    "wheel>=0.34",
+    # tests/test_wheels.py's end-to-end tests run the real uv found beside the interpreter, where this puts it.
+    "uv>=0.12",
+]
+
+[project.urls]
+Homepage = "https://github.com/Gearlux/aisland"
+Repository = "https://github.com/Gearlux/aisland.git"
+Issues = "https://github.com/Gearlux/aisland/issues"
+# The release's own tag, as the README's links (tests/test_docs.py): a version bump moves them together.
+Changelog = "https://github.com/Gearlux/aisland/blob/v0.1.0/CHANGELOG.md"
+
 [project.scripts]
 aisland = "aisland.cli:main"
+# The MCP server; `aisland setup` lists it in `.mcp.json` (a `<pkg>.server:main` script importing `mcp.server`).
+aisland-mcp = "aisland.server:main"
+
+# Every pytest run in the workspace `.venv` loads this plugin, which records each run of a
+# workspace project to `aisland/data/test-stats/` (aisland rules → "Two Test Runs"; read back by
+# `aisland tests report`). Disable it for one run with `-p no:aisland_test_stats`.
+[project.entry-points.pytest11]
+aisland_test_stats = "aisland.pytest_stats"
 
 [tool.setuptools.packages.find]
 where = ["."]
 include = ["aisland*"]
+
+# The non-Python files the package reads or runs, so a wheel carries them:
+# the workspace-file template (setup/editor_files.py), the git alias scripts and the
+# files `aisland workspace init` writes (aisland/setup/init.py), and the agent harness `aisland setup` installs
+# into every workspace (aisland/setup/harness.py: the commands, their helper script, the generic rules — `harness/` is no
+# Python package, so its script is data too). setup.py adds project.bashrc.
+[tool.setuptools.package-data]
+aisland = ["py.typed", "code-workspace.json", "git/*.sh", "templates/*", "templates/ci/*", "templates/jenkins/*", "templates/swiftbar/*", "harness/*.md", "harness/*.toml", "harness/commands/*.md", "harness/scripts/*.py"]
 
 [tool.black]
 line-length = 120
@@ -35,14 +140,88 @@ profile = "black"
 line_length = 120
 skip_glob = ["data/*"]
 
+# The package's layers, read from its import graph by import-linter (grimp); tests/test_imports.py runs them, so the
+# test run enforces them (`lint-imports --no-cache` from this folder shows the same report). Every module is in one of
+# the layers below or is a leaf (the `leaves` contract), which tests/test_imports.py also checks: a new top-level
+# module joins one of the two lists.
+[tool.importlinter]
+root_package = "aisland"
+include_external_packages = true
+# pytest_stats names pytest for its annotations alone; such an import never runs.
+exclude_type_checking_imports = true
+
+# Top to bottom; a layer imports only the layers below it, and the modules of one line never import one another.
+[[tool.importlinter.contracts]]
+id = "layers"
+name = "The front doors, the commands over the workspace, the services, CI, wheels, setup, the workspace model"
+type = "layers"
+layers = [
+    "aisland.cli | aisland.server",
+    "aisland.doctor | aisland.clean",
+    "aisland.backups | aisland.services",
+    "aisland.ci",
+    "aisland.wheels",
+    "aisland.setup",
+    "aisland.workspace | aisland.tunnel",
+]
+
+[[tool.importlinter.contracts]]
+id = "leaves"
+name = "The leaf modules every layer shares import no layer"
+type = "forbidden"
+source_modules = [
+    "aisland.atomic", "aisland.console", "aisland.css_colors", "aisland.downloads", "aisland.editor", "aisland.envfile",
+    "aisland.errors", "aisland.failures", "aisland.git_exclude", "aisland.gitcmd", "aisland.locations",
+    "aisland.machine_config", "aisland.notebook_utils", "aisland.paths", "aisland.plugins", "aisland.probe",
+    "aisland.pypi", "aisland.pyproject", "aisland.pytest_stats", "aisland.toml_places", "aisland.userspace_tools",
+    "aisland.venv",
+]
+forbidden_modules = [
+    "aisland.backups", "aisland.ci", "aisland.clean", "aisland.cli", "aisland.doctor", "aisland.server",
+    "aisland.services", "aisland.setup", "aisland.tunnel", "aisland.wheels", "aisland.workspace",
+]
+
+[[tool.importlinter.contracts]]
+id = "acyclic-inside"
+name = "Inside each subpackage the modules import one another without a cycle"
+type = "acyclic_siblings"
+ancestors = ["aisland.ci", "aisland.cli", "aisland.services", "aisland.setup", "aisland.tunnel", "aisland.wheels", "aisland.workspace"]
+
+# Every third-party package aisland imports anywhere is listed (tests/test_imports.py fails on one missing).
+[[tool.importlinter.contracts]]
+id = "stdlib-only"
+name = "The standard-library-only modules import no third-party package"
+type = "forbidden"
+source_modules = ["aisland.atomic", "aisland.locations", "aisland.plugins", "aisland.pytest_stats", "aisland.tunnel.shell", "aisland.wheels.install", "aisland.wheels.unzip"]
+forbidden_modules = ["click", "git_filter_repo", "jinja2", "liquifai", "markupsafe", "mcp", "msgpack", "packaging", "tomlkit", "yaml"]
+# A standalone script's optional library stays lazy (AGENTS.md "Imports sit at the top…"): install.py reads a
+# wheels.yaml with PyYAML when it is there.
+ignore_imports = ["aisland.wheels.install -> yaml"]
+
+[[tool.importlinter.contracts]]
+id = "runs-without-aisland"
+name = "The scripts that run where aisland is not installed import nothing of aisland"
+type = "forbidden"
+source_modules = ["aisland.tunnel.shell", "aisland.wheels.install", "aisland.wheels.unzip"]
+forbidden_modules = ["aisland.**"]
+as_packages = false
+
+# Every coverage run of aisland measures branches (workspace rule "Keep Branch Coverage On"); CI's runs also pass
+# --cov-branch, from the templates.
+[tool.coverage.run]
+branch = true
+
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 python_files = ["test_*.py"]
-norecursedirs = ["data", ".venv"]
-
-[tool.aisland.sys-dependencies]
-# f1bonacc1/tap/process-compose: the service supervisor (aisland/supervisor.py)
-# — tap-qualified because homebrew-core has no process-compose formula.
-# Linux gets it from the userspace registry (manager.USERSPACE_TOOLS) instead.
-brew = ["openjdk", "swiftbar", "act", "docker", "colima", "f1bonacc1/tap/process-compose"]
-userspace = ["process-compose"]
+norecursedirs = ["data", ".venv", "tools", "bin"]
+# Plain `pytest` is the fast run, `pytest -m slow` the slow one (workspace rule "Two Test Runs"); a test moves to the
+# slow run when `aisland tests report aisland` lists it.
+# -n 4: the fast run is PARALLEL (user pick 3, 2026-10-28). Measured on this machine under load: 790 s in one process,
+# 490 s over six workers, every test passing — most of a test's time is git, uv and builds in subprocesses. Four, the
+# cores a GitHub runner has: more workers than cores is slower, never wrong, so CI needs no setting of its own.
+addopts = "-m 'not slow' -n 4"
+markers = [
+    "slow: never failed and among the slowest; left out of the fast run, run by CI's slow leg",
+    "real_workspace: reads the workspace aisland is checked out in (tests/conftest.py::no_real_workspace)",
+]

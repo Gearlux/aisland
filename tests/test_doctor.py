@@ -1,12 +1,15 @@
 """`aisland doctor` — preflight checks for known recurring venv skew.
 
 Each check encodes an invariant the workspace enforces elsewhere (the uv override policy in
-`manager._ROOT_UV_BASE`, the huggingface_hub floor in the root AGENTS.md). These tests drive
+`uv_config._ROOT_UV_BASE`, the huggingface_hub floor in the root AGENTS.md). These tests drive
 the checks through both the healthy state and the exact broken state that motivated them, so
 a future refactor cannot silently turn a check into a no-op.
 """
 
 import json
+import os
+import threading
+import time
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
@@ -15,6 +18,7 @@ from click.testing import CliRunner
 
 from aisland import doctor
 from aisland.cli import main
+from aisland.tunnel import binary as tunnel_binary
 
 
 @pytest.fixture()
@@ -115,7 +119,7 @@ class TestMcpServerApiCheck:
     """The 2.x MCP SDK renamed the server class AND its module; the two never coexist.
 
     The real incident: `mcp` 2.0.0 resolved into the shared venv against an unbounded
-    `mcp>=1.9.0` floor, `mcp.server.fastmcp` vanished, and `vendorcli-mcp` died on import —
+    `mcp>=1.9.0` floor, `mcp.server.fastmcp` vanished, and `app-mcp` died on import —
     discovered only when someone tried to use it.
     """
 
@@ -293,6 +297,177 @@ class TestColimaVmTrustCheck:
         assert colima["urls"] == ["https://ghcr.io/v2/"]
 
 
+class TestTunnelRelayCheck:
+    """The relay probe runs only where a tunnel has been used, and names what to do when it fails."""
+
+    def test_a_machine_with_no_tunnel_passes_without_probing(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        def explode(*args: Any, **kwargs: Any) -> None:
+            raise AssertionError("a machine with no tunnel must not probe the relay")
+
+        monkeypatch.setattr(doctor.tunnel, "relay_reachable", explode)
+
+        result = doctor.check_tunnel_relay()
+
+        assert result.ok
+        assert "no tunnel configured here" in result.detail
+
+    def test_a_reachable_relay_passes_with_what_it_answered(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        tunnel_binary.cli_path().parent.mkdir(parents=True, exist_ok=True)
+        tunnel_binary.cli_path().write_text("")
+        monkeypatch.setattr(doctor.tunnel, "relay_reachable", lambda *a, **k: (True, "the relay answers (HTTP 404)"))
+
+        result = doctor.check_tunnel_relay()
+
+        assert result.ok
+        assert "HTTP 404" in result.detail
+
+    def test_an_unreachable_relay_fails_with_a_command_to_run(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        doctor.tunnel.provider_path().parent.mkdir(parents=True, exist_ok=True)
+        doctor.tunnel.provider_path().write_text("github\n")
+        monkeypatch.setattr(doctor.tunnel, "relay_reachable", lambda *a, **k: (False, "the relay is unreachable: x"))
+
+        result = doctor.check_tunnel_relay()
+
+        assert not result.ok
+        assert "cannot reach the editor" in result.detail
+        assert result.remedy.startswith("curl ")
+        assert doctor.tunnel.RELAY_HOST in result.remedy
+
+
+class TestTunnelConnectCheck:
+    """Where `aisland tunnel connect` has been used, what it needs here is checked, each gap with its fix."""
+
+    @staticmethod
+    def _used_here() -> None:
+        doctor.tunnel_connect.cache_path().parent.mkdir(parents=True, exist_ok=True)
+        doctor.tunnel_connect.cache_path().write_text("[]\n")
+
+    @staticmethod
+    def _devtunnel(monkeypatch: pytest.MonkeyPatch, tmp_path: Path, user_show: str, status: int = 0) -> None:
+        """A `devtunnel` on PATH whose `user show` prints ``user_show`` and exits with ``status``."""
+        bin_dir = tmp_path / "bin"
+        bin_dir.mkdir()
+        script = bin_dir / "devtunnel"
+        script.write_text(f"#!/bin/sh\necho '{user_show}'\nexit {status}\n")
+        script.chmod(0o755)
+        monkeypatch.setenv("PATH", f"{bin_dir}:/usr/bin:/bin")
+
+    @pytest.fixture()
+    def msgpack_imports(self, monkeypatch: pytest.MonkeyPatch) -> List[str]:
+        asked: List[str] = []
+
+        def fake(statement: str) -> Any:
+            asked.append(statement)
+            return True, ""
+
+        monkeypatch.setattr(doctor, "_import_probe", fake)
+        return asked
+
+    def test_a_machine_that_never_connected_passes_without_asking(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path, msgpack_imports: List[str]
+    ) -> None:
+        monkeypatch.setenv("PATH", str(tmp_path))  # no devtunnel at all
+
+        result = doctor.check_tunnel_connect()
+
+        assert result.ok
+        assert "`aisland tunnel connect` not used here" in result.detail
+        assert msgpack_imports == []
+
+    def test_a_forward_alone_counts_as_used(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path, msgpack_imports: List[str]
+    ) -> None:
+        doctor.tunnel_connect.log_path().parent.mkdir(parents=True, exist_ok=True)
+        doctor.tunnel_connect.log_path().write_text("Connected to tunnel: x\n")
+        monkeypatch.setenv("PATH", str(tmp_path))
+
+        assert not doctor.check_tunnel_connect().ok
+
+    def test_without_devtunnel_the_fix_is_its_install(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path, msgpack_imports: List[str]
+    ) -> None:
+        self._used_here()
+        monkeypatch.setenv("PATH", str(tmp_path))
+
+        result = doctor.check_tunnel_connect()
+
+        assert not result.ok
+        assert "no `devtunnel` on PATH" in result.detail
+        assert result.remedy == doctor.tunnel_connect.install_hint()
+
+    def test_without_msgpack_the_fix_is_the_extra(self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+        self._used_here()
+        self._devtunnel(monkeypatch, tmp_path, "Logged in as someone@example.com using Microsoft.")
+        monkeypatch.setattr(
+            doctor, "_import_probe", lambda s: (False, "ModuleNotFoundError: No module named 'msgpack'")
+        )
+
+        result = doctor.check_tunnel_connect()
+
+        assert not result.ok
+        assert "No module named 'msgpack'" in result.detail
+        assert result.remedy == "pip install 'aisland[connect]'"
+
+    def test_not_signed_in_the_fix_is_the_sign_in(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path, msgpack_imports: List[str]
+    ) -> None:
+        self._used_here()
+        self._devtunnel(monkeypatch, tmp_path, "Not logged in.")
+
+        result = doctor.check_tunnel_connect()
+
+        assert not result.ok
+        assert "devtunnel is not signed in" in result.detail
+        assert result.remedy.startswith("devtunnel user login")
+
+    def test_signed_in_passes_naming_the_account(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path, msgpack_imports: List[str]
+    ) -> None:
+        self._used_here()
+        self._devtunnel(monkeypatch, tmp_path, "Logged in as someone@example.com using Microsoft.")
+
+        result = doctor.check_tunnel_connect()
+
+        assert result.ok
+        assert "Logged in as someone@example.com using Microsoft." in result.detail
+        assert msgpack_imports == ["import msgpack"]
+
+    def test_a_devtunnel_that_cannot_answer_passes_with_a_note(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path, msgpack_imports: List[str]
+    ) -> None:
+        """The sign-in question goes to the service; offline, the doctor says so rather than failing."""
+        self._used_here()
+        self._devtunnel(monkeypatch, tmp_path, "Unable to reach the tunnel service.", status=1)
+
+        result = doctor.check_tunnel_connect()
+
+        assert result.ok
+        assert "could not ask devtunnel" in result.detail
+        assert "Unable to reach the tunnel service." in result.detail
+
+
+class TestAProbeThatHangsIsGivenUp:
+    """`aisland doctor` and the MCP server's `doctor` tool wait on every probe: one that never ends is named after
+    `PROBE_SECONDS`, never waited on."""
+
+    def test_an_import_that_never_ends_fails_naming_the_limit(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setattr(doctor, "PROBE_SECONDS", 1)
+        assert doctor._import_probe("import time; time.sleep(60)") == (False, "did not finish within 1 s")
+
+    def test_a_vm_that_never_answers_is_inconclusive_not_a_trust_failure(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        colima = tmp_path / "colima"
+        colima.write_text("#!/bin/sh\nsleep 60\n")
+        colima.chmod(0o755)
+        monkeypatch.setenv("PATH", f"{tmp_path}:{os.environ['PATH']}")
+        monkeypatch.setattr(doctor, "_colima_running", lambda: True)
+        monkeypatch.setattr(doctor, "PROBE_SECONDS", 1)
+        result = doctor.check_colima_vm_trust()
+        assert result.ok
+        assert "did not answer within 1 s" in result.detail
+
+
 class TestReporting:
     def test_exit_code_is_zero_when_everything_passes(self, monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.setattr(doctor, "CHECKS", (lambda: doctor.CheckResult("x", True, "fine"),))
@@ -306,11 +481,65 @@ class TestReporting:
         out = capsys.readouterr().out
         assert "✗ x" in out and "fix: do the thing" in out
 
+    def test_a_check_that_breaks_is_one_failed_line_and_the_others_still_report(
+        self, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture
+    ) -> None:
+        def check_broken_jdk() -> doctor.CheckResult:
+            raise OSError("exec format error: java")
+
+        monkeypatch.setattr(doctor, "CHECKS", (check_broken_jdk, lambda: doctor.CheckResult("x", True, "fine")))
+        assert doctor.run_doctor() == 1
+        out = capsys.readouterr().out
+        assert "✗ broken-jdk" in out and "the check itself failed: OSError: exec format error: java" in out
+        assert "fix: aisland --debug doctor" in out and "✓ x" in out
+
+    @pytest.mark.usefixtures("empty_workspace")
     def test_every_registered_check_returns_a_result(self) -> None:
         results: List[doctor.CheckResult] = doctor.run_checks()
         assert len(results) == len(doctor.CHECKS)
+        # Each reports under the one name it is registered with, which the doctor's own lines about it use too.
+        assert [r.name for r in results] == [doctor._check_name(check) for check in doctor.CHECKS]
+        assert "colima-tls" in [r.name for r in results] and "torch-ext-lock" in [r.name for r in results]
         assert all(isinstance(r, doctor.CheckResult) and r.detail for r in results)
         assert all(r.ok or r.remedy for r in results), "a failing check must carry a remedy"
+
+    def test_the_checks_run_side_by_side(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """Each check waits on the other: run one after the other, neither would ever pass the barrier."""
+        barrier = threading.Barrier(2, timeout=10)
+
+        def check_left() -> doctor.CheckResult:
+            barrier.wait()
+            return doctor.CheckResult("left", True, "met")
+
+        def check_right() -> doctor.CheckResult:
+            barrier.wait()
+            return doctor.CheckResult("right", True, "met")
+
+        monkeypatch.setattr(doctor, "CHECKS", (check_left, check_right))
+        assert [(r.name, r.ok) for r in doctor.run_checks()] == [("left", True), ("right", True)]
+
+    def test_a_check_past_the_budget_is_reported_unchecked_and_the_report_still_comes(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """The MCP tool `doctor` must answer: a check still running when the budget is spent is a line of the report,
+        never a report that does not come."""
+        released = threading.Event()
+
+        @doctor._reports(doctor.COLIMA_TLS)
+        def check_stuck_vm() -> doctor.CheckResult:
+            released.wait(timeout=30)
+            return doctor.CheckResult(doctor.COLIMA_TLS, True, "late")
+
+        monkeypatch.setattr(doctor, "CHECKS", (lambda: doctor.CheckResult("x", True, "fine"), check_stuck_vm))
+        started = time.monotonic()
+        try:
+            results = doctor.run_checks(budget=0.5)
+        finally:
+            released.set()
+        assert time.monotonic() - started < 10
+        assert [r.name for r in results] == ["x", "colima-tls"]  # the name the check reports, as the docs give it
+        assert results[0].ok and not results[1].ok
+        assert results[1].detail.startswith("not checked: time budget spent") and results[1].remedy
 
     def test_cli_command_exits_nonzero_when_a_check_fails(self, monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.setattr(doctor, "CHECKS", (lambda: doctor.CheckResult("x", False, "bad", "fix it"),))

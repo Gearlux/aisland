@@ -1,0 +1,28 @@
+{#- The config.xml of a project's local job, its Jenkinsfile.local embedded (jenkins_jobs.local_job_config). Every {{ value }} is escaped as XML text
+    (jenkins_jobs.render_job): pass it as written, never escaped. -#}
+<?xml version='1.1' encoding='UTF-8'?>
+<flow-definition plugin="workflow-job">
+  <actions/>
+  <description>Local development pipeline for {{ project }}</description>
+  <keepDependencies>false</keepDependencies>
+  <properties>
+    <org.jenkinsci.plugins.workflow.job.properties.DisableConcurrentBuildsJobProperty/>
+{%- if slow_tests %}
+    <hudson.model.ParametersDefinitionProperty>
+      <parameterDefinitions>
+        <hudson.model.BooleanParameterDefinition>
+          <name>SLOW_TESTS</name>
+          <defaultValue>false</defaultValue>
+        </hudson.model.BooleanParameterDefinition>
+      </parameterDefinitions>
+    </hudson.model.ParametersDefinitionProperty>
+{%- endif %}
+  </properties>
+  <definition class="org.jenkinsci.plugins.workflow.cps.CpsFlowDefinition" plugin="workflow-cps">
+    <script>{{ script }}</script>
+    <sandbox>true</sandbox>
+  </definition>
+  <triggers/>
+  <disabled>false</disabled>
+  <customWorkspace>{{ workspace }}</customWorkspace>
+</flow-definition>

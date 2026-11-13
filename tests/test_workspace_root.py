@@ -13,17 +13,18 @@ from pathlib import Path
 
 import pytest
 
-from aisland import manager
+from aisland import locations
+from aisland.workspace import projects
+from tests.workspace_layout import needs_workspace
 
 
 def _resolve_from(monkeypatch: pytest.MonkeyPatch, module_file: Path) -> Path:
-    """Run get_workspace_root as if manager.py lived at ``module_file``."""
-    monkeypatch.setattr(manager, "__file__", str(module_file))
-    return manager.get_workspace_root()
+    """Run the checkout's root rule as if manager.py lived at ``module_file``."""
+    return locations.checkout_workspace_root(module_file)
 
 
 def _make_tree(tmp_path: Path, *, gitmodules: bool) -> Path:
-    """Build <ws>/aisland/aisland/manager.py with a TASKS.md at BOTH levels."""
+    """Build <ws>/aisland/aisland/setup/manager.py with a TASKS.md at BOTH levels."""
     ws = (tmp_path / "acme").resolve()
     pkg = ws / "aisland" / "aisland"
     pkg.mkdir(parents=True)
@@ -62,9 +63,10 @@ def test_outermost_git_when_no_tasks_md(tmp_path: Path, monkeypatch: pytest.Monk
     assert _resolve_from(monkeypatch, pkg / "manager.py") == ws
 
 
+@needs_workspace
 def test_live_workspace_root_is_the_superproject() -> None:
     """Unmonkeypatched: the real checkout resolves to the dir holding .gitmodules."""
-    root = manager.get_workspace_root()
+    root = projects.get_workspace_root()
     assert (root / ".gitmodules").is_file()
     assert (root / "TASKS.md").exists()
     assert root.name != "aisland"

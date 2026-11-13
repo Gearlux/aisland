@@ -12,6 +12,7 @@ bind mount under the home directory. ``aisland docker start --mount`` therefore 
 
 from __future__ import annotations
 
+import subprocess
 from pathlib import Path
 from typing import List
 from unittest.mock import MagicMock, patch
@@ -20,13 +21,16 @@ import click
 import pytest
 from click.testing import CliRunner
 
+from aisland import probe
 from aisland.services import docker as docker_mod
 from aisland.services.docker import DockerService, Mount, parse_mount
 
 
 @pytest.fixture
 def home(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
-    """A fake ``$HOME`` carrying a colima profile with the DEFAULT (empty) mounts list.
+    """A fake ``$HOME`` carrying a colima profile with the DEFAULT (empty) mounts list, and colima and docker
+    installed (a machine without them, as a CI runner, would be asked to install them first; the tests that check that
+    say so themselves).
 
     Set through the environment (not a ``Path.home`` patch) so ``~`` expansion agrees with it.
     """
@@ -35,6 +39,7 @@ def home(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     profile.mkdir(parents=True)
     (profile / "colima.yaml").write_text("mounts: []\n")
     monkeypatch.setenv("HOME", str(fake_home))
+    monkeypatch.setattr(docker_mod.shutil, "which", lambda tool: f"/usr/local/bin/{tool}")
     return fake_home
 
 
@@ -153,6 +158,13 @@ def test_is_running_is_false_without_a_colima_binary() -> None:
         assert DockerService().is_running() is False
 
 
+def test_a_colima_status_that_never_answers_is_given_up_as_not_running() -> None:
+    """A stuck VM's `colima status` must not hang `aisland services status`, the doctor or an MCP tool."""
+    with patch("subprocess.run", side_effect=subprocess.TimeoutExpired(["colima", "status"], 30)) as run:
+        assert DockerService().is_running() is False
+    assert run.call_args.kwargs["timeout"] == probe.PROBE_SECONDS
+
+
 # --------------------------------------------------------------------------- #
 # launch
 # --------------------------------------------------------------------------- #
@@ -166,7 +178,9 @@ def test_launch_starts_colima_with_the_mounts_when_it_is_stopped(home: Path, tmp
         with patch.object(DockerService, "configure_socket"):
             with patch("subprocess.check_call") as call_mock:
                 svc.launch(mounts=[f"{data}:r"])
-    call_mock.assert_called_once_with(["colima", "start", "--mount", f"{home}:w", "--mount", f"{data}:r"])
+    call_mock.assert_called_once_with(
+        ["colima", "start", "--mount", f"{home}:w", "--mount", f"{data}:r"], timeout=docker_mod.COLIMA_START_SECONDS
+    )
 
 
 def test_launch_refuses_to_change_mounts_under_a_running_engine(home: Path, tmp_path: Path) -> None:
@@ -219,12 +233,16 @@ def test_launch_validates_every_mount_before_touching_colima(home: Path, tmp_pat
 # --------------------------------------------------------------------------- #
 
 
-def test_the_cli_passes_repeated_mount_flags_to_start_and_restart(tmp_path: Path) -> None:
+def test_the_cli_passes_repeated_mount_flags_to_start_and_restart(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     from aisland.cli import main
 
+    monkeypatch.setattr(docker_mod.platform, "system", lambda: "Darwin")  # --mount is Colima's: on Linux it is refused
     seen: List[dict] = []
     with patch.object(DockerService, "launch", side_effect=lambda **kw: seen.append(kw)):
-        with patch.object(DockerService, "stop"):
+        # Stopped, whatever this machine's Colima is doing: a running one makes `restart` stop before its start.
+        with patch.object(DockerService, "stop"), patch.object(DockerService, "is_running", return_value=False):
             runner = CliRunner()
             result = runner.invoke(main, ["docker", "start", "--mount", "/a:r", "--mount", "/b:w"])
             assert result.exit_code == 0, result.output
@@ -232,3 +250,141 @@ def test_the_cli_passes_repeated_mount_flags_to_start_and_restart(tmp_path: Path
             assert result.exit_code == 0, result.output
     assert seen[0]["mounts"] == ("/a:r", "/b:w")
     assert seen[1]["mounts"] == ("/c",)
+
+
+# --------------------------------------------------------------------------- #
+# Linux: the system's own Docker Engine, checked, never managed
+# --------------------------------------------------------------------------- #
+
+
+@pytest.mark.parametrize("system, kind", [("Linux", docker_mod.LinuxDockerService), ("Darwin", DockerService)])
+def test_each_platform_gets_its_engine(monkeypatch: pytest.MonkeyPatch, system: str, kind: type) -> None:
+    monkeypatch.setattr(docker_mod.platform, "system", lambda: system)
+    service = docker_mod.docker_service()
+    assert type(service) is kind and service.name == "docker"
+
+
+def _linux(monkeypatch: pytest.MonkeyPatch, installed: bool, running: bool) -> List[List[str]]:
+    """A Linux machine whose `docker` is (not) on PATH and whose engine does (not) answer `docker info`."""
+    ran: List[List[str]] = []
+    monkeypatch.setattr(docker_mod.platform, "system", lambda: "Linux")
+    monkeypatch.setattr(docker_mod.shutil, "which", lambda tool: f"/usr/bin/{tool}" if installed else None)
+
+    def run(argv: List[str], **kwargs: object) -> MagicMock:
+        ran.append(argv)
+        if not installed:
+            raise FileNotFoundError(argv[0])
+        return MagicMock(returncode=0 if running else 1)
+
+    monkeypatch.setattr(docker_mod.subprocess, "run", run)
+    return ran
+
+
+@pytest.mark.parametrize(
+    "installed, running, message",
+    [
+        (
+            False,
+            False,
+            "Error: Docker is not installed. Install Docker Engine: https://docs.docker.com/engine/install/",
+        ),
+        (True, False, "Error: the Docker engine is not running. Start it: sudo systemctl start docker"),
+    ],
+)
+def test_on_linux_start_says_how_to_get_the_engine_and_installs_nothing(
+    monkeypatch: pytest.MonkeyPatch, installed: bool, running: bool, message: str
+) -> None:
+    from aisland.cli import main
+
+    ran = _linux(monkeypatch, installed, running)
+    result = CliRunner().invoke(main, ["docker", "start"])
+    assert result.exit_code == 1
+    assert message in result.output
+    assert all(argv[:2] == ["docker", "info"] for argv in ran)  # never colima, never an install
+
+
+def test_on_linux_a_running_engine_is_reported_and_left_alone(monkeypatch: pytest.MonkeyPatch) -> None:
+    from aisland.cli import main
+
+    ran = _linux(monkeypatch, installed=True, running=True)
+    runner = CliRunner()
+    result = runner.invoke(main, ["docker", "start"])
+    assert result.exit_code == 0 and "Docker engine is running." in result.output
+    result = runner.invoke(main, ["docker", "stop"])
+    assert result.exit_code == 0 and "Docker engine left running" in result.output
+    assert ran == [["docker", "info"]]
+
+
+def test_on_linux_mount_and_reset_are_refused(monkeypatch: pytest.MonkeyPatch) -> None:
+    from aisland.cli import main
+
+    _linux(monkeypatch, installed=True, running=True)
+    result = CliRunner().invoke(main, ["docker", "start", "--mount", "/data"])
+    assert result.exit_code == 1 and "--mount shares a folder with Colima's VM on macOS" in result.output
+    with pytest.raises(click.ClickException, match="aisland does not wipe the system's Docker engine"):
+        docker_mod.LinuxDockerService().reset()
+
+
+@pytest.mark.parametrize("installed, running, word", [(False, False, "Not Installed"), (True, False, "Stopped")])
+def test_on_linux_status_and_info_read_the_engine(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture, installed: bool, running: bool, word: str
+) -> None:
+    _linux(monkeypatch, installed, running)
+    service = docker_mod.LinuxDockerService()
+    service.status()
+    service.info()
+    out = capsys.readouterr().out
+    assert f"Docker (engine)  : {word}" in out and f"Status        : {word}" in out
+
+
+def test_on_linux_the_engine_is_asked_through_the_state_probe(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A hung daemon must not hang `aisland services status` or an MCP tool: `docker info` is a state probe, given up
+    past `probe.PROBE_SECONDS` like a missing program."""
+    asked: List[List[str]] = []
+    monkeypatch.setattr(probe, "run", lambda argv: asked.append(list(argv)))  # no answer in time
+    assert docker_mod.LinuxDockerService().is_running() is False
+    assert asked == [["docker", "info"]]
+
+
+# --------------------------------------------------------------------------- #
+# reset and the socket
+# --------------------------------------------------------------------------- #
+
+
+def test_a_reset_asks_once_the_command_asked_already(monkeypatch: pytest.MonkeyPatch) -> None:
+    """`aisland docker reset` and `aisland services reset` ask before they call it; the engine asks nothing more."""
+    from aisland import console
+    from aisland.cli import main
+
+    monkeypatch.setattr(docker_mod.platform, "system", lambda: "Darwin")
+    monkeypatch.setattr(console, "confirm", lambda *a, **k: pytest.fail("asked a second time"))
+    monkeypatch.setattr(DockerService, "is_running", lambda self: False)
+    ran: List[List[str]] = []
+    monkeypatch.setattr(docker_mod.subprocess, "check_call", lambda argv, **kw: ran.append(argv))
+    result = CliRunner().invoke(main, ["docker", "reset", "-y"])
+    assert result.exit_code == 0, result.output
+    assert ran == [["colima", "delete"]]
+
+
+def test_an_older_colima_s_socket_is_the_one_info_and_the_link_name(
+    home: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    legacy = home / ".colima" / "docker.sock"
+    legacy.write_text("")
+    assert docker_mod.colima_socket_path() == legacy
+    monkeypatch.setattr(probe, "run", lambda argv: MagicMock(returncode=0, stdout="", stderr=""))
+    monkeypatch.setattr(docker_mod.shutil, "which", lambda tool: f"/usr/local/bin/{tool}")
+    DockerService().info()
+    assert f"Colima socket : {legacy} (present)" in capsys.readouterr().out
+    (home / ".colima" / "default" / "docker.sock").write_text("")
+    assert docker_mod.colima_socket_path() == home / ".colima" / "default" / "docker.sock"
+
+
+def test_docker_reset_names_what_it_deletes_and_a_no_deletes_nothing(monkeypatch: pytest.MonkeyPatch) -> None:
+    from aisland.cli import main
+
+    monkeypatch.setattr(docker_mod.platform, "system", lambda: "Darwin")
+    monkeypatch.setattr(docker_mod.subprocess, "check_call", lambda argv, **kw: pytest.fail("deleted"))
+    result = CliRunner().invoke(main, ["docker", "reset"], input="n\n")
+    assert "Stop Docker and delete the Colima VM, with every container, image and volume in it?" in result.output
+    assert result.exit_code == 1

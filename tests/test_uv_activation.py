@@ -1,54 +1,123 @@
 """Tests for the activation-driven submodule lifecycle + generated root uv.toml.
 
 Covers `aisland setup`'s new pieces in `manager.py`:
-- `_write_root_uv_toml` / `_merge_uv` / `_emit_uv_toml` — the generated (gitignored) root
+- `write_root_uv_toml` / `_merge_uv` / `_emit_uv_toml` — the generated (gitignored) root
   uv.toml = workspace base merged with each ACTIVATED project's uv.toml.
-- `_project_is_optional` — which submodules are prompted.
-- `_resolve_submodule_activation` — per-machine `.git/config` decisions + prompt semantics.
-- `reconcile_submodules` honoring the per-machine `.git/config` override.
+Which projects a machine has (the `active` plugin) is `tests/test_activation.py`.
 """
 
 from __future__ import annotations
 
+import os
+import subprocess
+import sys
 import tomllib
+import zipfile
 from pathlib import Path
 from typing import Any
 
 import pytest
 
-from aisland import manager as m
+from aisland.setup import uv_config
+from tests.records import project_metadata
 
-# The workspace-wide override policy (manager._ROOT_UV_BASE), restated so a change to it is a
-# deliberate edit here too: the unified `lightning` and the GUI `opencv-python` are dropped
-# workspace-wide, and headless opencv is pinned to the one range every consumer can share.
+# The workspace-wide override policy (uv_config._ROOT_UV_BASE), restated so a change to it is a
+# deliberate edit here too: the GUI `opencv-python` is dropped workspace-wide, and headless
+# opencv is pinned to the one range every consumer can share.
 _OVERRIDE = [
-    "lightning ; sys_platform == 'never'",
     "opencv-python ; sys_platform == 'never'",
     "opencv-python-headless>=4.12,<5",
 ]
 
+# The conditional half (uv_config._CONDITIONAL_OVERRIDES): dropping the unified `lightning` applies
+# ONLY where a project names `pytorch-lightning`, because the two conflict with each other and
+# nothing else. A workspace with no `pytorch-lightning` keeps `lightning` — stripping it there
+# removes a dependency its projects declare outright.
+_LIGHTNING_OVERRIDE = ["lightning ; sys_platform == 'never'"]
+
+
+def _pyproject(project: Path, name: str, requires: list[str]) -> None:
+    body = ", ".join(f'"{r}"' for r in requires)
+    (project / "pyproject.toml").write_text(f'[project]\nname = "{name}"\nversion = "0.1.0"\ndependencies = [{body}]\n')
+
 
 # --- root uv.toml generation --------------------------------------------------
 class TestWriteRootUvToml:
+    def test_lightning_is_kept_where_nothing_wants_pytorch_lightning(self, tmp_path: Path) -> None:
+        """Another workspace, 2026-10-20: two projects require `lightning`, nothing requires the other one."""
+        project = tmp_path / "my_project"
+        project.mkdir()
+        _pyproject(project, "my-project", ["lightning", "torch"])
+        uv_config.write_root_uv_toml(tmp_path, [project_metadata("my_project", project)])
+        data = tomllib.loads((tmp_path / "uv.toml").read_text())
+        assert data["override-dependencies"] == _OVERRIDE
+        assert "lightning ; sys_platform == 'never'" not in data["override-dependencies"]
+
+    def test_lightning_is_dropped_where_a_project_wants_pytorch_lightning(self, tmp_path: Path) -> None:
+        """The workspace the override was written in: matrainer and friends declare pytorch-lightning."""
+        project = tmp_path / "matrainer"
+        project.mkdir()
+        _pyproject(project, "matrainer", ["pytorch-lightning"])
+        uv_config.write_root_uv_toml(tmp_path, [project_metadata("matrainer", project)])
+        data = tomllib.loads((tmp_path / "uv.toml").read_text())
+        assert data["override-dependencies"] == _LIGHTNING_OVERRIDE + _OVERRIDE
+
+    def test_pytorch_lightning_behind_an_extra_still_triggers_the_override(self, tmp_path: Path) -> None:
+        """matrainer declares it under [lightning]; an override that came and went with the
+        selected extras would resolve differently run to run."""
+        project = tmp_path / "matrainer"
+        project.mkdir()
+        (project / "pyproject.toml").write_text(
+            '[project]\nname = "matrainer"\nversion = "0.1.0"\ndependencies = []\n\n'
+            "[project.optional-dependencies]\n"
+            'lightning = ["pytorch-lightning", "torchmetrics"]\n'
+        )
+        uv_config.write_root_uv_toml(tmp_path, [project_metadata("matrainer", project)])
+        data = tomllib.loads((tmp_path / "uv.toml").read_text())
+        assert data["override-dependencies"] == _LIGHTNING_OVERRIDE + _OVERRIDE
+
+    def test_the_distribution_name_is_normalised(self, tmp_path: Path) -> None:
+        """`pytorch_lightning` and `pytorch-lightning` are the same distribution (PEP 503)."""
+        project = tmp_path / "p"
+        project.mkdir()
+        _pyproject(project, "p", ["pytorch_lightning"])
+        uv_config.write_root_uv_toml(tmp_path, [project_metadata("p", project)])
+        data = tomllib.loads((tmp_path / "uv.toml").read_text())
+        assert data["override-dependencies"] == _LIGHTNING_OVERRIDE + _OVERRIDE
+
     def test_merges_base_with_activated_project(self, tmp_path: Path) -> None:
-        vendorcli = tmp_path / "vendorcli"
-        vendorcli.mkdir()
-        (vendorcli / "uv.toml").write_text('extra-index-url = ["https://idx/simple"]\n')
-        m._write_root_uv_toml(tmp_path, [{"name": "vendorcli", "path": vendorcli}])
+        app = tmp_path / "app"
+        app.mkdir()
+        (app / "uv.toml").write_text('extra-index-url = ["https://idx/simple"]\n')
+        uv_config.write_root_uv_toml(tmp_path, [project_metadata("app", app)])
         data = tomllib.loads((tmp_path / "uv.toml").read_text())
         assert data["override-dependencies"] == _OVERRIDE
         assert data["extra-index-url"] == ["https://idx/simple"]
 
+    def test_carries_a_project_constraint_through_to_the_root(self, tmp_path: Path) -> None:
+        # A project that depends on a package whose own metadata names a direct URL must be able to
+        # constrain that URL (uv refuses a transitive URL otherwise). The merge is key-agnostic, so
+        # `constraint-dependencies` reaches the root exactly like `extra-index-url` — and only when
+        # the project is activated.
+        pin = "pkg @ https://idx/pkg-0.0.0%2Balpha.1-py3-none-any.whl"
+        app = tmp_path / "app"
+        app.mkdir()
+        (app / "uv.toml").write_text(f'constraint-dependencies = ["{pin}"]\n')
+        uv_config.write_root_uv_toml(tmp_path, [project_metadata("app", app)])
+        assert tomllib.loads((tmp_path / "uv.toml").read_text())["constraint-dependencies"] == [pin]
+        uv_config.write_root_uv_toml(tmp_path, [])
+        assert "constraint-dependencies" not in tomllib.loads((tmp_path / "uv.toml").read_text())
+
     def test_base_only_when_no_uv_toml(self, tmp_path: Path) -> None:
         ordinary = tmp_path / "confluid"
         ordinary.mkdir()
-        m._write_root_uv_toml(tmp_path, [{"name": "confluid", "path": ordinary}])
+        uv_config.write_root_uv_toml(tmp_path, [project_metadata("confluid", ordinary)])
         data = tomllib.loads((tmp_path / "uv.toml").read_text())
         assert "extra-index-url" not in data  # no private index leaks in
         assert data["override-dependencies"] == _OVERRIDE
 
     def test_empty_activated_is_base_only(self, tmp_path: Path) -> None:
-        m._write_root_uv_toml(tmp_path, [])
+        uv_config.write_root_uv_toml(tmp_path, [])
         data = tomllib.loads((tmp_path / "uv.toml").read_text())
         assert data == {"override-dependencies": _OVERRIDE}
 
@@ -58,119 +127,133 @@ class TestWriteRootUvToml:
             p.mkdir()
             (p / "uv.toml").write_text(f'extra-index-url = ["{url}"]\n')
         (tmp_path / "b" / "uv.toml").write_text('extra-index-url = ["https://x/simple", "https://y/simple"]\n')
-        m._write_root_uv_toml(tmp_path, [{"name": "a", "path": tmp_path / "a"}, {"name": "b", "path": tmp_path / "b"}])
+        uv_config.write_root_uv_toml(
+            tmp_path, [project_metadata("a", tmp_path / "a"), project_metadata("b", tmp_path / "b")]
+        )
         data = tomllib.loads((tmp_path / "uv.toml").read_text())
         assert data["extra-index-url"] == ["https://x/simple", "https://y/simple"]  # deduped
 
     def test_output_is_valid_toml_with_header(self, tmp_path: Path) -> None:
-        m._write_root_uv_toml(tmp_path, [])
+        uv_config.write_root_uv_toml(tmp_path, [])
         raw = (tmp_path / "uv.toml").read_text()
         assert raw.startswith("# ")  # provenance header
         tomllib.loads(raw)  # parses
 
     def test_regenerates_idempotently(self, tmp_path: Path) -> None:
-        vendorcli = tmp_path / "vendorcli"
-        vendorcli.mkdir()
-        (vendorcli / "uv.toml").write_text('extra-index-url = ["https://idx/simple"]\n')
-        m._write_root_uv_toml(tmp_path, [{"name": "vendorcli", "path": vendorcli}])
+        app = tmp_path / "app"
+        app.mkdir()
+        (app / "uv.toml").write_text('extra-index-url = ["https://idx/simple"]\n')
+        uv_config.write_root_uv_toml(tmp_path, [project_metadata("app", app)])
         assert "idx" in (tmp_path / "uv.toml").read_text()
-        m._write_root_uv_toml(tmp_path, [])  # vendorcli deactivated on the second run
+        uv_config.write_root_uv_toml(tmp_path, [])  # app deactivated on the second run
         assert "idx" not in (tmp_path / "uv.toml").read_text()
 
 
 def test_merge_uv_unions_lists_and_last_wins_scalars() -> None:
     into: dict[str, Any] = {"extra-index-url": ["a"]}
-    m._merge_uv(into, {"extra-index-url": ["a", "b"], "index-url": "u"})
+    uv_config._merge_uv(into, {"extra-index-url": ["a", "b"], "index-url": "u"})
     assert into == {"extra-index-url": ["a", "b"], "index-url": "u"}
 
 
-def test_emit_uv_toml_round_trips_supported_types() -> None:
-    emitted = m._emit_uv_toml({"s": "x", "b": True, "n": 3, "lst": ["a", "b"]})
+def test_emit_uv_toml_round_trips_supported_types(tmp_path: Path) -> None:
+    emitted = uv_config._emit_uv_toml({"s": "x", "b": True, "n": 3, "lst": ["a", "b"]}, tmp_path / "uv.toml")
     assert tomllib.loads(emitted) == {"s": "x", "b": True, "n": 3, "lst": ["a", "b"]}
 
 
-# --- optional detection -------------------------------------------------------
-def test_project_is_optional(tmp_path: Path) -> None:
-    p = tmp_path / "proj"
-    p.mkdir()
-    assert m._project_is_optional(p, True) is False  # ordinary, active, no uv.toml
-    assert m._project_is_optional(p, False) is True  # active=false in .gitmodules
-    (p / "uv.toml").write_text("")
-    assert m._project_is_optional(p, True) is True  # ships uv.toml
+def test_a_projects_index_tables_backslashes_and_quotes_reach_the_root_file_as_written(tmp_path: Path) -> None:
+    """A project's ``[[index]]`` list of tables, a Windows path and a marker holding ``"`` were written as Python's
+    repr and pasted unescaped: the root file no longer read, and every install in the workspace failed."""
+    project = tmp_path / "app"
+    project.mkdir()
+    (project / "uv.toml").write_text(
+        "find-links = ['C:\\wheels\\here']\n"
+        "override-dependencies = ['torch ; platform_machine == \"arm64\"']\n"
+        '[[index]]\nname = "acme"\nurl = "https://pypi.acme.example/simple"\nexplicit = true\n'
+        '[pip]\nno-build-isolation-package = ["flash-attn"]\n'
+    )
+    uv_config.write_root_uv_toml(tmp_path, [project_metadata("app", project)])
+    text = (tmp_path / "uv.toml").read_text()
+    assert text.startswith("# =====")
+    assert "AUTO-GENERATED by `aisland setup`" in text
+    data = tomllib.loads(text)
+    assert data["find-links"] == ["C:\\wheels\\here"]
+    assert data["override-dependencies"][-1] == 'torch ; platform_machine == "arm64"'
+    assert data["index"] == [{"name": "acme", "url": "https://pypi.acme.example/simple", "explicit": True}]
+    assert data["pip"] == {"no-build-isolation-package": ["flash-attn"]}
 
 
-# --- per-machine local override parsing --------------------------------------
-def _fake_run(returncode: int, stdout: str) -> Any:
-    def run(cmd: list[str], **kwargs: Any) -> Any:
-        return type("R", (), {"returncode": returncode, "stdout": stdout})()
-
-    return run
-
-
-def test_local_submodule_active_true(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr(m.subprocess, "run", _fake_run(0, "true\n"))
-    assert m._local_submodule_active(tmp_path, "x") is True
+# --- a project's wheels folder ------------------------------------------------
+def _wheels_folder(project: Path) -> Path:
+    """The folder `aisland wheels build` writes: wheels beside their `wheels.yaml`."""
+    folder = project / "wheels"
+    folder.mkdir(parents=True)
+    (folder / "wheels.yaml").write_text(f'project: "{project.name}"\nwheels: []\nnot_built: []\n')
+    return folder
 
 
-def test_local_submodule_active_false(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr(m.subprocess, "run", _fake_run(0, "false\n"))
-    assert m._local_submodule_active(tmp_path, "x") is False
+def _installable_wheel(folder: Path, name: str, version: str) -> None:
+    """A minimal wheel uv installs: one module, METADATA, WHEEL and a RECORD naming every member."""
+    info = f"{name}-{version}.dist-info"
+    members = {
+        f"{name}/__init__.py": "",
+        f"{info}/METADATA": f"Metadata-Version: 2.1\nName: {name}\nVersion: {version}\n",
+        f"{info}/WHEEL": "Wheel-Version: 1.0\nGenerator: test\nRoot-Is-Purelib: true\nTag: py3-none-any\n",
+    }
+    record = "".join(f"{member},,\n" for member in [*members, f"{info}/RECORD"])
+    with zipfile.ZipFile(folder / f"{name}-{version}-py3-none-any.whl", "w") as archive:
+        for member, text in {**members, f"{info}/RECORD": record}.items():
+            archive.writestr(member, text)
 
 
-def test_local_submodule_active_unset_is_none(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr(m.subprocess, "run", _fake_run(1, ""))
-    assert m._local_submodule_active(tmp_path, "x") is None
+class TestWheelsFolders:
+    def test_an_activated_projects_wheels_folder_is_a_find_links_path_from_the_root(self, tmp_path: Path) -> None:
+        bridge = tmp_path / "bridge"
+        _wheels_folder(bridge)
+        uv_config.write_root_uv_toml(tmp_path, [project_metadata("bridge", bridge)])
+        assert tomllib.loads((tmp_path / "uv.toml").read_text())["find-links"] == ["bridge/wheels"]
 
+    def test_a_folder_without_wheels_yaml_is_no_wheels_folder(self, tmp_path: Path) -> None:
+        (tmp_path / "bridge" / "wheels").mkdir(parents=True)
+        uv_config.write_root_uv_toml(tmp_path, [project_metadata("bridge", tmp_path / "bridge")])
+        assert "find-links" not in tomllib.loads((tmp_path / "uv.toml").read_text())
 
-# --- activation resolution ----------------------------------------------------
-def _stub_optional(monkeypatch: pytest.MonkeyPatch, entries: list[tuple[str, str, bool]]) -> dict[str, bool]:
-    """Stub the activation surface; return a dict that captures `.git/config` writes."""
-    monkeypatch.setattr(m, "submodule_active_map", lambda root: entries)
-    monkeypatch.setattr(m, "_project_is_optional", lambda path, committed: True)
-    written: dict[str, bool] = {}
-    monkeypatch.setattr(m, "_set_local_submodule_active", lambda root, name, active: written.__setitem__(name, active))
-    return written
+    def test_without_wheels_folders_the_file_is_what_it_was(self, tmp_path: Path) -> None:
+        (tmp_path / "plain").mkdir()
+        uv_config.write_root_uv_toml(tmp_path, [project_metadata("plain", tmp_path / "plain")])
+        assert tomllib.loads((tmp_path / "uv.toml").read_text()) == {"override-dependencies": _OVERRIDE}
 
+    def test_every_wheels_folder_is_listed_in_install_order_and_a_deactivated_one_goes(self, tmp_path: Path) -> None:
+        for name in ("tools", "bridge"):
+            _wheels_folder(tmp_path / name)
+        both = [project_metadata("tools", tmp_path / "tools"), project_metadata("bridge", tmp_path / "bridge")]
+        uv_config.write_root_uv_toml(tmp_path, both)
+        assert tomllib.loads((tmp_path / "uv.toml").read_text())["find-links"] == ["tools/wheels", "bridge/wheels"]
+        uv_config.write_root_uv_toml(tmp_path, both[1:])
+        assert tomllib.loads((tmp_path / "uv.toml").read_text())["find-links"] == ["bridge/wheels"]
 
-def test_resolve_prompts_undecided_even_non_interactive(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    written = _stub_optional(monkeypatch, [("vendorcli", "vendorcli", False)])
-    monkeypatch.setattr(m, "_local_submodule_active", lambda root, name: None)  # undecided
-    prompted: list[str] = []
-
-    def fake_confirm(msg: str, default: bool = False) -> bool:
-        prompted.append(msg)
-        return True
-
-    monkeypatch.setattr(m.click, "confirm", fake_confirm)
-    m._resolve_submodule_activation(tmp_path, non_interactive=True)  # new module → still asks
-    assert prompted and written == {"vendorcli": True}
-
-
-def test_resolve_honors_decided_silently_non_interactive(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    _stub_optional(monkeypatch, [("vendorcli", "vendorcli", False)])
-    monkeypatch.setattr(m, "_local_submodule_active", lambda root, name: True)  # decided
-    monkeypatch.setattr(m, "_set_local_submodule_active", lambda *a: pytest.fail("should not rewrite a decided module"))
-    monkeypatch.setattr(m.click, "confirm", lambda *a, **k: pytest.fail("should not prompt a decided module"))
-    m._resolve_submodule_activation(tmp_path, non_interactive=True)  # no error = silent honor
-
-
-def test_resolve_forced_flags_skip_prompt(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    written = _stub_optional(monkeypatch, [("vendorcli", "vendorcli", False), ("hel", "hel", False)])
-    monkeypatch.setattr(m, "_local_submodule_active", lambda root, name: None)
-    monkeypatch.setattr(m.click, "confirm", lambda *a, **k: pytest.fail("forced flags must not prompt"))
-    m._resolve_submodule_activation(tmp_path, activate=("vendorcli",), deactivate=("hel",))
-    assert written == {"vendorcli": True, "hel": False}
-
-
-# --- reconcile honors the override -------------------------------------------
-def test_reconcile_deinits_locally_deactivated_committed_active(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    (tmp_path / "x").mkdir()
-    (tmp_path / "x" / ".git").write_text("")  # looks checked-out
-    monkeypatch.setattr(m, "submodule_active_map", lambda root: [("x", "x", True)])  # committed active
-    monkeypatch.setattr(m, "_local_submodule_active", lambda root, name: False)  # per-machine deactivate
-    calls: list[list[str]] = []
-    monkeypatch.setattr(m.subprocess, "check_call", lambda cmd, **k: calls.append(cmd))
-    m.reconcile_submodules(tmp_path)
-    assert any("deinit" in c for c in calls)
+    def test_uv_run_in_the_workspace_installs_a_package_only_the_wheels_folder_has(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """The real uv, offline and without this machine's own uv settings, reads the root file from the workspace and
+        from a folder below it."""
+        bridge = tmp_path / "bridge"
+        _installable_wheel(_wheels_folder(bridge), "onlyhere", "0.3.0")
+        uv_config.write_root_uv_toml(tmp_path, [project_metadata("bridge", bridge)])
+        uv = str(Path(sys.executable).with_name("uv"))
+        env = {
+            **os.environ,
+            "UV_OFFLINE": "1",
+            "UV_CACHE_DIR": str(tmp_path / "cache"),
+            "XDG_CONFIG_HOME": str(tmp_path),
+        }
+        subprocess.run([uv, "venv", "-q", "--python", sys.executable, str(tmp_path / "venv")], check=True, env=env)
+        for where in (tmp_path, bridge):
+            result = subprocess.run(
+                [uv, "pip", "install", "--python", str(tmp_path / "venv"), "--no-index", "--reinstall", "onlyhere"],
+                cwd=where,
+                env=env,
+                capture_output=True,
+                text=True,
+            )
+            assert result.returncode == 0, result.stderr
+            assert " onlyhere==0.3.0" in result.stderr  # + the first time, ~ (reinstalled) the second
