@@ -580,8 +580,11 @@ def _record_root_pointer(workspace_root: Path, path: str, changed: Dict[str, str
     return old, new
 
 
-def prune(workspace_root: Path, project_name: str, apply: bool = False) -> PruneReport:
-    """``aisland wheels prune PROJECT [--apply]``: see the module's docstring."""
+def prune(workspace_root: Path, project_name: str, apply: bool = False, everything: bool = False) -> PruneReport:
+    """``aisland wheels prune PROJECT [--apply] [--all]``: see the module's docstring.
+
+    ``everything`` (``--all``) strips EVERY wheel version from every commit, the ones a branch, a tag, HEAD or the
+    root's commit holds too: no tip keeps its wheels, so the tree check is skipped."""
     target = find_target(workspace_projects(workspace_root), workspace_root, project_name)
     repo = target.path
     _check_repository(repo, target.name)
@@ -597,7 +600,11 @@ def prune(workspace_root: Path, project_name: str, apply: bool = False) -> Prune
     labels = {commit: label for label, commit in kept_commits.items()}
     held = wheels_at(repo, [*keep_refs, *kept_commits.values()])
     in_history = history_wheels(repo)
-    stripped = sorted(in_history - set(held))
+    if everything:
+        stripped = sorted(in_history | set(held))
+        held = {}
+    else:
+        stripped = sorted(in_history - set(held))
     problems += _other_remotes(repo, stripped)
     holders = sorted({labels.get(ref) or _short(ref) for refs in held.values() for ref in refs})
     report = PruneReport(
@@ -619,12 +626,16 @@ def prune(workspace_root: Path, project_name: str, apply: bool = False) -> Prune
     bundle, restore = _backup(repo)
     report.backup, report.restore = str(bundle), restore
     trees = {ref: _tree(repo, ref) for ref in [*keep_refs, *kept_commits.values()]}
+    if everything:
+        trees = {}
     held_head = _hold_head(repo)
     rewrite_refs = [*keep_refs, *([_STASH] if _STASH in _refs(repo, _STASH) else []), *held_head]
     changed = strip(repo, stripped, rewrite_refs, restore)
     # A ref names its rewritten commit; a kept commit is followed through the map.
-    moved_trees = [ref for ref in keep_refs if _tree(repo, ref) != trees[ref]] + [
-        label for label, commit in kept_commits.items() if _tree(repo, changed.get(commit, commit)) != trees[commit]
+    moved_trees = [ref for ref in keep_refs if ref in trees and _tree(repo, ref) != trees[ref]] + [
+        label
+        for label, commit in kept_commits.items()
+        if commit in trees and _tree(repo, changed.get(commit, commit)) != trees[commit]
     ]
     if moved_trees:
         raise PruneError(

@@ -83,7 +83,7 @@ def wheels_group(
     aisland wheels build PROJECT [--include-published | --all] [--include-project] [--extra NAME] [--bundle] [--zip] [--commit] [--force] [--no-check] [--json]
     aisland wheels zip PROJECT
     aisland wheels install ZIP --python PYTHON [--into DIR] [-- install.py options]
-    aisland wheels prune PROJECT [--apply] [--json]
+    aisland wheels prune PROJECT [--apply] [--all] [--json]
     aisland wheels reset PROJECT [--json]
     aisland wheels PROJECT …          (= aisland wheels build PROJECT …)
     aisland wheels --install ZIP --python PYTHON [--into DIR]
@@ -259,8 +259,14 @@ def wheels_install(zip_path: Path, python: Path, into: Optional[Path], rest: Tup
     is_flag=True,
     help="Rewrite the history and force-push origin; without it the run only says what would go.",
 )
+@click.option(
+    "--all",
+    "everything",
+    is_flag=True,
+    help="Strip EVERY wheel version from all branches and tags too, not only the ones none holds.",
+)
 @click.option("--json", "as_json", is_flag=True, help="Print the report as JSON.")
-def wheels_prune_command(project: str, apply: bool, as_json: bool) -> None:
+def wheels_prune_command(project: str, apply: bool, everything: bool, as_json: bool) -> None:
     """Strip from PROJECT's history every committed wheel version no branch or tag holds.
 
     A version stays when a branch or a tag of this clone or of origin holds it, so every branch tip and tag keeps
@@ -270,11 +276,15 @@ def wheels_prune_command(project: str, apply: bool, as_json: bool) -> None:
     the workspace root's pointer to PROJECT. Every other clone then runs `aisland wheels reset PROJECT` before
     its next pull. Needs git-filter-repo: uv pip install 'aisland[prune]'.
 
+    --all removes every wheel from every branch and tag as well: no tip keeps a wheel, so the committed files
+    of each branch and tag change, not only their commit ids.
+
     \b
     aisland wheels prune models
     aisland wheels prune models --apply
+    aisland wheels prune models --all --apply
     """
-    report = wheels_prune.prune(get_workspace_root(), project, apply=apply)
+    report = wheels_prune.prune(get_workspace_root(), project, apply=apply, everything=everything)
     click.echo(json.dumps(report.to_dict(), indent=2) if as_json else wheels_prune.render_prune(report))
 
 

@@ -6,7 +6,11 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html). The newest entry is the
 next release: it reads `- Unreleased` until the release dates it.
 
-## [0.1.1] - Unreleased
+## [0.1.1] - 2026-11-13
+
+### Added
+- **`aisland wheels prune --all`** strips every committed wheel version from every branch and tag, the ones a branch,
+  a tag, HEAD or the root's commit holds too, so no tip keeps a wheel ([wheels](https://github.com/Gearlux/aisland/blob/v0.1.1/docs/wheels.md#old-committed-wheels-aisland-wheels-prune-and-aisland-wheels-reset)).
 
 ## [0.1.0] - 2026-11-13
 

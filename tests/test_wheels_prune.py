@@ -190,6 +190,27 @@ def test_apply_strips_the_unheld_version_everywhere_and_keeps_every_tip_and_tag(
     assert "Every other clone of models: aisland wheels reset models, before its next pull" in text
 
 
+def test_all_strips_every_wheel_version_from_every_branch_and_tag(setup: Setup) -> None:
+    report = wp.prune(setup.root, "models", apply=True, everything=True)
+
+    assert report.applied and report.stripped == sorted([setup.v1, setup.v2, setup.v3])
+    assert (report.kept, report.holders) == (0, [])
+    for ref in ("main", "v-two"):
+        assert _git(setup.origin, "ls-tree", "-r", "--name-only", ref).count("wheels/") == 0
+    _gc(setup.origin)
+    assert all(_gone(setup.origin, blob) for blob in (setup.v1, setup.v2, setup.v3))
+    assert _git(setup.repo, "rev-parse", "main") == _git(setup.origin, "rev-parse", "main")
+    assert _git(setup.repo, "status", "--porcelain", "--untracked-files=no") == ""
+    assert "pyproject.toml" in _git(setup.origin, "ls-tree", "-r", "--name-only", "main")
+
+
+def test_all_without_apply_names_every_version_and_changes_nothing(setup: Setup) -> None:
+    before = _refs(setup.repo)
+    report = wp.prune(setup.root, "models", everything=True)
+    assert (len(report.stripped), report.kept, report.applied) == (3, 0, False)
+    assert _refs(setup.repo) == before
+
+
 @pytest.mark.slow
 def test_a_commit_only_a_reflog_reaches_is_kept_in_the_backup(setup: Setup) -> None:
     """The shrink expires every reflog: a commit a `reset --hard` left behind would go with no copy, so the backup

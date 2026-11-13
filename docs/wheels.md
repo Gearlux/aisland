@@ -321,6 +321,10 @@ app: 27 of 59 wheel versions are held by no branch or tag (7.6 MB) — they go
 aisland wheels prune app --apply   rewrites history and force-pushes origin
 ```
 
+`--all` removes every wheel version from every commit, the ones a branch, a tag, HEAD or the root's commit holds
+too (`aisland wheels prune app --all --apply`): no tip keeps a wheel, so the files of each branch and tag change, not
+only their commit ids. Rebuild with `aisland wheels build app --commit` afterwards if the project ships them.
+
 `--apply` needs git-filter-repo (`uv pip install 'aisland[prune]'`) and:
 
 1. refuses a clone with changes no commit holds, a branch with commits origin lacks or behind origin's, a tag
