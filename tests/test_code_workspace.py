@@ -158,7 +158,12 @@ def test_no_venv_lists_no_log_folder(tmp_path: Path) -> None:
 # --- the rest of the file -----------------------------------------------------------------
 
 
-def test_settings_and_extensions_come_from_the_template(workspace: Path) -> None:
+def test_settings_and_extensions_come_from_the_template(workspace: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """On a machine that has every shell the template names; a machine without one has the tests above. A GitHub
+    macOS runner has no Homebrew bash, so its file named `/bin/bash` where the template says Homebrew's."""
+    real_exists = Path.exists
+    shells = {"/opt/homebrew/bin/bash", "/bin/bash"}
+    monkeypatch.setattr(Path, "exists", lambda self: str(self) in shells or real_exists(self))
     editor_files.write_code_workspace(workspace)
     written = _read(workspace)
     written.pop("folders")
