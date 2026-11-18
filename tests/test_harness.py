@@ -382,10 +382,11 @@ def test_the_harness_carries_no_dated_ruling_of_the_workspace_it_was_written_in(
     assert hits == []
 
 
-def test_aisland_ships_the_six_commands_the_helper_and_the_rules() -> None:
+def test_aisland_ships_the_seven_commands_the_helper_and_the_rules() -> None:
     assert [name for _source, name in harness.shipped_files()] == [
         ".agents/workflows/commit-all.md",
         ".agents/workflows/commit-session.md",
+        ".agents/workflows/detach.md",
         ".agents/workflows/list-actions.md",
         ".agents/workflows/pull-all.md",
         ".agents/workflows/push-all.md",

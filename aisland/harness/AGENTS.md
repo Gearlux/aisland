@@ -329,7 +329,8 @@ in that project's `AGENTS.md`. The commands in `.agents/workflows/` cite these r
   its artifact; an item already in a `TASKS.md` is referenced, not restated. Proposals are offers — nothing starts
   unasked. A PICKED proposal is the approval of the work it names: deliver it, take sub-decisions with the
   recommended default and state each in one line, never answer it with a new menu. A narrow question (a command, a
-  value, a path) gets its answer alone. `/list-actions` gathers the offers not yet carried out.
+  value, a path) gets its answer alone. `/list-actions` gathers the offers not yet carried out;
+  `/detach <n>` proposes one as a session of its own, not started.
 - **"One By One" Means ONE Item Per Message:** asked for items one by one, each message shows exactly one — item N of
   M, its example, the measured output, a recommendation, the one decision asked — and stops until the user answers.
 - **Never Silently Remap A Surface The User Named:** when the user names a surface (a menu, a pane, a command) that

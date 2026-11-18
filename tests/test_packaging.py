@@ -76,6 +76,7 @@ def test_the_package_holds_the_templates_and_the_git_scripts() -> None:
         "aisland/harness/AGENTS.md",
         "aisland/harness/commands/commit-all.md",
         "aisland/harness/commands/commit-session.md",
+        "aisland/harness/commands/detach.md",
         "aisland/harness/commands/list-actions.md",
         "aisland/harness/commands/pull-all.md",
         "aisland/harness/commands/push-all.md",
