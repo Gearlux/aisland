@@ -46,10 +46,15 @@ def link(root: Path) -> List[str]:
     root project, or once the link is there.
 
     Refused, and left as it is: a ``workspace.toml`` of the folder's own, or a link to any other file — the folder
-    would be written down twice, and setup's edits would never reach the root project."""
+    would be written down twice, and setup's edits would never reach the root project.
+
+    A workspace of submodules holding a root project is one still to convert: its own file stays as it is, and the one
+    line says how to switch (:mod:`aisland.convert`), so setup goes on working while the machine waits for it."""
     project = find(root)
     if project is None:
         return []
+    if not rooted(root):
+        return [f"{project.name} is a root project: aisland workspace convert makes this workspace one around it"]
     own = root / locations.WORKSPACE_FILE
     target = f"{project.name}/{locations.WORKSPACE_FILE}"
     if own.is_symlink():

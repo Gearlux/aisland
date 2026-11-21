@@ -135,6 +135,20 @@ def _tree(root: Path) -> List[str]:
     return sorted(str(path.relative_to(root)) for path in root.rglob("*"))
 
 
+# --- before converting: nothing changes ----------------------------------------------------------------------------
+
+
+def test_before_converting_setup_leaves_the_workspace_as_it_is_and_says_so(old: Old) -> None:
+    """A root project cloned into a workspace of submodules is used only once `convert` has run: until then setup
+    keeps the workspace's own `workspace.toml` — refusing it would stop every setup half way through a migration."""
+    before = (old.root / "workspace.toml").read_text()
+    assert root_project.link(old.root) == [
+        "acme is a root project: aisland workspace convert makes this workspace one around it"
+    ]
+    assert not (old.root / "workspace.toml").is_symlink()
+    assert (old.root / "workspace.toml").read_text() == before
+
+
 # --- each project: a clone holding its own repository ---------------------------------------------------------------
 
 
