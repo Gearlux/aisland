@@ -50,6 +50,15 @@ $ aisland workspace harness install
 The usual places read for a set without `harness.toml`, as agents add theirs. Never a precedence between sets, and
 never an edit of the workspace's own `AGENTS.md`.
 
+**Amendment (2026-11-21): the projects' skills reach the root.** Claude Code offers the skills of the folder a session
+starts in, so a project's skill reached a session at the workspace root only through a link the root repository
+tracked — and a workspace with a root project has no root repository to track it (decision 0083). The harness now
+links each skill an installed project ships, `<project>/.claude/skills/<skill>/SKILL.md`, as
+`<root>/.claude/skills/<skill>`, recorded and ignored like the sets' files and taken away once no installed project
+ships it: a project switched off on a machine brings none, so no link points at nothing. Two projects shipping one
+skill name link neither, and a folder of the workspace's own keeps its place; both are said. Skills are not a file
+kind of a set: a project ships them where Claude Code reads them, with no declaration.
+
 ---
 
 [The architecture and every decision](../architecture.md#the-decisions)

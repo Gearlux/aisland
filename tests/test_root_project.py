@@ -401,18 +401,22 @@ def test_tracking_is_refused_where_nothing_records_commits(
 # --- what the root project brings: rules and files, always as links -------------------------------------------------
 
 
-def test_the_root_projects_rules_and_files_reach_the_folder_as_links(
-    rooted: Rooted, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    """From a wheel too (`link=False`): a copy of `TASKS.md` would keep an edit made at the root from ever reaching
-    the root project. Without `[harness] sets`, a workspace with a root project takes aisland's set and the root
-    project's, in that order."""
+@pytest.fixture
+def builtin_set(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """aisland's own harness set, a small stand-in."""
     builtin = tmp_path / "builtin"
     builtin.mkdir()
     (builtin / "harness.toml").write_text('rules = "AGENTS.md"\n')
     (builtin / "AGENTS.md").write_text("# aisland rules\n")
     monkeypatch.setattr(harness, "HARNESS_DIR", builtin)
     monkeypatch.setattr(harness, "registered", lambda: {})
+
+
+@pytest.mark.usefixtures("builtin_set")
+def test_the_root_projects_rules_and_files_reach_the_folder_as_links(rooted: Rooted) -> None:
+    """From a wheel too (`link=False`): a copy of `TASKS.md` would keep an edit made at the root from ever reaching
+    the root project. Without `[harness] sets`, a workspace with a root project takes aisland's set and the root
+    project's, in that order."""
     root = rooted.root
     root_project.link(root)
     harness.install_harness(root, link=False)
@@ -426,6 +430,22 @@ def test_the_root_projects_rules_and_files_reach_the_folder_as_links(
     tasks.write_text("# tasks\n- one more\n")
     assert _git(rooted.project, "status", "--porcelain") == "M TASKS.md"  # the commands' link is excluded
     assert (rooted.project / ".claude" / "commands").is_symlink()  # a session started in it finds the commands
+
+
+@pytest.mark.usefixtures("builtin_set")
+def test_the_skills_of_the_root_project_and_of_each_project_installed_here_reach_the_root(rooted: Rooted) -> None:
+    """A project switched off here keeps its clone, and its skill no longer reaches the root."""
+    _set_up(rooted)
+    for folder in (rooted.root / "models", rooted.project):
+        skill = folder / ".claude" / "skills" / f"{folder.name}-skill"
+        skill.mkdir(parents=True)
+        (skill / "SKILL.md").write_text(f"---\nname: {folder.name}-skill\n---\n")
+    harness.install_harness(rooted.root, link=False)
+    skills = rooted.root / ".claude" / "skills"
+    assert sorted(link.name for link in skills.iterdir()) == ["acme-skill", "models-skill"]
+    activation.set_machine_choice(rooted.root, "models", False)
+    harness.install_harness(rooted.root, link=False)
+    assert sorted(link.name for link in skills.iterdir()) == ["acme-skill"]
 
 
 # --- mirrors: on a clone, the primary is the row's url --------------------------------------------------------------

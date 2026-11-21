@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import json
 import os
+import shutil
 import subprocess
 from pathlib import Path
 from typing import Dict
@@ -424,3 +425,73 @@ def test_a_set_inside_the_workspace_is_linked_from_a_wheel_too(root: Path, kind:
         source, installed = root / "agents" / "rules" / "AGENTS.md", root / ".agents/agents/AGENTS.md"
     harness.install_harness(root, link=False)
     assert installed.is_symlink() and installed.resolve() == source.resolve()
+
+
+# --- the projects' skills, linked at the root -----------------------------------------------------------------------
+
+
+def _python_project(root: Path, name: str) -> Path:
+    _write(root / name / "pyproject.toml", f'[project]\nname = "{name}"\nversion = "0.1.0"\n')
+    return root / name
+
+
+def _skill(folder: Path, name: str) -> Path:
+    """A Claude Code skill in ``folder``: ``.claude/skills/<name>/SKILL.md``."""
+    skill = folder / ".claude" / "skills" / name
+    _write(skill / "SKILL.md", f"---\nname: {name}\ndescription: {name}\n---\n")
+    return skill
+
+
+def test_an_installed_projects_skill_is_linked_at_the_root(root: Path) -> None:
+    """Claude Code offers the skills of the folder a session starts in: at the workspace root, each installed
+    project's skill comes through a link, which the root's git never sees."""
+    skill = _skill(_python_project(root, "models"), "annotate")
+    assert harness.install_harness(root, link=False) == []
+    link = root / ".claude" / "skills" / "annotate"
+    assert link.is_symlink() and os.readlink(link) == "../../models/.claude/skills/annotate"
+    assert link.resolve() == skill.resolve()
+    status = subprocess.run(["git", "status", "--porcelain", "-uall"], cwd=root, capture_output=True, text=True)
+    shown = [line[3:] for line in status.stdout.splitlines()]
+    assert [path for path in shown if path.startswith(".claude/skills")] == []  # ignored by its own path
+
+
+def test_a_skill_no_installed_project_ships_any_more_is_taken_away(root: Path) -> None:
+    skill = _skill(_python_project(root, "models"), "annotate")
+    harness.install_harness(root, link=False)
+    shutil.rmtree(skill)
+    harness.install_harness(root, link=False)
+    assert not os.path.lexists(root / ".claude" / "skills" / "annotate")
+
+
+def test_a_skill_two_projects_ship_is_linked_from_neither(root: Path) -> None:
+    _skill(_python_project(root, "models"), "annotate")
+    _skill(_python_project(root, "tools"), "annotate")
+    assert harness.install_harness(root, link=False) == [
+        "no link for the skill annotate: models and tools both ship it — rename one of them"
+    ]
+    assert not os.path.lexists(root / ".claude" / "skills" / "annotate")
+
+
+def test_a_skill_folder_of_the_workspaces_own_is_kept(root: Path) -> None:
+    _skill(_python_project(root, "models"), "annotate")
+    own = _skill(root, "annotate")
+    assert harness.install_harness(root, link=False) == [
+        "kept .claude/skills/annotate, the workspace's own: models/.claude/skills/annotate is not linked"
+    ]
+    assert own.is_dir() and not own.is_symlink()
+
+
+def test_a_folder_without_its_skill_md_is_no_skill(root: Path) -> None:
+    _write(_python_project(root, "models") / ".claude" / "skills" / "notes" / "README.md", "notes\n")
+    harness.install_harness(root, link=False)
+    assert not os.path.lexists(root / ".claude" / "skills" / "notes")
+
+
+def test_with_no_harness_set_no_skill_is_linked(root: Path) -> None:
+    """`sets = []` installs nothing and takes away what an earlier install put, the skills' links included."""
+    _skill(_python_project(root, "models"), "annotate")
+    harness.install_harness(root, link=False)
+    (root / "AGENTS.md").unlink()
+    _sets(root, "[]")
+    harness.install_harness(root, link=False)
+    assert not os.path.lexists(root / ".claude" / "skills" / "annotate")

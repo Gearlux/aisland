@@ -98,6 +98,9 @@ CLONE_SECONDS = 600.0
 #: The places an agent reads, used for a folder without ``harness.toml`` (:func:`_usual_places`).
 _USUAL_RULES = ("AGENTS.md", "CLAUDE.md")
 _USUAL_COMMANDS = ".claude/commands"
+#: Where Claude Code reads a folder's skills, each a folder holding :data:`SKILL_FILE`.
+SKILLS = ".claude/skills"
+SKILL_FILE = "SKILL.md"
 _USUAL_FILES = {
     ".cursor/rules/*": ".cursor/rules/",
     ".github/copilot-instructions.md": ".github/copilot-instructions.md",
@@ -520,6 +523,52 @@ def _remove_dropped(root: Path, installed: List[str], record: Dict[str, str]) ->
     return report
 
 
+def _project_skills(root: Path) -> Tuple[Dict[str, Path], List[str]]:
+    """The skills to link at the root: ``{".claude/skills/<skill>": its folder}`` for each skill an installed project
+    ships — the root project's too, in a workspace with one — and a line for each skill two of them ship, which
+    neither links. A skill is a folder of the project's ``.claude/skills`` holding a ``SKILL.md``."""
+    folders = [project["path"] for project in Workspace(root).install_order]
+    own_root = root_project.find(root) if root_project.rooted(root) else None
+    if own_root is not None:
+        folders.append(own_root)
+    shipped: Dict[str, List[Path]] = {}
+    for folder in folders:
+        skills = folder / SKILLS
+        if not skills.is_dir():
+            continue
+        for skill in sorted(skills.iterdir(), key=lambda path: path.name):
+            if skill.is_dir() and (skill / SKILL_FILE).is_file():
+                shipped.setdefault(skill.name, []).append(skill)
+    found: Dict[str, Path] = {}
+    lines: List[str] = []
+    for name, sources in sorted(shipped.items()):
+        if len(sources) == 1:
+            found[f"{SKILLS}/{name}"] = sources[0]
+            continue
+        owners = [os.path.relpath(source.parents[2], root) for source in sources]
+        lines.append(
+            f"no link for the skill {name}: {', '.join(owners[:-1])} and {owners[-1]} both ship it — rename one of them"
+        )
+    return found, lines
+
+
+def _link_skill(root: Path, name: str, source: Path, record: Dict[str, str]) -> Optional[str]:
+    """``<root>/<name>`` a link to the skill's folder; a line when a folder of the workspace's own is in the way."""
+    target = root / name
+    wanted = os.path.relpath(source, target.parent)
+    if target.is_symlink():
+        if os.readlink(target) == wanted:
+            record[name] = "link"
+            return None
+        target.unlink()  # a link, as every harness link: replaced
+    elif os.path.lexists(target):
+        return f"kept {name}, the workspace's own: {os.path.relpath(source, root)} is not linked"
+    target.parent.mkdir(parents=True, exist_ok=True)
+    os.symlink(wanted, target)
+    record[name] = "link"
+    return None
+
+
 def _link_claude_commands(root: Path, folder: Path, own_set: bool) -> Optional[str]:
     """``<folder>/.claude/commands`` → the workspace's ``.agents/workflows``, where Claude Code looks for commands.
 
@@ -612,6 +661,18 @@ def install_harness(root: Path, link: Optional[bool] = None) -> List[str]:
             line = _install_one(root, source, name, harness_set.name, linked, record)
             if line:
                 report.append(line)
+    if found:  # the skills come with the harness: `sets = []` takes their links away too
+        skills, lines = _project_skills(root)
+        report += lines
+        for name, source in skills.items():
+            if name in installed:
+                report.append(f"no link for the skill at {name}: a harness set places that path")
+                continue
+            line = _link_skill(root, name, source, record)
+            if line:
+                report.append(line)
+            else:
+                installed.append(name)
     report += _remove_dropped(root, installed, record)
     _write_record(root, record)
     _write_index(root, found)

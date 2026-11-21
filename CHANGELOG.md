@@ -20,6 +20,10 @@ next release: it reads `- Unreleased` until the release dates it.
   `.git/config`. `aisland workspace convert` turns a workspace of submodules into one, its repositories moved into
   their folders and the old root kept in the backup store ([workspace](https://github.com/Gearlux/aisland/blob/v0.1.2/docs/workspace.md#a-workspace-with-a-root-project-no-root-repository)).
 
+- **Each installed project's skills reach a session at the workspace root.** Setup links every
+  `<project>/.claude/skills/<skill>` into the root's `.claude/skills/`, and takes the link away once the project is no
+  longer installed there ([harness](https://github.com/Gearlux/aisland/blob/v0.1.2/docs/harness.md#agent-commands-and-rules-in-every-workspace-the-harness)).
+
 ### Changed
 - **A harness set that lives in the workspace — a project's or a folder's — is linked**, from a wheel too: a copy kept
   an edit made through the workspace's `.agents/` from reaching the set

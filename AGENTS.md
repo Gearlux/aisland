@@ -1054,6 +1054,11 @@ A bare `::` pin in this section is in `tests/test_jenkins_scaffold.py`.
   fingerprint is the one `.agents/installed.json` recorded, or it equals its source; anything else is kept and named —
   never overwritten, never deleted. A file in `.agents/` aisland does not ship is never touched, and an existing
   workspace `AGENTS.md` is never edited.
+- **Each installed project's skills are linked at the root** (`_project_skills`, `_link_skill`): `<root>/.claude/skills/<skill>`
+  → `<project>/.claude/skills/<skill>` for every folder holding a `SKILL.md` of a project in `Workspace.install_order`
+  (an off project's is not) and of the root project; recorded and ignored like the sets' files, taken away once no
+  installed project ships it, none under `sets = []`. A skill two projects ship is linked from neither, a folder of
+  the workspace's own is kept — both said, setup going on (`tests/test_harness_sets.py`).
 - Every installed file is ignored by its own path, never by its folder, so a workspace's own command stays
   committable. Every project folder (a direct subfolder with a `pyproject.toml`) gets `.claude/commands` too — Claude
   Code reads only the folder a session starts in — excluded through ITS repository's `.git/info/exclude`, never a

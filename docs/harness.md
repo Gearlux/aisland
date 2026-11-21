@@ -12,6 +12,7 @@ gets aisland's own:
 | --- | --- |
 | `.agents/workflows/*.md` | the sets' commands — aisland's: `/commit-all`, `/commit-session`, `/detach`, `/export-session`, `/import-session`, `/list-actions`, `/pull-all`, `/push-all`, `/ship` |
 | `.claude/commands` | a link to `.agents/workflows`, where Claude Code looks for them — at the root and in every project folder (Claude Code reads only the folder a session starts in); a project's link is kept out of git through its repository's own `.git/info/exclude` |
+| `.claude/skills/<skill>` | a link to each skill an installed project ships (`<project>/.claude/skills/<skill>/SKILL.md`, the root project's too), so a session started at the root offers it; the link goes once no installed project ships the skill. A skill two projects ship is linked from neither, and a folder of the workspace's own is kept; setup says both |
 | `.agents/scripts/*` | the sets' helper scripts — aisland's: `stage_hunks.py`, which `/commit-session` runs, and `session_handoff.py`, which `/export-session` and `/import-session` run |
 | `.agents/<set>/AGENTS.md` | each set's rules — aisland's in `.agents/aisland/AGENTS.md` |
 | `.agents/rules.md` | an import of every set's rules, in the order the sets are listed; the workspace's `AGENTS.md` imports it with its first line |
