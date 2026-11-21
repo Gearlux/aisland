@@ -157,7 +157,7 @@ name = "The front doors, the commands over the workspace, the services, CI, whee
 type = "layers"
 layers = [
     "aisland.cli | aisland.server",
-    "aisland.doctor | aisland.clean",
+    "aisland.doctor | aisland.clean | aisland.convert",
     "aisland.backups | aisland.services",
     "aisland.ci",
     "aisland.wheels",
@@ -177,8 +177,8 @@ source_modules = [
     "aisland.venv",
 ]
 forbidden_modules = [
-    "aisland.backups", "aisland.ci", "aisland.clean", "aisland.cli", "aisland.doctor", "aisland.server",
-    "aisland.services", "aisland.setup", "aisland.tunnel", "aisland.wheels", "aisland.workspace",
+    "aisland.backups", "aisland.ci", "aisland.clean", "aisland.cli", "aisland.convert", "aisland.doctor",
+    "aisland.server", "aisland.services", "aisland.setup", "aisland.tunnel", "aisland.wheels", "aisland.workspace",
 ]
 
 [[tool.importlinter.contracts]]

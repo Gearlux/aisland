@@ -33,6 +33,86 @@ CHECKOUT_DIR = PACKAGE_DIR.parent
 #: How far above a checkout the workspace listing it is looked for.
 _LISTING_DEPTH = 5
 _GITMODULES_PATH = re.compile(r"^\s*path\s*=\s*(.+?)\s*$", re.MULTILINE)
+#: The file a workspace is written down in, at its root (``aisland.workspace.file``).
+WORKSPACE_FILE = "workspace.toml"
+#: The key of ``workspace.toml``'s ``[workspace]`` table naming the workspace's root project.
+ROOT_KEY = "root"
+
+#: What :func:`_is` asks of a path.
+PathKind = Literal["file", "folder", "link"]
+
+
+def _is(path: Path, kind: PathKind) -> bool:
+    """Whether ``path`` is a file, a folder or a symbolic link — False when it cannot be looked at. pathlib answers
+    False for a missing path but raises ``PermissionError`` for one inside a folder you may not enter
+    (``/tmp/snap-private-tmp`` on Linux), and from a wheel every command looks for its workspace on import."""
+    try:
+        if kind == "file":
+            return path.is_file()
+        if kind == "folder":
+            return path.is_dir()
+        return path.is_symlink()
+    except OSError:
+        return False
+
+
+def _root_named(listing: Path) -> Optional[str]:
+    """The folder of the root project the ``workspace.toml`` at ``listing`` names — its ``[workspace] root`` row's
+    ``path``, else the row's name — or None: no such key, no such row, a path that is no plain folder name (the root
+    project sits directly in the workspace folder), or a file that cannot be read."""
+    try:
+        data = tomllib.loads(listing.read_text(encoding="utf-8"))
+    except (OSError, UnicodeDecodeError, tomllib.TOMLDecodeError):
+        return None
+    settings, projects = data.get("workspace"), data.get("project")
+    name = settings.get(ROOT_KEY) if isinstance(settings, dict) else None
+    table = projects.get(name) if isinstance(name, str) and isinstance(projects, dict) else None
+    path = table.get("path", name) if isinstance(table, dict) else None
+    if not isinstance(path, str) or path in ("", ".", "..") or "/" in path or "\\" in path:
+        return None
+    return path
+
+
+def is_root_project(folder: Path) -> bool:
+    """Whether ``folder`` is a root project: a folder whose own ``workspace.toml`` — a file, not a link to another
+    folder's — names this folder as the workspace's root project."""
+    listing = folder / WORKSPACE_FILE
+    return (
+        not folder.name.startswith(".")
+        and _is(listing, "file")
+        and not _is(listing, "link")
+        and _root_named(listing) == folder.name
+    )
+
+
+def root_project(root: Path) -> Optional[Path]:
+    """The folder of the workspace's root project — the clone holding the workspace's own files, whose
+    ``workspace.toml`` names it as ``[workspace] root`` — or None for a workspace without one.
+
+    ``<root>/workspace.toml`` says which when it names one (setup links it to the root project's file); otherwise it is
+    the one direct subfolder that :func:`is_root_project` — a new machine before its first setup, or a workspace of
+    submodules being converted, whose own file names none. Two such subfolders are none: which one is the user's to
+    say."""
+    named = _root_named(root / WORKSPACE_FILE)
+    if named is not None:
+        folder = root / named
+        return folder if _is(folder / WORKSPACE_FILE, "file") else None
+    try:
+        children = sorted(root.iterdir(), key=lambda child: child.name)
+    except OSError:
+        return None
+    found = [child for child in children if _is(child, "folder") and is_root_project(child)]
+    return found[0] if len(found) == 1 else None
+
+
+def workspace_listing(root: Path) -> Path:
+    """The ``workspace.toml`` that writes the workspace at ``root`` down: its own (setup's link to the root project's
+    file once it has one), else its root project's, before setup has linked it."""
+    own = root / WORKSPACE_FILE
+    if _is(own, "file"):
+        return own
+    project = root_project(root)
+    return project / WORKSPACE_FILE if project is not None else own
 
 
 def _lists(folder: Path, relative: str) -> bool:
@@ -45,7 +125,7 @@ def _lists(folder: Path, relative: str) -> bool:
     if relative in (match.strip().strip('"') for match in _GITMODULES_PATH.findall(gitmodules)):
         return True
     try:
-        projects = tomllib.loads((folder / "workspace.toml").read_text(encoding="utf-8")).get("project", {})
+        projects = tomllib.loads(workspace_listing(folder).read_text(encoding="utf-8")).get("project", {})
     except (OSError, UnicodeDecodeError, tomllib.TOMLDecodeError):
         return False
     return isinstance(projects, dict) and any(
@@ -145,24 +225,6 @@ def _said(root: Path, why: str) -> Path:
     return root
 
 
-#: What :func:`_is` asks of a path.
-PathKind = Literal["file", "folder", "link"]
-
-
-def _is(path: Path, kind: PathKind) -> bool:
-    """Whether ``path`` is a file, a folder or a symbolic link — False when it cannot be looked at. pathlib answers
-    False for a missing path but raises ``PermissionError`` for one inside a folder you may not enter
-    (``/tmp/snap-private-tmp`` on Linux), and from a wheel every command looks for its workspace on import."""
-    try:
-        if kind == "file":
-            return path.is_file()
-        if kind == "folder":
-            return path.is_dir()
-        return path.is_symlink()
-    except OSError:
-        return False
-
-
 def is_alias(folder: Path, workspace: Path) -> bool:
     """Whether ``folder`` is a symbolic link to a folder inside ``workspace`` — a second name for a folder the
     workspace already holds (``ml -> machine_learning``), never a project of its own: every reader of the workspace's
@@ -227,12 +289,16 @@ def find_workspace(start: Path) -> Optional[Path]:
     """The workspace ``start`` is in, or None. From ``start`` upwards, the first folder that
 
     1. holds ``.gitmodules`` — a superproject (from inside a submodule too);
-    2. is ``start`` itself and holds projects (:func:`holds_projects`) — a folder of projects, run from its root;
-    3. holds a ``pyproject.toml`` — a project, so the workspace is its PARENT (a project that is its own git clone
+    2. is a root project (:func:`is_root_project`) — so the workspace is its PARENT (its own ``.git`` would make it
+       a workspace of its own by rule 5);
+    3. holds a ``workspace.toml`` naming its root project — a workspace with one, set up;
+    4. is ``start`` itself and holds projects (:func:`holds_projects`) or a root project (:func:`root_project`) — a
+       folder of projects run from its root, or a new machine where only the root project is cloned yet;
+    5. holds a ``pyproject.toml`` — a project, so the workspace is its PARENT (a project that is its own git clone
        is never the workspace);
-    4. holds a ``.git`` folder — a repository with no project yet (what ``aisland workspace init`` makes).
+    6. holds a ``.git`` folder — a repository with no project yet (what ``aisland workspace init`` makes).
 
-    Rule 2 looks at ``start`` only: applied above it, a home folder holding one project would become the workspace
+    Rule 4 looks at ``start`` only: applied above it, a home folder holding one project would become the workspace
     of every folder under it. A folder that cannot be looked into holds none of these, and the search goes on above
     it.
     """
@@ -245,7 +311,11 @@ def _find_workspace(start: Path) -> Optional[Tuple[Path, str]]:
     for candidate in [start, *start.parents]:
         if _is(candidate / ".gitmodules", "file"):
             return candidate, f"{candidate} holds .gitmodules"
-        if candidate == start and holds_projects(candidate):
+        if is_root_project(candidate):
+            return candidate.parent, f"{candidate} is the root project, the workspace its parent"
+        if _root_named(candidate / WORKSPACE_FILE) is not None:
+            return candidate, f"{candidate}'s workspace.toml names its root project"
+        if candidate == start and (holds_projects(candidate) or root_project(candidate) is not None):
             return candidate, f"{candidate}, the folder aisland runs in, holds projects"
         if _is(candidate / "pyproject.toml", "file"):
             return candidate.parent, f"{candidate} is a project, the workspace its parent"
@@ -292,7 +362,7 @@ def is_workspace(folder: Path, environ: Mapping[str, str] = os.environ) -> bool:
     named = environ.get(WORKSPACE_ENV, "")
     if named and Path(named).expanduser().resolve() == folder.resolve():
         return True
-    return any(_is(folder / marker, "file") for marker in WORKSPACE_MARKERS)
+    return any(_is(folder / marker, "file") for marker in WORKSPACE_MARKERS) or root_project(folder) is not None
 
 
 def workspace_found() -> bool:

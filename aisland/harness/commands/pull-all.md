@@ -9,6 +9,8 @@ allowed-tools: [Bash(git pull-all:*), Bash(git status:*), Bash(git diff:*), Bash
 
 `git pull-all` — the alias `aisland/aisland/git/setup_git.sh` installs, logic in `aisland/aisland/git/git_pull_all.sh`, usage in the aisland README "Pulling Everything (`pull-all`)" — does the mechanical part: fetches the root and every submodule, merges each submodule, merges the root (a submodule-pointer conflict settled to the submodule's checkout when it holds both sides) and records the submodule commits that came in. What it cannot do it lists under `needs you:` and exits 1. This workflow finishes those items and reruns it until it is clean. It never pushes (`/push-all` does).
 
+**A workspace with a root project** (`[workspace] root` in `workspace.toml`; `aisland workspace convert` makes one of a workspace of submodules) has no root repository: its folder holds plain clones, the workspace's shared files there are links into the root project, and `aisland workspace projects` lists the root project last. There every step below about the root — its status, a pointer to stage, its commit, its push — is skipped, since the folder is no repository; the root project is pulled like any project, and nothing is recorded.
+
 When the user invokes `/pull-all`:
 
 1. **Run it** from the workspace root: `git pull-all`. Exit 0 → step 6.

@@ -27,7 +27,7 @@ from aisland.workspace import activation
 from aisland.workspace import check as workspace_check
 from aisland.workspace import clones
 from aisland.workspace import file as workspace_file
-from aisland.workspace import selection
+from aisland.workspace import root_project, selection
 from aisland.workspace.mirrors import apply_all as apply_mirrors
 from aisland.workspace.model import Workspace
 from aisland.workspace.projects import ProjectMetadata, get_workspace_root, install_groups, internal_dependencies
@@ -127,6 +127,9 @@ def setup_workspace(non_interactive: bool = False, install_all: bool = False) ->
     uv_cmd = ensure_uv_in_venv(venv_bin)
     # 0b. The root's `project.bashrc`, a link to aisland's copy, so `source ./project.bashrc` works from the root.
     link_project_bashrc(workspace_root)
+    # 0b'. A workspace with a root project: `workspace.toml` linked to the root project's (aisland.workspace.root_project)
+    #      before anything reads it — the harness reads `[harness] sets` from it next.
+    _say(root_project.link(workspace_root))
     # 0c. The agent harness in `.agents/` (aisland.setup.harness) — linked from a checkout, copied from a wheel. Before
     #     provisioning, which can stop a setup half-way.
     _say(install_harness(workspace_root))

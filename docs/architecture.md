@@ -20,14 +20,14 @@ steps of `aisland setup` in order, and each step is a module of its own.
 
 | area | modules |
 |---|---|
-| The workspace and its file | `workspace/` (`model`, the workspace as one record; `file`, `check`, `local`, `projects`, `gitmodules`, `clones`, `discovery`, `github`), `locations`, `paths`, `pyproject`, `toml_places` (a table's line in a TOML file) |
+| The workspace and its file | `workspace/` (`model`, the workspace as one record; `file`, `check`, `local`, `root_project` (a workspace whose root project holds its files), `projects`, `gitmodules`, `clones`, `discovery`, `github`), `locations`, `paths`, `pyproject`, `toml_places` (a table's line in a TOML file) |
 | What a project or a machine chooses | `workspace/` (the plugins `activation`, `selection`, `sources` — the model — with `source_apply`, `mirrors`; `tracking`, `recording`), `machine_config` (this machine's `git config --local`) |
 | Setting a machine up | `setup/` (`manager`, the driver, and its steps `provision`, `installers`, `renamed`, `bashrc`, `uv_config`, `editor_files`, `mcp_config`, `env_example`, `completion`, `playwright_browser`, `git_settings`, `harness`; `init`, `workspace init`; `configure` and `source_commands`, the configure commands), `downloads`, `editor`, `venv` (the `.venv` and its uv), `userspace_tools` |
 | Services | `services/` (`base`, `registry`, `plugin`, `declared`, `supervisor`, `jenkins`, `jenkins_jobs`, `jenkins_settings`, `jenkins_java`, `docker`, `swiftbar`, `nightly`), `envfile` (the workspace's `.env`) |
 | CI and tests | `ci/` (`ci_scaffold`, `ci_templates` — the sets under `templates/` —, `jenkins_job_config`, `quality`, `stats_report`), `pytest_stats` (the plugin, standard library only) |
 | Wheels | `wheels/` (`build`, the run, and `projects`, `published`, `export`, `report`, `files`, `check`, `bundle`, `extra`, `scrub`, `prune` with `filter_repo`, `install`, `unzip`) |
 | Reaching a remote machine | `tunnel/` (`host`, `state`, `binary`, `store`, `connect`, `shell`) |
-| Diagnosis and housekeeping | `doctor`, `clean`, `backups`, `probe`, `git_exclude`, `notebook_utils`, `css_colors` |
+| Diagnosis and housekeeping | `doctor`, `clean`, `convert` (`aisland workspace convert`: submodules into clones around a root project), `backups`, `probe`, `git_exclude`, `notebook_utils`, `css_colors` |
 | Shared plumbing | `gitcmd`, `downloads`, `pypi` (PyPI's JSON document and the release question), `errors`, `failures`, `console`, `atomic`, `server` (the MCP server) |
 
 A subject of several modules is a package. Three modules stay at the top level whatever their subject:
@@ -44,7 +44,7 @@ The subpackages are layers, and import-linter holds them (`[tool.importlinter]` 
 
   ```text
   cli | server                 the front doors
-  doctor | clean               the commands over the whole workspace
+  doctor | clean | convert     the commands over the whole workspace
   backups | services
   ci
   wheels
@@ -96,7 +96,9 @@ Build one where it is used and never keep one across a step that changes the wor
 milliseconds, a stale answer a wrong command.
 
 What is committed lives in `workspace.toml` — a project's settings in its table, a selection's choice under
-`[workspace]` — and what one machine deviates in `.git/config` (`machine_config`). A plugin of
+`[workspace]` — and what one machine deviates in `.git/config` (`machine_config`). A workspace with a root project
+has no root repository: its `workspace.toml` is a link to the root project's, which wins over every clone, and the
+machine's `.git/config` is the root project's ([0083](decisions/0083-a-root-project-holds-the-workspaces-files-and-nothing-records-the-projects-commits.md)). A plugin of
 `aisland workspace configure` (`source`, `mirror`, `active`, `extras`, the selections the projects declare) is one set
 of keys in both layers ([0035](decisions/0035-aisland-workspace-configure-one-set-of-commands-built.md)). A project
 tells aisland what it brings in its own `pyproject.toml` (`[tool.aisland]`) or an `aisland.plugins` entry point, and
@@ -227,3 +229,4 @@ mechanism that is replaced gets a new record, and the old one says which superse
 - [0080 — The release review's service, tunnel and MCP fixes](decisions/0080-the-release-reviews-service-tunnel-and-mcp-fixes.md)
 - [0081 — Emptying a project folder keeps its ignored files, and the release review's safety fixes](decisions/0081-emptying-a-folder-keeps-ignored-files-and-the-release-reviews-safety-fixes.md)
 - [0082 — A renamed project's old distribution is uninstalled before its new one](decisions/0082-a-renamed-projects-old-distribution-is-uninstalled-before-its-new-one.md)
+- [0083 — A root project holds the workspace's files, and nothing records the projects' commits](decisions/0083-a-root-project-holds-the-workspaces-files-and-nothing-records-the-projects-commits.md)

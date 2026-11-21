@@ -18,7 +18,7 @@ from aisland.pypi import PypiInfo, PypiProject, points_at_owner, pypi_json
 from aisland.setup.editor_files import write_code_workspace
 from aisland.venv import ensure_uv_in_venv, require_venv_bin
 from aisland.workspace import file as workspace_file
-from aisland.workspace import source_apply, sources
+from aisland.workspace import root_project, source_apply, sources
 from aisland.workspace.github import github_repository
 from aisland.workspace.model import Workspace
 from aisland.workspace.projects import get_workspace_root, submodule_active_map
@@ -94,13 +94,15 @@ def _remote_ref_exists(workspace_root: Path, project: str, ref: str) -> bool:
 
 
 def _refuse_unmanageable(root: Path, project: str, kind: str) -> None:
-    """Refuse a project the workspace does not know, a kind there is none of, and a detached kind for a folder."""
+    """Refuse a project the workspace does not know, a kind there is none of, and a detached kind for a folder — but
+    in a workspace with a root project, where a detached source keeps the clone and empties nothing."""
     known = Workspace(root).known_names
     if project not in known:
         raise AislandError(f"'{project}' is not a workspace project. Known: {', '.join(known)}")
     if kind not in sources.SOURCE_KINDS:
         raise AislandError(f"unknown source kind '{kind}'; expected one of {', '.join(sources.SOURCE_KINDS)}")
-    if kind in sources.DETACHED_KINDS and project not in {name for name, _path, _active in submodule_active_map(root)}:
+    submodules = {name for name, _path, _active in submodule_active_map(root)}
+    if kind in sources.DETACHED_KINDS and project not in submodules and not root_project.rooted(root):
         # A folder project (no .gitmodules entry) has no submodule to deinit and none to check out again.
         raise AislandError(
             f"'{project}' is a folder of the workspace, not a submodule: a {kind} source empties its folder, "

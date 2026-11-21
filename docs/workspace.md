@@ -1,7 +1,8 @@
 # A workspace and its setup
 
 This page covers how a workspace is created and set up: the bootstrap, `aisland workspace init`, tracking of projects,
-`workspace.toml`, what projects declare, system tools, workspaces without `.gitmodules`, and optional projects.
+`workspace.toml`, what projects declare, system tools, workspaces without `.gitmodules`, a workspace with a root
+project, and optional projects.
 
 ## Create a workspace (`aisland workspace init`)
 
@@ -557,6 +558,116 @@ Error: 'alpha' is a folder of the workspace, not a submodule: a pypi source empt
 A wheel is built from a project's last commit, so a project folder in no git repository is
 refused (`alpha is in no git repository; …`); a mirror needs a submodule's `.gitmodules`
 remote and is refused.
+
+### A workspace with a root project: no root repository
+
+A workspace's shared files — `workspace.toml`, the rules agents read, a backlog — can live in a project of their own,
+the **root project**. The workspace folder is then no repository: every project, the root project too, is a clone
+holding its own repository on its own branch, and nothing records which commit of each goes with which. The root
+project's `workspace.toml` names it and lists every project, itself included:
+
+```toml
+# acme/workspace.toml, in the root project
+[workspace]
+format = 1
+root = "acme"
+
+[project."acme"]
+url = "git@github.com:acme/acme.git"
+branch = "main"
+
+[project."models"]
+url = "git@github.com:acme/models.git"
+branch = "dev/main"
+```
+
+A new machine clones the root project into the workspace folder and runs setup there:
+
+```bash
+mkdir ~/work/acme && cd ~/work/acme
+git clone git@github.com:acme/acme.git
+uv venv --seed .venv && .venv/bin/pip install aisland
+.venv/bin/aisland setup
+```
+
+```text
+  - linked workspace.toml to acme/workspace.toml, the root project's
+==> Bringing the project folders in line with their activation...
+  - clone models (dev/main)
+```
+
+```text
+~/work/acme/                     ← no repository, no .gitmodules
+├── acme/                        ← the root project
+├── workspace.toml → acme/workspace.toml
+├── AGENTS.md, CLAUDE.md         ← the rules: aisland's, then the root project's
+├── TASKS.md → acme/TASKS.md     ← a file the root project's harness.toml places
+├── models/                      ← a clone setup made
+└── .venv
+```
+
+What setup does in such a workspace:
+
+- **`workspace.toml` is a link to the root project's.** Every change setup or `aisland workspace configure … set` makes
+  to it lands in the root project, to commit there. A `workspace.toml` of the folder's own, or a link to another
+  file, is refused.
+- **The file wins over the clones.** Each active project the folder lacks is cloned beside the root project on its
+  branch, and each clone's `origin` follows the url its row gives: a url changed on another machine reaches this one,
+  and a clone's old origin is never written back into the file.
+- **The root project's rules and files arrive as a harness set** ([harness](harness.md)): without `[harness] sets`,
+  the sets are aisland's and then the root project's. Its `AGENTS.md` is its rules, and its `harness.toml` places other
+  files at the root, always as links, so an edit made at the root is an edit of the root project:
+
+  ```toml
+  # acme/harness.toml
+  format = 1
+  rules = "AGENTS.md"
+
+  [files]
+  "TASKS.md" = "TASKS.md"
+  ```
+
+- **This machine's choices** (`--machine-only`, the optional projects, the editor's theme) live in the root project's
+  `.git/config`, never committed.
+- **The root project is never installed**, whatever it holds; `aisland workspace projects` lists it last.
+
+A project switched off on this machine (`aisland workspace configure active set models false --machine-only`), or
+taking its release (`source set models pypi`), keeps its clone — its repository lives nowhere else — and is only
+left out of the installs. `git pull-all` and `git push-all` treat the root project as one more clone, and record
+nothing. `aisland workspace track` is refused there: nothing records commits.
+
+#### From a workspace of submodules (`aisland workspace convert`)
+
+Put the workspace's shared files into a root project — its `workspace.toml` naming it as `root`, its rows the
+projects —, push it, clone it into the workspace folder, then:
+
+```bash
+aisland workspace convert && aisland setup
+```
+
+```text
+==> Converted /Users/you/work/acme: a folder of clones around its root project
+  - models: a clone now, its repository moved from .git/modules/models into models/.git
+  - this machine's settings: 3 copied into acme/.git/config
+  - tools: off on this machine; its repository is kept in …/backups/.workspace-root/20250101-120000/files/.git/modules/tools
+  - the old root repository and the 6 files it tracked: moved into …/backups/.workspace-root/20250101-120000/files
+Next: aisland setup
+```
+
+Each project's repository moves from `.git/modules` into its folder — its commits, branches, stashes, uncommitted
+edits and worktrees as they were. This machine's `aisland.*` settings are copied into the root project's
+`.git/config`. The old root repository and the files it tracks move into aisland's backup store, never deleted,
+with the repositories of the projects that are off on this machine; what it does not track (`.env`, `.venv`) stays.
+Nothing moves while the root holds work no remote has (a change no commit holds, a commit its upstream lacks), has
+worktrees of its own, or holds no root project yet:
+
+```text
+Error: not converted: the root repository holds work no remote has (TASKS.md has changes no commit holds). Push it, or carry it into the root project, first.
+```
+
+Convert each machine the same way, before or after its root pulled the commit that drops the submodules: the
+repositories are found in `.git/modules` either way. A second run says `nothing to convert: the workspace has no root
+repository`.
 
 ## Optional projects & the generated `uv.toml`
 

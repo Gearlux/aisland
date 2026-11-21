@@ -9,6 +9,11 @@ without the key is always part of the workspace. This machine's choice is ``aisl
 have it yet (a machine made by ``init --from``, which clones only the projects without ``active``) — an inactive one
 emptied, never forced. It also writes what git reads: ``.gitmodules`` ``active = false`` for a project whose default
 is off, and this machine's ``submodule.<name>.active``, so a plain ``git submodule update`` agrees.
+
+A workspace with a root project (:mod:`aisland.workspace.root_project`) holds plain clones, no submodules: there an
+active project is cloned beside the root project, on its branch, and each clone's ``origin`` follows the url
+``workspace.toml`` gives it. An inactive project's clone is kept as it is — its repository lives nowhere else — and is
+only left out of the installs.
 """
 
 from __future__ import annotations
@@ -19,7 +24,7 @@ from typing import Dict, List, Optional
 from aisland import console, gitcmd, machine_config
 from aisland.workspace import file as workspace_file
 from aisland.workspace import local as local_workspace
-from aisland.workspace import tracking
+from aisland.workspace import root_project, tracking
 from aisland.workspace.projects import ProjectFolder, ignored_content, ignored_content_refusal, submodule_active_map
 from aisland.workspace.sources import detached_projects
 
@@ -104,6 +109,8 @@ def reconcile(root: Path) -> List[str]:
     ``.git/config`` is gone after a deinit —, each untracked project on no branch is put on its branch, and a local
     workspace (:mod:`aisland.workspace.local`) commits
     ``.gitmodules`` and the projects added."""
+    if root_project.rooted(root):
+        return _reconcile_clones(root)
     stuck = _reconcile(root)
     for change in tracking.apply(root):
         console.echo(f"  - {change.line()}")
@@ -182,6 +189,52 @@ def _reconcile(root: Path) -> List[str]:
             gitcmd.git(root, "config", "-f", ".gitmodules", f"submodule.{name}.active", "false")
         else:
             gitcmd.git(root, "config", "-f", ".gitmodules", "--unset", f"submodule.{name}.active")
+    return stuck
+
+
+def _reconcile_clones(root: Path) -> List[str]:
+    """:func:`reconcile` in a workspace with a root project: each active project the folder lacks cloned from its row,
+    each clone's ``origin`` pointed at its row's url, an inactive one's clone kept and said."""
+    listed = workspace_file.load(root)
+    own = root_project.find(root)
+    detached = detached_projects(root)
+    stuck: List[str] = []
+    console.echo("==> Bringing the project folders in line with their activation...")
+    for project in listed.projects.values():
+        folder = root / project.path
+        cloned = (folder / ".git").exists()
+        want = effective(root, project.name) and project.name not in detached
+        if own is not None and folder == own:
+            continue  # the root project: there, and part of the workspace, by definition
+        if not cloned:
+            if not want:
+                continue
+            if project.url is None:
+                console.echo(f"    skip {project.path}: active, but workspace.toml gives it no url to clone from.")
+                stuck.append(project.name)
+                continue
+            on = project.branch or "its origin's default branch"
+            console.echo(f"  - clone {project.path} ({on})")
+            branch = ["-b", project.branch] if project.branch else []
+            # git's own prompts are off (a credential asked for with the output captured would hang unseen), and a
+            # clone may take as long as the download does.
+            done = gitcmd.git(
+                root, "clone", "-q", *branch, "--", project.url, project.path, network=True, timeout=gitcmd.NO_LIMIT
+            )
+            if done.returncode != 0:
+                console.echo(
+                    f"    skip {project.path}: {done.stderr.strip().splitlines()[-1] if done.stderr else 'failed'}"
+                )
+                stuck.append(project.name)
+            continue
+        if project.name in detached:
+            console.echo(f"  - {project.path} is installed from its release here: its clone kept, not installed")
+        elif not want:
+            console.echo(f"  - {project.path} is off here: not installed, its clone kept")
+        origin = gitcmd.read(folder, "remote", "get-url", "origin")
+        if project.url is not None and origin is not None and origin != project.url:
+            gitcmd.git(folder, "remote", "set-url", "--", "origin", project.url)
+            console.echo(f"  - {project.path}: origin {project.url} (workspace.toml)")
     return stuck
 
 

@@ -13,6 +13,17 @@ next release: it reads `- Unreleased` until the release dates it.
   proposed next action as a session of its own that waits for the go; `/export-session` writes a handoff of a session
   (a brief, the commits no remote has, its own uncommitted edits) and `/import-session` carries it on in a workspace
   on another machine ([harness](https://github.com/Gearlux/aisland/blob/v0.1.2/docs/harness.md#agent-commands-and-rules-in-every-workspace-the-harness)).
+- **A workspace with a root project.** A clone whose `workspace.toml` names it (`[workspace] root`) holds the
+  workspace's shared files; clone it into a folder and `aisland setup` links its `workspace.toml`, its rules and the
+  files its `harness.toml` places, then clones every other project beside it. There is no root repository and no
+  `.gitmodules`, so nothing records the projects' commits; this machine's choices live in the root project's
+  `.git/config`. `aisland workspace convert` turns a workspace of submodules into one, its repositories moved into
+  their folders and the old root kept in the backup store ([workspace](https://github.com/Gearlux/aisland/blob/v0.1.2/docs/workspace.md#a-workspace-with-a-root-project-no-root-repository)).
+
+### Changed
+- **A harness set that lives in the workspace — a project's or a folder's — is linked**, from a wheel too: a copy kept
+  an edit made through the workspace's `.agents/` from reaching the set
+  ([harness](https://github.com/Gearlux/aisland/blob/v0.1.2/docs/harness.md#agent-commands-and-rules-in-every-workspace-the-harness)).
 
 ### Fixed
 - **A renamed project is installed under its new name alone.** `aisland setup` uninstalls what the old name left in

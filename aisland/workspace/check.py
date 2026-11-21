@@ -19,6 +19,7 @@ import tomllib
 from pathlib import Path
 from typing import List, Tuple
 
+from aisland import locations
 from aisland import pyproject as pyproject_toml
 from aisland import pytest_stats
 from aisland.toml_places import FORMAT_KEY, Where, key_line, table_line
@@ -40,6 +41,7 @@ PROJECT_KEYS: Tuple[str, ...] = (
 WORKSPACE_KEYS: Tuple[str, ...] = (
     workspace_file.NAME_KEY,
     FORMAT_KEY,
+    locations.ROOT_KEY,
     tracking.TRACK_KEY,
     pytest_stats.RECORD_KEY,
 )

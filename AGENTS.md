@@ -61,7 +61,9 @@ The workspace's dev-infrastructure CLI, `aisland` (click, the `aisland/cli/` pac
   `true`/`false`; `check=True` raises when git refuses) are the one way a module reads or writes
   `aisland.<plugin>.<project>.<key>`, `submodule.<name>.active` or `pull.rebase`; never a bare `git config --local`.
   A read answers "nothing" for an unset key or a folder that is no repository, and a write there is silent
-  (`tests/test_machine_config.py`). `.gitmodules` keeps `gitmodules.py`; `pytest_stats.py` reads its own keys with the
+  (`tests/test_machine_config.py`). Given a workspace folder that is no repository but has a root project, every one of
+  them reads and writes the ROOT PROJECT's `.git/config` (`settings_repository`; `pytest_stats` asks the same of
+  `locations.root_project`) (`tests/test_root_project.py`). `.gitmodules` keeps `gitmodules.py`; `pytest_stats.py` reads its own keys with the
   standard library.
 - **`locations.py`**: where the workspace and the state are (standard library only: the pytest plugin imports it), and
   what a project folder is — `is_project_folder(folder, workspace)` (a folder holding a `pyproject.toml`, not hidden
@@ -106,6 +108,32 @@ The workspace's dev-infrastructure CLI, `aisland` (click, the `aisland/cli/` pac
   else staged — at init, after every `activation.reconcile` and after `track set|unset`; a commit git refuses is said,
   never raised; an unmarked workspace is never touched; the `active` plugin adds a project there with `-f`
   (`tests/test_local_workspace.py`).
+- **`workspace/root_project.py`** [root-project]: a workspace with a ROOT PROJECT — a clone whose `workspace.toml`
+  names it (`[workspace] root`) and lists every project, itself included — has no root repository and no
+  `.gitmodules`: every project is a plain clone and nothing records which commits go together. `locations.root_project`
+  finds it (standard library only: the folder `<root>/workspace.toml` names, else the ONE direct subfolder whose own
+  file names that subfolder); `find_workspace` takes a root project's parent, and a folder holding one, as the
+  workspace; `rooted` (a root project, no `.gitmodules`) is the test every step asks. `link`, setup's step right before
+  the harness (which reads `[harness] sets`), makes `<root>/workspace.toml` a link to the root project's file — a file
+  of the folder's own or a link elsewhere is refused, left as it is — so every write (`atomic.write_text` follows the
+  link) lands in the root project. **The file wins:** `refresh` never writes a clone's origin over a row's url and keeps
+  every row; activation (`_reconcile_clones`) clones each active project the folder lacks (`git clone -b <branch> --`)
+  and points each clone's `origin` at its row's url. **An off or released project keeps its clone** (a plain clone's
+  repository lives nowhere else): `Workspace.left_out` keeps it, and the root project, out of every install, the
+  editor's and mypy's project lists included, and `source_apply` never deinits there. The root project is never
+  installed, whatever it holds; `aisland workspace projects` lists it LAST (the agent commands commit and ship it
+  after the projects). Without `[harness] sets` the sets are `["aisland", "<root>"]`; `track set|unset` are refused
+  (`tracking.nothing_records`), a mirror goes on a clone with the row's url as its primary
+  (`tests/test_root_project.py`). Never a root repository recording commits beside a root project, a clone's origin
+  written over the file's url, or an off project's clone emptied.
+- **`convert.py`**: `aisland workspace convert` turns a workspace of submodules into a rooted one — each
+  `.git/modules/<name>` moved into its folder (`core.worktree` dropped from its config file, `git worktree repair`), this
+  machine's `aisland.*` settings copied into the root project, the old root repository and the files it tracks moved
+  into the backup store (`<backups>/.workspace-root/<stamp>/files/` + `manifest.json`), never deleted, the off projects'
+  repositories with it. REFUSED before anything moves: no root project cloned, a change no commit holds or a commit
+  its upstream lacks, a worktree of the root, a project holding submodules of its own; a folder with no root
+  repository answers `convert.NOTHING`. It moves into the store as `clean` does, so it is a top-level module on
+  `clean`'s line of the layers (`tests/test_workspace_convert.py`).
 - **`workspace/clones.py`**: `aisland setup` adds a clone the workspace does not list as a submodule BY ITSELF, never asking (do not
   add a prompt back; `tests/test_setup_adds_clones.py::test_setup_never_asks`). A clone is a
   direct, non-hidden subfolder with a `.git` FOLDER, an `origin` and a `pyproject.toml`, not in `.gitmodules`, no alias
@@ -281,7 +309,7 @@ naming the PID is the only signal). All service state lives under `<workspace>/a
 - **The layers are import-linter contracts** (`[tool.importlinter]` in `pyproject.toml`, run by
   `tests/test_imports.py::test_the_import_graph_keeps_every_contract`; `lint-imports --no-cache` shows them). The
   `layers` contract, top to bottom — a layer imports only those below it, the modules of one line never one another:
-  `cli | server`, `doctor | clean`, `backups | services`, `ci`, `wheels`, `setup`, `workspace | tunnel`. Every other
+  `cli | server`, `doctor | clean | convert`, `backups | services`, `ci`, `wheels`, `setup`, `workspace | tunnel`. Every other
   top-level module is a LEAF (`atomic`, `console`, `errors`, `gitcmd`, `locations`, `paths`, `venv`, …), which the
   `leaves` contract forbids every layer; a new top-level module joins one of the two lists
   (`::test_every_top_level_module_is_in_a_layer_or_a_leaf`). Inside each subpackage no cycle; the
@@ -1019,7 +1047,10 @@ A bare `::` pin in this section is in `tests/test_jenkins_scaffold.py`.
   `AGENTS.md` below the import line. A command cites a rule as `aisland rules → "<bold heading>"`, and
   `harness/AGENTS.md` must hold that heading (`::test_every_section_a_command_cites_is_in_the_rules`): rename a rule and
   its citations together.
-- From a checkout, links; from a wheel, copies (`locations.FROM_CHECKOUT`). A copy is replaced only while its
+- From a checkout, links; from a wheel, copies (`locations.FROM_CHECKOUT`) — but a set that LIVES IN THE WORKSPACE
+  (kind `project` or `folder`, the root project's among them) is linked either way, since it is edited and committed
+  where it lives (`tests/test_harness_sets.py::test_a_set_inside_the_workspace_is_linked_from_a_wheel_too`). A copy is
+  replaced only while its
   fingerprint is the one `.agents/installed.json` recorded, or it equals its source; anything else is kept and named —
   never overwritten, never deleted. A file in `.agents/` aisland does not ship is never touched, and an existing
   workspace `AGENTS.md` is never edited.

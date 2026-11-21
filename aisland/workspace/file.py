@@ -32,7 +32,7 @@ from tomlkit.container import OutOfOrderTableProxy
 from aisland import __version__, atomic, gitcmd, locations
 from aisland.errors import AislandError
 from aisland.toml_places import FORMAT_KEY, Where, format_refusal, key_line, table_line
-from aisland.workspace import gitmodules
+from aisland.workspace import gitmodules, root_project
 
 #: The file, at the workspace root.
 FILE_NAME = "workspace.toml"
@@ -207,8 +207,9 @@ def _refuse_a_shared_folder(projects: Dict[str, Project]) -> None:
 
 
 def load(root: Path) -> WorkspaceFile:
-    """The workspace's file, or an empty one when it has none."""
-    path = root / FILE_NAME
+    """The workspace's file, or an empty one when it has none: its own, else — before setup links it — its root
+    project's (:func:`aisland.locations.workspace_listing`)."""
+    path = locations.workspace_listing(root)
     return read(path) if path.is_file() else WorkspaceFile()
 
 
@@ -449,8 +450,9 @@ def render(workspace: WorkspaceFile, name: str, text: str = "") -> str:
 
 def write(root: Path, workspace: WorkspaceFile) -> Optional[Path]:
     """Write ``workspace`` to ``<root>/workspace.toml``, editing the file that is there; with nothing in it, remove the
-    file and return None."""
-    path = root / FILE_NAME
+    file and return None. In a workspace with a root project the file is the root project's, reached through the
+    folder's link (or, before setup has made it, at its place in the root project)."""
+    path = locations.workspace_listing(root)
     if not workspace.settings and not workspace.projects and not workspace.ci and not workspace.harness:
         path.unlink(missing_ok=True)
         return None
@@ -554,10 +556,14 @@ def refresh(root: Path) -> List[str]:
     """Bring ``<root>/workspace.toml`` in line with the projects the workspace holds; one line per change.
 
     A new project is added with its path, url and branch; a changed url or path is followed; a project the workspace
-    lacks stays when it has a url (setup's activation step clones it) and is dropped otherwise. A branch already written is kept (``aisland workspace configure source`` changes it), and every other
+    lacks stays when it has a url (setup's activation step clones it) and is dropped otherwise. In a workspace with a
+    root project the file is what every machine shares, so it wins: a row's url is never replaced by a clone's
+    origin (setup's activation step points the clone at the file's url instead), and a row stays whether this machine
+    has the project or not; only a clone the file does not list yet is added. A branch already written is kept (``aisland workspace configure source`` changes it), and every other
     setting of a project stays as written. A project of the file is matched by its folder first, so a name written by
     hand survives. Nothing changed: the file is not touched. Raises :class:`FileError` for a file aisland cannot use."""
     current = load(root)
+    shared = root_project.rooted(root)
     by_path = {project.path: project for project in current.projects.values()}
     found = workspace_projects(root)
     kept_paths = {project.path for project in found}
@@ -568,7 +574,7 @@ def refresh(root: Path) -> List[str]:
     ]
     # An optional project (an `active` key) the workspace does not have is not gone: it is not switched on here. Nor is
     # one with a url to clone from: the file is a way to add a project, and setup's activation step clones it. Only a project the workspace lacks and nothing could bring back is dropped.
-    optional = [project for project in gone if "active" in project.others]
+    optional = [project for project in gone if "active" in project.others or shared]
     to_add = [project for project in gone if project not in optional and project.url is not None]
     lines = [
         f"{FILE_NAME}: dropped {project.name} (no longer in the workspace)"
@@ -583,7 +589,8 @@ def refresh(root: Path) -> List[str]:
             projects[item.name] = Project(item.name, item.path, item.url, item.branch)
             lines.append(f"{FILE_NAME}: added {item.name}")
             continue
-        if old.url != item.url:
+        url = old.url if shared and old.url is not None else item.url
+        if old.url != url:
             lines.append(f"{FILE_NAME}: {old.name} url {item.url}")
         if old.path != item.path:
             lines.append(f"{FILE_NAME}: {old.name} path {item.path}")
@@ -591,10 +598,10 @@ def refresh(root: Path) -> List[str]:
         if branch is None and item.branch is not None:
             branch = item.branch
             lines.append(f"{FILE_NAME}: {old.name} branch {branch}")
-        projects[old.name] = Project(old.name, item.path, item.url, branch, dict(old.others))
+        projects[old.name] = Project(old.name, item.path, url, branch, dict(old.others))
     for project in optional + to_add:
         projects[project.name] = project
     updated = replace(current, settings=dict(current.settings), projects=projects)
-    if updated != current or (updated.projects and not (root / FILE_NAME).is_file()):
+    if updated != current or (updated.projects and not locations.workspace_listing(root).is_file()):
         write(root, updated)
     return lines

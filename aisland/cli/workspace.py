@@ -10,7 +10,7 @@ from typing import Callable, Optional, Tuple
 
 import click
 
-from aisland import failures, locations
+from aisland import convert, failures, locations
 from aisland.cli import configure as configure_cli
 from aisland.cli import editor as editor_cli
 from aisland.cli._base import Group, complete_submodules, complete_workspace_projects, main, workspace_root_found
@@ -20,7 +20,7 @@ from aisland.setup import bashrc, configure, editor_files, env_example, harness
 from aisland.setup import init as workspace_mod
 from aisland.setup import provision
 from aisland.workspace import check as workspace_check
-from aisland.workspace import discovery, recording, tracking
+from aisland.workspace import discovery, recording, root_project, tracking
 from aisland.workspace.mirrors import run_sync
 from aisland.workspace.model import Workspace
 from aisland.workspace.projects import get_workspace_root, workspace_folders
@@ -249,14 +249,18 @@ def workspace_show(as_json: bool) -> None:
 @click.option("--json", "as_json", is_flag=True, help="Print them as one JSON object.")
 def workspace_projects(as_json: bool) -> None:
     """The workspace's projects with a checkout, every dependency before the projects that need it: one folder a
-    line, or with --json each project's folder and distribution name.
+    line, or with --json each project's folder and distribution name. A workspace with a root project lists it last.
 
     \b
     for project in $(aisland workspace projects); do git -C "$project" status --short; done
     """
     if not locations.workspace_found():
         raise AislandError(locations.missing_workspace_message())
-    projects = [{"folder": p["path"].name, "name": p["name"]} for p in Workspace(get_workspace_root()).install_order]
+    root = get_workspace_root()
+    projects = [{"folder": p["path"].name, "name": p["name"]} for p in Workspace(root).install_order]
+    own = root_project.name(root) if root_project.rooted(root) else None
+    if own is not None:
+        projects.append({"folder": own, "name": own})
     if as_json:
         click.echo(json.dumps({"projects": projects}, indent=2))
         return
@@ -371,6 +375,31 @@ def workspace_mirror_sync(project: Optional[str], dry_run: bool) -> None:
     if not locations.workspace_found():
         raise AislandError(locations.missing_workspace_message())
     raise SystemExit(run_sync(project, push=not dry_run))
+
+
+@workspace_group.command("convert")
+def workspace_convert() -> None:
+    """Turn a workspace of submodules into a folder of clones around its root project: no root repository then
+    records which commit of each project goes with which.
+
+    \b
+    Clone the root project into the workspace folder first — the repository whose workspace.toml names it as
+    [workspace] root and holds the workspace's shared files — then:
+    aisland workspace convert && aisland setup
+
+    Each project's repository moves from .git/modules into its folder; this machine's settings into the root project's
+    .git/config; the old root repository and the files it tracks into aisland's backup store, never deleted. Refused
+    before anything moves while the root holds work no remote has, or has worktrees of its own.
+    """
+    root = workspace_root_found()
+    lines = convert.convert_workspace(root)
+    if lines == [convert.NOTHING]:
+        click.echo(f"==> {convert.NOTHING}")
+        return
+    click.echo(f"==> Converted {root}: a folder of clones around its root project")
+    for line in lines:
+        click.echo(f"  - {line}")
+    click.echo("Next: aisland setup")
 
 
 @workspace_group.command("bashrc")

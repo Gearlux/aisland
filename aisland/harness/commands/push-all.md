@@ -11,6 +11,8 @@ Pushes the current branch of every repository — the submodules, then the root 
 
 **No quality gates**: the committed work was checked when its task ended, and `/ship` runs the gates before it merges into `main`. The only checks on the way are `/pull-all`'s own, on a merge conflict it resolved by hand before committing it — which is why the formatters and `pytest` stay in `allowed-tools`.
 
+**A workspace with a root project** (`[workspace] root` in `workspace.toml`; `aisland workspace convert` makes one of a workspace of submodules) has no root repository: its folder holds plain clones, the workspace's shared files there are links into the root project, and `aisland workspace projects` lists the root project last. There every step below about the root — its status, a pointer to stage, its commit, its push — is skipped, since the folder is no repository; the root project is pushed like any project.
+
 When the user invokes `/push-all`:
 
 1. **Pull first.** Run the `/pull-all` workflow (`.agents/workflows/pull-all.md`) in full. If it ends with items that still need the user → stop, report them, push nothing.

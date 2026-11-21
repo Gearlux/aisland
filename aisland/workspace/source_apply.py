@@ -16,7 +16,7 @@ from typing import List
 
 from aisland import console, failures, gitcmd
 from aisland.workspace import file as workspace_file
-from aisland.workspace import sources
+from aisland.workspace import root_project, sources
 from aisland.workspace.projects import ignored_content, ignored_content_refusal, set_submodule_active
 from aisland.workspace.selection import editable_target
 
@@ -97,13 +97,22 @@ def apply_source(workspace_root: Path, project: str, source: sources.ProjectSour
     editable. ``github`` / ``pypi``: resolve the distribution name while the directory is still
     readable, deinit (protectively — no ``-f``, so uncommitted work refuses and aborts BEFORE the
     venv is touched), then install from the remote at ``ref`` / from PyPI.
+
+    In a workspace with a root project (:mod:`aisland.workspace.root_project`) a project is a plain clone, which setup's
+    activation step clones: nothing here clones, deinits or writes git's submodule keys, and a detached kind keeps the
+    clone — its repository lives nowhere else — and installs the release beside it.
     """
     path = sources.project_path(workspace_root, project)
     rel = str(path.relative_to(workspace_root))
+    clones = root_project.rooted(workspace_root)
 
     if source.kind == "local":
         console.echo(f"==> {project}: local checkout @ {source.ref}")
-        set_submodule_active(workspace_root, sources.submodule_name(workspace_root, project), True)
+        if clones and not (path / ".git").exists():
+            failures.report(f"  - Error: {project}: no clone in {rel} to install (is it off on this machine?)")
+            return False
+        if not clones:
+            set_submodule_active(workspace_root, sources.submodule_name(workspace_root, project), True)
         if not (path / ".git").exists():
             # It clones: no credential prompt, and a remote that stops sending is given up (gitcmd's guard).
             if not _git(workspace_root, "submodule", "update", "--init", "--", rel, network=True):
@@ -142,7 +151,9 @@ def apply_source(workspace_root: Path, project: str, source: sources.ProjectSour
         )
         console.echo(f"==> {project}: pypi ({target})")
 
-    if (path / ".git").exists():
+    if clones and (path / ".git").exists():
+        console.echo(f"  - {project}: its clone kept in {rel}, not installed from it")
+    elif (path / ".git").exists():
         # Before git empties the folder: a deinit refuses uncommitted work but deletes what git ignores.
         kept = ignored_content(path)
         if kept:
@@ -155,7 +166,8 @@ def apply_source(workspace_root: Path, project: str, source: sources.ProjectSour
                 err=True,
             )
             return False
-    set_submodule_active(workspace_root, sources.submodule_name(workspace_root, project), False)
+    if not clones:
+        set_submodule_active(workspace_root, sources.submodule_name(workspace_root, project), False)
     # Uninstall first, unconditionally: an editable install would otherwise keep its .pth entry,
     # and re-pinning github:main -> github:dev/main reports the SAME version, which uv would
     # treat as already satisfied and skip.

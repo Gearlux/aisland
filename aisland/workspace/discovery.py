@@ -59,6 +59,7 @@ _KIND_METHODS: Dict[str, Tuple[str, ...]] = {"service": ("start",)}
 RESERVED_SELECTION_NAMES: Dict[str, str] = {
     "name": "workspace.toml's [workspace] name is the workspace's name",
     "format": "workspace.toml's [workspace] format is the file's format version",
+    "root": "workspace.toml's [workspace] root names the workspace's root project",
     "track": "workspace.toml's [workspace] track says whether the root records its projects",
     "test-stats": "workspace.toml's [workspace] test-stats turns the test-run record on or off",
     "extras": "aisland's own selection of each project's extras has that name",

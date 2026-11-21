@@ -9,6 +9,8 @@ allowed-tools: [Bash(git add:*), Bash(git commit:*), Bash(git status:*), Bash(gi
 
 Several sessions work in this workspace at once, so `git status` shows everyone's uncommitted work. `/commit-all` commits all of it; `/commit-session` commits only the part this session made.
 
+**A workspace with a root project** (`[workspace] root` in `workspace.toml`; `aisland workspace convert` makes one of a workspace of submodules) has no root repository: its folder holds plain clones, the workspace's shared files there are links into the root project, and `aisland workspace projects` lists the root project last. There every step below about the root — its status, a pointer to stage, its commit, its push — is skipped, since the folder is no repository; the root project is committed like any project, last.
+
 When the user invokes `/commit-session`:
 
 0. **Branch check, before anything is staged** (aisland rules → "Commits Go To A `dev/*` Branch — Never Create A Branch"): for the root and every repository holding this session's changes, `git -C <repo> branch --show-current`. Each may be on any `dev/*` branch (`dev/main`, `dev/<name>`), and each commit goes to the branch its repository is on. Any that prints something outside `dev/*` — `main`, another branch, or nothing (a detached HEAD) — → stage and commit NOTHING anywhere; report each such repository with its branch to the user and stop.

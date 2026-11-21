@@ -19,8 +19,9 @@ from pathlib import Path
 from typing import Dict, List, Optional
 
 from aisland import locations
+from aisland.workspace import activation
 from aisland.workspace import file as workspace_file
-from aisland.workspace import gitmodules
+from aisland.workspace import gitmodules, root_project, sources
 from aisland.workspace.projects import (
     ProjectFolder,
     ProjectMetadata,
@@ -92,7 +93,29 @@ class Workspace:
         (:func:`discover_projects`), by folder name: the order a folder listing gives differs between file systems,
         and every order made from this one (:attr:`install_order`, the editor's folders) must not."""
         found = [get_project_metadata(pyproject) for pyproject in discover_projects(self.root)]
+        left_out = [folder.resolve() for folder in self.left_out]
+        found = [
+            entry
+            for entry in found
+            if not any(entry["path"].resolve() == out or out in entry["path"].resolve().parents for out in left_out)
+        ]
         return sorted(found, key=lambda entry: entry["path"].name)
+
+    @functools.cached_property
+    def left_out(self) -> List[Path]:
+        """The folders on disk whose projects are not installed here. In a workspace with a root project: the root
+        project itself — a project for git only, whatever it holds — and each clone this machine has switched off or
+        takes from its release, kept since its repository lives nowhere else. None in a workspace of submodules, where
+        such a folder is emptied instead."""
+        if not root_project.rooted(self.root):
+            return []
+        own = root_project.find(self.root)
+        detached = sources.detached_projects(self.root)
+        out = [own] if own is not None else []
+        for row in self.file.projects.values():
+            if row.name in detached or not activation.effective(self.root, row.name):
+                out.append(self.root / row.path)
+        return out
 
     @functools.cached_property
     def install_order(self) -> List[ProjectMetadata]:

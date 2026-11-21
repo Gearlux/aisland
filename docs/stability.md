@@ -10,7 +10,7 @@ and what to do about it. A patch release (0.1.0 → 0.1.1) changes none of it.
   prints one `Error:` line on stderr and exits 1; success exits 0. The words a command prints are for a person: a
   script reads `--json` where a command offers it (`aisland workspace show --json`, `aisland tests report <project>
   --json`, `aisland wheels build <project> --json`, …), and the keys of that JSON are kept.
-- **`workspace.toml`, format 1**: `[workspace]` (`name`, `format`, `track`, `test-stats`, the selections),
+- **`workspace.toml`, format 1**: `[workspace]` (`name`, `format`, `root`, `track`, `test-stats`, the selections),
   `[ci]` (`templates`, `[ci.variables]`), `[harness]` (`sets`), and each `[project."<name>"]` (`path`, `url`, `branch`, `source`,
   `version`, `distribution`, `mirror`, `active`, `track`, `test-stats`, `ci`). A later aisland reads a format 1 file;
   a file of a newer format is refused with the upgrade to install. See [the workspace page](workspace.md).

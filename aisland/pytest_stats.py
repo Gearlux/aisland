@@ -124,11 +124,14 @@ def machine_key(project: str) -> str:
 
 
 def _machine_switches(root: Path) -> Dict[str, bool]:
-    """This machine's ``aisland.test-stats.*`` settings in ``<root>/.git/config``; none when git cannot say."""
+    """This machine's ``aisland.test-stats.*`` settings in ``<root>/.git/config`` — in a workspace with a root project
+    and no root repository, the root project's (``aisland.machine_config.settings_repository``) —; none when git cannot
+    say."""
+    project = None if (root / ".git").exists() else locations.root_project(root)
     try:
         run = subprocess.run(
             ["git", "config", "--local", "--type=bool", "--get-regexp", r"^aisland\.test-stats\."],
-            cwd=root,
+            cwd=project or root,
             capture_output=True,
             text=True,
             timeout=10,
@@ -159,7 +162,7 @@ def recording(root: Path, folder: str) -> Recording:
     plugin loads in every pytest run and must never cost one.
     """
     try:
-        data = tomllib.loads((root / "workspace.toml").read_text(encoding="utf-8"))
+        data = tomllib.loads(locations.workspace_listing(root).read_text(encoding="utf-8"))
     except (OSError, UnicodeDecodeError, tomllib.TOMLDecodeError):
         data = {}
     name, own = folder, None

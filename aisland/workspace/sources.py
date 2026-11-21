@@ -304,10 +304,14 @@ def remote_url(workspace_root: Path, project: str) -> Optional[str]:
 
     Read rather than built from a GitHub owner and the name, so a ``github`` source also
     works for the submodules that are NOT on GitHub (a private project on an internal Bitbucket), and so it always matches the remote the operator's git auth is
-    already set up for.
+    already set up for. A workspace without ``.gitmodules`` (a root project's, a folder of clones) has the url its
+    ``workspace.toml`` row gives.
     """
     found = submodule_of(workspace_root, project)
-    return found.url if found is not None and found.url else None
+    if found is not None:
+        return found.url or None
+    listed = workspace_file.load(workspace_root).projects.get(project)
+    return listed.url if listed is not None and listed.url else None
 
 
 def pip_vcs_url(url: str, ref: str) -> str:

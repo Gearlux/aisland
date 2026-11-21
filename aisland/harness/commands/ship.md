@@ -7,6 +7,8 @@ allowed-tools: [Bash(aisland workspace mirror sync:*), Bash(git add:*), Bash(git
 
 # Workflow: Ship (Push → Promote → Sync-Back)
 
+**A workspace with a root project** (`[workspace] root` in `workspace.toml`; `aisland workspace convert` makes one of a workspace of submodules) has no root repository: its folder holds plain clones, the workspace's shared files there are links into the root project, and `aisland workspace projects` lists the root project last. There every step below about the root — its status, a pointer to stage, its commit, its push — is skipped, since the folder is no repository; the root project is shipped like any project, last.
+
 When the user invokes `/ship`:
 
 ## 1. Pre-flight gates

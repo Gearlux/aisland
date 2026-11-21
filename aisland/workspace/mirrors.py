@@ -58,7 +58,7 @@ from urllib.parse import urlparse
 from aisland import console, failures, gitcmd, machine_config
 from aisland.errors import AislandError
 from aisland.workspace import file as workspace_file
-from aisland.workspace import prune_record
+from aisland.workspace import prune_record, root_project
 from aisland.workspace.projects import get_workspace_root, submodule_active_map
 from aisland.workspace.prune_record import PRUNE_REF, Prune
 
@@ -197,7 +197,12 @@ def _last_line(res: "subprocess.CompletedProcess[str]") -> str:
 
 
 def _submodules(workspace_root: Path) -> Dict[str, str]:
-    """``{name: relative path}`` for every submodule ``.gitmodules`` declares."""
+    """``{name: relative path}`` for every submodule ``.gitmodules`` declares — in a workspace with a root project,
+    which has none, every project ``workspace.toml`` lists but the root project: each is a clone of its own."""
+    if root_project.rooted(workspace_root):
+        own = root_project.name(workspace_root)
+        rows = workspace_file.load(workspace_root).projects.values()
+        return {row.name: row.path for row in rows if row.path != own}
     return {name: path for name, path, _active in submodule_active_map(workspace_root)}
 
 
@@ -206,7 +211,11 @@ def _has_checkout(path: Path) -> bool:
 
 
 def primary_url(workspace_root: Path, project: str) -> str:
-    """The submodule's remote as ``.gitmodules`` declares it (empty when undeclared)."""
+    """The submodule's remote as ``.gitmodules`` declares it — in a workspace with a root project, the url its row of
+    ``workspace.toml`` gives — empty when undeclared."""
+    if root_project.rooted(workspace_root):
+        row = workspace_file.load(workspace_root).projects.get(project)
+        return row.url or "" if row is not None else ""
     return _git_out(workspace_root, "config", "-f", ".gitmodules", "--get", f"submodule.{project}.url")
 
 

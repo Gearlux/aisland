@@ -1198,7 +1198,7 @@ Options:
 
 - `--help` — Show this message and exit.
 
-Commands: `bashrc`, `code-workspace`, `color`, `configure`, `env-example`, `env-test`, `harness`, `init`, `mirror`, `projects`, `provision`, `show`, `test-stats`, `theme`, `track`.
+Commands: `bashrc`, `code-workspace`, `color`, `configure`, `convert`, `env-example`, `env-test`, `harness`, `init`, `mirror`, `projects`, `provision`, `show`, `test-stats`, `theme`, `track`.
 
 #### `aisland workspace bashrc`
 
@@ -1473,6 +1473,26 @@ Options:
 - `--machine-only` — Change this machine only (.git/config); commit nothing.
 - `--help` — Show this message and exit.
 
+#### `aisland workspace convert`
+
+```text
+aisland workspace convert [OPTIONS]
+```
+
+Turn a workspace of submodules into a folder of clones around its root project: no root repository then records which commit of each project goes with which.
+
+```text
+Clone the root project into the workspace folder first — the repository whose workspace.toml names it as
+[workspace] root and holds the workspace's shared files — then:
+aisland workspace convert && aisland setup
+```
+
+Each project's repository moves from .git/modules into its folder; this machine's settings into the root project's .git/config; the old root repository and the files it tracks into aisland's backup store, never deleted. Refused before anything moves while the root holds work no remote has, or has worktrees of its own.
+
+Options:
+
+- `--help` — Show this message and exit.
+
 #### `aisland workspace env-example`
 
 ```text
@@ -1608,7 +1628,7 @@ Options:
 aisland workspace projects [OPTIONS]
 ```
 
-The workspace's projects with a checkout, every dependency before the projects that need it: one folder a line, or with --json each project's folder and distribution name.
+The workspace's projects with a checkout, every dependency before the projects that need it: one folder a line, or with --json each project's folder and distribution name. A workspace with a root project lists it last.
 
 ```text
 for project in $(aisland workspace projects); do git -C "$project" status --short; done

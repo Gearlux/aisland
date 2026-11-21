@@ -13,6 +13,8 @@ table, aisland's own):
   folder and fetched again only when its url or ref changes.
 
 Any of them may carry ``exclude = [...]``, the set's files left out (``{ set = "aisland", exclude = [...] }``).
+Without the table, a workspace with a root project (:mod:`aisland.workspace.root_project`) takes aisland's set and
+then the root project's (:func:`default_sets`).
 
 A set's folder says what it brings in ``harness.toml`` (:data:`SET_FILE`): ``rules`` (one file), ``commands`` and
 ``scripts`` (glob patterns), and ``[files]`` (a pattern → a place in the workspace, a folder when it ends in ``/``).
@@ -28,7 +30,9 @@ sets placing a file at the same path are refused before anything is installed, n
 
 How a file is installed follows how aisland is (:data:`aisland.locations.FROM_CHECKOUT`): from a checkout each file
 is a relative LINK to its source, so an edit made through the workspace is an edit of the set's own file; from a
-wheel it is a COPY. A copy is replaced on the next install only while it is still the copy aisland wrote —
+wheel it is a COPY — but a set that lives in the workspace (a project's, a folder's: the root project's among them)
+is linked either way, since it is edited and committed where it lives. A copy is replaced on the next install only
+while it is still the copy aisland wrote —
 :data:`RECORD` holds each copy's fingerprint, and each link —, so a copy someone edited is kept and named, never
 overwritten. A file under an installed name that aisland never wrote is kept the same way, and any other file in
 those folders (a command of the workspace's own) is never touched. A file no set ships any more is taken away, unless
@@ -61,6 +65,7 @@ from aisland import pyproject as pyproject_toml
 from aisland.errors import AislandError
 from aisland.toml_places import FORMAT_KEY, Where, format_refusal, key_line, table_line
 from aisland.workspace import file as workspace_file
+from aisland.workspace import root_project
 from aisland.workspace.model import Workspace
 from aisland.workspace.projects import workspace_folders
 
@@ -354,7 +359,7 @@ def sets(root: Path) -> List[HarnessSet]:
     table = workspace_file.load(root).harness
     header = table_line(text, SECTION)
     where = Where(path, key_line(text, header, SETS_KEY) if header else None)
-    entries = table.get(SETS_KEY, [BUILTIN]) if table else [BUILTIN]
+    entries = table.get(SETS_KEY, default_sets(root)) if table else default_sets(root)
     if not isinstance(entries, list):
         raise HarnessError(f'{where}: [{SECTION}] {SETS_KEY} must be a list, as {SETS_KEY} = ["aisland", "agents"]')
     found: List[HarnessSet] = []
@@ -374,6 +379,17 @@ def sets(root: Path) -> List[HarnessSet]:
                 )
             owners[place] = harness_set.name
     return found
+
+
+def default_sets(root: Path) -> List[str]:
+    """The sets of a workspace whose ``workspace.toml`` names none: aisland's own, then — in a workspace with a root
+    project — the root project's, which brings the workspace's own rules and files."""
+    own = root_project.name(root) if root_project.rooted(root) else None
+    return [BUILTIN] if own is None else [BUILTIN, own]
+
+
+#: The kinds of set that live in the workspace, edited and committed where they are: always linked, never copied.
+_IN_THE_WORKSPACE: Tuple[SetKind, ...] = ("project", "folder")
 
 
 def _one(root: Path, entry: object, where: Where) -> HarnessSet:
@@ -592,7 +608,8 @@ def install_harness(root: Path, link: Optional[bool] = None) -> List[str]:
     for harness_set in found:
         for source, name in harness_set.files:
             installed.append(name)
-            line = _install_one(root, source, name, harness_set.name, link, record)
+            linked = link or harness_set.kind in _IN_THE_WORKSPACE
+            line = _install_one(root, source, name, harness_set.name, linked, record)
             if line:
                 report.append(line)
     report += _remove_dropped(root, installed, record)
@@ -604,7 +621,11 @@ def install_harness(root: Path, link: Optional[bool] = None) -> List[str]:
     for line in (_link_claude_commands(root, root, False), _workspace_agents_md(root) if _has_rules(found) else None):
         if line:
             report.append(line)
-    for project in Workspace(root).top_level_folders:
+    folders = Workspace(root).top_level_folders
+    own_root = root_project.find(root) if root_project.rooted(root) else None
+    if own_root is not None and own_root not in folders:
+        folders = [*folders, own_root]  # a session may start there too, though it holds no pyproject.toml
+    for project in folders:
         line = _link_claude_commands(root, project, project.resolve() in own)
         if line:
             report.append(line)

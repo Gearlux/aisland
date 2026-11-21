@@ -406,3 +406,21 @@ def test_aislands_own_set_describes_itself() -> None:
     """The set in the package says what it installs, so its export is a set that works on its own."""
     assert (harness.locations.PACKAGE_DIR / "harness" / harness.SET_FILE).is_file()
     assert os.path.basename(harness.RULES) == "AGENTS.md"
+
+
+@pytest.mark.parametrize("kind", ["project", "folder"])
+def test_a_set_inside_the_workspace_is_linked_from_a_wheel_too(root: Path, kind: str) -> None:
+    """A set that is a project or a folder of the workspace is edited and committed where it lives: a copy would keep
+    an edit made in the workspace's `.agents/` from ever reaching it. Only a set from outside (aisland's packaged one,
+    a git set, a package's) is copied from a wheel."""
+    if kind == "project":
+        _write(root / "models" / "pyproject.toml", '[project]\nname = "models"\n')
+        _write(root / "models" / "AGENTS.md", "# models rules\n")
+        _sets(root, '["models"]')
+        source, installed = root / "models" / "AGENTS.md", root / ".agents/models/AGENTS.md"
+    else:
+        _agents_set(root)
+        _sets(root, '["agents"]')
+        source, installed = root / "agents" / "rules" / "AGENTS.md", root / ".agents/agents/AGENTS.md"
+    harness.install_harness(root, link=False)
+    assert installed.is_symlink() and installed.resolve() == source.resolve()

@@ -9,7 +9,7 @@ from packaging.utils import NormalizedName, canonicalize_name
 from aisland import gitcmd, locations, machine_config
 from aisland import pyproject as pyproject_toml
 from aisland.workspace import file as workspace_file
-from aisland.workspace import gitmodules
+from aisland.workspace import gitmodules, root_project
 
 
 def get_workspace_root() -> Path:
@@ -171,11 +171,16 @@ def workspace_folders(workspace_root: Path) -> List[ProjectFolder]:
 
     With ``.gitmodules``, its submodules (:func:`submodule_active_map`). Without one, every project folder of the
     root (:func:`aisland.locations.project_folders`), active and named by its folder — the workspace is read as if
-    each were a submodule.
+    each were a submodule — but the root project's (:mod:`aisland.workspace.root_project`).
     """
     if (workspace_root / ".gitmodules").is_file():
         return submodule_active_map(workspace_root)
-    return [ProjectFolder(child.name, child.name, True) for child in locations.project_folders(workspace_root)]
+    own = root_project.find(workspace_root)  # a project for git only: never one of these, whatever it holds
+    return [
+        ProjectFolder(child.name, child.name, True)
+        for child in locations.project_folders(workspace_root)
+        if own is None or child.resolve() != own.resolve()
+    ]
 
 
 def set_submodule_active(workspace_root: Path, name: str, active: bool) -> None:

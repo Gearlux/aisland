@@ -368,3 +368,43 @@ def test_push_all_holds_the_root_back_when_a_clone_fails(repo_root: Folder) -> N
     assert repo_root.git(repo_root.tmp / "origin" / "root.git", "rev-parse", "main") != repo_root.git(
         repo_root.root, "rev-parse", "HEAD"
     )
+
+
+# --- the root project: a clone like the others ----------------------------------------------------------------------
+
+
+@pytest.fixture
+def rooted(tmp_path: Path) -> Folder:
+    """`plain`, plus the root project `acme`: a clone holding the workspace's files and no `pyproject.toml`."""
+    folder = Folder(tmp_path, root_is_repo=False)
+    seed = tmp_path / "seed" / "acme"
+    seed.mkdir(parents=True)
+    folder.git(seed, "init", "-q", "-b", "main")
+    (seed / "workspace.toml").write_text('[workspace]\nroot = "acme"\n\n[project."acme"]\nurl = "x"\n')
+    (seed / "f.txt").write_text("one\n")
+    folder.git(seed, "add", ".")
+    folder.git(seed, "commit", "-q", "-m", "first")
+    folder.git(tmp_path, "clone", "-q", "--bare", str(seed), str(tmp_path / "origin" / "acme.git"))
+    for where in (folder.root / "acme", tmp_path / "other" / "acme"):
+        folder.git(tmp_path, "clone", "-q", str(tmp_path / "origin" / "acme.git"), str(where))
+    assert folder.install().returncode == 0
+    return folder
+
+
+def test_pull_all_merges_the_root_project_like_any_clone_and_records_nothing(rooted: Folder) -> None:
+    sha = rooted.publish("acme", "two\n")
+    result = rooted.run("pull-all", rooted.root / "acme")
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert f"{'acme':<23}merged origin/main (1 commit)" in result.stdout.splitlines()
+    assert rooted.git(rooted.root / "acme", "rev-parse", "HEAD") == sha
+    assert not (rooted.root / ".git").exists()
+
+
+def test_push_all_pushes_the_root_project_like_any_clone(rooted: Folder) -> None:
+    acme = rooted.root / "acme"
+    (acme / "f.txt").write_text("edited at the root\n")
+    rooted.git(acme, "commit", "-q", "-am", "tasks")
+    result = rooted.run("push-all", acme)
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert f"{'acme':<23}pushed main (1 commit)" in result.stdout.splitlines()
+    assert rooted.git(rooted.tmp / "origin" / "acme.git", "rev-parse", "main") == rooted.git(acme, "rev-parse", "HEAD")

@@ -19,7 +19,8 @@ gets aisland's own:
 | anything else a set places | where its `harness.toml` says, such as Cursor's `.cursor/rules/` |
 
 From an aisland **checkout** (a clone of its repository inside the workspace) each file is a link to its set's own
-file, so an edit is made in the set; from a **wheel** each is a copy. Every installed file is listed in the root
+file, so an edit is made in the set; from a **wheel** each is a copy — but a set that lives in the workspace (a
+project's, a folder's) is linked either way, since it is edited and committed where it lives. Every installed file is listed in the root
 `.gitignore` by its own path, so a command of the workspace's own in `.agents/workflows/` is never touched and can be
 committed.
 
@@ -59,7 +60,8 @@ sets = [
 | a name an installed package registers | the package holding the set, registered through the `aisland.harnesses` entry point |
 | `{ git = "<url>", ref = "<ref>" }` | the repository, cloned into aisland's state folder at `ref`, fetched again only when the url or the ref changes; `name = "…"` names it, else the repository's name does |
 
-Without `[harness]` the list is `["aisland"]`; `sets = []` installs nothing, and takes away what an earlier install
+Without `[harness]` the list is `["aisland"]` — in a workspace with a root project, `["aisland", "<the root project>"]`
+([workspace](workspace.md#a-workspace-with-a-root-project-no-root-repository)); `sets = []` installs nothing, and takes away what an earlier install
 put. A set dropped from the list takes its files and its import with it. A git set needs the network the first time
 and whenever its `ref` changes; an unreachable repository stops setup, naming the line.
 

@@ -36,6 +36,7 @@ from aisland import gitcmd, machine_config
 from aisland.errors import AislandError
 from aisland.workspace import file as workspace_file
 from aisland.workspace import local as local_workspace
+from aisland.workspace import root_project
 
 TRACK_KEY = "track"
 
@@ -152,8 +153,23 @@ def apply(root: Path) -> List[Change]:
     return changes
 
 
+def nothing_records(root: Path) -> Optional[str]:
+    """Why nothing records the projects' commits in the workspace at ``root`` — one with a root project, whose folder
+    is no repository — or None where a root repository does."""
+    if not root_project.rooted(root):
+        return None
+    return (
+        f"nothing records the projects' commits here: {root_project.name(root)} is the workspace's root project, "
+        "and the workspace folder is no repository"
+    )
+
+
 def _named(root: Path, projects: Sequence[str]) -> List[str]:
-    """``projects``, each a submodule of the workspace; refused before anything changes."""
+    """``projects``, each a submodule of the workspace; refused before anything changes — everything is refused in a
+    workspace with a root project, where nothing records commits (:func:`nothing_records`)."""
+    why = nothing_records(root)
+    if why is not None:
+        raise AislandError(why)
     submodules = _submodules(root)
     unknown = [name for name in projects if name not in submodules]
     if unknown:
@@ -342,6 +358,9 @@ def status_lines(root: Path, projects: Sequence[str] = ()) -> List[str]:
     """``aisland workspace track status``: the lines of a named project each, else the workspace's choice and the
     projects that differ from it or that git does not yet agree with — the rest are counted, or, when none differs,
     said once."""
+    why = nothing_records(root)
+    if why is not None:
+        return [f"==> {why}: each clone follows its own branch"]
     rows = status(root, projects)
     if projects:
         return [row.line() for row in rows]
