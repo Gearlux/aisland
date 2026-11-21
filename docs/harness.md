@@ -10,9 +10,9 @@ gets aisland's own:
 
 | In the workspace | What it is |
 | --- | --- |
-| `.agents/workflows/*.md` | the sets' commands — aisland's: `/commit-all`, `/commit-session`, `/detach`, `/list-actions`, `/pull-all`, `/push-all`, `/ship` |
+| `.agents/workflows/*.md` | the sets' commands — aisland's: `/commit-all`, `/commit-session`, `/detach`, `/export-session`, `/import-session`, `/list-actions`, `/pull-all`, `/push-all`, `/ship` |
 | `.claude/commands` | a link to `.agents/workflows`, where Claude Code looks for them — at the root and in every project folder (Claude Code reads only the folder a session starts in); a project's link is kept out of git through its repository's own `.git/info/exclude` |
-| `.agents/scripts/*` | the sets' helper scripts — aisland's: `stage_hunks.py`, which `/commit-session` runs |
+| `.agents/scripts/*` | the sets' helper scripts — aisland's: `stage_hunks.py`, which `/commit-session` runs, and `session_handoff.py`, which `/export-session` and `/import-session` run |
 | `.agents/<set>/AGENTS.md` | each set's rules — aisland's in `.agents/aisland/AGENTS.md` |
 | `.agents/rules.md` | an import of every set's rules, in the order the sets are listed; the workspace's `AGENTS.md` imports it with its first line |
 | `AGENTS.md`, `CLAUDE.md`, `GEMINI.md` | written once, when the workspace has no `AGENTS.md`: the import line, then room for the workspace's own rules; the other two link to it |

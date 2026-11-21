@@ -77,6 +77,8 @@ def test_the_package_holds_the_templates_and_the_git_scripts() -> None:
         "aisland/harness/commands/commit-all.md",
         "aisland/harness/commands/commit-session.md",
         "aisland/harness/commands/detach.md",
+        "aisland/harness/commands/export-session.md",
+        "aisland/harness/commands/import-session.md",
         "aisland/harness/commands/list-actions.md",
         "aisland/harness/commands/pull-all.md",
         "aisland/harness/commands/push-all.md",
@@ -115,9 +117,10 @@ def test_the_wheel_carries_every_file_of_the_package(wheel_members: List[str]) -
     assert missing == []
 
 
-def test_the_wheel_carries_the_harness_script_though_its_folder_is_no_package(wheel_members: List[str]) -> None:
-    """`harness/` has no `__init__.py`, so its `.py` helper reaches the wheel only as package data."""
+def test_the_wheel_carries_the_harness_scripts_though_their_folder_is_no_package(wheel_members: List[str]) -> None:
+    """`harness/` has no `__init__.py`, so its `.py` helpers reach the wheel only as package data."""
     assert "aisland/harness/scripts/stage_hunks.py" in wheel_members
+    assert "aisland/harness/scripts/session_handoff.py" in wheel_members
 
 
 def test_the_wheel_carries_the_shell_init_beside_the_package(wheel_members: List[str]) -> None:
