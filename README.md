@@ -22,7 +22,7 @@ Python of Homebrew or Debian refuses it (`externally-managed-environment`).
 `aisland setup` also installs rule files for AI coding agents: an `AGENTS.md` in the root (`CLAUDE.md` and
 `GEMINI.md` link to it), the rules and commands in `.agents/`, and a `.claude/commands` link in the root and in every
 project. To have none of them, write `[harness] sets = []` into `workspace.toml`
-([harness](https://github.com/Gearlux/aisland/blob/v0.1.1/docs/harness.md)).
+([harness](https://github.com/Gearlux/aisland/blob/v0.1.2/docs/harness.md)).
 
 aisland runs on macOS and Linux with Python 3.12 or newer, git, [uv](https://docs.astral.sh/uv/) and bash (the git
 aliases and the shell start-up file `project.bashrc` are bash), and on macOS [Homebrew](https://brew.sh), through which
@@ -41,7 +41,7 @@ instead. Three extras add optional parts:
 Installing aisland also registers a pytest plugin, `aisland_test_stats`. It records every test run of a project
 in an aisland workspace (how long it took, and each test's outcome) in the workspace's `.aisland/data/test-stats/`;
 a project outside a workspace records nothing. `aisland tests report` reads the record. To turn it off
-([tests](https://github.com/Gearlux/aisland/blob/v0.1.1/docs/tests.md#the-pytest-plugin) says what it writes):
+([tests](https://github.com/Gearlux/aisland/blob/v0.1.2/docs/tests.md#the-pytest-plugin) says what it writes):
 
 ```bash
 aisland workspace test-stats off [PROJECT…] [--machine-only]   # for good
@@ -144,29 +144,29 @@ aisland comes with the habits of the workspace it grew in. Each one can be left 
 
 | To … | Run | Page |
 |---|---|---|
-| create a workspace, or set up an existing repository | `aisland workspace init <folder>` | [workspace](https://github.com/Gearlux/aisland/blob/v0.1.1/docs/workspace.md) |
-| bring the workspace in line after a change | `aisland setup` | [workspace](https://github.com/Gearlux/aisland/blob/v0.1.1/docs/workspace.md) |
-| see which of the projects' variables this machine's `.env` lacks | `aisland workspace env-example --missing` | [workspace](https://github.com/Gearlux/aisland/blob/v0.1.1/docs/workspace.md#the-machines-environment-envcomplete-envexample-and-env) |
-| choose where a project comes from | `aisland workspace configure source set <project> local\|github\|pypi` | [sources](https://github.com/Gearlux/aisland/blob/v0.1.1/docs/sources.md) |
-| choose the extras the projects install | `aisland workspace configure extras set <names…>` | [selections](https://github.com/Gearlux/aisland/blob/v0.1.1/docs/selections.md) |
-| choose whether the root records a project's commits, and see what is set | `aisland workspace track set\|unset [<project>]`, `aisland workspace track status` | [workspace](https://github.com/Gearlux/aisland/blob/v0.1.1/docs/workspace.md) |
-| pull, push or tag every project | `git pull-all`, `git push-all`, `git tag-all <tag>` | [git](https://github.com/Gearlux/aisland/blob/v0.1.1/docs/git.md) |
-| run the local services | `aisland services start [NAME…]` | [services](https://github.com/Gearlux/aisland/blob/v0.1.1/docs/services.md) |
-| check the environment | `aisland doctor` | [doctor](https://github.com/Gearlux/aisland/blob/v0.1.1/docs/doctor.md) |
-| see where a command failed | `aisland --debug <command>` (every error is one `Error:` line, exit 1; this adds its traceback and aisland's debug log) | [doctor](https://github.com/Gearlux/aisland/blob/v0.1.1/docs/doctor.md) |
-| check every project, or one, before a push | `aisland check [<project>]` (isort, black, flake8, mypy, pytest, `act`; `--write` lets isort and black rewrite) | [ci](https://github.com/Gearlux/aisland/blob/v0.1.1/docs/ci.md#check-quality-gates) |
-| write a project's CI files | `aisland jenkins scaffold <project>` | [ci](https://github.com/Gearlux/aisland/blob/v0.1.1/docs/ci.md) |
-| see a project's test runs and slowest tests | `aisland tests report <project>` | [tests](https://github.com/Gearlux/aisland/blob/v0.1.1/docs/tests.md) |
-| carry a project to a machine without the workspace | `aisland wheels build <project>` | [wheels](https://github.com/Gearlux/aisland/blob/v0.1.1/docs/wheels.md) |
-| drop old committed wheels from a project's history | `aisland wheels prune <project> --apply` | [wheels](https://github.com/Gearlux/aisland/blob/v0.1.1/docs/wheels.md#old-committed-wheels-aisland-wheels-prune-and-aisland-wheels-reset) |
-| reclaim a project's disk, and undo it | `aisland clean <project>`, `aisland backups restore` | [clean](https://github.com/Gearlux/aisland/blob/v0.1.1/docs/clean.md) |
-| refresh shell completion | `aisland completion install` | [completion](https://github.com/Gearlux/aisland/blob/v0.1.1/docs/completion.md) |
-| give the editor window its own theme | `aisland workspace theme set <name>` | [editor](https://github.com/Gearlux/aisland/blob/v0.1.1/docs/editor.md) |
-| list the workspace's MCP servers for an AI client | `aisland mcp claude` | [mcp](https://github.com/Gearlux/aisland/blob/v0.1.1/docs/mcp.md) |
-| keep notebooks in git without their outputs | nothing: `aisland setup` registers the git filter `aisland notebooks clean` and adds `*.ipynb filter=ipynb-cleaner` to the root's `.gitattributes` (a project adds the line to its own) | [notebooks](https://github.com/Gearlux/aisland/blob/v0.1.1/docs/notebooks.md) |
-| reach a remote machine from your editor or a terminal, with no sshd | `aisland tunnel start` there, then `aisland tunnel open <workspace>` or `aisland tunnel connect <workspace>` here | [tunnel](https://github.com/Gearlux/aisland/blob/v0.1.1/docs/tunnel.md) |
+| create a workspace, or set up an existing repository | `aisland workspace init <folder>` | [workspace](https://github.com/Gearlux/aisland/blob/v0.1.2/docs/workspace.md) |
+| bring the workspace in line after a change | `aisland setup` | [workspace](https://github.com/Gearlux/aisland/blob/v0.1.2/docs/workspace.md) |
+| see which of the projects' variables this machine's `.env` lacks | `aisland workspace env-example --missing` | [workspace](https://github.com/Gearlux/aisland/blob/v0.1.2/docs/workspace.md#the-machines-environment-envcomplete-envexample-and-env) |
+| choose where a project comes from | `aisland workspace configure source set <project> local\|github\|pypi` | [sources](https://github.com/Gearlux/aisland/blob/v0.1.2/docs/sources.md) |
+| choose the extras the projects install | `aisland workspace configure extras set <names…>` | [selections](https://github.com/Gearlux/aisland/blob/v0.1.2/docs/selections.md) |
+| choose whether the root records a project's commits, and see what is set | `aisland workspace track set\|unset [<project>]`, `aisland workspace track status` | [workspace](https://github.com/Gearlux/aisland/blob/v0.1.2/docs/workspace.md) |
+| pull, push or tag every project | `git pull-all`, `git push-all`, `git tag-all <tag>` | [git](https://github.com/Gearlux/aisland/blob/v0.1.2/docs/git.md) |
+| run the local services | `aisland services start [NAME…]` | [services](https://github.com/Gearlux/aisland/blob/v0.1.2/docs/services.md) |
+| check the environment | `aisland doctor` | [doctor](https://github.com/Gearlux/aisland/blob/v0.1.2/docs/doctor.md) |
+| see where a command failed | `aisland --debug <command>` (every error is one `Error:` line, exit 1; this adds its traceback and aisland's debug log) | [doctor](https://github.com/Gearlux/aisland/blob/v0.1.2/docs/doctor.md) |
+| check every project, or one, before a push | `aisland check [<project>]` (isort, black, flake8, mypy, pytest, `act`; `--write` lets isort and black rewrite) | [ci](https://github.com/Gearlux/aisland/blob/v0.1.2/docs/ci.md#check-quality-gates) |
+| write a project's CI files | `aisland jenkins scaffold <project>` | [ci](https://github.com/Gearlux/aisland/blob/v0.1.2/docs/ci.md) |
+| see a project's test runs and slowest tests | `aisland tests report <project>` | [tests](https://github.com/Gearlux/aisland/blob/v0.1.2/docs/tests.md) |
+| carry a project to a machine without the workspace | `aisland wheels build <project>` | [wheels](https://github.com/Gearlux/aisland/blob/v0.1.2/docs/wheels.md) |
+| drop old committed wheels from a project's history | `aisland wheels prune <project> --apply` | [wheels](https://github.com/Gearlux/aisland/blob/v0.1.2/docs/wheels.md#old-committed-wheels-aisland-wheels-prune-and-aisland-wheels-reset) |
+| reclaim a project's disk, and undo it | `aisland clean <project>`, `aisland backups restore` | [clean](https://github.com/Gearlux/aisland/blob/v0.1.2/docs/clean.md) |
+| refresh shell completion | `aisland completion install` | [completion](https://github.com/Gearlux/aisland/blob/v0.1.2/docs/completion.md) |
+| give the editor window its own theme | `aisland workspace theme set <name>` | [editor](https://github.com/Gearlux/aisland/blob/v0.1.2/docs/editor.md) |
+| list the workspace's MCP servers for an AI client | `aisland mcp claude` | [mcp](https://github.com/Gearlux/aisland/blob/v0.1.2/docs/mcp.md) |
+| keep notebooks in git without their outputs | nothing: `aisland setup` registers the git filter `aisland notebooks clean` and adds `*.ipynb filter=ipynb-cleaner` to the root's `.gitattributes` (a project adds the line to its own) | [notebooks](https://github.com/Gearlux/aisland/blob/v0.1.2/docs/notebooks.md) |
+| reach a remote machine from your editor or a terminal, with no sshd | `aisland tunnel start` there, then `aisland tunnel open <workspace>` or `aisland tunnel connect <workspace>` here | [tunnel](https://github.com/Gearlux/aisland/blob/v0.1.2/docs/tunnel.md) |
 
-Every command has `--help`; [commands](https://github.com/Gearlux/aisland/blob/v0.1.1/docs/commands.md) lists them all, with every option.
+Every command has `--help`; [commands](https://github.com/Gearlux/aisland/blob/v0.1.2/docs/commands.md) lists them all, with every option.
 
 ## Environment variables
 
@@ -208,42 +208,42 @@ your consent. To remove it from a workspace:
 
 ## Documentation
 
-- [A workspace and its setup](https://github.com/Gearlux/aisland/blob/v0.1.1/docs/workspace.md) — `init`, `setup`,
+- [A workspace and its setup](https://github.com/Gearlux/aisland/blob/v0.1.2/docs/workspace.md) — `init`, `setup`,
   `workspace.toml`, optional and untracked projects, system tools, a workspace of plain folders
-- [Where each project comes from](https://github.com/Gearlux/aisland/blob/v0.1.1/docs/sources.md) — `local`, `github`,
+- [Where each project comes from](https://github.com/Gearlux/aisland/blob/v0.1.2/docs/sources.md) — `local`, `github`,
   `pypi`, and mirrors
-- [Selections](https://github.com/Gearlux/aisland/blob/v0.1.1/docs/selections.md) — the extras a project offers and the
+- [Selections](https://github.com/Gearlux/aisland/blob/v0.1.2/docs/selections.md) — the extras a project offers and the
   workspace chooses
-- [Git across the workspace](https://github.com/Gearlux/aisland/blob/v0.1.1/docs/git.md) — `pull-all`, `push-all` and
+- [Git across the workspace](https://github.com/Gearlux/aisland/blob/v0.1.2/docs/git.md) — `pull-all`, `push-all` and
   the other aliases
-- [Services](https://github.com/Gearlux/aisland/blob/v0.1.1/docs/services.md) — the supervisor, Jenkins, Docker
+- [Services](https://github.com/Gearlux/aisland/blob/v0.1.2/docs/services.md) — the supervisor, Jenkins, Docker
   and the others, and a service a project declares
-- [Jenkins](https://github.com/Gearlux/aisland/blob/v0.1.1/docs/jenkins.md) — starting it, its GitHub credential and
+- [Jenkins](https://github.com/Gearlux/aisland/blob/v0.1.2/docs/jenkins.md) — starting it, its GitHub credential and
   the pipelines `aisland jenkins init` seeds
-- [CI](https://github.com/Gearlux/aisland/blob/v0.1.1/docs/ci.md) — the generated `Jenkinsfile`, `Jenkinsfile.local`
+- [CI](https://github.com/Gearlux/aisland/blob/v0.1.2/docs/ci.md) — the generated `Jenkinsfile`, `Jenkinsfile.local`
   and `ci.yml`, and the quality gates
-- [The environment doctor](https://github.com/Gearlux/aisland/blob/v0.1.1/docs/doctor.md)
-- [Test-run statistics](https://github.com/Gearlux/aisland/blob/v0.1.1/docs/tests.md)
-- [Wheels for another machine](https://github.com/Gearlux/aisland/blob/v0.1.1/docs/wheels.md)
-- [Reclaiming disk space](https://github.com/Gearlux/aisland/blob/v0.1.1/docs/clean.md) — `clean` and `backups`
-- [Shell completion](https://github.com/Gearlux/aisland/blob/v0.1.1/docs/completion.md)
-- [The editor's files](https://github.com/Gearlux/aisland/blob/v0.1.1/docs/editor.md) — the VS Code workspace file,
+- [The environment doctor](https://github.com/Gearlux/aisland/blob/v0.1.2/docs/doctor.md)
+- [Test-run statistics](https://github.com/Gearlux/aisland/blob/v0.1.2/docs/tests.md)
+- [Wheels for another machine](https://github.com/Gearlux/aisland/blob/v0.1.2/docs/wheels.md)
+- [Reclaiming disk space](https://github.com/Gearlux/aisland/blob/v0.1.2/docs/clean.md) — `clean` and `backups`
+- [Shell completion](https://github.com/Gearlux/aisland/blob/v0.1.2/docs/completion.md)
+- [The editor's files](https://github.com/Gearlux/aisland/blob/v0.1.2/docs/editor.md) — the VS Code workspace file,
   Pyright's files, the window's theme and colours
-- [MCP](https://github.com/Gearlux/aisland/blob/v0.1.1/docs/mcp.md) — the client files and `aisland-mcp`
-- [Agent commands and rules](https://github.com/Gearlux/aisland/blob/v0.1.1/docs/harness.md)
-- [Notebooks](https://github.com/Gearlux/aisland/blob/v0.1.1/docs/notebooks.md)
-- [Remote machines](https://github.com/Gearlux/aisland/blob/v0.1.1/docs/tunnel.md)
-- [Stability](https://github.com/Gearlux/aisland/blob/v0.1.1/docs/stability.md) — what a release keeps, and what may
+- [MCP](https://github.com/Gearlux/aisland/blob/v0.1.2/docs/mcp.md) — the client files and `aisland-mcp`
+- [Agent commands and rules](https://github.com/Gearlux/aisland/blob/v0.1.2/docs/harness.md)
+- [Notebooks](https://github.com/Gearlux/aisland/blob/v0.1.2/docs/notebooks.md)
+- [Remote machines](https://github.com/Gearlux/aisland/blob/v0.1.2/docs/tunnel.md)
+- [Stability](https://github.com/Gearlux/aisland/blob/v0.1.2/docs/stability.md) — what a release keeps, and what may
   change in any release
-- [Architecture](https://github.com/Gearlux/aisland/blob/v0.1.1/docs/architecture.md) — for contributors: what aisland
+- [Architecture](https://github.com/Gearlux/aisland/blob/v0.1.2/docs/architecture.md) — for contributors: what aisland
   is built of, and the decision records behind each mechanism
-- [Contributing](https://github.com/Gearlux/aisland/blob/v0.1.1/CONTRIBUTING.md) — a checkout that runs the tests, the
+- [Contributing](https://github.com/Gearlux/aisland/blob/v0.1.2/CONTRIBUTING.md) — a checkout that runs the tests, the
   layers, where a change goes, the release
 
-The examples in [`examples/`](https://github.com/Gearlux/aisland/tree/v0.1.1/examples) run as written and check what
+The examples in [`examples/`](https://github.com/Gearlux/aisland/tree/v0.1.2/examples) run as written and check what
 the pages show.
 
 ## Licence
 
-MIT — see [LICENSE](https://github.com/Gearlux/aisland/blob/v0.1.1/LICENSE). Changes are listed in the
-[CHANGELOG](https://github.com/Gearlux/aisland/blob/v0.1.1/CHANGELOG.md).
+MIT — see [LICENSE](https://github.com/Gearlux/aisland/blob/v0.1.2/LICENSE). Changes are listed in the
+[CHANGELOG](https://github.com/Gearlux/aisland/blob/v0.1.2/CHANGELOG.md).

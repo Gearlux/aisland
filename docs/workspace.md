@@ -111,6 +111,25 @@ A `--local` root commits it with `.gitmodules`; in a shared root they are left f
 So in a `--local --untracked` workspace, a project you clone into the folder needs only `aisland setup`: it becomes an
 untracked submodule, listed in `workspace.toml` and in the editor's workspace file, and committed.
 
+### A renamed project
+
+`aisland setup` installs each project under the name its `pyproject.toml` has now. What the old name left in `.venv` is
+uninstalled first, so the two never own the same package or command side by side:
+
+- renamed in its folder (`name = "tools-manager"` became `name = "tools"`): the old distribution, just before the
+  project installs;
+- renamed with its folder (`lib/` became `core/`): the distribution installed from the folder that is gone, before
+  any project installs.
+
+```text
+$ .venv/bin/aisland setup
+==> Uninstalling tools-manager: installed from /Users/you/work/acme/tools, whose project is now tools.
+==> Installing tools (/Users/you/work/acme/tools[dev])...
+```
+
+A distribution installed from anywhere else stays: from outside the workspace, from deeper in it, or from a folder
+that is still there, such as an inactive project's.
+
 ### Track or untrack the projects: `aisland workspace track set|unset|status`
 
 ```bash

@@ -6,7 +6,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "aisland"
-version = "0.1.1"
+version = "0.1.2"
 description = "One workspace of many Python projects: a shared venv, local services, generated CI and git aliases."
 readme = "README.md"
 keywords = ["workspace", "monorepo", "git submodules", "virtualenv", "continuous integration", "jenkins", "developer tools"]
@@ -106,7 +106,7 @@ Homepage = "https://github.com/Gearlux/aisland"
 Repository = "https://github.com/Gearlux/aisland.git"
 Issues = "https://github.com/Gearlux/aisland/issues"
 # The release's own tag, as the README's links (tests/test_docs.py): a version bump moves them together.
-Changelog = "https://github.com/Gearlux/aisland/blob/v0.1.1/CHANGELOG.md"
+Changelog = "https://github.com/Gearlux/aisland/blob/v0.1.2/CHANGELOG.md"
 
 [project.scripts]
 aisland = "aisland.cli:main"

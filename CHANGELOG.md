@@ -6,6 +6,19 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html). The newest entry is the
 next release: it reads `- Unreleased` until the release dates it.
 
+## [0.1.2] - Unreleased
+
+### Added
+- **`/detach`, `/export-session` and `/import-session`**, three agent commands of the harness. `/detach <n>` opens a
+  proposed next action as a session of its own that waits for the go; `/export-session` writes a handoff of a session
+  (a brief, the commits no remote has, its own uncommitted edits) and `/import-session` carries it on in a workspace
+  on another machine ([harness](https://github.com/Gearlux/aisland/blob/v0.1.2/docs/harness.md#agent-commands-and-rules-in-every-workspace-the-harness)).
+
+### Fixed
+- **A renamed project is installed under its new name alone.** `aisland setup` uninstalls what the old name left in
+  `.venv` first, renamed in its folder or with it, and still writes the right version into `workspace.toml`'s how-to
+  ([workspace](https://github.com/Gearlux/aisland/blob/v0.1.2/docs/workspace.md#a-renamed-project)).
+
 ## [0.1.1] - 2026-11-13
 
 ### Added
@@ -47,5 +60,6 @@ The first release on PyPI: `pip install aisland`.
   `aisland --debug` adds the traceback. `workspace.toml`, template sets and harness sets carry a `format`, so a file
   written for a newer aisland is refused with the upgrade to make ([stability](https://github.com/Gearlux/aisland/blob/v0.1.0/docs/stability.md)).
 
+[0.1.2]: https://github.com/Gearlux/aisland/releases/tag/v0.1.2
 [0.1.1]: https://github.com/Gearlux/aisland/releases/tag/v0.1.1
 [0.1.0]: https://github.com/Gearlux/aisland/releases/tag/v0.1.0

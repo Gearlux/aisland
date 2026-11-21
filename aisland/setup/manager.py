@@ -14,7 +14,7 @@ from pathlib import Path
 from typing import Iterable, List, Tuple
 
 from aisland import console, failures
-from aisland.setup import env_example, provision
+from aisland.setup import env_example, provision, renamed
 from aisland.setup.bashrc import link_project_bashrc
 from aisland.setup.editor_files import sync_mypy_path, write_code_workspace, write_pyrightconfig
 from aisland.setup.git_settings import install_git_aliases, merge_on_pull
@@ -43,11 +43,22 @@ def _run_installs(workspace_root: Path, uv_cmd: str, projects: List[ProjectMetad
     Returns ``(failed, skipped)``. A project whose dependency failed (or was itself skipped) is
     SKIPPED and named, never attempted: it would fail against the stale index copy of what just
     failed, and a dozen such repeats buried the one real error. Unrelated projects still install.
+
+    What a rename left installed goes first (:mod:`aisland.setup.renamed`): a distribution from a workspace folder that
+    is gone before any install, one under a project's old name just before that project's install — a failed uninstall
+    is that project's failed install, since installing beside the old name is what it prevents.
     """
     adj = internal_dependencies(projects)
     workspace_axes = axes(workspace_root)  # read once: each read scans every project
     failed: List[str] = []
     skipped: List[str] = []
+    installed = renamed.editable_installs(workspace_root, uv_cmd)
+    gone = renamed.gone_folders(installed, workspace_root)
+    try:
+        renamed.uninstall(workspace_root, uv_cmd, gone)
+    except subprocess.CalledProcessError as e:
+        failures.report(f"  - Error: Failed to uninstall {', '.join(gone)}: {e}")
+    old_names = renamed.renamed_in_place(installed, projects)
     for group in install_groups(projects):
         names = [p["name"] for p in group]
         blocked = sorted({dep for n in names for dep in adj[n] if dep in failed or dep in skipped} - set(names))
@@ -60,9 +71,12 @@ def _run_installs(workspace_root: Path, uv_cmd: str, projects: List[ProjectMetad
         # (shared with `aisland workspace configure source … local`, so the two installs cannot drift).
         targets = [selection.editable_target(workspace_root, p["path"], workspace_axes) for p in group]
         suffix = " — a dependency cycle, installed together" if len(group) > 1 else ""
-        console.echo(f"==> Installing {', '.join(names)} ({' '.join(targets)}){suffix}...")
         cmd = [uv_cmd, "pip", "install"] + [arg for t in targets for arg in ("-e", t)]
         try:
+            renamed.uninstall(
+                workspace_root, uv_cmd, {old: why for n in names for old, why in old_names.get(n, {}).items()}
+            )
+            console.echo(f"==> Installing {', '.join(names)} ({' '.join(targets)}){suffix}...")
             # Run from the workspace root so uv reads the generated root uv.toml (the merged
             # private indexes); the editable target is absolute, so cwd doesn't change WHAT installs.
             logger.debug("running %s (in %s)", " ".join(cmd), workspace_root)

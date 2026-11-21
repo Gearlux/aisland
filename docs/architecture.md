@@ -22,7 +22,7 @@ steps of `aisland setup` in order, and each step is a module of its own.
 |---|---|
 | The workspace and its file | `workspace/` (`model`, the workspace as one record; `file`, `check`, `local`, `projects`, `gitmodules`, `clones`, `discovery`, `github`), `locations`, `paths`, `pyproject`, `toml_places` (a table's line in a TOML file) |
 | What a project or a machine chooses | `workspace/` (the plugins `activation`, `selection`, `sources` — the model — with `source_apply`, `mirrors`; `tracking`, `recording`), `machine_config` (this machine's `git config --local`) |
-| Setting a machine up | `setup/` (`manager`, the driver, and its steps `provision`, `installers`, `bashrc`, `uv_config`, `editor_files`, `mcp_config`, `env_example`, `completion`, `playwright_browser`, `git_settings`, `harness`; `init`, `workspace init`; `configure` and `source_commands`, the configure commands), `downloads`, `editor`, `venv` (the `.venv` and its uv), `userspace_tools` |
+| Setting a machine up | `setup/` (`manager`, the driver, and its steps `provision`, `installers`, `renamed`, `bashrc`, `uv_config`, `editor_files`, `mcp_config`, `env_example`, `completion`, `playwright_browser`, `git_settings`, `harness`; `init`, `workspace init`; `configure` and `source_commands`, the configure commands), `downloads`, `editor`, `venv` (the `.venv` and its uv), `userspace_tools` |
 | Services | `services/` (`base`, `registry`, `plugin`, `declared`, `supervisor`, `jenkins`, `jenkins_jobs`, `jenkins_settings`, `jenkins_java`, `docker`, `swiftbar`, `nightly`), `envfile` (the workspace's `.env`) |
 | CI and tests | `ci/` (`ci_scaffold`, `ci_templates` — the sets under `templates/` —, `jenkins_job_config`, `quality`, `stats_report`), `pytest_stats` (the plugin, standard library only) |
 | Wheels | `wheels/` (`build`, the run, and `projects`, `published`, `export`, `report`, `files`, `check`, `bundle`, `extra`, `scrub`, `prune` with `filter_repo`, `install`, `unzip`) |
@@ -226,3 +226,4 @@ mechanism that is replaced gets a new record, and the old one says which superse
 - [0079 — TOML is written by tomlkit, and the release review's setup, wheels and CI fixes](decisions/0079-toml-is-written-by-tomlkit-and-the-release-reviews-setup-fixes.md)
 - [0080 — The release review's service, tunnel and MCP fixes](decisions/0080-the-release-reviews-service-tunnel-and-mcp-fixes.md)
 - [0081 — Emptying a project folder keeps its ignored files, and the release review's safety fixes](decisions/0081-emptying-a-folder-keeps-ignored-files-and-the-release-reviews-safety-fixes.md)
+- [0082 — A renamed project's old distribution is uninstalled before its new one](decisions/0082-a-renamed-projects-old-distribution-is-uninstalled-before-its-new-one.md)

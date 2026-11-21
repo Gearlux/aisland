@@ -206,7 +206,8 @@ naming the PID is the only signal). All service state lives under `<workspace>/a
   `mirrors.primary_url`, `sources.remote_url`, `activation`) stay where they are. A new reader adds a view, never a
   second `tomllib.load` of a `pyproject.toml` or a second `--get-regexp`. Exceptions: the standard-library-only modules
   (`wheels/install.py`, `wheels/unzip.py`, `tunnel/shell.py`, `pytest_stats.py`, `locations.py`) and `harness/`, which
-  run where aisland is not installed; other TOML files (`workspace.toml`, `uv.toml`, a template set's `template.toml`)
+  run where aisland is not installed, and `aisland/__init__.py`'s version without an install record, which every
+  `import aisland` runs [renamed-installs]; other TOML files (`workspace.toml`, `uv.toml`, a template set's `template.toml`)
   keep their readers (`tests/test_pyproject.py`, `tests/test_gitmodules.py`).
 - **TOML aisland writes is written by tomlkit, never by hand** [toml-writer]: `workspace.toml` is EDITED in place
   (`workspace.file.render` syncs the parsed document: a changed value replaced where it stands, every comment, order
@@ -667,6 +668,21 @@ aisland rules → "Two Test Runs, The Fast One Within 5 Minutes". [test-stats] (
   summary. Don't revert to a per-project loop or edit the extras to hide the cycle; `apply_selection` (`configure
   <selection> set`) installs the same groups, every group with a member offering the selection
   (`tests/test_install_groups.py`, `tests/test_selection.py::test_two_projects_requiring_each_other_are_installed_together`).
+- **What a renamed project left in the venv is uninstalled before it installs.** [renamed-installs] `_run_installs`
+  asks `uv pip list --editable --format json` once (the installs' uv, from the root: the same venv) and
+  `setup/renamed.py` picks two kinds, each uninstalled with one line saying why: a distribution installed from a
+  project's folder under another name than its `pyproject.toml` has (PEP 503 names), just before that project's group —
+  a failed uninstall is that group's failed install, never an install beside the old name; and one installed from a
+  folder DIRECTLY in the root that no longer exists, before any group — a failed uninstall is reported, the installs go
+  on. Never uninstall after the install (the old RECORD deletes the shared script), and never touch a distribution
+  from outside the workspace, deeper in it or from a folder still there (a deactivated project's). A uv that cannot
+  list gives none: the install reports it (`tests/test_renamed_project_install.py`, the real uv offline).
+  - **`aisland.__version__` is the install record's, else the `pyproject.toml` beside the package.** Setup writes
+    `workspace.toml`'s how-to before it installs, so the first setup after a rename runs with no `aisland` record;
+    `__init__.py` then reads `[project] version` from the `pyproject.toml` beside the package (no wheel carries one),
+    with the standard library alone and never raising, and `0.0.0.dev0` is left only to a wheel without its record (a
+    `--bundle`). Never move the how-to after the installs to fix this, and never type the number into `__init__.py`
+    (`tests/test_version.py`, a fresh interpreter without site-packages).
 
 ## Generated and committed workspace files
 

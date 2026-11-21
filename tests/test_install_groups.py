@@ -12,6 +12,7 @@ from typing import Any, List, Tuple
 import pytest
 
 from aisland.setup import manager as m
+from aisland.setup import renamed
 from aisland.workspace import selection
 from aisland.workspace.projects import ProjectMetadata, install_groups
 from tests.records import project_metadata
@@ -75,6 +76,7 @@ class TestRunInstalls:
                 raise subprocess.CalledProcessError(1, cmd)
 
         monkeypatch.setattr(subprocess, "check_call", fake)
+        monkeypatch.setattr(renamed, "editable_installs", lambda root, uv: {})  # nothing a rename left
         monkeypatch.setattr(selection, "editable_target", lambda root, path, workspace_axes: f"{path}[dev]")
         return seen
 
