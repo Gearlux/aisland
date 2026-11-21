@@ -5,16 +5,45 @@ Each test builds throwaway repositories — an origin, a root with one submodule
 for the other machine — so nothing of the workspace is touched.
 """
 
+import importlib.util
+import io
 import json
+import re
 import subprocess
 import sys
 import tarfile
 from pathlib import Path
-from typing import Dict, List, Tuple
+from types import ModuleType
+from typing import Dict, List, Optional, Tuple
 
 import pytest
 
 SCRIPT = Path(__file__).resolve().parents[1] / "aisland" / "harness" / "scripts" / "session_handoff.py"
+
+
+def _script() -> ModuleType:
+    """The script loaded in this process, so a test can change the ``tarfile`` it sees."""
+    spec = importlib.util.spec_from_file_location("session_handoff", SCRIPT)
+    assert spec and spec.loader
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+def _python_without_the_data_filter(monkeypatch: pytest.MonkeyPatch) -> None:
+    """``tarfile`` as a Python before 3.12 has it (macOS's ``/usr/bin/python3`` is 3.9): no extraction filters, and
+    an ``extractall`` that refuses a ``filter`` argument."""
+    monkeypatch.delattr(tarfile, "data_filter")
+    real = tarfile.TarFile.extractall
+
+    def extractall(
+        self: tarfile.TarFile, path: str = ".", members: Optional[List[tarfile.TarInfo]] = None, **kw: object
+    ) -> None:
+        if kw:
+            raise TypeError(f"extractall() got an unexpected keyword argument {next(iter(kw))!r}")
+        real(self, path, members, filter="fully_trusted")  # what an old Python does: no check at all
+
+    monkeypatch.setattr(tarfile.TarFile, "extractall", extractall)
 
 
 def _git(repo: Path, *args: str) -> str:
@@ -215,3 +244,63 @@ def test_an_archive_holds_one_folder_named_like_it(machines: Tuple[Path, Path, P
     with tarfile.open(archive) as tar:
         names: List[str] = tar.getnames()
     assert {name.split("/")[0] for name in names} == {"h"}
+
+
+@pytest.mark.parametrize("data_filter", [True, False], ids=["python-3.12", "python-3.9"])
+def test_an_archive_unpacks_beside_itself_with_or_without_the_data_filter(
+    machines: Tuple[Path, Path, Path], monkeypatch: pytest.MonkeyPatch, data_filter: bool
+) -> None:
+    here, _there, home = machines
+    out = here / ".handoff" / "h"
+    _run(here, "export", str(out), home=home)
+    (out / "HANDOFF.md").write_text("# brief\n")
+    archive = Path(_run(here, "pack", str(out), home=home)["archive"])  # type: ignore[index]
+    moved = here.parent / "inbox" / archive.name
+    moved.parent.mkdir()
+    archive.rename(moved)
+    if not data_filter:
+        _python_without_the_data_filter(monkeypatch)
+
+    folder = _script()._open(moved)
+
+    assert folder == moved.parent / "h"
+    assert (folder / "HANDOFF.md").read_text() == "# brief\n" and (folder / "state.json").is_file()
+
+
+def _member(name: str, kind: bytes = tarfile.REGTYPE, link: str = "") -> tarfile.TarInfo:
+    info = tarfile.TarInfo(name)
+    info.type, info.linkname = kind, link
+    info.size = 1 if kind == tarfile.REGTYPE else 0
+    return info
+
+
+def _hostile(outside: Path) -> Dict[str, List[tarfile.TarInfo]]:
+    """Archives named ``h.tar.gz`` that would write outside ``h/``, by the member each must be refused for."""
+    return {
+        "../outside/evil": [_member("h", tarfile.DIRTYPE), _member("../outside/evil")],
+        str(outside / "evil"): [_member("h", tarfile.DIRTYPE), _member(str(outside / "evil"))],
+        "h/link": [_member("h", tarfile.DIRTYPE), _member("h/link", tarfile.SYMTYPE, str(outside))],
+        "h/hard": [_member("h", tarfile.DIRTYPE), _member("h/hard", tarfile.LNKTYPE, str(outside / "evil"))],
+        "other/evil": [_member("h", tarfile.DIRTYPE), _member("h/ok.txt"), _member("other/evil")],
+    }
+
+
+@pytest.mark.parametrize("data_filter", [True, False], ids=["python-3.12", "python-3.9"])
+@pytest.mark.parametrize("refused", ["../outside/evil", "absolute", "h/link", "h/hard", "other/evil"])
+def test_an_archive_with_a_member_outside_its_folder_is_refused_and_nothing_unpacked(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, data_filter: bool, refused: str
+) -> None:
+    inbox, outside = tmp_path / "inbox", tmp_path / "outside"
+    inbox.mkdir()
+    name = str(outside / "evil") if refused == "absolute" else refused
+    archive = inbox / "h.tar.gz"
+    with tarfile.open(archive, "w:gz") as tar:
+        for info in _hostile(outside)[name]:
+            tar.addfile(info, io.BytesIO(b"x") if info.isfile() else None)
+    if not data_filter:
+        _python_without_the_data_filter(monkeypatch)
+
+    with pytest.raises(SystemExit, match=re.escape(repr(name))):
+        _script()._open(archive)
+
+    assert sorted(p.name for p in tmp_path.iterdir()) == ["inbox"] and list(inbox.iterdir()) == [archive]

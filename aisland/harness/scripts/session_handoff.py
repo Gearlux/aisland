@@ -9,7 +9,9 @@ work from one machine to another. The other half, ``HANDOFF.md`` (what the sessi
     python3 .agents/scripts/session_handoff.py apply <folder|tar.gz>      # do it
     python3 .agents/scripts/session_handoff.py install-transcript <folder|tar.gz>  # for `claude --resume <id>` here
 
-Run it from the workspace root (the repository whose submodules are the projects). Each prints JSON.
+Run it from the workspace root (the repository whose submodules are the projects). Each prints JSON. It needs the
+standard library only and runs on Python 3.9 and later: the commands run it as ``python3``, which on macOS is the
+system's 3.9.
 
 ``export`` writes ``state.json``: for the root and every checked-out submodule, the branch, HEAD, its remote and the
 files with changes. Commits on no remote travel as a ``git bundle`` (``repos/<name>.bundle``), so nothing needs
@@ -37,7 +39,7 @@ import subprocess
 import sys
 import tarfile
 import tempfile
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 from typing import Dict, List, Optional, TypedDict
 
 FORMAT = 1
@@ -267,8 +269,20 @@ def pack(out: Path) -> Path:
     return archive
 
 
+def _members(tar: tarfile.TarFile, archive: Path, folder: str) -> List[tarfile.TarInfo]:
+    """Every member of a handoff archive, each a plain file or folder inside ``folder`` — what ``pack`` writes."""
+    members = tar.getmembers()
+    for member in members:
+        parts = PurePosixPath(member.name).parts
+        if not parts or parts[0] != folder or ".." in parts or not (member.isfile() or member.isdir()):
+            raise SystemExit(
+                f"{archive}: refused {member.name!r} — a handoff archive holds only files and folders inside {folder}/"
+            )
+    return members
+
+
 def _open(bundle: Path) -> Path:
-    """A handoff folder; a ``.tar.gz`` is unpacked beside itself first."""
+    """A handoff folder; a ``.tar.gz`` is unpacked beside itself first, once every member is checked."""
     if bundle.is_dir():
         return bundle
     if not bundle.name.endswith(".tar.gz"):
@@ -276,7 +290,11 @@ def _open(bundle: Path) -> Path:
     target = bundle.with_name(bundle.name[: -len(".tar.gz")])
     if not target.exists():
         with tarfile.open(bundle) as tar:
-            tar.extractall(bundle.parent, filter="data")
+            members = _members(tar, bundle, target.name)
+            if hasattr(tarfile, "data_filter"):  # Python 3.12, and 3.8.17, 3.9.17, 3.10.12, 3.11.4 on
+                tar.extractall(bundle.parent, members=members, filter="data")
+            else:  # an older Python, macOS's 3.9.6 among them: the members are checked above
+                tar.extractall(bundle.parent, members=members)
     return target
 
 
