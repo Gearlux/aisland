@@ -311,7 +311,7 @@ def test_a_project_installed_from_pypi_gets_no_clone(rooted: Rooted) -> None:
 
 @pytest.mark.parametrize("kind", ["pypi", "github"])
 def test_a_clone_taken_from_its_release_is_kept_and_the_release_installed(
-    rooted: Rooted, monkeypatch: pytest.MonkeyPatch, kind: str
+    rooted: Rooted, monkeypatch: pytest.MonkeyPatch, kind: sources.SourceKind
 ) -> None:
     """In a workspace of submodules the folder is emptied (its repository stays in `.git/modules`); a plain clone's
     repository lives nowhere else, so it stays. A `github` source installs from the url its row gives."""
@@ -462,3 +462,69 @@ def test_a_mirror_is_set_and_synced_on_a_clone(rooted: Rooted, tmp_path: Path) -
     assert _git(models, "remote", "get-url", "mirror") == str(mirror)
     mirrors.sync(workspace_root=rooted.root)
     assert _get(mirror, "rev-parse", "dev/main") == _git(models, "rev-parse", "origin/dev/main")
+
+
+# --- the how-to a rooted file starts with, and init refusing such a file ---------------------------------------------
+
+
+def _listing(root: Optional[str]) -> workspace_file.WorkspaceFile:
+    """A file of two projects, the first of them the root project when ``root`` names it."""
+    return workspace_file.WorkspaceFile(
+        settings={"root": root} if root else {},
+        projects={
+            "acme": workspace_file.Project("acme", "acme", url="git@example.com:acme/acme.git", branch="dev/main"),
+            "models": workspace_file.Project("models", "models", url="git@example.com:acme/models.git"),
+        },
+    )
+
+
+def test_the_how_to_of_a_rooted_file_clones_the_root_project_and_runs_setup() -> None:
+    """A new machine starts a rooted workspace with `git clone` and `aisland setup`: the how-to's `workspace init
+    --from` made a root repository holding every project as a submodule, the layout a root project replaces. A file
+    that already starts with the other how-to gets this one in its place."""
+    before = workspace_file.render(_listing(None), "acme")
+    lines = workspace_file.render(_listing("acme"), "acme", before).splitlines()
+    assert lines[:3] == [
+        "# workspace.toml — the acme workspace: its projects and its choices, committed.",
+        "# It lives in the root project acme. `aisland setup` adds a row for a new clone and fills in",
+        "# a missing branch; it never changes a url or drops a row. The rest is yours to edit.",
+    ]
+    clone = lines.index("#        git clone -b dev/main git@example.com:acme/acme.git acme")
+    assert lines[clone - 2 : clone] == [
+        "#   1. The root project, cloned into the folder that will hold the workspace:",
+        "#        mkdir acme && cd acme",
+    ]
+    venv = lines.index("#        uv venv --seed --prompt acme .venv")
+    setup = lines.index("#        .venv/bin/aisland setup")
+    assert clone < venv < setup
+    assert lines[setup - 1] == "#   3. Every other project cloned beside it, and all of them installed into .venv:"
+    assert not any("workspace init" in line for line in lines)
+    assert lines.count("# workspace.toml — the acme workspace: its projects and its choices, committed.") == 1
+
+
+def test_a_file_naming_no_root_project_keeps_the_how_to_of_a_workspace_of_submodules() -> None:
+    lines = workspace_file.render(_listing(None), "acme").splitlines()
+    assert "#        .venv/bin/aisland workspace init . --from workspace.toml" in lines
+    assert not any("git clone" in line for line in lines)
+
+
+def test_init_refuses_a_file_naming_a_root_project_before_it_writes_anything(tmp_path: Path) -> None:
+    """`init --from` makes a root repository with the projects as submodules; from a rooted file that is the layout
+    the root project replaces, so it is refused, naming the start the file's how-to gives."""
+    source = tmp_path / "source" / "workspace.toml"
+    source.parent.mkdir()
+    source.write_text(
+        '[workspace]\nroot = "acme"\n\n'
+        '[project."acme"]\nurl = "git@example.com:acme/acme.git"\nbranch = "dev/main"\n\n'
+        '[project."models"]\nurl = "git@example.com:acme/models.git"\n'
+    )
+    new = tmp_path / "new"
+    result = CliRunner().invoke(cli.main, ["workspace", "init", str(new), "--from", str(source)])
+    assert result.exit_code == 1
+    assert (
+        f"Error: {source}:2: the file names a root project (acme), and init would make a root repository of "
+        "submodules instead. In the folder for the workspace, clone it and run setup, as the file's first lines say:\n"
+        "  git clone -b dev/main git@example.com:acme/acme.git acme\n"
+        "  .venv/bin/aisland setup\n"
+    ) in result.output
+    assert not new.exists()

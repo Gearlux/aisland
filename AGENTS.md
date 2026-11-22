@@ -124,7 +124,9 @@ The workspace's dev-infrastructure CLI, `aisland` (click, the `aisland/cli/` pac
   installed, whatever it holds; `aisland workspace projects` lists it LAST (the agent commands commit and ship it
   after the projects). Without `[harness] sets` the sets are `["aisland", "<root>"]`; `track set|unset` are refused
   (`tracking.nothing_records`), a mirror goes on a clone with the row's url as its primary
-  (`tests/test_root_project.py`). Never a root repository recording commits beside a root project, a clone's origin
+  (`tests/test_root_project.py`). The file's how-to (`file._header`, given `file.root_row`) starts a new machine with
+  `git clone -b <branch> <url> <path>` (`file.clone_command`), the venv and setup; `init --from` refuses a file naming
+  a root project at its `root` line before writing anything (`init._refuse_a_root_project`). Never a root repository recording commits beside a root project, a clone's origin
   written over the file's url, or an off project's clone emptied.
 - **`convert.py`**: `aisland workspace convert` turns a workspace of submodules into a rooted one — each
   `.git/modules/<name>` moved into its folder (`core.worktree` dropped from its config file, `git worktree repair`), this

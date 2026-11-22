@@ -216,16 +216,53 @@ def load(root: Path) -> WorkspaceFile:
 # --- writing -------------------------------------------------------------------------------------------------------
 
 
-def _header(name: str) -> str:
-    """The how-to the file starts with: it is read on a machine that has no aisland yet."""
-    return f"""\
+def _header(name: str, root: Optional[Project] = None) -> str:
+    """The how-to the file starts with: it is read on a machine that has no aisland yet. A file naming a root project
+    (``root``, its row) says to clone that project and run setup; any other says to run ``aisland workspace init``."""
+    if root is None or root.url is None:
+        return f"""\
 # {FILE_NAME} — the {name} workspace: its projects and its choices, committed.
 # Kept by `aisland setup` (aisland/aisland/workspace/file.py): it adds a new project, follows a changed url or folder
 # and drops a project that is gone, changing nothing else; the rest is yours to edit.
 # =========================================================================
 # A workspace aisland creates on a new machine. From the folder that will hold it:
 #
-#   1. A virtual environment with pip and aisland in it. aisland finds it at .venv in this folder;
+#   1. {_venv_step(name)}
+#   2. The workspace: each project below cloned on its branch, the starting files, the git aliases:
+#        .venv/bin/aisland workspace init . --from {FILE_NAME}
+#
+#   3. The projects installed into .venv:
+#        .venv/bin/aisland setup
+# =========================================================================
+"""
+    return f"""\
+# {FILE_NAME} — the {name} workspace: its projects and its choices, committed.
+# It lives in the root project {root.name}. `aisland setup` adds a row for a new clone and fills in
+# a missing branch; it never changes a url or drops a row. The rest is yours to edit.
+# =========================================================================
+# A workspace aisland creates on a new machine:
+#
+#   1. The root project, cloned into the folder that will hold the workspace:
+#        mkdir {name} && cd {name}
+#        {clone_command(root)}
+#
+#   2. {_venv_step(name)}
+#   3. Every other project cloned beside it, and all of them installed into .venv:
+#        .venv/bin/aisland setup
+# =========================================================================
+"""
+
+
+def clone_command(project: Project) -> str:
+    """The ``git clone`` that makes ``project``'s folder on its branch, as a person types it."""
+    branch = f"-b {project.branch} " if project.branch else ""
+    return f"git clone {branch}{project.url} {project.path}"
+
+
+def _venv_step(name: str) -> str:
+    """The how-to's step making the venv, from the text after its number to the blank line closing it."""
+    return f"""\
+A virtual environment with pip and aisland in it. aisland finds it at .venv in this folder;
 #      --prompt names it, so the shell shows ({name}) once it is activated. With uv:
 #        uv venv --seed --prompt {name} .venv
 #        .venv/bin/pip install aisland
@@ -244,33 +281,32 @@ def _header(name: str) -> str:
 #      From a wheel instead of PyPI, name the file in place of aisland:
 #        .venv/bin/pip install ./aisland-{__version__}-py3-none-any.whl
 #      (built in a checkout of aisland with: uv build --wheel aisland -o dist)
-#
-#   2. The workspace: each project below cloned on its branch, the starting files, the git aliases:
-#        .venv/bin/aisland workspace init . --from {FILE_NAME}
-#
-#   3. The projects installed into .venv:
-#        .venv/bin/aisland setup
-# =========================================================================
-"""
+#"""
 
 
 #: The ruled lines that open and close the how-to (:func:`_header`).
 _RULE = "# ========"
 
 
-def _with_header(text: str, name: str) -> str:
-    """``text`` under the current how-to: the one a file starts with (its first line names the file, its second ruled
-    line closes it) is replaced, so a new name or aisland's version reaches it; a file starting with no comment gets
-    one; a file opening with comments of its own keeps them as they are."""
+def _with_header(text: str, header: str) -> str:
+    """``text`` under the current how-to, ``header``: the one a file starts with (its first line names the file, its
+    second ruled line closes it) is replaced, so a new name, a root project or aisland's version reaches it; a file
+    starting with no comment gets one; a file opening with comments of its own keeps them as they are."""
     lines = text.splitlines(keepends=True)
     if lines and lines[0].startswith(f"# {FILE_NAME} — "):
         rules = [number for number, line in enumerate(lines) if line.startswith(_RULE)]
         if len(rules) >= 2 and all(line.startswith("#") for line in lines[: rules[1] + 1]):
-            return _header(name) + "".join(lines[rules[1] + 1 :])
+            return header + "".join(lines[rules[1] + 1 :])
         return text
     if text.lstrip().startswith("#"):
         return text
-    return _header(name) + "\n" + text.lstrip("\n")
+    return header + "\n" + text.lstrip("\n")
+
+
+def root_row(workspace: WorkspaceFile) -> Optional[Project]:
+    """The row of the root project the file names (``[workspace] root``), or None: no such key, or no such row."""
+    name = workspace.settings.get(locations.ROOT_KEY)
+    return workspace.projects.get(name) if isinstance(name, str) else None
 
 
 def _item(value: object) -> tomlkit_items.Item:
@@ -408,7 +444,7 @@ def render(workspace: WorkspaceFile, name: str, text: str = "") -> str:
     """The file: the how-to, ``[workspace]`` (its ``format`` first), ``[ci]``, ``[harness]``, then a
     ``[project."<name>"]`` per project — written into ``text``, the file as it is, so every comment, the order of the
     keys and the type of each value a person wrote stays where it was (only a value that changed is rewritten)."""
-    document = tomlkit.parse(_with_header(text, name))
+    document = tomlkit.parse(_with_header(text, _header(name, root_row(workspace))))
     settings = _section(document, "workspace", {FORMAT_KEY: FORMAT})
     if FORMAT_KEY not in settings:
         # `format` goes first: the table is written again with it ahead of what the file holds — its comments too,

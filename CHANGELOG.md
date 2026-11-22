@@ -17,8 +17,10 @@ next release: it reads `- Unreleased` until the release dates it.
   workspace's shared files; clone it into a folder and `aisland setup` links its `workspace.toml`, its rules and the
   files its `harness.toml` places, then clones every other project beside it. There is no root repository and no
   `.gitmodules`, so nothing records the projects' commits; this machine's choices live in the root project's
-  `.git/config`. `aisland workspace convert` turns a workspace of submodules into one, its repositories moved into
-  their folders and the old root kept in the backup store ([workspace](https://github.com/Gearlux/aisland/blob/v0.1.2/docs/workspace.md#a-workspace-with-a-root-project-no-root-repository)).
+  `.git/config`. The file's how-to then starts a new machine with the root project's `git clone` and setup, and
+  `aisland workspace init --from` refuses the file, naming those two commands. `aisland workspace convert` turns a
+  workspace of submodules into one, its repositories moved into their folders and the old root kept in the backup
+  store ([workspace](https://github.com/Gearlux/aisland/blob/v0.1.2/docs/workspace.md#a-workspace-with-a-root-project-no-root-repository)).
 
 - **Each installed project's skills reach a session at the workspace root.** Setup links every
   `<project>/.claude/skills/<skill>` into the root's `.claude/skills/`, and takes the link away once the project is no

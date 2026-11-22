@@ -290,7 +290,8 @@ url = "git@github.com:acme/machine_learning.git"
 change is rewritten where it stands, and every comment you wrote, the order of the keys and the type of each value (a
 date stays a date) stay as they were. Only the how-to at the top — the comment block that opens with the file's
 name — is aisland's, rewritten with the workspace's name and aisland's version; a file that opens with comments of
-your own keeps them and gets no how-to.
+your own keeps them and gets no how-to. A file naming a root project gets steps of its own
+([a workspace with a root project](#a-workspace-with-a-root-project-no-root-repository)).
 
 A project is named after its repository; `path` is its folder (its name when left out) and `branch` the
 branch it is cloned on (without one, the repository's default branch). A branch already in the file is
@@ -585,7 +586,7 @@ A new machine clones the root project into the workspace folder and runs setup t
 
 ```bash
 mkdir ~/work/acme && cd ~/work/acme
-git clone git@github.com:acme/acme.git
+git clone -b main git@github.com:acme/acme.git acme
 uv venv --seed .venv && .venv/bin/pip install aisland
 .venv/bin/aisland setup
 ```
@@ -604,6 +605,18 @@ uv venv --seed .venv && .venv/bin/pip install aisland
 ├── TASKS.md → acme/TASKS.md     ← a file the root project's harness.toml places
 ├── models/                      ← a clone setup made
 └── .venv
+```
+
+The file's first lines give a new machine these same steps. In a file naming a root project, the how-to clones the root
+project from its row (its branch, url and folder), makes the venv, then runs `aisland setup`, in place of
+`aisland workspace init`. `init --from` refuses such a file before it writes anything, since it would build a root
+repository of submodules from it:
+
+```text
+$ aisland workspace init ~/work/acme --from acme/workspace.toml
+Error: acme/workspace.toml:4: the file names a root project (acme), and init would make a root repository of submodules instead. In the folder for the workspace, clone it and run setup, as the file's first lines say:
+  git clone -b main git@github.com:acme/acme.git acme
+  .venv/bin/aisland setup
 ```
 
 What setup does in such a workspace:

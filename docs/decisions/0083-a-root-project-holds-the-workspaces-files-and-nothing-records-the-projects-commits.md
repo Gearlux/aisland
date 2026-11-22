@@ -27,6 +27,10 @@ to keep track of.
 - **`workspace.toml` is the root project's, linked into the folder** (`root_project.link`, setup's first step after
   the venv, before the harness reads `[harness] sets`). Every write follows the link (`atomic.write_text`), so the
   change lands in the root project to be committed there. A file of the folder's own, or a link elsewhere, is refused.
+- **The file's how-to starts a new machine with `git clone` and setup.** A file naming a root project with a url opens
+  with `git clone -b <branch> <url> <path>` from the root project's row, the venv, then `aisland setup`
+  (`file._header`). `aisland workspace init --from` refuses such a file at its `root` line, before anything is
+  written: init would build a root repository of submodules from it.
 - **The file wins.** It is what every machine shares, so `refresh` never writes a clone's `origin` over a row's url,
   and keeps every row whether this machine has the project or not; setup's activation step clones each active
   project the folder lacks (`git clone -b <branch> -- <url> <path>`) and points each clone's `origin` at its row's url.
@@ -82,8 +86,8 @@ uv venv --seed .venv && .venv/bin/pip install aisland && .venv/bin/aisland setup
 ## What you may change
 
 - The wording of the lines and refusals, and which settings `convert` leaves behind (`convert._LEFT_BEHIND`).
-- Never: a root repository recording commits beside a root project, a clone's origin written over the file's url, or
-  an off project's clone emptied.
+- Never: a root repository recording commits beside a root project, a clone's origin written over the file's url, an
+  off project's clone emptied, or `init` building submodules from a file naming a root project.
 
 ---
 

@@ -44,6 +44,7 @@ from aisland.setup.git_settings import install_git_aliases
 from aisland.setup.harness import install_harness
 from aisland.setup.harness import sets as harness_sets
 from aisland.setup.harness import summary as harness_summary
+from aisland.toml_places import Where, key_line, table_line
 from aisland.venv import venv_dir
 from aisland.workspace import clones
 from aisland.workspace import file as workspace_file
@@ -277,6 +278,24 @@ def _clone(root: Path, plan: Sequence[Tuple[str, Optional[Tuple[str, Optional[st
         _say(f"{step} {label}  done in {time.monotonic() - started:.1f} s")
 
 
+def _refuse_a_root_project(from_file: Path, listing: workspace_file.WorkspaceFile) -> None:
+    """Refuse a file naming a root project, at its ``root`` line: such a workspace has no root repository, and init
+    would make one of submodules. Such a workspace starts with the root project's clone and setup, as its how-to says.
+    """
+    root = workspace_file.root_row(listing)
+    if root is None or root.url is None:  # a root project without a url: the plan below refuses its row
+        return
+    text = from_file.read_text(encoding="utf-8")
+    header = table_line(text, "workspace")
+    where = Where(from_file, key_line(text, header, locations.ROOT_KEY) if header else None)
+    raise AislandError(
+        f"{where}: the file names a root project ({root.name}), and init would make a root repository of submodules "
+        "instead. In the folder for the workspace, clone it and run setup, as the file's first lines say:\n"
+        f"  {workspace_file.clone_command(root)}\n"
+        "  .venv/bin/aisland setup"
+    )
+
+
 def init_workspace(
     folder: Path,
     add: Sequence[str] = (),
@@ -293,7 +312,10 @@ def init_workspace(
     Each of ``rewrite`` is written over its old copy, kept as ``<file>.bak``; in a folder that already is a git
     repository only those files are written. A folder that already is a repository is set up in place. ``local``
     makes the root track only the projects, ``untracked`` its projects' commits go unrecorded (the module docstring)."""
-    listed = list(workspace_file.read(from_file).projects.values()) if from_file is not None else []
+    listing = workspace_file.read(from_file) if from_file is not None else workspace_file.WorkspaceFile()
+    if from_file is not None:
+        _refuse_a_root_project(from_file, listing)
+    listed = list(listing.projects.values())
     # Each project in the order init says it: its name and (url, path, branch), or None for one it leaves out.
     plan: List[Tuple[str, Optional[Tuple[str, Optional[str], Optional[str]]]]] = []
     for project in listed:
