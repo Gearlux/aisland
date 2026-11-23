@@ -212,7 +212,12 @@ def test_after_converting_setup_finds_every_project_where_it_is(old: Old, capsys
     activation.reconcile(old.root)
     assert "clone models" not in capsys.readouterr().out
     assert (old.root / "workspace.toml").is_symlink()
-    assert _git(old.project, "status", "--porcelain") == ""  # every row was right: nothing to commit
+    # Every row was right: the one change to commit is the how-to of a workspace with a root project.
+    assert _git(old.project, "status", "--porcelain") == "M workspace.toml"
+    diff = _git(old.project, "diff", "--unified=0", "--", "workspace.toml").splitlines()
+    changed = [line[1:] for line in diff if line[:1] in "+-" and not line.startswith(("+++", "---"))]
+    assert changed and all(line == "" or line.startswith("#") for line in changed)
+    assert "#        .venv/bin/aisland setup" in (old.project / "workspace.toml").read_text()
 
 
 # --- refused before anything moves ----------------------------------------------------------------------------------

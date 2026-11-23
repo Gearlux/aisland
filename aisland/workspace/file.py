@@ -597,7 +597,8 @@ def refresh(root: Path) -> List[str]:
     origin (setup's activation step points the clone at the file's url instead), and a row stays whether this machine
     has the project or not; only a clone the file does not list yet is added. A branch already written is kept (``aisland workspace configure source`` changes it), and every other
     setting of a project stays as written. A project of the file is matched by its folder first, so a name written by
-    hand survives. Nothing changed: the file is not touched. Raises :class:`FileError` for a file aisland cannot use."""
+    hand survives. With no row changed, a how-to out of date (:func:`_with_header`) is rewritten alone, and said; nothing
+    changed: the file is not touched. Raises :class:`FileError` for a file aisland cannot use."""
     current = load(root)
     shared = root_project.rooted(root)
     by_path = {project.path: project for project in current.projects.values()}
@@ -638,6 +639,13 @@ def refresh(root: Path) -> List[str]:
     for project in optional + to_add:
         projects[project.name] = project
     updated = replace(current, settings=dict(current.settings), projects=projects)
-    if updated != current or (updated.projects and not locations.workspace_listing(root).is_file()):
+    path = locations.workspace_listing(root)
+    if updated != current or (updated.projects and not path.is_file()):
         write(root, updated)
+    elif path.is_file():
+        text = path.read_text(encoding="utf-8")
+        how_to = _with_header(text, _header(current.settings.get(NAME_KEY) or root.name, root_row(current)))
+        if how_to != text:
+            atomic.write_text(path, how_to)
+            lines.append(f"{FILE_NAME}: the how-to rewritten for aisland {__version__}")
     return lines

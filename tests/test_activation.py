@@ -323,6 +323,7 @@ def _write_lib(ws: Path, tmp_path: Path) -> None:
 def test_a_project_written_into_the_file_by_hand_is_kept_for_setup_to_add(ws: Path, tmp_path: Path) -> None:
     """The file is a way to add a project: a listed project with a url the workspace lacks is not gone (user choice
     2026-10-28, release review 3a). To remove one, its row goes too."""
+    workspace_file.refresh(ws)  # the how-to the fixture's file lacks
     _write_lib(ws, tmp_path)
     before = (ws / "workspace.toml").read_text()
     assert workspace_file.refresh(ws) == ["workspace.toml: lib is not in the workspace yet; setup adds it"]

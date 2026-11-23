@@ -32,6 +32,10 @@ next release: it reads `- Unreleased` until the release dates it.
   ([harness](https://github.com/Gearlux/aisland/blob/v0.1.2/docs/harness.md#agent-commands-and-rules-in-every-workspace-the-harness)).
 
 ### Fixed
+- **`workspace.toml`'s how-to no longer goes stale.** `aisland setup` rewrote the file only when a row changed, so a
+  new how-to — a new aisland version, a file naming a root project — waited for one; it is now rewritten on its own,
+  every row left as it is, and setup says so
+  ([workspace](https://github.com/Gearlux/aisland/blob/v0.1.2/docs/workspace.md#the-same-workspace-on-another-machine-workspacetoml)).
 - **A renamed project is installed under its new name alone.** `aisland setup` uninstalls what the old name left in
   `.venv` first, renamed in its folder or with it, and still writes the right version into `workspace.toml`'s how-to
   ([workspace](https://github.com/Gearlux/aisland/blob/v0.1.2/docs/workspace.md#a-renamed-project)).

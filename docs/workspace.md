@@ -289,8 +289,9 @@ url = "git@github.com:acme/machine_learning.git"
 **The rest of the file is yours.** Setup and `aisland workspace configure` edit the file in place: a value they
 change is rewritten where it stands, and every comment you wrote, the order of the keys and the type of each value (a
 date stays a date) stay as they were. Only the how-to at the top — the comment block that opens with the file's
-name — is aisland's, rewritten with the workspace's name and aisland's version; a file that opens with comments of
-your own keeps them and gets no how-to. A file naming a root project gets steps of its own
+name — is aisland's, rewritten with the workspace's name and aisland's version. Setup rewrites it whenever it is out of
+date, even with no row changed, and says so (`workspace.toml: the how-to rewritten for aisland 0.1.2`); a file that
+opens with comments of your own keeps them and gets no how-to. A file naming a root project gets steps of its own
 ([a workspace with a root project](#a-workspace-with-a-root-project-no-root-repository)).
 
 A project is named after its repository; `path` is its folder (its name when left out) and `branch` the

@@ -280,7 +280,7 @@ def test_a_branch_already_in_the_file_is_kept(tmp_path: Path) -> None:
     models = _remote(tmp_path, "models", ("dev",))
     root = _superproject(tmp_path, ("models", models, "dev"))
     _file(root, f'[project."models"]\nurl = "{models}"\nbranch = "release"\n')
-    assert workspace_file.refresh(root) == []
+    assert workspace_file.refresh(root) == [f"workspace.toml: the how-to rewritten for aisland {__version__}"]
     assert workspace_file.load(root).projects["models"].branch == "release"
 
 
@@ -388,6 +388,27 @@ def test_nothing_changed_leaves_the_file_as_it_was(tmp_path: Path) -> None:
     assert workspace_file.refresh(root) == []
     assert (root / "workspace.toml").read_bytes() == before
     assert (root / "workspace.toml").stat().st_mtime == 0
+
+
+def test_a_file_with_no_how_to_gets_one_with_its_rows_unchanged(tmp_path: Path) -> None:
+    """refresh wrote the file only when a row changed, so a file whose rows were current never got the how-to."""
+    models = _remote(tmp_path, "models")
+    root = _superproject(tmp_path, ("models", models, None))
+    rows = f'[project."models"]\nurl = "{models}"\n'
+    path = _file(root, rows)
+    assert workspace_file.refresh(root) == [f"workspace.toml: the how-to rewritten for aisland {__version__}"]
+    text = path.read_text()
+    assert text.startswith("# workspace.toml — the acme workspace: its projects and its choices, committed.\n")
+    assert text.endswith("# =========================================================================\n\n" + rows)
+
+
+def test_a_file_opening_with_comments_of_its_own_is_left_as_it_was(tmp_path: Path) -> None:
+    models = _remote(tmp_path, "models")
+    root = _superproject(tmp_path, ("models", models, None))
+    path = _file(root, f'# Ask Ann before adding a project.\n[project."models"]\nurl = "{models}"\n')
+    before = path.read_bytes()
+    assert workspace_file.refresh(root) == []
+    assert path.read_bytes() == before
 
 
 def test_without_gitmodules_each_clone_is_a_project_and_a_link_to_it_its_path(tmp_path: Path) -> None:

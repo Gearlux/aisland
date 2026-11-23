@@ -20,7 +20,7 @@ from typing import Callable, Dict, List, Optional, Sequence
 import pytest
 from click.testing import CliRunner
 
-from aisland import cli, locations, machine_config, pytest_stats
+from aisland import __version__, cli, locations, machine_config, pytest_stats
 from aisland.errors import AislandError
 from aisland.setup import harness, manager, source_commands
 from aisland.workspace import activation
@@ -506,6 +506,29 @@ def test_a_file_naming_no_root_project_keeps_the_how_to_of_a_workspace_of_submod
     lines = workspace_file.render(_listing(None), "acme").splitlines()
     assert "#        .venv/bin/aisland workspace init . --from workspace.toml" in lines
     assert not any("git clone" in line for line in lines)
+
+
+#: The how-to a converted file still carries: the one of a workspace of submodules.
+_OLD_HOW_TO = """\
+# workspace.toml — the work workspace: its projects and its choices, committed.
+# Kept by `aisland setup` (aisland/aisland/workspace/file.py): it adds a new project, follows a changed url or folder
+# =========================================================================
+#   2. The workspace: each project below cloned on its branch, the starting files, the git aliases:
+#        .venv/bin/aisland workspace init . --from workspace.toml
+# =========================================================================
+"""
+
+
+def test_setup_gives_a_converted_file_the_how_to_of_a_rooted_one_with_no_row_changed(rooted: Rooted) -> None:
+    """A converted file kept the `workspace init` how-to: refresh wrote the file only when a row changed."""
+    rows = "\n" + rooted.listed.read_text()
+    rooted.listed.write_text(_OLD_HOW_TO + rows)
+    root_project.link(rooted.root)
+    assert workspace_file.refresh(rooted.root) == [f"workspace.toml: the how-to rewritten for aisland {__version__}"]
+    text = rooted.listed.read_text()
+    assert f"#        git clone -b main {rooted.remotes['acme']} acme\n" in text
+    assert "workspace init" not in text
+    assert text.endswith(rows)
 
 
 def test_init_refuses_a_file_naming_a_root_project_before_it_writes_anything(tmp_path: Path) -> None:
