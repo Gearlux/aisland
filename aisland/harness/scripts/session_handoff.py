@@ -5,8 +5,7 @@ one machine to another. The other half, ``HANDOFF.md`` (what the session knows),
 
     python3 .agents/scripts/session_handoff.py export <folder> [--attach FILE ...] [--no-transcript]
     python3 .agents/scripts/session_handoff.py pack <folder>              # copies the chat, writes <folder>.tar.gz
-    python3 .agents/scripts/session_handoff.py check <folder|tar.gz>      # what importing would do; changes nothing
-    python3 .agents/scripts/session_handoff.py restore <folder|tar.gz>    # puts the chat where `claude --resume` finds it
+    python3 .agents/scripts/session_handoff.py restore <folder|tar.gz>    # puts the chat back and lists it in the app
 
 Run it from the workspace root. Each prints JSON. It needs the standard library only and runs on Python 3.9 and later:
 the commands run it as ``python3``, which on macOS is the system's 3.9.
@@ -21,12 +20,12 @@ folder inside the workspace is kept out of ``git status`` through the root's ``.
 line, and the folder beside it with the subagents' chats and the tool results — unless the export was made with
 ``--no-transcript``, then writes the archive. It runs last, so the chat holds the whole export but its end.
 
-``check`` compares each repository here with what was exported — the same commit, behind it, ahead, diverged, or the
-commit missing — and says where the chat would go. ``restore`` writes the chat into Claude Code's folder for the
-folder the session started in, as this machine names it: a workspace at another path, or another HOME, has every
-such path in the chat's files rewritten. A session this machine has already (the handoff came back to where it
-started) is restored under a new id, so no chat here is ever overwritten; a handoff restored once is not restored
-again.
+``restore`` writes the chat into Claude Code's folder for the folder the session started in, as this machine names
+it: a workspace at another path, or another HOME, has every such path in the chat's files rewritten. A session this
+machine has already (the handoff came back to where it started) is restored under a new id, so no chat here is ever
+overwritten; a handoff restored once is not restored again. Where the Claude desktop app keeps its Code sessions, the
+chat is also listed there — one session record, titled after the brief's heading — so it opens from the app's sidebar
+without a terminal; a handoff restored before that record existed gets it on the next ``restore``.
 """
 
 import argparse
@@ -79,19 +78,6 @@ class Manifest(TypedDict):
     attachments: List[Attachment]
 
 
-class Row(TypedDict, total=False):
-    """One repository of a ``check`` report."""
-
-    path: str
-    status: str
-    wanted_branch: Optional[str]
-    wanted_head: str
-    branch: Optional[str]
-    head: str
-    relation: str
-    same_branch: bool
-
-
 class ChatPlan(TypedDict):
     """Where ``restore`` would put the chat, and what it would rewrite on the way."""
 
@@ -106,6 +92,8 @@ class Restored(TypedDict):
     session_id: str
     transcript: str
     start_folder: Optional[str]
+    title: str
+    desktop: Optional[str]
     taken: bool
     already: bool
 
@@ -115,10 +103,6 @@ def _git(repo: Path, *args: str, check: bool = True) -> str:
     if check and result.returncode != 0:
         raise SystemExit(f"git {' '.join(args)} in {repo}: {result.stderr.strip()}")
     return result.stdout.strip() if result.returncode == 0 else ""
-
-
-def _ok(repo: Path, *args: str) -> bool:
-    return subprocess.run(["git", "-C", str(repo), *args], capture_output=True).returncode == 0
 
 
 def _repos(root: Path) -> List[str]:
@@ -291,31 +275,6 @@ def _manifest(folder: Path) -> Manifest:
     return manifest
 
 
-def _relation(repo: Path, local: str, wanted: str) -> str:
-    if local == wanted:
-        return "same"
-    if not _ok(repo, "cat-file", "-e", f"{wanted}^{{commit}}"):
-        return "missing"
-    if _ok(repo, "merge-base", "--is-ancestor", local, wanted):
-        return "behind"
-    if _ok(repo, "merge-base", "--is-ancestor", wanted, local):
-        return "ahead"
-    return "diverged"
-
-
-def _check_repo(root: Path, state: RepoState) -> Row:
-    repo = root / state["path"]
-    row: Row = {"path": state["path"], "wanted_branch": state["branch"], "wanted_head": state["head"]}
-    if not (repo / ".git").exists():
-        row["status"] = "absent: the repository is not checked out here"
-        return row
-    local = _git(repo, "rev-parse", "HEAD")
-    branch = _git(repo, "symbolic-ref", "--short", "-q", "HEAD", check=False) or None
-    row["branch"], row["head"], row["relation"] = branch, local, _relation(repo, local, state["head"])
-    row["same_branch"] = branch == state["branch"]
-    return row
-
-
 def _chat_plan(root: Path, folder: Path, manifest: Manifest) -> Optional[ChatPlan]:
     session_id, name = manifest["session_id"], manifest["chat_folder"]
     if not session_id or not name:
@@ -345,14 +304,6 @@ def _chat_plan(root: Path, folder: Path, manifest: Manifest) -> Optional[ChatPla
     }
 
 
-def check(root: Path, folder: Path) -> Dict[str, object]:
-    manifest = _manifest(folder)
-    return {
-        "repos": [_check_repo(root, state) for state in manifest["repos"]],
-        "chat": _chat_plan(root, folder, manifest),
-    }
-
-
 def _rewrite(data: bytes, swaps: Dict[str, str]) -> bytes:
     """``data`` with every ``swaps`` key replaced by its value, in one pass: a replacement is never replaced again."""
     if not swaps:
@@ -366,15 +317,14 @@ def restore(root: Path, folder: Path) -> Restored:
     plan = _chat_plan(root, folder, manifest)
     if plan is None:
         raise SystemExit("this handoff carries no chat")
+    title = _title(folder)
     if plan["restored"]:
-        before = json.loads((folder / RESTORED).read_text())
-        return {
-            "session_id": before["session_id"],
-            "transcript": before["transcript"],
-            "start_folder": before["start_folder"],
-            "taken": before["taken"],
-            "already": True,
-        }
+        before: Restored = json.loads((folder / RESTORED).read_text())
+        again: Restored = {**before, "title": before.get("title", title), "already": True}
+        if not before.get("desktop"):  # restored before the record existed, or with no desktop app then
+            again["desktop"] = _list_in_desktop(again["session_id"], again["start_folder"] or str(root), title)
+            (folder / RESTORED).write_text(json.dumps({**again, "already": False}, indent=2) + "\n")
+        return again
     session_id = plan["session_id"]
     new_id = str(uuid.uuid4()) if plan["taken"] else session_id
     swaps = {**plan["rewrites"], **({session_id: new_id} if new_id != session_id else {})}
@@ -386,15 +336,66 @@ def restore(root: Path, folder: Path) -> Restored:
                 _private(target / new_id / file.relative_to(source / session_id), _rewrite(file.read_bytes(), swaps))
     transcript = target / f"{new_id}.jsonl"
     _private(transcript, _rewrite((source / f"{session_id}.jsonl").read_bytes(), swaps))  # last: it makes it a chat
+    start_folder = _start_folder(root, target.name)
     done: Restored = {
         "session_id": new_id,
         "transcript": str(transcript),
-        "start_folder": _start_folder(root, target.name),
+        "start_folder": start_folder,
+        "title": title,
+        "desktop": _list_in_desktop(new_id, start_folder or str(root), title),
         "taken": plan["taken"],
         "already": False,
     }
     (folder / RESTORED).write_text(json.dumps(done, indent=2) + "\n")
     return done
+
+
+def _title(folder: Path) -> str:
+    """The brief's heading without its ``Handoff:`` — what the session was about — else the handoff folder's name."""
+    lines = (folder / HANDOFF).read_text().splitlines() if (folder / HANDOFF).is_file() else []
+    heading = lines[0].lstrip("#").strip() if lines and lines[0].startswith("#") else ""
+    return re.sub(r"^handoff:\s*", "", heading, flags=re.IGNORECASE) or folder.name
+
+
+def _desktop_sessions() -> Optional[Path]:
+    """The folder of the signed-in account's Code sessions in the Claude desktop app — of the account folders under
+    its ``claude-code-sessions``, the one holding the newest session record — or None without the app."""
+    base = Path.home() / "Library" / "Application Support" / "Claude" / "claude-code-sessions"
+    records = sorted(base.glob("*/*/local_*.json"), key=lambda p: p.stat().st_mtime) if base.is_dir() else []
+    return records[-1].parent if records else None
+
+
+def _list_in_desktop(session_id: str, cwd: str, title: str) -> Optional[str]:
+    """A session record of the desktop app for the restored chat, so its sidebar lists it; the record's path, or None
+    without the app. It runs on the model and effort of the newest record — this machine's latest choice — and asks
+    before every edit or command (``permissionMode: default``), whatever the session that left was allowed."""
+    sessions = _desktop_sessions()
+    if sessions is None:
+        return None
+    newest = max(sessions.glob("local_*.json"), key=lambda p: p.stat().st_mtime)
+    latest = json.loads(newest.read_text())
+    now = int(datetime.datetime.now().timestamp() * 1000)
+    local_id = f"local_{uuid.uuid4()}"
+    record = {
+        "sessionId": local_id,
+        "cliSessionId": session_id,
+        "cwd": cwd,
+        "originCwd": cwd,
+        "createdAt": now,
+        "lastActivityAt": now,
+        "model": latest["model"],
+        "effort": latest.get("effort", "high"),
+        "isArchived": False,
+        "title": title,
+        "titleSource": "user",
+        "permissionMode": "default",
+        "remoteMcpServersConfig": [],
+        "alwaysAllowedReasons": [],
+        "sessionPermissionUpdates": [],
+    }
+    path = sessions / f"{local_id}.json"
+    _private(path, (json.dumps(record, indent=2) + "\n").encode())
+    return str(path)
 
 
 def _start_folder(root: Path, name: str) -> Optional[str]:
@@ -414,7 +415,7 @@ def main(argv: Optional[List[str]] = None) -> int:
     ex.add_argument("--attach", action="append", default=[], help="a file or folder to carry along")
     ex.add_argument("--session-id", default=os.environ.get("CLAUDE_CODE_SESSION_ID"))
     ex.add_argument("--no-transcript", action="store_true", help="leave the session's chat out")
-    for name in ("pack", "check", "restore"):
+    for name in ("pack", "restore"):
         sub.add_parser(name).add_argument("folder", type=Path)
     args = parser.parse_args(argv)
     root = Path.cwd()
@@ -424,8 +425,6 @@ def main(argv: Optional[List[str]] = None) -> int:
         result = export(root, folder, args.attach, None if args.no_transcript else args.session_id)
     elif args.command == "pack":
         result = pack(folder)
-    elif args.command == "check":
-        result = check(root, _open(folder))
     else:
         result = restore(root, _open(folder))
     json.dump(result, sys.stdout, indent=2)

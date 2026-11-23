@@ -35,8 +35,9 @@ When the user invokes `/export-session [<name>] [--to <dest>] [--no-transcript]`
    `/push-all` (or a commit first) as the way to send it; the export goes on.
 
 4. **Write `.handoff/<stamp>-<slug>/HANDOFF.md`** for a reader who has seen nothing of this conversation. The restored
-   chat is how the work goes on; the brief is what `/import-session` checks the machine against, and the fallback
-   when the chat cannot be resumed there (another Claude Code version, `--no-transcript`). Use these headings, leaving
+   chat is how the work goes on; the brief's first line, `# Handoff: <what the session was about>`, is the title the
+   chat gets in the desktop app's sidebar there, and the brief is the fallback when the chat cannot be resumed
+   (another Claude Code version, `--no-transcript`). Use these headings, leaving
    none out (write "none" under an empty one):
 
    - **Task** — what the user asked for, their own words quoted, and each later change of direction quoted too.

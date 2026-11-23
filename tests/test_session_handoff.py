@@ -1,5 +1,5 @@
-"""The harness helper ``session_handoff.py`` carries a session's chat from one workspace to another and says whether
-the code there is at the commits the session left. It carries no code: every commit is on a remote.
+"""The harness helper ``session_handoff.py`` carries a session's chat from one workspace to another and lists it in
+the desktop app there. It carries no code: every commit is on a remote.
 
 Each test builds throwaway repositories — an origin, a root with one submodule, and a second clone of both standing
 for the other machine — and a fake chat in a HOME of its own, so nothing of the workspace or of the real chats is
@@ -9,6 +9,7 @@ touched.
 import importlib.util
 import io
 import json
+import os
 import re
 import subprocess
 import sys
@@ -170,8 +171,18 @@ def _files(folder: Path) -> Dict[str, bytes]:
     return {p.relative_to(folder).as_posix(): p.read_bytes() for p in sorted(folder.rglob("*")) if p.is_file()}
 
 
-def _rows(report: Json) -> Dict[str, Dict[str, Any]]:
-    return {row["path"]: row for row in report["repos"]}
+def _desktop(home: Path) -> Path:
+    """The desktop app's Code sessions in ``home``: an account folder last used in the past and the one signed in now,
+    each holding a session record."""
+    base = home / "Library" / "Application Support" / "Claude" / "claude-code-sessions"
+    for account, model, age in (("old/org", "old-model", 1000), ("now/org", "claude-model", 0)):
+        folder = base / account
+        folder.mkdir(parents=True)
+        record = folder / f"local_{uuid.uuid4()}.json"
+        record.write_text(json.dumps({"sessionId": record.stem, "model": model, "effort": "xhigh"}))
+        stamp = record.stat().st_mtime - age
+        os.utime(record, (stamp, stamp))
+    return base / "now" / "org"
 
 
 def test_the_export_records_each_repositorys_branch_and_commit_and_carries_no_code(
@@ -221,38 +232,6 @@ def test_the_handoff_folder_stays_out_of_git_status(machines: Tuple[Path, Path, 
     assert next(r for r in manifest["repos"] if r["path"] == ".")["changed"] == []
 
 
-@pytest.mark.parametrize("case", ["same", "missing", "behind", "ahead", "diverged", "other branch", "absent"])
-def test_check_says_how_each_repository_stands_and_changes_nothing(
-    machines: Tuple[Path, Path, Path], case: str
-) -> None:
-    here, there, home = machines
-    if case in ("missing", "behind", "diverged"):
-        _commit(here / "lib", "lib.txt", "here\n", "here's")
-    if case in ("behind", "diverged"):
-        _git(here / "lib", "push", "-q", "origin", "dev/main")
-    out = _handoff(here, home, "--no-transcript")
-    if case in ("ahead", "diverged"):
-        _commit(there / "lib", "other.txt", "there\n", "there's")
-    if case in ("behind", "diverged"):
-        _git(there / "lib", "fetch", "-q", "origin")
-    if case == "other branch":
-        _git(there / "lib", "switch", "-q", "-c", "elsewhere")
-    if case == "absent":
-        _git(there, "submodule", "deinit", "-q", "-f", "lib")
-    heads = {repo: _git(there / repo, "rev-parse", "HEAD") for repo in (".", "lib")}
-
-    rows = _rows(_run(there, "check", str(out), home=home))
-
-    lib = rows["lib"]
-    assert rows["."]["relation"] == "same"
-    if case == "absent":
-        assert lib["status"].startswith("absent")
-    else:
-        assert lib["relation"] == ("same" if case == "other branch" else case)
-        assert lib["same_branch"] is (case != "other branch") and lib["wanted_branch"] == "dev/main"
-    assert {repo: _git(there / repo, "rev-parse", "HEAD") for repo in (".", "lib")} == heads
-
-
 def test_the_whole_chat_travels_as_it_is_when_packed(machines: Tuple[Path, Path, Path]) -> None:
     here, _there, home = machines
     transcript = _chat(home, here, here)
@@ -290,11 +269,11 @@ def test_a_chat_restored_at_the_same_path_is_the_same_files(
     packed = _files(out / "chat")
     for folder in chats.iterdir():  # the other machine has none of it
         subprocess.run(["rm", "-rf", str(folder)], check=True)
-    assert _run(here, "check", str(out), home=home, **env)["chat"]["taken"] is False
 
     restored = _run(here, "restore", str(out), home=home, **env)
 
     assert restored["session_id"] == SESSION and restored["taken"] is False
+    assert restored["title"] == "brief" and restored["desktop"] is None, "no desktop app in this HOME"
     assert Path(restored["transcript"]) == chats / _slug(here) / f"{SESSION}.jsonl"
     assert restored["start_folder"] == str(here)
     assert _files(chats / _slug(here)) == packed
@@ -335,7 +314,6 @@ def test_a_session_this_machine_has_is_restored_under_a_new_id_and_only_once(mac
     with original.open("a") as chat:
         chat.write('nt", "message": "the export turn ends here"}\n')
     kept = _files(original.parent)
-    assert _run(here, "check", str(out), home=home)["chat"]["taken"] is True
 
     restored = _run(here, "restore", str(out), home=home)
 
@@ -359,6 +337,49 @@ def test_restore_refuses_a_handoff_without_a_chat(machines: Tuple[Path, Path, Pa
     out = _handoff(here, home, "--no-transcript")
     assert not (out / "chat").exists() and json.loads((out / "state.json").read_text())["session_id"] is None
     assert "carries no chat" in _refused(here, "restore", str(out), home=home)
+
+
+def test_the_restored_chat_is_listed_in_the_desktop_app_under_the_briefs_heading(
+    machines: Tuple[Path, Path, Path], tmp_path: Path
+) -> None:
+    """The record goes to the account signed in now (the folder holding the newest record), points at the restored
+    chat and its folder, and asks before every edit whatever the session that left was allowed."""
+    here, there, home = machines
+    home_there = _home(tmp_path / "home-there")
+    sessions = _desktop(home_there)
+    _chat(home, here, here)
+    out = _handoff(here, home)
+    (out / "HANDOFF.md").write_text("# Handoff: signal detection\n\nthe brief\n")
+
+    restored = _run(there, "restore", str(out), home=home_there)
+
+    record_path = Path(restored["desktop"])
+    assert restored["title"] == "signal detection" and record_path.parent == sessions
+    record = json.loads(record_path.read_text())
+    assert record["sessionId"] == record_path.stem and record["sessionId"].startswith("local_")
+    assert record["cliSessionId"] == SESSION and record["cwd"] == record["originCwd"] == str(there)
+    assert record["title"] == "signal detection" and record["isArchived"] is False
+    assert (record["model"], record["effort"], record["permissionMode"]) == ("claude-model", "xhigh", "default")
+    assert record_path.stat().st_mode & 0o077 == 0, "a session record is the user's alone"
+
+
+def test_a_chat_restored_before_the_desktop_record_existed_is_listed_once_on_the_next_restore(
+    machines: Tuple[Path, Path, Path], tmp_path: Path
+) -> None:
+    here, there, home = machines
+    home_there = _home(tmp_path / "home-there")
+    _chat(home, here, here)
+    out = _handoff(here, home)
+    first = _run(there, "restore", str(out), home=home_there)
+    assert first["desktop"] is None
+    sessions = _desktop(home_there)  # the app is installed, or first used, afterwards
+
+    second = _run(there, "restore", str(out), home=home_there)
+    third = _run(there, "restore", str(out), home=home_there)
+
+    assert second["already"] is True and Path(second["desktop"]).parent == sessions
+    assert third == second, "listed once"
+    assert len(list(sessions.glob("local_*.json"))) == 2
 
 
 def test_pack_refuses_without_the_brief(machines: Tuple[Path, Path, Path]) -> None:

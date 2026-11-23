@@ -12,7 +12,8 @@ next release: it reads `- Unreleased` until the release dates it.
 - **`/detach`, `/export-session` and `/import-session`**, three agent commands of the harness. `/detach <n>` opens a
   proposed next action as a session of its own that waits for the go; `/export-session` writes a handoff of a session
   (its whole chat, a brief, each repository's branch and commit — no code) and `/import-session` restores the chat in
-  a workspace on another machine, its paths rewritten for that machine, so the conversation goes on there ([harness](https://github.com/Gearlux/aisland/blob/v0.1.2/docs/harness.md#agent-commands-and-rules-in-every-workspace-the-harness)).
+  a workspace on another machine, its paths rewritten for that machine, and lists it in the Claude desktop app's
+  sidebar, so the conversation goes on there ([harness](https://github.com/Gearlux/aisland/blob/v0.1.2/docs/harness.md#agent-commands-and-rules-in-every-workspace-the-harness)).
 - **A workspace with a root project.** A clone whose `workspace.toml` names it (`[workspace] root`) holds the
   workspace's shared files; clone it into a folder and `aisland setup` links its `workspace.toml`, its rules and the
   files its `harness.toml` places, then clones every other project beside it. There is no root repository and no
