@@ -1,14 +1,15 @@
 ---
-description: Export this session so a session on another machine — same code, none of this conversation — can carry on. Writes a handoff folder and a .tar.gz — a brief of what the session knows, its commits no remote has, its own uncommitted edits, the files it relied on and its transcript. Sends nothing anywhere unless told where.
+description: Export this session so the same chat goes on on another machine — same code, pulled from the remotes. Writes a handoff folder and a .tar.gz — the whole chat, a brief of what the session knows, each repository's branch and commit, and the files it relied on. Carries no code and sends nothing anywhere unless told where.
 argument-hint: "[<short name>] [--to <folder or host:folder>] [--no-transcript]"
 ---
 <!-- Shipped by aisland (aisland/harness/commands/export-session.md), installed into .agents/workflows/ by `aisland setup` (aisland/setup/harness.py). Change it in aisland; the rules it cites are aisland's (.agents/aisland/AGENTS.md). -->
 
 # Workflow: Export Session (a handoff another machine can continue from)
 
-The other machine has the same repositories but not this conversation, this machine's scratch folders, its
-uncommitted edits or its unpushed commits. The handoff carries all of that: `HANDOFF.md`, the brief only this session
-can write, and what `.agents/scripts/session_handoff.py` gathers mechanically. `/import-session` reads it there.
+The other machine has the same repositories and gets the code from their remotes: every commit is pushed, so no code
+travels. What it lacks is this conversation, this machine's scratch folders and memory files. The handoff carries
+those: the chat itself, which `/import-session` restores there so the conversation goes on, `HANDOFF.md`, the brief
+only this session can write, and what `.agents/scripts/session_handoff.py` gathers mechanically.
 
 When the user invokes `/export-session [<name>] [--to <dest>] [--no-transcript]`:
 
@@ -16,43 +17,38 @@ When the user invokes `/export-session [<name>] [--to <dest>] [--no-transcript]`
    not travel. Wait for one about to finish; otherwise name it in the brief (what it is, where its output lands, how
    to read it) and say so in the report. A server this session started is named with how to start it again.
 
-2. **List this session's own files** — every file it created, edited or deleted and has not committed, from its own
-   tool calls, checked against `git status` / `git diff` in each repository (a submodule's file in its own
-   repository). Another session's edit to a file is never this session's; where both changed one file, the patch
-   carries the whole file's change, so say which hunks are this session's in the brief
-   (aisland rules → "Sessions On This Machine Coordinate Before They Edit"). Nothing is committed or pushed for the
-   export: unpushed commits travel as git bundles and the edits as patches.
-
-3. **List what to attach** — files outside the repositories that the work depends on and the other machine lacks:
+2. **List what to attach** — files outside the repositories that the work depends on and the other machine lacks:
    scratch outputs, measurements, screenshots and rendered images the brief cites, a log the next step reads, a
    memory file this session wrote or relied on. A large data file the other machine can reach by its own path is
    named in the brief, not attached.
 
-4. **Export.** From the workspace root, with `<stamp>` the local time as `YYYY-MM-DD-HHMM` and `<slug>` a few words of
+3. **Export.** From the workspace root, with `<stamp>` the local time as `YYYY-MM-DD-HHMM` and `<slug>` a few words of
    the task (the `<name>` given, else one you choose):
 
    ```bash
-   python3 .agents/scripts/session_handoff.py export .handoff/<stamp>-<slug> --path <file> … --attach <file> …
+   python3 .agents/scripts/session_handoff.py export .handoff/<stamp>-<slug> --attach <file> …
    ```
 
-   `--no-transcript` when the user asked for it. The JSON it prints is `state.json`: read it — a repository with
-   `unpushed` commits, `changed` files that are not this session's, or a `patch` missing for a file listed in step 2
-   (a file with no change against HEAD) goes into the brief.
+   `--no-transcript` when the user asked for it: the chat then stays here, and the other machine starts a new session
+   from the brief. The JSON it prints is `state.json`, each repository's branch and commit. Read it: a repository
+   with `unpushed` commits or `changed` files holds work that does NOT travel — name each in the report with
+   `/push-all` (or a commit first) as the way to send it; the export goes on.
 
-5. **Write `.handoff/<stamp>-<slug>/HANDOFF.md`** for a reader who has seen nothing of this conversation. It is the
-   handoff's heart; the transcript beside it is the fallback, never a substitute. Use these headings, leaving none
-   out (write "none" under an empty one):
+4. **Write `.handoff/<stamp>-<slug>/HANDOFF.md`** for a reader who has seen nothing of this conversation. The restored
+   chat is how the work goes on; the brief is what `/import-session` checks the machine against, and the fallback
+   when the chat cannot be resumed there (another Claude Code version, `--no-transcript`). Use these headings, leaving
+   none out (write "none" under an empty one):
 
    - **Task** — what the user asked for, their own words quoted, and each later change of direction quoted too.
    - **Decisions and constraints** — every choice the user made and every limit they set, quoted, with what it rules
      out; the rules or conventions the work turned out to hinge on, with their files.
-   - **Where it stands** — done (each with its commit hash or file), in progress (how far, what is half-written),
-     not started. Mark each claim **verified** (by what: a test, a command and its output) or **not verified**.
+   - **Where it stands** — done (each with its commit hash or file), in progress (how far), not started. Mark each
+     claim **verified** (by what: a test, a command and its output) or **not verified**.
    - **What was found** — the facts the next step needs: causes, measurements with their baselines, what was ruled
      out and how, the command that reproduces each, failing output quoted. Name files as `path:line`, functions and
      settings in backticks, and a data file by its full path written from the environment variable that roots it,
      never from this machine's home folder.
-   - **Files** — the files to read first and why; this session's changed files and what each change does.
+   - **Files** — the files to read first and why; the commits this session made and what each does.
    - **Next step** — the one action to take next, concrete enough to start on, then the rest of the plan in order.
    - **Open questions** — what waits on the user, each as a question with the options and your recommendation.
    - **Approvals given here** — what the user allowed in this session (a push, a deletion, a message), as history:
@@ -64,21 +60,25 @@ When the user invokes `/export-session [<name>] [--to <dest>] [--no-transcript]`
 
    Never write a secret into it (a token, a password, a key), even one the conversation showed.
 
-6. **Read the brief as a stranger would.** For each section ask: could a session that has only these files and the
-   repositories do the next step without asking what this session already knew? Fill each gap; a detail too long to
-   restate is pointed at in the transcript by what to search for.
+5. **Read the brief as a stranger would.** For each section ask: could a session that has only these files and the
+   repositories do the next step without asking what this session already knew? Fill each gap.
 
-7. **Pack:** `python3 .agents/scripts/session_handoff.py pack .handoff/<stamp>-<slug>` writes
-   `.handoff/<stamp>-<slug>.tar.gz`. With `--to`, copy the archive there (`cp` for a folder, `scp` for `host:folder`)
-   — the user's own destination; never send it anywhere else, and never commit or upload it.
+6. **Pack** — the last step, so the chat it copies holds the whole export but the pack and the report:
+   `python3 .agents/scripts/session_handoff.py pack .handoff/<stamp>-<slug>` copies the chat into the folder (its
+   transcript, its subagents' chats and its tool results) and writes `.handoff/<stamp>-<slug>.tar.gz`; `chat: false`
+   in what it prints means the transcript was not found, so the chat does not travel — say so. With `--to`, copy the
+   archive there (`cp` for a folder, `scp` for `host:folder`) — the user's own destination; never send it anywhere
+   else, and never commit or upload it.
 
-8. **Report**, in a few lines: the archive's full path and size; what it carries (repositories with commits or
-   patches, attachments, transcript or not); anything that did not travel (a run still going, a file too large); that
-   the transcript may hold whatever the conversation showed, so the archive is kept private; and how to continue —
-   move the archive to the other machine and run there, in the workspace root:
+7. **Report**, in a few lines: the archive's full path and size; what it carries (the chat or not, attachments); what
+   did not travel (unpushed commits and uncommitted files by repository, a run still going, a file too large); that
+   the chat holds whatever the conversation showed, so the archive is kept private; and how to continue — push what
+   is unpushed, move the archive to the other machine and run there, in the workspace root:
 
    ```text
    /import-session <path to the .tar.gz>
    ```
+
+   The chat goes on there; this session stops here, since a reply in it would not reach the other machine.
 
    Change nothing else: no commit, no push, no edit outside `.handoff/`.

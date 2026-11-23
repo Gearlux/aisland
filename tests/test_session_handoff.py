@@ -1,8 +1,9 @@
-"""The harness helper ``session_handoff.py`` carries a session's commits and its own uncommitted edits from one
-workspace to another, and refuses to move a repository it cannot move cleanly.
+"""The harness helper ``session_handoff.py`` carries a session's chat from one workspace to another and says whether
+the code there is at the commits the session left. It carries no code: every commit is on a remote.
 
 Each test builds throwaway repositories — an origin, a root with one submodule, and a second clone of both standing
-for the other machine — so nothing of the workspace is touched.
+for the other machine — and a fake chat in a HOME of its own, so nothing of the workspace or of the real chats is
+touched.
 """
 
 import importlib.util
@@ -12,13 +13,16 @@ import re
 import subprocess
 import sys
 import tarfile
+import uuid
 from pathlib import Path
 from types import ModuleType
-from typing import Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Tuple
 
 import pytest
 
 SCRIPT = Path(__file__).resolve().parents[1] / "aisland" / "harness" / "scripts" / "session_handoff.py"
+SESSION = "abc-123"
+Json = Any  # Any: the script's JSON output, read by key
 
 
 def _script() -> ModuleType:
@@ -65,31 +69,49 @@ def _commit(repo: Path, name: str, text: str, message: str) -> str:
     return _git(repo, "rev-parse", "HEAD")
 
 
-def _run(cwd: Path, *args: str, home: Path) -> object:
+def _env(home: Path, **extra: str) -> Dict[str, str]:
+    return {
+        "HOME": str(home),
+        "PATH": "/usr/bin:/bin:/usr/local/bin:/opt/homebrew/bin",
+        "GIT_CONFIG_GLOBAL": str(home / ".gitconfig"),
+        "CLAUDE_CODE_SESSION_ID": SESSION,
+        **extra,
+    }
+
+
+def _run(cwd: Path, *args: str, home: Path, **env: str) -> Json:
     result = subprocess.run(
-        [sys.executable, str(SCRIPT), *args],
-        cwd=cwd,
-        capture_output=True,
-        text=True,
-        env={
-            "HOME": str(home),
-            "PATH": "/usr/bin:/bin:/usr/local/bin:/opt/homebrew/bin",
-            "GIT_CONFIG_GLOBAL": str(home / ".gitconfig"),
-            "CLAUDE_CODE_SESSION_ID": "abc-123",
-        },
+        [sys.executable, str(SCRIPT), *args], cwd=cwd, capture_output=True, text=True, env=_env(home, **env)
     )
     assert result.returncode == 0, result.stderr
     return json.loads(result.stdout)
 
 
+def _refused(cwd: Path, *args: str, home: Path) -> str:
+    result = subprocess.run(
+        [sys.executable, str(SCRIPT), *args], cwd=cwd, capture_output=True, text=True, env=_env(home)
+    )
+    assert result.returncode != 0, result.stdout
+    return result.stderr
+
+
+def _slug(folder: Path) -> str:
+    """The name Claude Code gives a folder's chats: every character that is no ASCII letter or digit becomes ``-``."""
+    return re.sub(r"[^A-Za-z0-9]", "-", str(folder))
+
+
+def _home(path: Path) -> Path:
+    path.mkdir()
+    (path / ".gitconfig").write_text(
+        '[user]\n\temail = test@example.com\n\tname = test\n[protocol "file"]\n\tallow = always\n'
+    )
+    return path
+
+
 @pytest.fixture()
 def machines(tmp_path: Path) -> Tuple[Path, Path, Path]:
     """``here`` and ``there``: two clones of a root whose submodule ``lib`` holds ``lib.txt``; and the HOME both use."""
-    home = tmp_path / "home"
-    home.mkdir()
-    (home / ".gitconfig").write_text(
-        '[user]\n\temail = test@example.com\n\tname = test\n[protocol "file"]\n\tallow = always\n'
-    )
+    home = _home(tmp_path / "home")
     origins = tmp_path / "origins"
     lib = origins / "lib"
     lib.mkdir(parents=True)
@@ -116,123 +138,234 @@ def machines(tmp_path: Path) -> Tuple[Path, Path, Path]:
     return clones[0], clones[1], home
 
 
-def _rows(report: object) -> Dict[str, Dict]:
-    assert isinstance(report, list)
-    return {row["path"]: row for row in report}
+def _chat(home: Path, started_in: Path, workspace: Path) -> Path:
+    """A chat of ``SESSION`` started in ``started_in``: two lines naming paths of ``workspace`` and one of its tool
+    results, a line still being written, and the folder beside it (a tool result, a subagent's chat)."""
+    folder = home / ".claude" / "projects" / _slug(started_in)
+    result = folder / SESSION / "tool-results" / "r1.txt"
+    lines = [
+        {"type": "user", "cwd": str(started_in), "sessionId": SESSION, "message": f"read {workspace}/lib/lib.txt"},
+        {"type": "assistant", "sessionId": SESSION, "message": f"output saved to {result}"},
+    ]
+    transcript = folder / f"{SESSION}.jsonl"
+    result.parent.mkdir(parents=True)
+    transcript.write_text("".join(json.dumps(line) + "\n" for line in lines) + '{"type": "assist')
+    result.write_text(f"{workspace}/lib/lib.txt: one\n")
+    agent = folder / SESSION / "subagents" / "agent-a1.jsonl"
+    agent.parent.mkdir()
+    agent.write_text(json.dumps({"cwd": str(workspace), "sessionId": SESSION}) + "\n")
+    return transcript
 
 
-def test_commits_on_no_remote_and_the_sessions_edits_reach_the_other_clone(machines: Tuple[Path, Path, Path]) -> None:
-    here, there, home = machines
-    head = _commit(here / "lib", "lib.txt", "two\n", "unpushed work")
-    (here / "lib" / "lib.txt").write_text("two\nthree\n")
-    (here / "lib" / "new.txt").write_text("a new file\n")
-    (here / "README.md").write_text("another session's edit\n")
-    out = here / ".handoff" / "h1"
-
-    manifest = _run(here, "export", str(out), "--path", "lib/lib.txt", "--path", "lib/new.txt", home=home)
-
-    assert isinstance(manifest, dict)
-    lib = next(r for r in manifest["repos"] if r["path"] == "lib")
-    root = next(r for r in manifest["repos"] if r["path"] == ".")
-    assert lib["unpushed"] == 1 and lib["bundle"] == "repos/lib.bundle"
-    assert lib["patch_files"] == ["lib.txt", "new.txt"]
-    assert root["patch"] is None, "another session's README edit is never carried"
-    assert "README.md" in root["changed"]
+def _handoff(workspace: Path, home: Path, *args: str) -> Path:
+    """Export and pack a handoff of ``workspace`` the way ``/export-session`` does: the brief is written between."""
+    out = workspace / ".handoff" / "h"
+    _run(workspace, "export", str(out), *args, home=home)
     (out / "HANDOFF.md").write_text("# brief\n")
-    archive = Path(_run(here, "pack", str(out), home=home)["archive"])  # type: ignore[index]
-
-    moved = there.parent / "inbox" / archive.name
-    moved.parent.mkdir()
-    archive.rename(moved)
-    rows = _rows(_run(there, "check", str(moved), home=home))
-    assert rows["lib"]["relation"] == "missing" and rows["lib"]["bundle"] == "fetchable"
-    assert rows["lib"]["patch"].startswith("does not apply")  # its base commit is not here yet
-    rows = _rows(_run(there, "apply", str(moved), home=home))
-
-    assert rows["lib"]["done"] == ["fast-forwarded", "patch applied"]
-    assert _git(there / "lib", "rev-parse", "HEAD") == head
-    assert (there / "lib" / "lib.txt").read_text() == "two\nthree\n"
-    assert (there / "lib" / "new.txt").read_text() == "a new file\n"
-    assert (there / "README.md").read_text() == "root\n"
+    _run(workspace, "pack", str(out), home=home)
+    return out
 
 
-def test_a_patch_already_on_disk_is_said_so_and_not_applied_twice(machines: Tuple[Path, Path, Path]) -> None:
+def _files(folder: Path) -> Dict[str, bytes]:
+    return {p.relative_to(folder).as_posix(): p.read_bytes() for p in sorted(folder.rglob("*")) if p.is_file()}
+
+
+def _rows(report: Json) -> Dict[str, Dict[str, Any]]:
+    return {row["path"]: row for row in report["repos"]}
+
+
+def test_the_export_records_each_repositorys_branch_and_commit_and_carries_no_code(
+    machines: Tuple[Path, Path, Path],
+) -> None:
     here, _there, home = machines
-    (here / "lib" / "lib.txt").write_text("edited\n")
+    head = _commit(here / "lib", "lib.txt", "two\n", "unpushed work")
+    (here / "lib" / "new.txt").write_text("a new file\n")
+    (here / "README.md").write_text("an edit\n")
+    before = {repo: _git(here / repo, "status", "--porcelain") for repo in (".", "lib")}
     out = here / ".handoff" / "h"
-    _run(here, "export", str(out), "--path", "lib/lib.txt", home=home)
 
-    rows = _rows(_run(here, "apply", str(out), home=home))
+    manifest = _run(here, "export", str(out), home=home)
 
-    assert rows["lib"]["patch"].startswith("already applied") and rows["lib"]["done"] == ["patch already applied"]
-    assert (here / "lib" / "lib.txt").read_text() == "edited\n"
+    repos = {repo["path"]: repo for repo in manifest["repos"]}
+    assert sorted(repos) == [".", "lib"]
+    assert repos["lib"]["branch"] == "dev/main" and repos["lib"]["head"] == head
+    assert repos["lib"]["unpushed"] == 1 and repos["lib"]["changed"] == ["new.txt"]
+    assert repos["."]["unpushed"] == 0 and "README.md" in repos["."]["changed"]
+    assert sorted(p.name for p in out.iterdir()) == ["state.json"], "no bundle, no patch"
+    assert {repo: _git(here / repo, "status", "--porcelain") for repo in (".", "lib")} == before
 
 
-def test_the_real_index_is_never_touched(machines: Tuple[Path, Path, Path]) -> None:
-    here, _there, home = machines
-    (here / "lib" / "new.txt").write_text("new\n")
-    before = _git(here / "lib", "status", "--porcelain")
+def test_a_workspace_with_no_root_repository_is_read_from_its_clones(tmp_path: Path) -> None:
+    """A workspace whose root is no repository (its projects plain clones beside a root project) is read from the
+    folders: each direct subfolder that is a repository of its own, never a link to one of them or a hidden one."""
+    home = _home(tmp_path / "home")
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    for name in ("app", "lib", ".hidden"):
+        _git(workspace, "init", "-q", "-b", "dev/main", name)
+        _identity(workspace / name)
+        _commit(workspace / name, "a.txt", "a\n", "start")
+    (workspace / "notes").mkdir()
+    (workspace / "short").symlink_to(workspace / "lib")
 
-    _run(here, "export", str(here / ".handoff" / "h"), "--path", "lib/new.txt", home=home)
+    manifest = _run(workspace, "export", str(workspace / ".handoff" / "h"), home=home)
 
-    assert _git(here / "lib", "status", "--porcelain") == before == "?? new.txt"
+    assert [repo["path"] for repo in manifest["repos"]] == ["app", "lib"]
+    assert manifest["workspace"] == str(workspace)
 
 
 def test_the_handoff_folder_stays_out_of_git_status(machines: Tuple[Path, Path, Path]) -> None:
     here, _there, home = machines
-    _run(here, "export", str(here / ".handoff" / "h"), home=home)
+    manifest = _run(here, "export", str(here / ".handoff" / "h"), home=home)
     assert ".handoff" not in _git(here, "status", "--porcelain")
+    assert next(r for r in manifest["repos"] if r["path"] == ".")["changed"] == []
 
 
-def test_a_diverged_or_other_branch_repository_is_left_alone(machines: Tuple[Path, Path, Path]) -> None:
+@pytest.mark.parametrize("case", ["same", "missing", "behind", "ahead", "diverged", "other branch", "absent"])
+def test_check_says_how_each_repository_stands_and_changes_nothing(
+    machines: Tuple[Path, Path, Path], case: str
+) -> None:
     here, there, home = machines
-    _commit(here / "lib", "lib.txt", "here\n", "here's")
+    if case in ("missing", "behind", "diverged"):
+        _commit(here / "lib", "lib.txt", "here\n", "here's")
+    if case in ("behind", "diverged"):
+        _git(here / "lib", "push", "-q", "origin", "dev/main")
+    out = _handoff(here, home, "--no-transcript")
+    if case in ("ahead", "diverged"):
+        _commit(there / "lib", "other.txt", "there\n", "there's")
+    if case in ("behind", "diverged"):
+        _git(there / "lib", "fetch", "-q", "origin")
+    if case == "other branch":
+        _git(there / "lib", "switch", "-q", "-c", "elsewhere")
+    if case == "absent":
+        _git(there, "submodule", "deinit", "-q", "-f", "lib")
+    heads = {repo: _git(there / repo, "rev-parse", "HEAD") for repo in (".", "lib")}
+
+    rows = _rows(_run(there, "check", str(out), home=home))
+
+    lib = rows["lib"]
+    assert rows["."]["relation"] == "same"
+    if case == "absent":
+        assert lib["status"].startswith("absent")
+    else:
+        assert lib["relation"] == ("same" if case == "other branch" else case)
+        assert lib["same_branch"] is (case != "other branch") and lib["wanted_branch"] == "dev/main"
+    assert {repo: _git(there / repo, "rev-parse", "HEAD") for repo in (".", "lib")} == heads
+
+
+def test_the_whole_chat_travels_as_it_is_when_packed(machines: Tuple[Path, Path, Path]) -> None:
+    here, _there, home = machines
+    transcript = _chat(home, here, here)
     out = here / ".handoff" / "h"
     _run(here, "export", str(out), home=home)
-    theirs = _commit(there / "lib", "other.txt", "there\n", "there's")
+    (out / "HANDOFF.md").write_text("# brief\n")
+    with transcript.open("a") as chat:  # the session writes on: the brief, then the pack itself
+        chat.write('nt"}\n{"type": "user", "message": "pack it"}\n{"type": "assis')
 
-    rows = _rows(_run(there, "apply", str(out), home=home))
+    packed = _run(here, "pack", str(out), home=home)
 
-    assert rows["lib"]["relation"] == "diverged" and rows["lib"]["done"] == ["left alone: diverged"]
-    assert _git(there / "lib", "rev-parse", "HEAD") == theirs
+    assert packed["chat"] is True and Path(packed["archive"]).stat().st_mode & 0o077 == 0, "it holds the chat"
+    copied = (out / "chat" / f"{SESSION}.jsonl").read_text()
+    assert copied == transcript.read_text().rsplit("\n", 1)[0] + "\n", "every whole line, never the one being written"
+    assert _files(out / "chat" / SESSION) == _files(transcript.parent / SESSION)
+    assert json.loads((out / "state.json").read_text())["chat_folder"] == _slug(here)
+    with tarfile.open(packed["archive"]) as tar:
+        assert f"h/chat/{SESSION}/subagents/agent-a1.jsonl" in tar.getnames()
 
 
-def test_a_repository_behind_on_another_branch_is_not_switched(machines: Tuple[Path, Path, Path]) -> None:
-    here, there, home = machines
-    _commit(here / "lib", "lib.txt", "two\n", "work")
+@pytest.mark.parametrize("config_dir", [False, True], ids=["home", "CLAUDE_CONFIG_DIR"])
+def test_a_chat_restored_at_the_same_path_is_the_same_files(
+    machines: Tuple[Path, Path, Path], tmp_path: Path, config_dir: bool
+) -> None:
+    here, _there, home = machines
+    env = {"CLAUDE_CONFIG_DIR": str(tmp_path / "config")} if config_dir else {}
+    chats = (tmp_path / "config" if config_dir else home / ".claude") / "projects"
+    _chat(home, here, here)
+    if config_dir:
+        (home / ".claude").rename(tmp_path / "config")
     out = here / ".handoff" / "h"
-    _run(here, "export", str(out), home=home)
-    _git(there / "lib", "switch", "-q", "-c", "elsewhere")
+    _run(here, "export", str(out), home=home, **env)
+    (out / "HANDOFF.md").write_text("# brief\n")
+    _run(here, "pack", str(out), home=home, **env)
+    packed = _files(out / "chat")
+    for folder in chats.iterdir():  # the other machine has none of it
+        subprocess.run(["rm", "-rf", str(folder)], check=True)
+    assert _run(here, "check", str(out), home=home, **env)["chat"]["taken"] is False
 
-    rows = _rows(_run(there, "apply", str(out), home=home))
+    restored = _run(here, "restore", str(out), home=home, **env)
 
-    assert rows["lib"]["done"] == ["left alone: here on elsewhere, exported on dev/main"]
-    assert _git(there / "lib", "symbolic-ref", "--short", "HEAD") == "elsewhere"
+    assert restored["session_id"] == SESSION and restored["taken"] is False
+    assert Path(restored["transcript"]) == chats / _slug(here) / f"{SESSION}.jsonl"
+    assert restored["start_folder"] == str(here)
+    assert _files(chats / _slug(here)) == packed
+    assert (chats / _slug(here)).stat().st_mode & 0o077 == 0, "a folder of chats is the user's alone"
+    assert (chats / _slug(here) / f"{SESSION}.jsonl").stat().st_mode & 0o077 == 0, "a chat is the user's alone"
 
 
-def test_the_transcript_travels_and_installs_for_resume(machines: Tuple[Path, Path, Path]) -> None:
+def test_a_chat_restored_at_another_path_names_the_paths_there(
+    machines: Tuple[Path, Path, Path], tmp_path: Path
+) -> None:
+    """The other machine keeps the workspace elsewhere and has another HOME: the chat goes to the folder Claude Code
+    reads there for the folder the session started in (here ``lib``), and every path of the workspace and of the
+    chat's own files is that machine's."""
     here, there, home = machines
-    transcript = home / ".claude" / "projects" / "-some-workspace" / "abc-123.jsonl"
-    transcript.parent.mkdir(parents=True)
-    transcript.write_text('{"type": "user"}\n')
-    out = here / ".handoff" / "h"
-    manifest = _run(here, "export", str(out), "--attach", str(transcript), home=home)
-    assert isinstance(manifest, dict) and manifest["transcript"] == "transcript.jsonl"
-    assert manifest["attachments"][0]["stored"] == "attachments/abc-123.jsonl"
-    transcript.unlink()
+    home_there = _home(tmp_path / "home-there")
+    _chat(home, here / "lib", here)
+    out = _handoff(here, home)
+    chats = home_there / ".claude" / "projects" / _slug(there / "lib")
 
-    installed = Path(_run(there, "install-transcript", str(out), home=home)["transcript"])  # type: ignore[index]
+    restored = _run(there, "restore", str(out), home=home_there)
 
-    assert installed.name == "abc-123.jsonl" and installed.read_text() == '{"type": "user"}\n'
-    assert installed.parent.parent == home / ".claude" / "projects"
+    assert Path(restored["transcript"]) == chats / f"{SESSION}.jsonl" and restored["start_folder"] == str(there / "lib")
+    lines = [json.loads(line) for line in (chats / f"{SESSION}.jsonl").read_text().splitlines()]
+    assert lines[0]["cwd"] == str(there / "lib") and lines[0]["message"] == f"read {there}/lib/lib.txt"
+    assert lines[1]["message"] == f"output saved to {chats / SESSION / 'tool-results' / 'r1.txt'}"
+    assert (chats / SESSION / "tool-results" / "r1.txt").read_text() == f"{there}/lib/lib.txt: one\n"
+    assert json.loads((chats / SESSION / "subagents" / "agent-a1.jsonl").read_text())["cwd"] == str(there)
+    old = (str(here).encode(), f"{home}/".encode())  # home-there starts with home's name: the slash tells them apart
+    assert not any(path in data for data in _files(chats).values() for path in old)
+
+
+def test_a_session_this_machine_has_is_restored_under_a_new_id_and_only_once(machines: Tuple[Path, Path, Path]) -> None:
+    """Back on the machine it came from, the session is there already, and longer than the copy that left: the
+    export turn went on writing. The restored chat gets an id of its own; the one here stays as it is."""
+    here, _there, home = machines
+    original = _chat(home, here, here)
+    out = _handoff(here, home)
+    with original.open("a") as chat:
+        chat.write('nt", "message": "the export turn ends here"}\n')
+    kept = _files(original.parent)
+    assert _run(here, "check", str(out), home=home)["chat"]["taken"] is True
+
+    restored = _run(here, "restore", str(out), home=home)
+
+    new = restored["session_id"]
+    assert restored["taken"] is True and str(uuid.UUID(new)) == new
+    assert {k: v for k, v in _files(original.parent).items() if not k.startswith(new)} == kept
+    files = {k: v for k, v in _files(original.parent).items() if k.startswith(new)}
+    assert sorted(files) == [f"{new}.jsonl", f"{new}/subagents/agent-a1.jsonl", f"{new}/tool-results/r1.txt"]
+    assert not any(SESSION.encode() in data for data in files.values())
+    assert json.loads(files[f"{new}.jsonl"].splitlines()[0])["sessionId"] == new
+
+    again = _run(here, "restore", str(out), home=home)
+
+    assert again == {**restored, "already": True}
+    assert len(list(original.parent.glob("*.jsonl"))) == 2
+
+
+def test_restore_refuses_a_handoff_without_a_chat(machines: Tuple[Path, Path, Path]) -> None:
+    here, _there, home = machines
+    _chat(home, here, here)
+    out = _handoff(here, home, "--no-transcript")
+    assert not (out / "chat").exists() and json.loads((out / "state.json").read_text())["session_id"] is None
+    assert "carries no chat" in _refused(here, "restore", str(out), home=home)
 
 
 def test_pack_refuses_without_the_brief(machines: Tuple[Path, Path, Path]) -> None:
     here, _there, home = machines
     out = here / ".handoff" / "h"
     _run(here, "export", str(out), home=home)
-    result = subprocess.run([sys.executable, str(SCRIPT), "pack", str(out)], cwd=here, capture_output=True, text=True)
-    assert result.returncode != 0 and "HANDOFF.md" in result.stderr
+    assert "HANDOFF.md" in _refused(here, "pack", str(out), home=home)
 
 
 def test_an_archive_holds_one_folder_named_like_it(machines: Tuple[Path, Path, Path]) -> None:
@@ -240,7 +373,7 @@ def test_an_archive_holds_one_folder_named_like_it(machines: Tuple[Path, Path, P
     out = here / ".handoff" / "h"
     _run(here, "export", str(out), home=home)
     (out / "HANDOFF.md").write_text("# brief\n")
-    archive = Path(_run(here, "pack", str(out), home=home)["archive"])  # type: ignore[index]
+    archive = Path(_run(here, "pack", str(out), home=home)["archive"])
     with tarfile.open(archive) as tar:
         names: List[str] = tar.getnames()
     assert {name.split("/")[0] for name in names} == {"h"}
@@ -254,7 +387,7 @@ def test_an_archive_unpacks_beside_itself_with_or_without_the_data_filter(
     out = here / ".handoff" / "h"
     _run(here, "export", str(out), home=home)
     (out / "HANDOFF.md").write_text("# brief\n")
-    archive = Path(_run(here, "pack", str(out), home=home)["archive"])  # type: ignore[index]
+    archive = Path(_run(here, "pack", str(out), home=home)["archive"])
     moved = here.parent / "inbox" / archive.name
     moved.parent.mkdir()
     archive.rename(moved)
