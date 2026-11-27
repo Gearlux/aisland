@@ -30,9 +30,8 @@ def find(root: Path) -> Optional[Path]:
 
 
 def rooted(root: Path) -> bool:
-    """Whether the workspace at ``root`` is one with a root project: a root project, and no ``.gitmodules`` — a
-    workspace of submodules holding a root project is one still to convert (:mod:`aisland.setup.convert`)."""
-    return find(root) is not None and not (root / ".gitmodules").is_file()
+    """Whether the workspace at ``root`` is one with a root project: :func:`aisland.locations.rooted`."""
+    return locations.rooted(root)
 
 
 def name(root: Path) -> Optional[str]:
@@ -49,12 +48,17 @@ def link(root: Path) -> List[str]:
     would be written down twice, and setup's edits would never reach the root project.
 
     A workspace of submodules holding a root project is one still to convert: its own file stays as it is, and the one
-    line says how to switch (:mod:`aisland.convert`), so setup goes on working while the machine waits for it."""
+    line names both ways on — :mod:`aisland.convert` for a workspace of submodules, or taking the ``.gitmodules`` away
+    from a root repository that should record no project —, so setup goes on working while the machine waits."""
     project = find(root)
     if project is None:
         return []
     if not rooted(root):
-        return [f"{project.name} is a root project: aisland workspace convert makes this workspace one around it"]
+        return [
+            f"{project.name} is a root project beside a .gitmodules: aisland workspace convert makes this workspace one "
+            "around it, or remove .gitmodules (and git rm --cached the submodules it lists) to keep a root repository "
+            "that records no project"
+        ]
     own = root / locations.WORKSPACE_FILE
     target = f"{project.name}/{locations.WORKSPACE_FILE}"
     if own.is_symlink():

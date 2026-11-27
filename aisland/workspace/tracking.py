@@ -155,12 +155,12 @@ def apply(root: Path) -> List[Change]:
 
 def nothing_records(root: Path) -> Optional[str]:
     """Why nothing records the projects' commits in the workspace at ``root`` — one with a root project, whose folder
-    is no repository — or None where a root repository does."""
+    is a repository recording no project or none at all — or None where a root repository does."""
     if not root_project.rooted(root):
         return None
     return (
         f"nothing records the projects' commits here: {root_project.name(root)} is the workspace's root project, "
-        "and the workspace folder is no repository"
+        "and no root repository records a project"
     )
 
 

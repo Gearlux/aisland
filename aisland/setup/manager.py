@@ -14,7 +14,7 @@ from pathlib import Path
 from typing import Iterable, List, Tuple
 
 from aisland import console, failures
-from aisland.setup import env_example, provision, renamed
+from aisland.setup import claude_hooks, env_example, provision, renamed
 from aisland.setup.bashrc import link_project_bashrc
 from aisland.setup.editor_files import sync_mypy_path, write_code_workspace, write_pyrightconfig
 from aisland.setup.git_settings import install_git_aliases, merge_on_pull
@@ -133,6 +133,9 @@ def setup_workspace(non_interactive: bool = False, install_all: bool = False) ->
     # 0c. The agent harness in `.agents/` (aisland.setup.harness) — linked from a checkout, copied from a wheel. Before
     #     provisioning, which can stop a setup half-way.
     _say(install_harness(workspace_root))
+    # 0c''. Claude Code's worktree hooks in `.claude/settings.json` (aisland.setup.claude_hooks): a session started at a
+    #       workspace with a root project works in a worktree of the whole workspace.
+    _say(claude_hooks.write_hooks(workspace_root))
     # 0c'. A clone of the workspace's folder that .gitmodules does not list: added as a submodule, never asked about
     #      (aisland.workspace.clones), before workspace.toml, discovery and the installs read the projects.
     _say(clones.add_unlisted(workspace_root))

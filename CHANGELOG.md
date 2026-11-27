@@ -16,12 +16,21 @@ next release: it reads `- Unreleased` until the release dates it.
   sidebar, so the conversation goes on there ([harness](https://github.com/Gearlux/aisland/blob/v0.1.2/docs/harness.md#agent-commands-and-rules-in-every-workspace-the-harness)).
 - **A workspace with a root project.** A clone whose `workspace.toml` names it (`[workspace] root`) holds the
   workspace's shared files; clone it into a folder and `aisland setup` links its `workspace.toml`, its rules and the
-  files its `harness.toml` places, then clones every other project beside it. There is no root repository and no
-  `.gitmodules`, so nothing records the projects' commits; this machine's choices live in the root project's
-  `.git/config`. The file's how-to then starts a new machine with the root project's `git clone` and setup, and
+  files its `harness.toml` places, then clones every other project beside it. There is no `.gitmodules` and no root
+  repository recording the projects, so nothing records their commits; this machine's choices live in the root
+  project's `.git/config`. The file's how-to then starts a new machine with the root project's `git clone` and setup, and
   `aisland workspace init --from` refuses the file, naming those two commands. `aisland workspace convert` turns a
   workspace of submodules into one, its repositories moved into their folders and the old root kept in the backup
-  store ([workspace](https://github.com/Gearlux/aisland/blob/v0.1.2/docs/workspace.md#a-workspace-with-a-root-project-no-root-repository)).
+  store ([workspace](https://github.com/Gearlux/aisland/blob/v0.1.2/docs/workspace.md#a-workspace-with-a-root-project)).
+- **A worktree of the whole workspace, for a session started at its root.** `aisland workspace init` in a folder
+  holding a root project makes it a repository that records nothing (`/*` in `.git/info/exclude`, no `.gitmodules`, no
+  submodule), so `git status-all` and `git pull-all` work at the root, over every clone, the root project's included.
+  `aisland setup` writes Claude Code's `WorktreeCreate`, `WorktreeRemove` and `SessionStart` hooks into the root's
+  `.claude/settings.json`, keeping every other entry there. A session started in a worktree — the desktop app's
+  Worktree option, `claude --worktree`, or asking for one — then works in `<workspace>-worktrees/<name>/` beside the
+  workspace: a git worktree of every project on `dev/<name>`, the workspace's files linked in, the worktree's
+  projects first on its `PYTHONPATH`. `aisland workspace worktree create|remove|list|env` do the same by hand; `remove`
+  keeps uncommitted work, and every branch that got commits ([worktrees](https://github.com/Gearlux/aisland/blob/v0.1.2/docs/worktrees.md)).
 
 - **Each installed project's skills reach a session at the workspace root.** Setup links every
   `<project>/.claude/skills/<skill>` into the root's `.claude/skills/`, and takes the link away once the project is no

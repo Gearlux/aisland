@@ -292,7 +292,7 @@ date stays a date) stay as they were. Only the how-to at the top — the comment
 name — is aisland's, rewritten with the workspace's name and aisland's version. Setup rewrites it whenever it is out of
 date, even with no row changed, and says so (`workspace.toml: the how-to rewritten for aisland 0.1.2`); a file that
 opens with comments of your own keeps them and gets no how-to. A file naming a root project gets steps of its own
-([a workspace with a root project](#a-workspace-with-a-root-project-no-root-repository)).
+([a workspace with a root project](#a-workspace-with-a-root-project)).
 
 A project is named after its repository; `path` is its folder (its name when left out) and `branch` the
 branch it is cloned on (without one, the repository's default branch). A branch already in the file is
@@ -561,12 +561,14 @@ A wheel is built from a project's last commit, so a project folder in no git rep
 refused (`alpha is in no git repository; …`); a mirror needs a submodule's `.gitmodules`
 remote and is refused.
 
-### A workspace with a root project: no root repository
+### A workspace with a root project
 
 A workspace's shared files — `workspace.toml`, the rules agents read, a backlog — can live in a project of their own,
-the **root project**. The workspace folder is then no repository: every project, the root project too, is a clone
-holding its own repository on its own branch, and nothing records which commit of each goes with which. The root
-project's `workspace.toml` names it and lists every project, itself included:
+the **root project**. No root repository then records the projects: every project, the root project too, is a clone
+holding its own repository on its own branch, and nothing records which commit of each goes with which. The folder
+is no repository, or one that records nothing
+([below](#a-root-repository-that-records-no-project-aisland-workspace-init)). The root project's `workspace.toml`
+names it and lists every project, itself included:
 
 ```toml
 # acme/workspace.toml, in the root project
@@ -650,6 +652,34 @@ taking its release (`source set models pypi`), keeps its clone — its repositor
 left out of the installs. `git pull-all` and `git push-all` treat the root project as one more clone, and record
 nothing. `aisland workspace track` is refused there: nothing records commits.
 
+#### A root repository that records no project (`aisland workspace init`)
+
+git's workspace aliases are a repository's own, and an editor offers a session a worktree only in a repository. For
+both, make the folder a repository that records nothing:
+
+```bash
+cd ~/work/acme && aisland workspace init .
+```
+
+```text
+==> Set up the root repository of workspace acme in /Users/you/work/acme
+    .git/                     git init: a root repository that records no project
+    .git/info/exclude         /*: every file ignored, so nothing is ever staged
+    git aliases               status-all, pull-all, … over every clone, the root project's included
+Next:
+    cd /Users/you/work/acme
+    .venv/bin/aisland setup    # it also writes the hooks that give a session a worktree of the workspace
+```
+
+There is no `.gitmodules` and nothing is staged, so it is still a workspace with a root project: `git status-all` and
+`git pull-all` at the root walk every clone, the root project's included, and skip the root, which has no origin. A
+project still joins the workspace as a row of the root project's `workspace.toml`; `--add`, `--from`, `--local` and
+`--rewrite`, which would put submodules or files beside the root project, are refused there. A session started at the
+root works in a worktree of the whole workspace ([worktrees](worktrees.md)).
+
+A root project beside a `.gitmodules` is a workspace of submodules still to convert, as below; setup says so, with
+both ways on — `aisland workspace convert`, or taking `.gitmodules` (and the submodules it staged) away.
+
 #### From a workspace of submodules (`aisland workspace convert`)
 
 Put the workspace's shared files into a root project — its `workspace.toml` naming it as `root`, its rows the
@@ -680,8 +710,8 @@ Error: not converted: the root repository holds work no remote has (TASKS.md has
 ```
 
 Convert each machine the same way, before or after its root pulled the commit that drops the submodules: the
-repositories are found in `.git/modules` either way. A second run says `nothing to convert: the workspace has no root
-repository`.
+repositories are found in `.git/modules` either way. A second run says `nothing to convert: no root repository records
+the workspace's projects`.
 
 ## Optional projects & the generated `uv.toml`
 

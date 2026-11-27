@@ -61,9 +61,10 @@ The workspace's dev-infrastructure CLI, `aisland` (click, the `aisland/cli/` pac
   `true`/`false`; `check=True` raises when git refuses) are the one way a module reads or writes
   `aisland.<plugin>.<project>.<key>`, `submodule.<name>.active` or `pull.rebase`; never a bare `git config --local`.
   A read answers "nothing" for an unset key or a folder that is no repository, and a write there is silent
-  (`tests/test_machine_config.py`). Given a workspace folder that is no repository but has a root project, every one of
-  them reads and writes the ROOT PROJECT's `.git/config` (`settings_repository`; `pytest_stats` asks the same of
-  `locations.root_project`) (`tests/test_root_project.py`). `.gitmodules` keeps `gitmodules.py`; `pytest_stats.py` reads its own keys with the
+  (`tests/test_machine_config.py`). Given the folder of a workspace with a root project (`locations.rooted`), whether or
+  not it is a repository too, every one of them reads and writes the ROOT PROJECT's `.git/config`
+  (`settings_repository`; `pytest_stats` asks `locations.rooted` the same); a workspace of submodules still to convert
+  keeps its root repository's (`tests/test_root_project.py`). `.gitmodules` keeps `gitmodules.py`; `pytest_stats.py` reads its own keys with the
   standard library.
 - **`locations.py`**: where the workspace and the state are (standard library only: the pytest plugin imports it), and
   what a project folder is — `is_project_folder(folder, workspace)` (a folder holding a `pyproject.toml`, not hidden
@@ -109,11 +110,17 @@ The workspace's dev-infrastructure CLI, `aisland` (click, the `aisland/cli/` pac
   never raised; an unmarked workspace is never touched; the `active` plugin adds a project there with `-f`
   (`tests/test_local_workspace.py`).
 - **`workspace/root_project.py`** [root-project]: a workspace with a ROOT PROJECT — a clone whose `workspace.toml`
-  names it (`[workspace] root`) and lists every project, itself included — has no root repository and no
-  `.gitmodules`: every project is a plain clone and nothing records which commits go together. `locations.root_project`
+  names it (`[workspace] root`) and lists every project, itself included — has no `.gitmodules` and no root repository
+  recording a project: every project is a plain clone and nothing records which commits go together. Its folder is no
+  repository, or one that records NOTHING (`/*` in `.git/info/exclude`, nothing staged), for git's aliases and an
+  editor's worktrees: `aisland workspace init` in a folder holding a root project makes it and adds no submodule,
+  refusing `--add`, `--from`, `--local` and `--rewrite` there (`init._root_repository`). `locations.root_project`
   finds it (standard library only: the folder `<root>/workspace.toml` names, else the ONE direct subfolder whose own
   file names that subfolder); `find_workspace` takes a root project's parent, and a folder holding one, as the
-  workspace; `rooted` (a root project, no `.gitmodules`) is the test every step asks. `link`, setup's step right before
+  workspace; `locations.rooted` (a root project, no `.gitmodules`, a root repository or none) is the ONE test every
+  step asks, `root_project.rooted` its alias. A root project beside a `.gitmodules` is a workspace still to convert:
+  setup goes on, its line naming `convert` and the `.gitmodules` taken away; `convert` finds nothing in a root
+  repository that records nothing. `link`, setup's step right before
   the harness (which reads `[harness] sets`), makes `<root>/workspace.toml` a link to the root project's file — a file
   of the folder's own or a link elsewhere is refused, left as it is — so every write (`atomic.write_text` follows the
   link) lands in the root project. **The file wins:** `refresh` never writes a clone's origin over a row's url and keeps
@@ -128,6 +135,24 @@ The workspace's dev-infrastructure CLI, `aisland` (click, the `aisland/cli/` pac
   `git clone -b <branch> <url> <path>` (`file.clone_command`), the venv and setup; `init --from` refuses a file naming
   a root project at its `root` line before writing anything (`init._refuse_a_root_project`). Never a root repository recording commits beside a root project, a clone's origin
   written over the file's url, or an off project's clone emptied.
+- **`setup/worktrees.py` + `setup/claude_hooks.py`** [worktrees]: a session started at a workspace with a root project
+  works in a worktree of the WHOLE workspace. `create(root, name)` makes `<root>-worktrees/<name>/` BESIDE the
+  workspace (Claude Code refuses a hook's folder inside any repository) holding a git worktree of each project this
+  machine has, the root project's included (`Workspace.left_out` leaves out the rest), each on `dev/<name>` from its
+  clone's `HEAD`; the root project's files come from the worktree's own root project (`root_project.link` and
+  `install_harness` run in the worktree), the workspace's `SHARED` files are links, and `.aisland-worktree.json` says
+  what it holds. Every refusal comes before anything is made, and a failure half way takes away what it made.
+  `remove(folder)` refuses while a project holds uncommitted work or the folder holds a file of no project, deletes
+  each `dev/<name>` branch with no commit since its base and keeps, naming, the others; `session_env` is the
+  `PYTHONPATH` line (the project folders, as the editor's `extraPaths`), since the shared venv imports the main
+  checkouts. `aisland workspace worktree create|remove|list|env` (`cli/worktree.py`) take `--hook`, reading Claude
+  Code's hook JSON on stdin; `create` prints the folder as its ONE stdout line, `env --hook` prints nothing (a
+  SessionStart hook's stdout reaches the session) and appends to `$CLAUDE_ENV_FILE`. Setup writes the
+  `WorktreeCreate`, `WorktreeRemove` and `SessionStart` entries into `<root>/.claude/settings.json` right after the
+  harness, only in a rooted workspace, and takes them away elsewhere; an entry is aisland's when its one hook runs
+  `aisland workspace worktree <verb> --hook` — every other key and hook is the person's and kept, and a file it
+  cannot read is left and named (`tests/test_worktrees.py`). Never a worktree folder inside a repository, a removal
+  that drops uncommitted work or a branch with commits, or an entry of the person's changed.
 - **`convert.py`**: `aisland workspace convert` turns a workspace of submodules into a rooted one — each
   `.git/modules/<name>` moved into its folder (`core.worktree` dropped from its config file, `git worktree repair`), this
   machine's `aisland.*` settings copied into the root project, the old root repository and the files it tracks moved

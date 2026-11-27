@@ -124,10 +124,9 @@ def machine_key(project: str) -> str:
 
 
 def _machine_switches(root: Path) -> Dict[str, bool]:
-    """This machine's ``aisland.test-stats.*`` settings in ``<root>/.git/config`` — in a workspace with a root project
-    and no root repository, the root project's (``aisland.machine_config.settings_repository``) —; none when git cannot
-    say."""
-    project = None if (root / ".git").exists() else locations.root_project(root)
+    """This machine's ``aisland.test-stats.*`` settings in ``<root>/.git/config`` — in a workspace with a root project,
+    the root project's (``aisland.machine_config.settings_repository``) —; none when git cannot say."""
+    project = locations.root_project(root) if locations.rooted(root) else None
     try:
         run = subprocess.run(
             ["git", "config", "--local", "--type=bool", "--get-regexp", r"^aisland\.test-stats\."],

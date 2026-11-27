@@ -62,7 +62,7 @@ sets = [
 | `{ git = "<url>", ref = "<ref>" }` | the repository, cloned into aisland's state folder at `ref`, fetched again only when the url or the ref changes; `name = "…"` names it, else the repository's name does |
 
 Without `[harness]` the list is `["aisland"]` — in a workspace with a root project, `["aisland", "<the root project>"]`
-([workspace](workspace.md#a-workspace-with-a-root-project-no-root-repository)); `sets = []` installs nothing, and takes away what an earlier install
+([workspace](workspace.md#a-workspace-with-a-root-project)); `sets = []` installs nothing, and takes away what an earlier install
 put. A set dropped from the list takes its files and its import with it. A git set needs the network the first time
 and whenever its `ref` changes; an unreachable repository stops setup, naming the line.
 

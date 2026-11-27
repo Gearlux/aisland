@@ -231,6 +231,7 @@ your consent. To remove it from a workspace:
   Pyright's files, the window's theme and colours
 - [MCP](https://github.com/Gearlux/aisland/blob/v0.1.2/docs/mcp.md) — the client files and `aisland-mcp`
 - [Agent commands and rules](https://github.com/Gearlux/aisland/blob/v0.1.2/docs/harness.md)
+- [Worktrees of the whole workspace](https://github.com/Gearlux/aisland/blob/v0.1.2/docs/worktrees.md)
 - [Notebooks](https://github.com/Gearlux/aisland/blob/v0.1.2/docs/notebooks.md)
 - [Remote machines](https://github.com/Gearlux/aisland/blob/v0.1.2/docs/tunnel.md)
 - [Stability](https://github.com/Gearlux/aisland/blob/v0.1.2/docs/stability.md) — what a release keeps, and what may

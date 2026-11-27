@@ -43,8 +43,9 @@ from aisland.workspace import gitmodules
 
 #: The folder of the backup store the old root goes into: a hidden name, which no project ever has.
 STORE_NAME = ".workspace-root"
-#: What a workspace without a root repository answers.
-NOTHING = "nothing to convert: the workspace has no root repository"
+#: What a workspace without a root repository recording its projects answers — none, or one recording nothing beside
+#: the workspace's root project (``aisland workspace init`` makes that one).
+NOTHING = "nothing to convert: no root repository records the workspace's projects"
 #: This machine's settings that mean nothing once there is no root repository: a local root's marker.
 _LEFT_BEHIND = ("aisland.workspace.local",)
 
@@ -210,6 +211,8 @@ def convert_workspace(root: Path) -> List[str]:
     if not (root / ".git").is_dir():
         return [NOTHING]
     modules = _modules(root)
+    if locations.rooted(root) and not modules and not gitcmd.git(root, "ls-files").stdout.strip():
+        return [NOTHING]  # the root repository beside a root project, recording no project (aisland workspace init)
     project = _refusals(root, modules)
     tracked = _tracked(root)
     lines = [_move_repository(root, module) for module in modules]

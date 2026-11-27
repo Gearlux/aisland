@@ -106,9 +106,10 @@ def _git(repo: Path, *args: str, check: bool = True) -> str:
 
 
 def _repos(root: Path) -> List[str]:
-    """The root (``.``) when it is a repository, then every direct subfolder that is a repository of its own — a
-    submodule or a clone; never a hidden folder, nor a link to a folder of the workspace (a short name for it)."""
-    found = ["."] if (root / ".git").exists() else []
+    """The root (``.``) when it is a repository with a commit — the one beside a root project records nothing and has
+    none —, then every direct subfolder that is a repository of its own — a submodule or a clone; never a hidden
+    folder, nor a link to a folder of the workspace (a short name for it)."""
+    found = ["."] if (root / ".git").exists() and _git(root, "rev-parse", "--verify", "-q", "HEAD", check=False) else []
     for folder in sorted(root.iterdir()):
         if folder.name.startswith(".") or not folder.is_dir() or not (folder / ".git").exists():
             continue

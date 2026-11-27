@@ -20,7 +20,7 @@ from typing import Callable, Dict, List, Optional, Sequence
 import pytest
 from click.testing import CliRunner
 
-from aisland import __version__, cli, locations, machine_config, pytest_stats
+from aisland import __version__, cli, convert, locations, machine_config, pytest_stats
 from aisland.errors import AislandError
 from aisland.setup import harness, manager, source_commands
 from aisland.workspace import activation
@@ -394,7 +394,7 @@ def test_tracking_is_refused_where_nothing_records_commits(
         change(rooted.root, [], False)
     assert refusal.value.format_message() == (
         "nothing records the projects' commits here: acme is the workspace's root project, "
-        "and the workspace folder is no repository"
+        "and no root repository records a project"
     )
 
 
@@ -551,3 +551,82 @@ def test_init_refuses_a_file_naming_a_root_project_before_it_writes_anything(tmp
         "  .venv/bin/aisland setup\n"
     ) in result.output
     assert not new.exists()
+
+
+# --- a root repository that records no project: git's aliases at the root, an editor's worktrees -------------------
+
+
+def _init_root_repository(rooted: Rooted) -> None:
+    """Setup's clones, then `aisland workspace init` in the folder."""
+    _set_up(rooted)
+    result = CliRunner().invoke(cli.main, ["workspace", "init", str(rooted.root)])
+    assert result.exit_code == 0, result.output
+
+
+def test_init_in_a_folder_holding_the_root_project_makes_a_root_repository_that_records_no_project(
+    rooted: Rooted,
+) -> None:
+    """The folder becomes a repository — git's aliases and an editor's worktrees need one at the root — that records
+    nothing: no `.gitmodules`, nothing staged, every file ignored. The clone beside the root project stays a plain
+    clone: init used to add each as a submodule, which made the workspace one still to convert."""
+    _init_root_repository(rooted)
+    assert (rooted.root / ".git").is_dir()
+    assert not (rooted.root / ".gitmodules").exists()
+    assert _git(rooted.root, "ls-files") == ""
+    assert _git(rooted.root, "status", "--porcelain") == ""
+    assert "/*" in (rooted.root / ".git" / "info" / "exclude").read_text().splitlines()
+    assert root_project.rooted(rooted.root)
+
+
+def test_init_keeps_a_root_repository_already_there(rooted: Rooted) -> None:
+    _set_up(rooted)
+    _git(rooted.root, "init", "-q")
+    result = CliRunner().invoke(cli.main, ["workspace", "init", str(rooted.root)])
+    assert result.exit_code == 0, result.output
+    assert "kept (an existing repository)" in result.output
+    assert _git(rooted.root, "status", "--porcelain") == ""
+
+
+@pytest.mark.parametrize(
+    "options", [["--add", "git@example.com:acme/extra.git"], ["--local"], ["--rewrite", "mypy.ini"]]
+)
+def test_init_there_refuses_what_would_add_submodules_or_files_beside_the_root_project(
+    rooted: Rooted, options: List[str]
+) -> None:
+    _set_up(rooted)
+    result = CliRunner().invoke(cli.main, ["workspace", "init", str(rooted.root), *options])
+    assert result.exit_code == 1
+    assert (
+        f"Error: {rooted.root} holds the workspace's root project, acme: init makes the folder a root repository that "
+        f"records no project, and {options[0]} would add submodules or files beside it. A project joins the workspace "
+        "as a row of acme/workspace.toml, which the next aisland setup clones.\n"
+    ) in result.output
+    assert not (rooted.root / ".git").exists()
+
+
+def test_status_all_at_the_root_lists_every_clone_the_root_project_included(rooted: Rooted) -> None:
+    """The root repository gets the aliases of a folder of clones: `status-all` and `pull-all` walk every clone, the
+    root project among them — with a `.gitmodules` they walked the submodules alone, and the root project is none."""
+    _init_root_repository(rooted)
+    shown = _git(rooted.root, "status-all")
+    assert [line.split()[0] for line in shown.splitlines() if "(@" in line] == ["root", "acme", "models"]
+
+
+def test_this_machines_choices_stay_in_the_root_project_when_the_folder_is_a_repository(rooted: Rooted) -> None:
+    _init_root_repository(rooted)
+    machine_config.put(rooted.root, "aisland.active.tools.active", True)
+    assert _git(rooted.project, "config", "--local", "--get", "aisland.active.tools.active") == "true"
+    assert _get(rooted.root, "config", "--local", "--get", "aisland.active.tools.active") is None
+    assert machine_config.get(rooted.root, "aisland.active.tools.active") == "true"
+
+
+def test_the_test_stats_switch_stays_in_the_root_project_when_the_folder_is_a_repository(rooted: Rooted) -> None:
+    _init_root_repository(rooted)
+    _git(rooted.project, "config", "--local", "aisland.test-stats.default", "false")
+    assert pytest_stats.recording(rooted.root, "models") == pytest_stats.Recording(False, "this machine", "models")
+
+
+def test_a_root_repository_that_records_no_project_is_nothing_to_convert(rooted: Rooted) -> None:
+    _init_root_repository(rooted)
+    assert convert.convert_workspace(rooted.root) == [convert.NOTHING]
+    assert (rooted.root / ".git").is_dir()

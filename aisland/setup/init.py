@@ -23,6 +23,12 @@ as ``<file>.bak``; in an existing repository that is all init does, and it is re
 Two choices of the root's, each its own flag: ``--local`` makes a new root repository that tracks only the projects
 (:mod:`aisland.workspace.local`: its ``.gitignore`` ignores everything, ``.gitmodules`` and the projects are its first
 commit), and ``--untracked`` makes the root record none of its projects' commits (:mod:`aisland.workspace.tracking`).
+
+A folder holding the workspace's root project (:mod:`aisland.workspace.root_project`) is set up otherwise: init makes
+it a root repository that records no project — git's workspace aliases and an editor's worktrees need a repository at
+the root, and ``workspace.toml`` stays the one list of the projects. Every file is ignored (``.git/info/exclude``), no
+submodule is added and the clones stay plain clones; ``--add``, ``--from``, ``--local`` and ``--rewrite``, which would
+add submodules or files beside the root project, are refused there.
 """
 
 import codecs
@@ -329,6 +335,10 @@ def init_workspace(
     root = folder.absolute()
     if root.exists() and not root.is_dir():
         raise AislandError(f"{root} is a file, not a folder.")
+    own_root = locations.root_project(root) if locations.rooted(root) else None
+    if own_root is not None:
+        _root_repository(root, own_root.name, add=add, from_file=from_file, local=local, rewrite=rewrite)
+        return
     existing = (root / ".git").exists()
     if existing and rewrite and (add or from_file is not None or local or untracked):
         raise AislandError("in an existing repository --rewrite writes its files and nothing else: run it on its own.")
@@ -364,6 +374,61 @@ def init_workspace(
             f"{message}\n{root} held files before this init, so it is left as it stopped: remove {root / '.git'} and "
             ".gitmodules, then run the same command again."
         ) from exc
+
+
+#: The root repository's own ignore line beside a root project: every file, so it never records one.
+RECORDS_NOTHING = "/*"
+
+
+def _root_repository(
+    root: Path,
+    own_root: str,
+    add: Sequence[str],
+    from_file: Optional[Path],
+    local: bool,
+    rewrite: Sequence[StartingFile],
+) -> None:
+    """Make the folder holding the root project ``own_root`` a root repository that records no project (the module
+    docstring), or keep the one there; refuse first what would add submodules or files beside the root project."""
+    given = [
+        option
+        for option, value in (("--add", add), ("--from", from_file), ("--local", local), ("--rewrite", rewrite))
+        if value
+    ]
+    if given:
+        raise AislandError(
+            f"{root} holds the workspace's root project, {own_root}: init makes the folder a root repository that "
+            f"records no project, and {', '.join(given)} would add submodules or files beside it. A project joins the "
+            f"workspace as a row of {own_root}/workspace.toml, which the next aisland setup clones."
+        )
+    if (root / ".git").exists():
+        rows = [_row(".git/", "kept (an existing repository)")]
+    else:
+        gitcmd.git(root, "init", "-q", check=True)
+        rows = [_row(".git/", "git init: a root repository that records no project")]
+    exclude = Path(
+        gitcmd.git(root, "rev-parse", "--path-format=absolute", "--git-path", "info/exclude", check=True).stdout.strip()
+    )
+    lines = exclude.read_text().splitlines() if exclude.is_file() else []
+    if RECORDS_NOTHING not in lines:
+        exclude.parent.mkdir(parents=True, exist_ok=True)
+        atomic.write_text(exclude, "\n".join([*lines, RECORDS_NOTHING]) + "\n")
+    rows.append(_row(".git/info/exclude", f"{RECORDS_NOTHING}: every file ignored, so nothing is ever staged"))
+    staged = gitcmd.git(root, "ls-files").stdout.split()
+    if staged:
+        rows.append(_row("", f"{len(staged)} path(s) staged before: take them out with git rm -r --cached -- ."))
+    ok = install_git_aliases(root, quiet=True)
+    rows.append(
+        _row("git aliases", "status-all, pull-all, … over every clone, the root project's included" if ok else "failed")
+    )
+    console.echo(f"==> Set up the root repository of workspace {get_workspace_name(root)} in {root}")
+    for row in rows:
+        console.echo(row)
+    console.echo("Next:")
+    console.echo(f"    cd {root}")
+    console.echo(
+        "    .venv/bin/aisland setup    # it also writes the hooks that give a session a worktree of the workspace"
+    )
 
 
 def _build(

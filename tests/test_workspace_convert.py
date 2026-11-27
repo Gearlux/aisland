@@ -143,7 +143,9 @@ def test_before_converting_setup_leaves_the_workspace_as_it_is_and_says_so(old: 
     keeps the workspace's own `workspace.toml` — refusing it would stop every setup half way through a migration."""
     before = (old.root / "workspace.toml").read_text()
     assert root_project.link(old.root) == [
-        "acme is a root project: aisland workspace convert makes this workspace one around it"
+        "acme is a root project beside a .gitmodules: aisland workspace convert makes this workspace one around it, or "
+        "remove .gitmodules (and git rm --cached the submodules it lists) to keep a root repository that records no "
+        "project"
     ]
     assert not (old.root / "workspace.toml").is_symlink()
     assert (old.root / "workspace.toml").read_text() == before
@@ -311,7 +313,9 @@ def test_it_converts_after_a_pull_already_took_the_submodules_out(old: Old) -> N
 def test_a_second_run_changes_nothing(old: Old) -> None:
     convert.convert_workspace(old.root)
     before = _tree(old.root)
-    assert convert.convert_workspace(old.root) == ["nothing to convert: the workspace has no root repository"]
+    assert convert.convert_workspace(old.root) == [
+        "nothing to convert: no root repository records the workspace's projects"
+    ]
     assert _tree(old.root) == before
 
 

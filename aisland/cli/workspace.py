@@ -1,6 +1,6 @@
 """`aisland workspace …`: init, show, projects, track, test-stats, provision, harness, mirror, the editor and shell files and the
-environment files; `configure` (:mod:`aisland.cli.configure`) and `theme`/`color` (:mod:`aisland.cli.editor`) are
-added here.
+environment files; `configure` (:mod:`aisland.cli.configure`), `theme`/`color` (:mod:`aisland.cli.editor`) and
+`worktree` (:mod:`aisland.cli.worktree`) are added here.
 """
 
 import json
@@ -13,6 +13,7 @@ import click
 from aisland import convert, failures, locations
 from aisland.cli import configure as configure_cli
 from aisland.cli import editor as editor_cli
+from aisland.cli import worktree as worktree_cli
 from aisland.cli._base import Group, complete_submodules, complete_workspace_projects, main, workspace_root_found
 from aisland.errors import AislandError
 from aisland.services.jenkins import JenkinsService
@@ -503,3 +504,4 @@ def workspace_env_test(projects: Tuple[str, ...]) -> None:
 workspace_group.add_command(configure_cli.workspace_configure)
 workspace_group.add_command(editor_cli.theme_group)
 workspace_group.add_command(editor_cli.color_group)
+workspace_group.add_command(worktree_cli.worktree_group)

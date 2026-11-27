@@ -225,6 +225,22 @@ def test_a_workspace_with_no_root_repository_is_read_from_its_clones(tmp_path: P
     assert manifest["workspace"] == str(workspace)
 
 
+def test_a_root_repository_with_no_commit_is_left_out(tmp_path: Path) -> None:
+    """The root repository beside a root project records nothing and has no commit (`aisland workspace init`): there is
+    no branch or commit of it to carry, and `git rev-parse HEAD` there fails."""
+    home = _home(tmp_path / "home")
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    _git(workspace, "init", "-q")
+    _git(workspace, "init", "-q", "-b", "dev/main", "app")
+    _identity(workspace / "app")
+    _commit(workspace / "app", "a.txt", "a\n", "start")
+
+    manifest = _run(workspace, "export", str(workspace / ".handoff" / "h"), home=home)
+
+    assert [repo["path"] for repo in manifest["repos"]] == ["app"]
+
+
 def test_the_handoff_folder_stays_out_of_git_status(machines: Tuple[Path, Path, Path]) -> None:
     here, _there, home = machines
     manifest = _run(here, "export", str(here / ".handoff" / "h"), home=home)

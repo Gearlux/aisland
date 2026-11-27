@@ -105,6 +105,15 @@ def root_project(root: Path) -> Optional[Path]:
     return found[0] if len(found) == 1 else None
 
 
+def rooted(root: Path) -> bool:
+    """Whether the workspace at ``root`` is one with a root project: a root project, and no ``.gitmodules``.
+
+    Its folder may be a git repository that records no project — ``aisland workspace init`` makes one there, for git's
+    workspace aliases and an editor's worktrees — or none. A workspace of submodules holding a root project is one
+    still to convert (``aisland workspace convert``)."""
+    return root_project(root) is not None and not (root / ".gitmodules").is_file()
+
+
 def workspace_listing(root: Path) -> Path:
     """The ``workspace.toml`` that writes the workspace at ``root`` down: its own (setup's link to the root project's
     file once it has one), else its root project's, before setup has linked it."""

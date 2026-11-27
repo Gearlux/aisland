@@ -22,7 +22,7 @@ steps of `aisland setup` in order, and each step is a module of its own.
 |---|---|
 | The workspace and its file | `workspace/` (`model`, the workspace as one record; `file`, `check`, `local`, `root_project` (a workspace whose root project holds its files), `projects`, `gitmodules`, `clones`, `discovery`, `github`), `locations`, `paths`, `pyproject`, `toml_places` (a table's line in a TOML file) |
 | What a project or a machine chooses | `workspace/` (the plugins `activation`, `selection`, `sources` — the model — with `source_apply`, `mirrors`; `tracking`, `recording`), `machine_config` (this machine's `git config --local`) |
-| Setting a machine up | `setup/` (`manager`, the driver, and its steps `provision`, `installers`, `renamed`, `bashrc`, `uv_config`, `editor_files`, `mcp_config`, `env_example`, `completion`, `playwright_browser`, `git_settings`, `harness`; `init`, `workspace init`; `configure` and `source_commands`, the configure commands), `downloads`, `editor`, `venv` (the `.venv` and its uv), `userspace_tools` |
+| Setting a machine up | `setup/` (`manager`, the driver, and its steps `provision`, `installers`, `renamed`, `bashrc`, `uv_config`, `editor_files`, `mcp_config`, `env_example`, `completion`, `playwright_browser`, `git_settings`, `harness`, `claude_hooks`; `init`, `workspace init`; `configure` and `source_commands`, the configure commands; `worktrees`, a worktree of the whole workspace), `downloads`, `editor`, `venv` (the `.venv` and its uv), `userspace_tools` |
 | Services | `services/` (`base`, `registry`, `plugin`, `declared`, `supervisor`, `jenkins`, `jenkins_jobs`, `jenkins_settings`, `jenkins_java`, `docker`, `swiftbar`, `nightly`), `envfile` (the workspace's `.env`) |
 | CI and tests | `ci/` (`ci_scaffold`, `ci_templates` — the sets under `templates/` —, `jenkins_job_config`, `quality`, `stats_report`), `pytest_stats` (the plugin, standard library only) |
 | Wheels | `wheels/` (`build`, the run, and `projects`, `published`, `export`, `report`, `files`, `check`, `bundle`, `extra`, `scrub`, `prune` with `filter_repo`, `install`, `unzip`) |
@@ -97,8 +97,10 @@ milliseconds, a stale answer a wrong command.
 
 What is committed lives in `workspace.toml` — a project's settings in its table, a selection's choice under
 `[workspace]` — and what one machine deviates in `.git/config` (`machine_config`). A workspace with a root project
-has no root repository: its `workspace.toml` is a link to the root project's, which wins over every clone, and the
-machine's `.git/config` is the root project's ([0083](decisions/0083-a-root-project-holds-the-workspaces-files-and-nothing-records-the-projects-commits.md)). A plugin of
+has no root repository recording its projects: its `workspace.toml` is a link to the root project's, which wins over
+every clone, and the machine's `.git/config` is the root project's ([0083](decisions/0083-a-root-project-holds-the-workspaces-files-and-nothing-records-the-projects-commits.md)). Its folder may be a repository
+that records nothing, for git's aliases and an editor's worktrees; a session there works in a worktree of the whole
+workspace, beside it, which Claude Code's hooks have aisland make ([0084](decisions/0084-a-root-repository-that-records-nothing-and-a-worktree-of-the-whole-workspace.md)). A plugin of
 `aisland workspace configure` (`source`, `mirror`, `active`, `extras`, the selections the projects declare) is one set
 of keys in both layers ([0035](decisions/0035-aisland-workspace-configure-one-set-of-commands-built.md)). A project
 tells aisland what it brings in its own `pyproject.toml` (`[tool.aisland]`) or an `aisland.plugins` entry point, and
@@ -230,3 +232,4 @@ mechanism that is replaced gets a new record, and the old one says which superse
 - [0081 — Emptying a project folder keeps its ignored files, and the release review's safety fixes](decisions/0081-emptying-a-folder-keeps-ignored-files-and-the-release-reviews-safety-fixes.md)
 - [0082 — A renamed project's old distribution is uninstalled before its new one](decisions/0082-a-renamed-projects-old-distribution-is-uninstalled-before-its-new-one.md)
 - [0083 — A root project holds the workspace's files, and nothing records the projects' commits](decisions/0083-a-root-project-holds-the-workspaces-files-and-nothing-records-the-projects-commits.md)
+- [0084 — A root repository that records nothing, and a worktree of the whole workspace](decisions/0084-a-root-repository-that-records-nothing-and-a-worktree-of-the-whole-workspace.md)

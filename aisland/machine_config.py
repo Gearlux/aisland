@@ -10,9 +10,10 @@ caller says ``check=True``.
 ``pytest_stats`` reads its own keys with the standard library: it loads in every pytest run, where aisland is not
 installed (:mod:`aisland.pytest_stats`).
 
-A workspace with a root project has no root repository: its folder holds plain clones. There the machine's settings
-live in the root project's own ``.git/config`` — still this machine's, never committed — and every function here,
-given the workspace folder, reads and writes that one (:func:`settings_repository`).
+A workspace with a root project records no project's commits: its folder holds plain clones, and is a repository
+recording nothing or none at all. There the machine's settings live in the root project's own ``.git/config`` — still
+this machine's, never committed — and every function here, given the workspace folder, reads and writes that one
+(:func:`settings_repository`).
 """
 
 from __future__ import annotations
@@ -30,11 +31,11 @@ def _text(value: Value) -> str:
 
 
 def settings_repository(repo: Path) -> Path:
-    """The repository whose ``.git/config`` holds the settings asked of ``repo``: ``repo`` itself when it is a
-    repository, else — a workspace folder with a root project, which is none — the root project's clone."""
-    if (repo / ".git").exists():
-        return repo
-    project = locations.root_project(repo)
+    """The repository whose ``.git/config`` holds the settings asked of ``repo``: in a workspace with a root project
+    (:func:`aisland.locations.rooted`) the root project's clone, whether or not the folder is a repository too; else
+    ``repo`` itself. A workspace of submodules still to convert keeps its root repository's, until convert copies them
+    into the root project."""
+    project = locations.root_project(repo) if locations.rooted(repo) else None
     return project if project is not None else repo
 
 

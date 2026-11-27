@@ -1198,7 +1198,7 @@ Options:
 
 - `--help` — Show this message and exit.
 
-Commands: `bashrc`, `code-workspace`, `color`, `configure`, `convert`, `env-example`, `env-test`, `harness`, `init`, `mirror`, `projects`, `provision`, `show`, `test-stats`, `theme`, `track`.
+Commands: `bashrc`, `code-workspace`, `color`, `configure`, `convert`, `env-example`, `env-test`, `harness`, `init`, `mirror`, `projects`, `provision`, `show`, `test-stats`, `theme`, `track`, `worktree`.
 
 #### `aisland workspace bashrc`
 
@@ -1854,4 +1854,70 @@ Stop recording PROJECT's commits in the root (no PROJECT: every submodule).
 Options:
 
 - `--machine-only` — Change this machine only (.git/config); commit nothing.
+- `--help` — Show this message and exit.
+
+#### `aisland workspace worktree`
+
+```text
+aisland workspace worktree [OPTIONS] COMMAND [ARGS]...
+```
+
+A worktree of the whole workspace for a session started at its root: one git worktree of each project, beside the workspace, each on its own dev/NAME branch.
+
+Options:
+
+- `--help` — Show this message and exit.
+
+Commands: `create`, `env`, `list`, `remove`.
+
+#### `aisland workspace worktree create`
+
+```text
+aisland workspace worktree create [OPTIONS] [NAME]
+```
+
+Make \<workspace\>-worktrees/NAME beside the workspace — each project a git worktree on dev/NAME — and print its folder (the progress goes to stderr).
+
+Options:
+
+- `--hook` — Read the name from Claude Code's WorktreeCreate hook input on stdin.
+- `--help` — Show this message and exit.
+
+#### `aisland workspace worktree env`
+
+```text
+aisland workspace worktree env [OPTIONS] [FOLDER]
+```
+
+The shell line a session in a worktree needs: the worktree's projects first on PYTHONPATH, since the shared venv imports the main checkouts. Nothing outside a worktree.
+
+Options:
+
+- `--hook` — Read the session's folder from Claude Code's SessionStart hook input on stdin, and append the line to the file $CLAUDE_ENV_FILE names.
+- `--help` — Show this message and exit.
+
+#### `aisland workspace worktree list`
+
+```text
+aisland workspace worktree list [OPTIONS]
+```
+
+The workspace's worktrees: each one's folder, the projects holding uncommitted work, the branches with commits.
+
+Options:
+
+- `--json` — Print the worktrees as one JSON object.
+- `--help` — Show this message and exit.
+
+#### `aisland workspace worktree remove`
+
+```text
+aisland workspace worktree remove [OPTIONS] [FOLDER]
+```
+
+Take the worktree at FOLDER away: refused while a project holds uncommitted work; a branch that got commits is kept, and named.
+
+Options:
+
+- `--hook` — Read the folder from Claude Code's WorktreeRemove hook input on stdin.
 - `--help` — Show this message and exit.
